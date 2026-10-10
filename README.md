@@ -41,17 +41,29 @@ npm run sample:check                      # also range-GETs every sample media U
 | `server/examples/resolver-example/` | example resolver module with a local stand-in upstream and catalog |
 | `sample-catalog/` | sample bundle of openly licensed content |
 | `android/` | Android TV app (Kotlin, Compose for TV, Media3) |
-| `docs/` | [roadmap](docs/roadmap.md), [decision log](docs/decisions.md), specs |
+| `scripts/` | release tooling: server package build (`pack-server.mjs`) and smoke test, version bump/check |
+| `Dockerfile` | container image of the server package |
+| `docs/` | [roadmap](docs/roadmap.md), [decision log](docs/decisions.md), specs, [self-hosting](docs/deploy/self-hosting.md), [releasing](docs/releasing.md) |
 
 ## Status
 
 Early development. Done: Phase 0 (bootstrap), Phase 1 (catalog bundle contract, validator, sample catalog),
 Phase 2 (server core for direct sources: pairing, TV and admin APIs, live events, progress and play order),
 Phase 3 (the Android TV app: pairing, home tiles, player with resume, auto-next, fallback and live updates, the
-hidden menu, English and Turkish), Phase 4 (resolver modules, the media proxy and admin diagnostics) and Phase 5
-(the browser admin page). Next are deployment docs and releases; see the [roadmap](docs/roadmap.md). How the TV
-behaves is described in [docs/ux/senior-tv.md](docs/ux/senior-tv.md), with screenshots in
-[docs/verification/](docs/verification/phase3/README.md).
+hidden menu, English and Turkish), Phase 4 (resolver modules, the media proxy and admin diagnostics), Phase 5
+(the browser admin page) and Phase 6 (self-hosting: server package, systemd and Caddy examples, Docker image,
+release workflow). Private catalogs and their resolver modules (Phase 7) live outside this repository; see the
+[roadmap](docs/roadmap.md). How the TV behaves is described in [docs/ux/senior-tv.md](docs/ux/senior-tv.md), with
+screenshots in [docs/verification/](docs/verification/phase3/README.md).
+
+## Self-hosting
+
+Each [release](https://github.com/mickeiik/izle/releases) has the server as one dependency-free package
+(`izle-server-X.Y.Z.tgz`, Node.js ≥ 22.13) and the TV app as an APK. The
+[self-hosting guide](docs/deploy/self-hosting.md) covers installing the server as a systemd service, HTTPS with
+Caddy, the admin token, the firewall, Docker, updates and backups, and installing the app on a TV. How releases
+are made, Android release signing and the checklist for publishing the repository are in
+[docs/releasing.md](docs/releasing.md).
 
 ## Development
 
@@ -61,6 +73,7 @@ Requirements: Node.js ≥ 22.13 and npm; for the TV app a JDK 21+ and the Androi
 npm ci
 npm test            # all workspaces
 npm run typecheck
+npm run pack:server && npm run smoke:server   # build dist/izle-server-X.Y.Z.tgz and test the installed package
 ```
 
 ### Run the server

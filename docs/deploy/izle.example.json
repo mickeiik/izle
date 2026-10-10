@@ -1,0 +1,9 @@
+{
+  "listen": { "host": "127.0.0.1", "port": 8787 },
+  "publicUrl": "https://izle.example.org",
+  "trustedProxies": ["127.0.0.1", "::1"],
+  "dataDir": "/var/lib/izle",
+  "resolver": null,
+  "defaults": { "uiLanguage": "en", "preferredAudioLanguage": "en" },
+  "log": { "level": "info" }
+}

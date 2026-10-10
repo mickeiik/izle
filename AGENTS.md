@@ -36,7 +36,15 @@ npm ci
 npm test                 # node:test in every workspace
 npm run typecheck        # tsc --noEmit in every workspace
 npm run sample:check     # probes every sample-catalog media URL (network; manual, not CI)
+npm run pack:server      # dist/izle-server-<version>.tgz: esbuild bundle, no dependencies (scripts/pack-server.mjs)
+npm run smoke:server     # installs that tarball offline into a temp prefix and exercises the installed server
+npm run version:check    # contract, server, lockfile and Android versionName agree; version:set -- X.Y.Z bumps all
 ```
+
+Releases (tag `vX.Y.Z` → `.github/workflows/release.yml`), Android release signing and the make-public checklist:
+[docs/releasing.md](docs/releasing.md). Deployment (systemd, Caddy, Docker): [docs/deploy/](docs/deploy/self-hosting.md).
+The package mirrors the source tree's relative paths (`server/dist/` → `../admin`, `../schema`,
+`../../sample-catalog`); the smoke test catches a resource that moved.
 
 - `contract/`: `npm test -w contract`, `npx izle-validate <bundleDir> [--probe]`
 - `server/`: `npm test -w server`, `npm run -w server dev -- --config server/izle.dev.json` (sample catalog on :8787,
@@ -45,7 +53,9 @@ npm run sample:check     # probes every sample-catalog media URL (network; manua
 - Resolver module + proxy end to end: [server/examples/resolver-example/](server/examples/resolver-example/README.md)
   (`make-media.sh` needs ffmpeg; `upstream.js` is the local stand-in site; `izle.example.json` the server config,
   state in `server/data/example/`)
-- `android/` (needs `JAVA_HOME` = JDK 21+ and `ANDROID_HOME`): `./gradlew :app:assembleDebug :app:testDebugUnitTest`
+- `android/` (needs `JAVA_HOME` = JDK 21+ and `ANDROID_HOME`): `./gradlew :app:assembleDebug :app:testDebugUnitTest`;
+  `:app:assembleRelease` is signed only with `android/keystore.properties` or the `IZLE_SIGNING_*` variables. A
+  device with a release-signed build needs `adb uninstall io.github.mickeiik.izle` before a debug install.
 
 The admin UI (`server/admin/`, served at `/admin/`) is plain ES modules without a build step or dependencies,
 typechecked by `server/admin/tsconfig.json` (DOM types) as part of `npm run typecheck`; its pure helpers in

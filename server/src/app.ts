@@ -8,6 +8,7 @@ import { HTTPException } from "hono/http-exception";
 import { routePath } from "hono/route";
 import { streamSSE } from "hono/streaming";
 import { bearerToken, secretsEqual, sha256 } from "./auth.ts";
+import { clientAddress, compileTrustedProxies } from "./clientip.ts";
 import { diagnoseEpisode } from "./diagnostics.ts";
 import { HttpError } from "./errors.ts";
 import { MAX_PAIR_WAIT_MS, type PairingService } from "./pairing.ts";
@@ -15,6 +16,7 @@ import { PROXY_TOKEN, type ProxyService, type ProxyTarget } from "./proxy.ts";
 import type { LoadedResolver } from "./resolver.ts";
 import type { Device } from "./store.ts";
 import { HOME_MAX_ITEMS, type Services, type TvService } from "./tv.ts";
+import { VERSION } from "./version.ts";
 import {
   approveBody,
   commandBody,
@@ -185,12 +187,15 @@ export function createApp(ctx: AppContext): Hono<Env> {
 
   // --- pairing (unauthenticated TV side) -----------------------------------------------------------------------
 
+  const trustedProxies = ctx.config.trustedProxies.length > 0 ? compileTrustedProxies(ctx.config.trustedProxies).list : null;
   const clientKey = (c: Context): string => {
+    let remote: string | undefined;
     try {
-      return getConnInfo(c).remote.address ?? "unknown";
+      remote = getConnInfo(c).remote.address;
     } catch {
-      return "unknown";
+      // not served from a Node socket (e.g. app.fetch in tests)
     }
+    return clientAddress(remote, c.req.header("X-Forwarded-For"), trustedProxies);
   };
 
   app.post("/api/v1/pair/start", (c) => {
@@ -423,6 +428,7 @@ export function createApp(ctx: AppContext): Hono<Env> {
       adapters: cur.manifest.adapters,
       warnings: cur.warnings.map((w) => ({ file: w.file, path: w.path, message: w.message })),
       resolver: ctx.resolverModule ? { sha256: ctx.resolverModule.sha256, adapters: [...ctx.resolverModule.adapters.keys()] } : null,
+      server: { version: VERSION },
     };
   };
 

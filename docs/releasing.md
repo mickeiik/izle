@@ -1,0 +1,115 @@
+# Releasing izle
+
+A release is a git tag `vX.Y.Z`. Pushing it runs [`.github/workflows/release.yml`](../.github/workflows/release.yml),
+which publishes a GitHub release with:
+
+| File | What |
+|---|---|
+| `izle-server-X.Y.Z.tgz` | the server package (`npm pack` tarball, no dependencies; built by `scripts/pack-server.mjs` and checked by `scripts/smoke-server.mjs`) |
+| `izle-tv-X.Y.Z.apk` | the Android TV app signed with the release key (only when the repository has the signing secrets, see below) |
+| `izle-tv-X.Y.Z-debug.apk` | the debug build, always |
+| `SHA256SUMS` | checksums |
+
+Owners install them as described in [deploy/self-hosting.md](deploy/self-hosting.md).
+
+## Cutting a release
+
+1. Set the version everywhere: the contract and server packages, the lockfile and the Android `versionName`.
+   The Android `versionCode` is derived from it (`1.2.3` → `10203`), so minor and patch stay below 100.
+   ```bash
+   npm run version:set -- 0.2.0
+   npm run version:check                 # prints 0.2.0
+   git commit -am "Release 0.2.0"
+   git push
+   ```
+2. Wait for CI to pass. Optionally do a dry run of the release workflow (same builds, artifacts attached to the run,
+   no release): `gh workflow run release.yml --ref main`, or Actions → Release → Run workflow.
+3. Tag and push:
+   ```bash
+   git tag -a v0.2.0 -m "izle 0.2.0"
+   git push origin v0.2.0
+   ```
+   The workflow refuses a tag that does not match the versions in the repository. A tag with a suffix
+   (`v0.2.0-rc.1`) becomes a pre-release.
+
+To build the same files locally: `npm ci && npm run pack:server && npm run smoke:server` for the server (into
+`dist/`), and `./gradlew :app:assembleDebug :app:assembleRelease` in `android/` for the APKs.
+
+## Android release signing
+
+Android only installs an update when it is signed with the same key as the installed app. The debug APK of each CI
+run is signed with a new throwaway key, which is why TVs should run the release APK.
+
+**Create the key once** and keep it, with its password, somewhere safe and backed up. If it is lost, every TV has
+to uninstall izle (and pair again) to get the next version. `keytool` comes with any JDK (Android Studio:
+`/opt/android-studio/jbr/bin/keytool` or the equivalent on your system):
+
+```bash
+keytool -genkeypair -v -keystore izle-release.jks -alias izle -keyalg RSA -keysize 4096 -validity 10000
+```
+
+Keep the keystore outside the repository. `*.jks` and `keystore.properties` are git-ignored anyway.
+
+**Local builds** read `android/keystore.properties`:
+
+```properties
+storeFile=/home/you/keys/izle-release.jks
+storePassword=…
+keyAlias=izle
+keyPassword=…
+```
+
+Then `./gradlew :app:assembleRelease` writes `app/build/outputs/apk/release/app-release.apk`. Without the file (and
+without the environment variables below) the same task produces `app-release-unsigned.apk`, which Android does
+not install. Check a signature with `$ANDROID_HOME/build-tools/<version>/apksigner verify --print-certs <apk>`.
+
+**Releases from CI** use four repository secrets, which the workflow turns into the `IZLE_SIGNING_STORE_FILE`,
+`IZLE_SIGNING_STORE_PASSWORD`, `IZLE_SIGNING_KEY_ALIAS` and `IZLE_SIGNING_KEY_PASSWORD` environment variables the
+Gradle build reads:
+
+```bash
+base64 -w0 izle-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
+gh secret set ANDROID_KEYSTORE_PASSWORD      # prompts for the value
+gh secret set ANDROID_KEY_ALIAS
+gh secret set ANDROID_KEY_PASSWORD
+```
+
+Only the release workflow's signing step sees them. Pull requests from forks never get secrets.
+
+**Moving a TV (or the emulator) from a debug to a release APK** needs an uninstall first, because the keys differ.
+Otherwise the install fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`:
+
+```bash
+adb uninstall io.github.mickeiik.izle
+adb install izle-tv-X.Y.Z.apk
+```
+
+The TV then pairs again and shows up as a new TV on the admin page. Set up its home screen and forget the old
+entry. Release builds have no minification (R8 is off), start with an empty server address and ignore the debug-only
+`izle.server` launch extra.
+
+## Make-public checklist
+
+The repository is private and was written to be published. Before switching its visibility, the owner (never an
+automated session) goes through this list.
+
+- [ ] **Secret scan of the whole history.** `gitleaks git .` (or
+  `docker run --rm -v "$PWD":/repo:ro ghcr.io/gitleaks/gitleaks:latest git /repo`), then review every finding.
+  Expect none: the only known hit, a made-up token the log redaction tests use as a hostile fixture, is marked
+  with an inline `gitleaks:allow` and listed in [`.gitleaksignore`](../.gitleaksignore).
+- [ ] **Private names.** Search the history for the names of your private catalogs, their sources, their hosts and
+  your private repositories. Only you know the list:
+  `git log -p --all | grep -n -i -E 'name-one|name-two|private-host'`.
+- [ ] **Author identities.** `git log --all --format='%an <%ae>' | sort -u`. Every address shown becomes public.
+  Rewrite them (e.g. to your GitHub `noreply` address) before publishing if needed.
+- [ ] **Tracked files.** Nothing like `*.token`, `*.db`, `*.jks`, `keystore.properties` or a local `izle.json`:
+  `git ls-files | grep -E '\.(token|db|jks)$|keystore\.properties|(^|/)izle\.json$'` prints nothing.
+- [ ] **Binary files are ours or licensed.** `git ls-files '*.jpg' '*.png' '*.apk'`: sample posters are listed in
+  [`sample-catalog/NOTICE.md`](../sample-catalog/NOTICE.md), the example catalog's posters are generated, and
+  verification screenshots show only sample or generated content.
+- [ ] **If something must go**, rewrite the history (`git filter-repo`) before publishing, and rotate whatever
+  leaked anyway.
+- [ ] **After publishing:** turn on secret scanning with push protection and Dependabot alerts, protect `main`, add
+  a ruleset so only maintainers can create `v*` tags, and keep "require approval for first-time contributors"
+  for Actions.
+- [ ] **Switch the visibility:** `gh repo edit mickeiik/izle --visibility public --accept-visibility-change-consequences`.

@@ -1,0 +1,145 @@
+#!/usr/bin/env node
+// @ts-check
+// Installs a server package the way the self-hosting guide does (`npm install --global --prefix`, offline: the
+// package has no dependencies) into a temporary directory and checks that the installed server works: version,
+// catalog validation, admin token, the admin page, pairing, the home state with posters, resolve, catalog reload
+// on SIGHUP and a clean stop on SIGTERM. Only loopback HTTP; nothing is fetched from the network.
+//
+// Usage: node scripts/smoke-server.mjs [<izle-server-x.y.z.tgz>] [--keep]
+import { execFile, spawn } from "node:child_process";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { parseArgs, promisify } from "node:util";
+
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+const { values: opts, positionals } = parseArgs({ options: { keep: { type: "boolean" } }, allowPositionals: true });
+const version = JSON.parse(await readFile(path.join(ROOT, "server", "package.json"), "utf8")).version;
+const tarball = path.resolve(positionals[0] ?? path.join(ROOT, "dist", `izle-server-${version}.tgz`));
+
+const run = promisify(execFile);
+const work = await mkdtemp(path.join(tmpdir(), "izle-smoke-"));
+const prefix = path.join(work, "prefix");
+const bin = path.join(prefix, "bin", "izle-server");
+const pkgDir = path.join(prefix, "lib", "node_modules", "@izle", "server");
+// npm sets INIT_CWD for scripts; the server would resolve relative paths against it.
+const { INIT_CWD: _initCwd, ...env } = process.env;
+
+/** @param {boolean} cond @param {string} what */
+function check(cond, what) {
+  if (!cond) throw new Error(`✖ ${what}`);
+  process.stdout.write(`✔ ${what}\n`);
+}
+
+/** @param {string[]} args */
+const cli = (args) => run(bin, args, { env, encoding: "utf8" });
+
+/** @type {import("node:child_process").ChildProcess | null} */
+let server = null;
+try {
+  await run("npm", ["install", "--global", "--prefix", prefix, "--offline", "--no-audit", "--no-fund", tarball], { encoding: "utf8" });
+  check(true, `installed ${path.basename(tarball)} offline into a temporary prefix`);
+
+  check((await cli(["--version"])).stdout.trim() === version, `izle-server --version prints ${version}`);
+  const deployFiles = ["izle.example.json", "izle.service", "Caddyfile"];
+  /** @type {string[]} */
+  const missing = [];
+  for (const f of deployFiles) await stat(path.join(pkgDir, "deploy", f)).catch(() => missing.push(f));
+  check(missing.length === 0, `the deploy examples are packaged${missing.length ? ` (missing: ${missing.join(", ")})` : ""}`);
+  check(/✔|valid/i.test((await cli(["validate-catalog", path.join(pkgDir, "sample-catalog")])).stdout), "the packaged sample catalog validates");
+
+  const config = path.join(work, "izle.json");
+  await writeFile(config, JSON.stringify({ listen: { host: "127.0.0.1", port: 0 }, dataDir: "./data", trustedProxies: ["127.0.0.1"] }));
+  const child = spawn(bin, ["--config", config], { env, stdio: ["ignore", "pipe", "pipe"] });
+  server = child;
+  /** @type {any[]} */
+  const logs = [];
+  let stderr = "";
+  child.stderr.on("data", (/** @type {Buffer} */ d) => void (stderr += d.toString()));
+  let partial = "";
+  child.stdout.on("data", (/** @type {Buffer} */ d) => {
+    const lines = (partial + d.toString()).split("\n");
+    partial = lines.pop() ?? "";
+    for (const line of lines) logs.push(JSON.parse(line));
+  });
+  const exited = new Promise((resolve) => child.once("exit", (code) => resolve(code)));
+  /** Waits until a log line with this message (after `from` lines) shows up. */
+  const logged = async (/** @type {string} */ msg, from = 0, ms = 15_000) => {
+    for (const end = Date.now() + ms; Date.now() < end; await new Promise((r) => setTimeout(r, 50))) {
+      const hit = logs.slice(from).find((l) => l.msg === msg);
+      if (hit) return hit;
+      if (child.exitCode !== null) break;
+    }
+    throw new Error(`✖ no "${msg}" log line; stderr: ${stderr}`);
+  };
+
+  const listening = await logged("listening");
+  check(listening.version === version, "the server starts and logs its version");
+  check(listening.catalogDir === path.join(pkgDir, "sample-catalog"), "without a catalog in the config it serves the packaged sample catalog");
+  const base = `http://127.0.0.1:${listening.port}`;
+
+  const admin = (await cli(["admin-token", "--config", config])).stdout.trim();
+  check(admin.length >= 24, "izle-server admin-token prints the generated token");
+
+  /**
+   * @param {string} method @param {string} route @param {{ token?: string, body?: unknown, headers?: Record<string, string> }} [o]
+   * @returns {Promise<{ res: Response, json: any, text: string }>}
+   */
+  const call = async (method, route, o = {}) => {
+    /** @type {Record<string, string>} */
+    const headers = { ...o.headers };
+    if (o.token) headers.Authorization = `Bearer ${o.token}`;
+    if (o.body !== undefined) headers["Content-Type"] = "application/json";
+    const res = await fetch(`${base}${route}`, { method, headers, body: o.body === undefined ? undefined : JSON.stringify(o.body) });
+    const type = res.headers.get("content-type") ?? "";
+    return { res, json: type.includes("json") ? await res.json() : null, text: type.includes("json") ? "" : await res.text() };
+  };
+
+  check((await call("GET", "/healthz")).json?.ok === true, "GET /healthz");
+  const page = await call("GET", "/admin/");
+  check(page.res.status === 200 && page.text.includes("app.js") && /script-src 'self'/.test(page.res.headers.get("content-security-policy") ?? ""), "the admin page is served with its CSP");
+  check((await call("GET", "/admin/app.js")).res.status === 200, "the admin page's script is served");
+
+  const info = await call("GET", "/api/v1/admin/catalog", { token: admin });
+  check(info.json?.id === "izle-sample" && info.json.server?.version === version, "the admin API answers with the catalog and server version");
+
+  const viaProxy = { "X-Forwarded-For": "203.0.113.7" };
+  const start = await call("POST", "/api/v1/pair/start", { headers: viaProxy });
+  check(start.res.status === 200 && /^\d{6}$/.test(start.json.code), "a TV gets a pairing code");
+  const approve = await call("POST", "/api/v1/admin/pair/approve", { token: admin, body: { code: start.json.code, name: "Smoke test" } });
+  check(approve.res.status === 200, "the owner approves it");
+  const wait = await call("GET", `/api/v1/pair/wait?code=${start.json.code}&wait=0`, { token: start.json.pairToken });
+  check(wait.json?.status === "approved" && typeof wait.json.deviceToken === "string", "the TV receives its device token");
+  const tv = wait.json.deviceToken;
+
+  const home = await call("PUT", `/api/v1/admin/devices/${wait.json.deviceId}/home`, { token: admin, body: { itemIds: ["caminandes", "sintel"] } });
+  check(home.res.status === 200, "the owner sets the home list");
+  const state = await call("GET", "/api/v1/tv/state", { token: tv });
+  check(state.json?.home?.map((/** @type {any} */ h) => h.item.id).join() === "caminandes,sintel", "the TV's home state lists the shows in order");
+  const poster = await fetch(new URL(state.json.home[0].item.posterUrl, base));
+  check(poster.status === 200 && poster.headers.get("content-type") === "image/jpeg", "posters are served");
+  const resolve = await call("POST", "/api/v1/tv/resolve", { token: tv, body: { episodeId: state.json.home[0].continue.episodeId } });
+  check(resolve.res.status === 200 && /^https:\/\//.test(resolve.json.media?.url), "resolve returns the episode's stream");
+
+  const before = logs.length;
+  child.kill("SIGHUP");
+  await logged("catalog reloaded", before);
+  check(true, "SIGHUP reloads the catalog");
+
+  child.kill("SIGTERM");
+  check((await exited) === 0, "SIGTERM stops the server with exit status 0");
+  server = null;
+  const unexpected = stderr.split("\n").filter((l) => l.trim() && !/ExperimentalWarning: SQLite|--trace-warnings/.test(l));
+  check(unexpected.length === 0, `nothing unexpected on stderr${unexpected.length ? `:\n${unexpected.join("\n")}` : ""}`);
+  const secrets = [admin, tv, start.json.pairToken, wait.json.deviceToken];
+  check(!logs.some((l) => secrets.some((s) => JSON.stringify(l).includes(s))), "no token appears in the log");
+  process.stdout.write(`smoke test passed for ${path.basename(tarball)}\n`);
+} catch (err) {
+  process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+  process.exitCode = 1;
+} finally {
+  server?.kill("SIGKILL");
+  if (opts.keep) process.stdout.write(`kept ${work}\n`);
+  else await rm(work, { recursive: true, force: true });
+}

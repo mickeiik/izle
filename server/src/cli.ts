@@ -7,6 +7,7 @@ import { ConfigError, loadConfig, type ServerConfig } from "./config.ts";
 import { createLogger } from "./log.ts";
 import { healthcheckAll, loadResolver, ResolverLoadError } from "./resolver.ts";
 import { startServer } from "./server.ts";
+import { VERSION } from "./version.ts";
 
 const USAGE = `usage:
   izle-server [--config <file>]                    start the server (defaults: port 8787, sample catalog, ./data)
@@ -15,6 +16,7 @@ const USAGE = `usage:
   izle-server validate-catalog <dir>               validate a catalog bundle (same as izle-validate)
   izle-server check-resolver [--config <file>]     load the configured resolver module, check that it provides
                                                    the catalog's adapters, and run every adapter's healthcheck
+  izle-server --version                            print the version
 
 Relative --config paths resolve against the directory npm or the shell was started in; relative paths inside the
 config file resolve against the file's directory. IZLE_ADMIN_TOKEN overrides the admin token file.`;
@@ -67,11 +69,16 @@ export async function main(argv: string[]): Promise<number> {
 
   if (command === "validate-catalog") return validateMain(rest);
 
-  let values: { config?: string; rotate?: boolean; help?: boolean };
+  let values: { config?: string; rotate?: boolean; help?: boolean; version?: boolean };
   try {
     ({ values } = parseArgs({
       args: rest,
-      options: { config: { type: "string", short: "c" }, rotate: { type: "boolean" }, help: { type: "boolean", short: "h" } },
+      options: {
+        config: { type: "string", short: "c" },
+        rotate: { type: "boolean" },
+        help: { type: "boolean", short: "h" },
+        version: { type: "boolean", short: "v" },
+      },
     }));
   } catch (err) {
     process.stderr.write(`${(err as Error).message}\n${USAGE}\n`);
@@ -79,6 +86,10 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (values.help) {
     process.stdout.write(`${USAGE}\n`);
+    return 0;
+  }
+  if (values.version) {
+    process.stdout.write(`${VERSION}\n`);
     return 0;
   }
 

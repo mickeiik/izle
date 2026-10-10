@@ -1,10 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Cleartext is allowed so a TV can reach an izle-server on the LAN (the emulator reaches the host at
-     http://10.0.2.2:8787). Internet deployments sit behind an HTTPS reverse proxy. -->
+     http://10.0.2.2:8787). Internet deployments sit behind an HTTPS reverse proxy.
+     Let's Encrypt's roots (ISRG Root X1/X2) are added to the system ones because Android 7.0 (API 24) predates them:
+     without them a TV on 7.0 cannot reach a server whose certificate comes from Let's Encrypt (Caddy's default). -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
+            <certificates src="@raw/isrg_root_x1" />
+            <certificates src="@raw/isrg_root_x2" />
         </trust-anchors>
     </base-config>
 </network-security-config>

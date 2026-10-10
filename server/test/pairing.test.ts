@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { startTestServer } from "./helpers.ts";
+import { startTestServer, type TestServer } from "./helpers.ts";
 
 test("pairing: start → pending → approve → token delivered exactly once", async (t) => {
   const s = await startTestServer();
@@ -83,6 +83,25 @@ test("pairing: at most five open codes, and pair/start is rate-limited per clien
   assert.equal((await s.call("POST", "/api/v1/pair/start")).json.error, "too_many_pending");
   s.clock.advance(10 * 60_000);
   assert.equal((await s.call("POST", "/api/v1/pair/start")).status, 200, "expired codes no longer count");
+});
+
+test("pairing: behind a trusted reverse proxy the rate limit counts each X-Forwarded-For client", async (t) => {
+  const limit = { pairing: { startLimit: { max: 2, windowMs: 60_000 } } };
+  const start = (s: TestServer, client: string) =>
+    s.call("POST", "/api/v1/pair/start", { headers: { "X-Forwarded-For": client } }).then((r) => r.status);
+
+  const behindProxy = await startTestServer({ ...limit, configFile: { trustedProxies: ["127.0.0.1", "::1"] } });
+  t.after(() => behindProxy.close());
+  assert.deepEqual([await start(behindProxy, "203.0.113.1"), await start(behindProxy, "203.0.113.1")], [200, 200]);
+  assert.equal(await start(behindProxy, "203.0.113.1"), 429);
+  assert.equal(await start(behindProxy, "203.0.113.2"), 200, "another TV behind the same proxy has its own limit");
+  assert.equal(await start(behindProxy, "198.51.100.7, 203.0.113.1"), 429, "a forged prefix does not escape the limit");
+
+  // Without trustedProxies the header is ignored: every request counts for the socket address.
+  const direct = await startTestServer(limit);
+  t.after(() => direct.close());
+  assert.deepEqual([await start(direct, "203.0.113.1"), await start(direct, "203.0.113.2")], [200, 200]);
+  assert.equal(await start(direct, "203.0.113.3"), 429);
 });
 
 test("pairing: input validation", async (t) => {

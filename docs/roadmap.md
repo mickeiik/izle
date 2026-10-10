@@ -4,7 +4,7 @@ This is the project plan, copied from the approved planning document and edited 
 (environment-specific facts and references to private catalogs removed). Routine decisions taken while
 implementing it are recorded in [decisions.md](decisions.md); where the two differ, the decision log wins.
 
-Status: Phases 0–5 implemented. Phase 6 is next.
+Status: Phases 0–6 implemented. Phase 7 (private catalog exports) happens out of tree.
 
 ## Context
 
@@ -222,7 +222,7 @@ Exact URLs live in `sample-catalog/items.json`. Excluded: demo streams whose con
 - Static SPA in `server/admin/`; pairing approval, devices, home editor, now playing, cursor, settings, commands, diagnostics.
 - Verify: browser against local server; optional Playwright smoke test.
 
-**Phase 6 — Deployment & hardening**
+**Phase 6 — Deployment & hardening** ✅
 - `docs/deploy/self-hosting.md` (systemd unit, Caddy HTTPS reverse proxy with SSE buffering off, admin token, firewall), Dockerfile (optional), GitHub Actions release on tag: `npm pack` server + debug/unsigned APK artifact; Android release signing docs; APK install via `adb install` or "Send files to TV"; optional Watch Next channel; make-public checklist (secret scan, history review).
 
 **Phase 7 — Private catalog exports (out of tree)**

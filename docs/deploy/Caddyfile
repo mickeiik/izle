@@ -1,0 +1,20 @@
+# izle behind Caddy: HTTPS with an automatic certificate, everything proxied to izle-server on 127.0.0.1:8787.
+# Replace izle.example.org with your domain; its DNS must point at this host and ports 80 and 443 must be open.
+# Do not turn on Caddy's access log for this site: request paths carry media proxy session tokens and pairing codes.
+# Do not add `encode` either: it would buffer the TVs' live event stream.
+
+izle.example.org {
+	header Strict-Transport-Security "max-age=31536000"
+
+	# Optional: answer the admin page and the admin API only on your LAN (or VPN). TVs never use them.
+	# @admin_outside {
+	# 	path /admin /admin/* /api/v1/admin/*
+	# 	not remote_ip private_ranges
+	# }
+	# respond @admin_outside 403
+
+	reverse_proxy 127.0.0.1:8787 {
+		# Hand server-sent events, the pairing long-poll and proxied media to the TV as they arrive.
+		flush_interval -1
+	}
+}

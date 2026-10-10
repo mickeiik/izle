@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { statSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -113,6 +113,9 @@ test("CLI: admin-token creates, reuses and rotates; validate-catalog; bad config
   assert.match(bad.stderr, /unknown property "nope"/);
   assert.equal((await run(["frobnicate"])).code, 2);
   assert.equal((await run(["--help"])).code, 0);
+  const version = await run(["--version"]);
+  assert.equal(version.code, 0);
+  assert.equal(version.stdout, `${JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version}\n`);
 });
 
 test("CLI: the server starts, answers and stops on SIGTERM", async (t) => {

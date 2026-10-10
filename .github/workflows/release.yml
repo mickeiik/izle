@@ -1,0 +1,134 @@
+name: Release
+
+# A pushed tag vX.Y.Z builds the server package and the Android APKs and publishes them as a GitHub release.
+# Running the workflow by hand (Actions → Release → Run workflow) is a dry run: the same builds, uploaded to the run
+# as artifacts, and no release. The process is described in docs/releasing.md.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  server:
+    name: server package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Check that every version matches the tag
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: node scripts/version.mjs check ${TAG:+--tag "$TAG"}
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run pack:server
+      - run: npm run smoke:server
+      - uses: actions/upload-artifact@v7
+        with:
+          name: izle-server
+          path: dist/izle-server-*.tgz
+          if-no-files-found: error
+
+  android:
+    name: android APKs
+    runs-on: ubuntu-latest
+    env:
+      # Secrets cannot be tested in `if:` directly; the signed release APK is built only when a key is configured.
+      HAS_RELEASE_KEY: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+      - run: ./gradlew --no-configuration-cache :app:assembleDebug :app:testDebugUnitTest
+      - name: Signed release APK
+        if: env.HAS_RELEASE_KEY == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          IZLE_SIGNING_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          IZLE_SIGNING_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          IZLE_SIGNING_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          export IZLE_SIGNING_STORE_FILE="$RUNNER_TEMP/release.jks"
+          trap 'rm -f "$IZLE_SIGNING_STORE_FILE"' EXIT
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$IZLE_SIGNING_STORE_FILE"
+          ./gradlew --no-configuration-cache :app:assembleRelease
+      - name: Name the APKs
+        run: |
+          version=$(node ../scripts/version.mjs check)
+          mkdir -p ../dist
+          cp app/build/outputs/apk/debug/app-debug.apk "../dist/izle-tv-$version-debug.apk"
+          if [ -f app/build/outputs/apk/release/app-release.apk ]; then
+            cp app/build/outputs/apk/release/app-release.apk "../dist/izle-tv-$version.apk"
+          fi
+          ls -l ../dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: izle-tv
+          path: dist/*.apk
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    needs: [server, android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: |
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Release notes
+        run: |
+          signed=""
+          for apk in dist/izle-tv-*.apk; do
+            case "$apk" in *-debug.apk) ;; *) signed=yes ;; esac
+          done
+          {
+            echo "## Downloads"
+            echo
+            echo "- \`izle-server-*.tgz\`: the server (Node.js 22.13 or newer, no other dependencies). Install it with"
+            echo "  \`npm install --global --prefix /opt/izle ./izle-server-<version>.tgz\` as described in the"
+            echo "  [self-hosting guide](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_SHA}/docs/deploy/self-hosting.md)."
+            if [ -n "$signed" ]; then
+              echo "- \`izle-tv-<version>.apk\`: the Android TV app, signed with the release key. Use this one on a TV;"
+              echo "  later releases install over it."
+            fi
+            echo "- \`izle-tv-<version>-debug.apk\`: debug build for trying izle and for the emulator. It is signed with a"
+            echo "  throwaway key, so a later APK cannot be installed over it: uninstall it first (the TV pairs again)."
+            echo "- \`SHA256SUMS\`: checksums of the files above."
+          } > notes.md
+          cat notes.md
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          prerelease=""
+          case "$TAG" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag --title "izle $TAG" \
+            --notes-file notes.md --generate-notes $prerelease

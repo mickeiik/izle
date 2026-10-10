@@ -1,5 +1,6 @@
 package io.github.mickeiik.izle.ui
 
+import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.mickeiik.izle.AppGraph
@@ -115,7 +116,8 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         mediaHttp = graph.http,
         repository = repository,
         userAgent = graph.userAgent,
-        capVideoTo720p = BuildConfig.DEBUG,
+        // The emulator decodes H.264 in software; real TVs, debug build or not, get full resolution.
+        capVideoTo720p = BuildConfig.DEBUG && isEmulator(),
         onExit = ::onPlayerExit,
     )
 
@@ -541,3 +543,6 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         repository.stop()
     }
 }
+
+/** The Android emulator's virtual board ("ranchu"; "goldfish" on old images). */
+private fun isEmulator(): Boolean = Build.HARDWARE == "ranchu" || Build.HARDWARE == "goldfish"

@@ -1,7 +1,7 @@
 # izle-server API v1
 
 Status: **draft, implemented**: direct sources (Phase 2), resolver modules and the media proxy (Phase 4), browser
-admin UI over the admin API (Phase 5). Changes
+admin UI over the admin API (Phase 5), reverse-proxy client addresses (Phase 6). Changes
 within v1 are additive only (new optional request fields, new response fields, new routes); clients MUST ignore
 unknown response fields.
 
@@ -41,7 +41,8 @@ device token.
 
 No body. → `200 {"code": "483920", "pairToken": "<secret>", "expiresAt": "…"}`. Codes live 10 minutes.
 
-Errors: `429 rate_limited` (more than 10 starts per client address in 10 minutes; `Retry-After` header),
+Errors: `429 rate_limited` (more than 10 starts per client address in 10 minutes; `Retry-After` header; behind
+a reverse proxy see `trustedProxies` in [Configuration](#configuration)),
 `429 too_many_pending` (5 codes are already open).
 
 ### `GET /api/v1/pair/wait?code=<6 digits>[&wait=<0..25>]`
@@ -278,7 +279,7 @@ Every change that affects the TV bumps the device's state version and emits a `s
 
 | Route | Response |
 |---|---|
-| `GET /api/v1/admin/catalog` | `{"id", "buildId", "builtAt", "name", "loadedAt", "stats", "adapters", "warnings", "resolver"}` — `resolver` is `{"sha256", "adapters"}` of the loaded module, or null |
+| `GET /api/v1/admin/catalog` | `{"id", "buildId", "builtAt", "name", "loadedAt", "stats", "adapters", "warnings", "resolver", "server"}` — `resolver` is `{"sha256", "adapters"}` of the loaded module, or null; `server` is `{"version"}` of the running server |
 | `GET /api/v1/admin/catalog/search?q=&limit=` | `{"items": [{"id", "kind", "title", "year", "posterUrl", "episodeCount", "playableCount"}]}` — case-, accent- and dotless-ı-insensitive match on title, original title and id; empty `q` lists everything (by title, `limit` ≤ 200, default 50) |
 | `GET /api/v1/admin/catalog/items/:id` | the item with all episodes; sources as `{id, type, label, languages, kind, needsProxy}` or `{…, adapter}` — upstream URLs, headers and refs are not exposed |
 | `POST /api/v1/admin/catalog/reload` | re-reads the bundle from disk: `200 {"catalog"}`, or `422 {"error": "invalid_catalog", "issues"}` and the previous catalog stays active (also when the bundle needs an adapter the resolver module does not provide). `SIGHUP` does the same. All devices get a new state version. |
@@ -331,6 +332,7 @@ logged at `debug` level only; proxy errors at `info`.
 {
   "listen": { "host": "0.0.0.0", "port": 8787 },
   "publicUrl": "https://izle.example.org",
+  "trustedProxies": ["127.0.0.1", "::1"],
   "dataDir": "./data",
   "catalog": { "dir": "./sample-catalog" },
   "resolver": { "module": "/opt/izle/resolver/index.js", "config": {}, "deadlineMs": 12000, "budgetMs": 30000 },
@@ -341,8 +343,15 @@ logged at `debug` level only; proxy errors at `info`.
 }
 ```
 
-Every key is optional. Without a file the server listens on `0.0.0.0:8787`, serves the sample catalog shipped in
-the repository and keeps its data in `./data` (`izle.db`, `admin.token`). Unknown keys are errors.
+Every key is optional. Without a file the server listens on `0.0.0.0:8787`, serves the sample catalog shipped with
+the server and keeps its data in `./data` (`izle.db`, `admin.token`). Unknown keys are errors. Deployment examples
+(systemd, Caddy, Docker) are in [deploy/self-hosting.md](../deploy/self-hosting.md).
+
+- `trustedProxies` (default `[]`): IP addresses or CIDR ranges (IPv4 or IPv6) of reverse proxies in front of the
+  server. For a request whose socket address is in the list, the client address is taken from
+  `X-Forwarded-For`, walking from the right past further trusted hops; entries left of the first untrusted hop are
+  ignored. The client address is only used for the `pair/start` rate limit. Without the setting the header is
+  ignored, so behind a proxy all TVs share one limit.
 
 - `resolver` (default null): `module` is a **local path** to the owner's resolver module (never downloaded);
   `config` is handed to it as `ctx.config` and never logged; `deadlineMs` (100–120000, default 12000) bounds one

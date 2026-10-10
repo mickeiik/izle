@@ -1,0 +1,56 @@
+# izle-server as a systemd service; setup in docs/deploy/self-hosting.md.
+#   sudo install -m 0644 izle.service /etc/systemd/system/izle.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now izle
+#   journalctl -u izle -f                 # the server's JSON log
+#   sudo systemctl reload izle            # re-read the catalog bundle (SIGHUP)
+
+[Unit]
+Description=izle server (catalog, TV and admin APIs)
+Documentation=https://github.com/mickeiik/izle/blob/main/docs/deploy/self-hosting.md
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+User=izle
+Group=izle
+ExecStart=/opt/izle/bin/izle-server --config /etc/izle/izle.json
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+SyslogIdentifier=izle
+
+# /var/lib/izle: the database, the admin token and the resolver module's directory. Nothing else is writable.
+StateDirectory=izle
+StateDirectoryMode=0700
+UMask=0077
+
+# Sandboxing: the server reads its config, catalog and resolver module, writes /var/lib/izle and opens network
+# connections (resolver modules and the media proxy fetch upstream URLs). MemoryDenyWriteExecute stays off because
+# Node.js compiles JavaScript at run time.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RemoveIPC=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

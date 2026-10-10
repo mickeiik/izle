@@ -738,6 +738,8 @@ function catalogView() {
         h("dd", null, c.adapters.length ? c.adapters.join(", ") : "none"),
         h("dt", null, "Resolver module"),
         h("dd", null, c.resolver ? [`provides ${c.resolver.adapters.join(", ") || "nothing"} · `, h("code", { title: c.resolver.sha256 }, c.resolver.sha256.slice(0, 16))] : "none configured"),
+        h("dt", null, "Server"),
+        h("dd", null, `izle-server ${c.server.version}`),
       ),
       h(
         "details",

@@ -343,3 +343,88 @@ from the roadmap, the entry wins until the roadmap is updated.
 - **Example catalog:** a series ("Proxy series", three episodes delivered differently plus one not approved) was
   added so "continue from", auto-next and the not-allowed state can be tried through the proxy; it was loaded
   with the page's "Reload from disk".
+
+## Phase 6 — Deployment and releases (2026-10-10)
+
+- **The server package is an esbuild bundle, not a `tsc` → `dist/` build.** `npm pack -w server` alone would produce
+  a tarball that cannot be installed (it depends on the unpublished workspace package `@izle/contract`), and a
+  `tsc` emit would need a second build of the contract plus import rewriting. `scripts/pack-server.mjs` bundles
+  `server/src/cli.ts` with the contract and all npm dependencies into `server/dist/izle-server.js` (ES module,
+  unminified, no source maps), stages a package around it and runs `npm pack`. The tarball has no dependencies
+  and no install scripts, installs offline and runs exactly the dependency versions the tests ran with. The
+  bundled packages' licenses are collected into `THIRD_PARTY_LICENSES.md`. Repeated builds of the same sources
+  produce byte-identical tarballs. `esbuild` (already in the tree through `tsx`) became a root dev dependency.
+- **Package layout mirrors the sources' relative paths** (`server/dist/` → `../admin`, `../schema`,
+  `../../sample-catalog`) instead of changing how the code finds its files; the contract schemas are copied to
+  `server/schema/`. The package keeps the name `@izle/server` (`npm pack` names it `izle-server-X.Y.Z.tgz`) and
+  `private: true` so it cannot be published by accident. Its bin checks for Node ≥ 22.13 before loading the bundle
+  and says so instead of failing on `node:sqlite`.
+- **Install method in the docs:** `npm install --global --prefix /opt/izle <tgz>`, a dedicated `izle` system user,
+  config in `/etc/izle` (root:izle 0640, since resolver configs may hold keys), state in `/var/lib/izle`
+  (systemd `StateDirectory`), own catalogs and resolver modules in `/srv/izle`. Without `catalog` in the config the
+  packaged sample catalog is served, so the example config works right after installation.
+- **`scripts/smoke-server.mjs`** installs the tarball the documented way (offline) and drives the installed server
+  over loopback HTTP: version, catalog validation, admin token, admin page with CSP, pairing, home state, posters,
+  resolve, SIGHUP reload, SIGTERM exit 0, nothing unexpected on stderr, no token in the log. CI runs it on Node 22,
+  24 and 26 (24 was added to the matrix because the Docker image uses it); it was also run on Node 22.13.0, the
+  engine floor.
+- **The version is one number** for the contract and server packages and the Android `versionName`;
+  `scripts/version.mjs set` writes it everywhere (also the server's `^X.Y.Z` range on the contract, which `^0.1.0`
+  would not satisfy for 0.2.0) and `check [--tag]` guards CI and the release workflow. The Android `versionCode` is
+  derived as `major·10000 + minor·100 + patch` (0.1.0 → 100), so minor and patch stay below 100.
+- **`izle-server --version`**, the version in the `listening` log line and `server.version` in
+  `GET /admin/catalog` (shown on the admin page's Catalog tab), so owners can see what runs after an upgrade. The
+  version is a JSON import of `server/package.json`, inlined by the bundler.
+- **`trustedProxies` (new config key, default `[]`).** Phase 2 left the pairing rate limit keyed by socket address,
+  which behind the documented Caddy setup put every TV (and any internet client) into one bucket. Entries are
+  addresses or CIDR ranges (`net.BlockList`); for a trusted peer the client is the rightmost `X-Forwarded-For` hop
+  that is not itself trusted, so a client-supplied prefix cannot escape the limit. Verified that Caddy 2.11
+  replaces an incoming `X-Forwarded-For` from an untrusted client with the real address.
+- **systemd unit:** `Type=exec`, static `User=izle`, `StateDirectory=izle` (0700), `UMask=0077`, `ExecReload` sends
+  SIGHUP, and a sandbox (`ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `PrivateDevices`, kernel/cgroup/clock
+  protections, `ProtectProc=invisible`, empty capability set, `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+  AF_NETLINK` (glibc's `getaddrinfo` may use netlink), `SystemCallFilter=@system-service ~@privileged` with
+  `SystemCallErrorNumber=EPERM`). Not used: `MemoryDenyWriteExecute` (V8 compiles at run time) and
+  `ProcSubset=pid` (it hides `/proc/cpuinfo` and `/proc/stat`, which V8 reads for CPU features on some ARM boards
+  and `os.cpus()` needs). `DynamicUser` was not
+  used because owners copy catalogs and run `admin-token` as the service user. `systemd-analyze verify` passes and
+  the offline security analysis rates it 1.4 ("OK"). The installed package ran under the unit's syscall filter in
+  an unprivileged user-level transient unit (serving, pairing, SQLite writes, reload, stop).
+- **No privileged containers for verification.** A first attempt to boot the unit in a privileged
+  systemd-in-Docker container crashed the development machine; the unit was verified statically and with the
+  user-level run above instead.
+- **Caddy example:** a single site block with `reverse_proxy … { flush_interval -1 }`, HSTS, no `encode` and no
+  access log (paths carry proxy session tokens and pairing codes), and an optional, commented block that answers
+  `/admin` and `/api/v1/admin/*` only from `private_ranges`. Verified with `caddy validate` (both variants), `caddy
+  fmt`, and a run through Caddy 2.11 in containers: the pairing long-poll answered 2.01 s after an approval at 2 s,
+  and a `state` event reached the client 8 ms after a home-list change.
+- **Dockerfile:** multi-stage, the build stage runs the same `pack-server.mjs`, the runtime stage installs the
+  tarball offline into `/opt/izle` on `node:24-slim`, runs as the image's `node` user, keeps data in the
+  `/var/lib/izle` volume, ships a default `/etc/izle/izle.json` (sample catalog) to be replaced by a mounted one,
+  and has a `/healthz` health check. No image is published to a registry; owners build it from the repository.
+- **Release workflow:** tag `v*` → server job (version check against the tag, typecheck, tests, pack, smoke test),
+  Android job (debug APK + unit tests; a signed release APK only when the `ANDROID_KEYSTORE_BASE64`,
+  `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` secrets exist), then a release job with
+  `SHA256SUMS`, download notes and generated notes, published with the preinstalled `gh` (no third-party release
+  action). A `-` in the tag marks a pre-release. `workflow_dispatch` is a dry run: everything except publishing.
+  `download-artifact` is v8 (current; the other actions are unchanged). Workflows pass `actionlint` with
+  shellcheck. No build provenance attestations: they need a public repository (or Enterprise) and can be added
+  after publishing.
+- **Release signing is opt-in and read from outside the repository:** `IZLE_SIGNING_*` environment variables
+  (CI) or `android/keystore.properties` (local, git-ignored); without them `assembleRelease` stays unsigned. R8
+  remains off. The debug APK of every CI run has a new throwaway key, so a debug install cannot be upgraded;
+  the docs point TVs at the release APK. Verified locally with a throwaway keystore: debug and signed release APKs,
+  the unsigned fallback, and the signed release APK paired with the packaged server and played on the emulator.
+- **The 720p cap now applies to debug builds on the emulator only** (`Build.HARDWARE` `ranchu`/`goldfish`). The
+  release workflow ships the debug APK, and on a real TV it should play full resolution like a release build.
+- **The app trusts Let's Encrypt's roots (ISRG Root X1 and X2) in addition to the system's**, through the network
+  security config. Android 7.0 (API 24, the minSdk) predates them, so without this a 7.0 TV could not reach a
+  server behind Caddy's default certificate. The certificates come from the local system store and match the
+  published SHA-256 fingerprints (X1 `96:BC:EC:06:…:08:C6`, valid to 2035; X2 `69:72:9B:8E:…:14:70`, to 2040).
+  Not verified on an API 24 device; on the API 36 emulator system CAs keep working (HTTPS sample media played).
+- **Not done (optional in the roadmap):** a Watch Next channel. It would put a second "continue" path into the
+  launcher, against the one-screen principle, and needs the TV provider API; left for later.
+- **Make-public checklist** lives in `docs/releasing.md`. Its automated parts were run: gitleaks over the history
+  and the working tree found one hit, the made-up device token the redaction tests use, now marked with an inline
+  `gitleaks:allow` and a `.gitleaksignore` entry for the commit that introduced it; no token, database, keystore or
+  local config is tracked. Private names and author e-mail addresses are for the owner to review.

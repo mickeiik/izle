@@ -1,8 +1,21 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
+
+// Release signing is optional: CI passes IZLE_SIGNING_* environment variables, a local build reads
+// android/keystore.properties (storeFile, storePassword, keyAlias, keyPassword; never committed). Without either,
+// assembleRelease produces an unsigned APK. See docs/releasing.md.
+val keystoreProperties = Properties().apply {
+    providers.fileContents(rootProject.layout.projectDirectory.file("keystore.properties")).asText.orNull
+        ?.let { load(it.reader()) }
+}
+fun signingValue(env: String, key: String): String? =
+    providers.environmentVariable(env).orNull?.takeIf { it.isNotEmpty() } ?: keystoreProperties.getProperty(key)
+val releaseStoreFile = signingValue("IZLE_SIGNING_STORE_FILE", "storeFile")
 
 android {
     namespace = "io.github.mickeiik.izle"
@@ -13,8 +26,21 @@ android {
         applicationId = "io.github.mickeiik.izle"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionName = "0.1.0" // set with `node scripts/version.mjs set X.Y.Z`
+        // 1.2.3 → 10203, so every release installs over the previous one (minor and patch stay below 100).
+        versionCode = versionName!!.substringBefore('-').split('.').map(String::toInt)
+            .let { (major, minor, patch) -> major * 10_000 + minor * 100 + patch }
+    }
+
+    signingConfigs {
+        if (releaseStoreFile != null) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile)
+                storePassword = signingValue("IZLE_SIGNING_STORE_PASSWORD", "storePassword")
+                keyAlias = signingValue("IZLE_SIGNING_KEY_ALIAS", "keyAlias")
+                keyPassword = signingValue("IZLE_SIGNING_KEY_PASSWORD", "keyPassword")
+            }
+        }
     }
 
     buildTypes {
@@ -24,6 +50,7 @@ android {
         }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
             buildConfigField("String", "DEFAULT_SERVER_URL", "\"\"")
         }
     }

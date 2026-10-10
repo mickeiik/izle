@@ -1,0 +1,14 @@
+# Only what `npm ci` and scripts/pack-server.mjs need goes into the build context.
+**/node_modules
+.git
+.github
+android
+dist
+docs/verification
+server/data
+server/examples
+**/*.token
+**/*.db*
+**/*.sqlite*
+izle.json
+.env

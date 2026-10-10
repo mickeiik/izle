@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import { compileTrustedProxies } from "./clientip.ts";
 import type { Level } from "./log.ts";
 
 export interface ServerConfig {
@@ -10,6 +11,8 @@ export interface ServerConfig {
   listen: { host: string; port: number };
   /** Public base URL behind a reverse proxy (informational in v1). */
   publicUrl: string | null;
+  /** Addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` names the client. */
+  trustedProxies: string[];
   dataDir: string;
   catalog: { dir: string };
   /** `deadlineMs` bounds one adapter call, `budgetMs` one TV resolve request (all sources together). */
@@ -49,6 +52,7 @@ const CONFIG_SCHEMA = {
       additionalProperties: false,
     },
     publicUrl: { anyOf: [{ type: "string", pattern: "^https?://[^\\s]+$" }, { type: "null" }] },
+    trustedProxies: { type: "array", items: { type: "string", minLength: 1 }, maxItems: 64 },
     dataDir: { type: "string", minLength: 1 },
     catalog: {
       type: "object",
@@ -108,6 +112,7 @@ const validateConfigFile = new Ajv2020({ strict: true, allErrors: true }).compil
 interface ConfigFile {
   listen?: { host?: string; port?: number };
   publicUrl?: string | null;
+  trustedProxies?: string[];
   dataDir?: string;
   catalog?: { dir: string };
   resolver?: { module: string; config?: Record<string, unknown>; deadlineMs?: number; budgetMs?: number } | null;
@@ -157,6 +162,10 @@ export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
       throw new ConfigError(`invalid config file ${configPath}: ${[...new Set(details)].join("; ")}`);
     }
     file = parsed as ConfigFile;
+    const { invalid } = compileTrustedProxies(file.trustedProxies ?? []);
+    if (invalid !== null) {
+      throw new ConfigError(`invalid config file ${configPath}: /trustedProxies "${invalid}" is not an IP address or CIDR range`);
+    }
   }
 
   const resolve = (p: string) => path.resolve(base, p);
@@ -167,6 +176,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
     configPath,
     listen: { host: file.listen?.host ?? "0.0.0.0", port: file.listen?.port ?? DEFAULT_PORT },
     publicUrl: file.publicUrl ? file.publicUrl.replace(/\/+$/, "") : null,
+    trustedProxies: file.trustedProxies ?? [],
     dataDir,
     catalog: { dir: file.catalog ? resolve(file.catalog.dir) : SAMPLE_CATALOG_DIR },
     resolver: file.resolver

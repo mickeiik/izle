@@ -124,6 +124,7 @@ test("catalog: info, accent-insensitive search, item detail without upstream URL
   const info = await s.admin("GET", "/catalog");
   assert.equal(info.json.id, "fixture");
   assert.equal(info.json.stats.items, 16);
+  assert.match(info.json.server.version, /^\d+\.\d+\.\d+/);
   const search = await s.admin("GET", "/catalog/search?q=sov");
   assert.deepEqual(search.json.items.map((i: { id: string }) => i.id), ["show"]);
   assert.equal(search.json.items[0].playableCount, 4);

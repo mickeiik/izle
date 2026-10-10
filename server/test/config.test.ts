@@ -18,6 +18,7 @@ test("defaults without a config file", () => {
   assert.equal(c.resolver, null);
   assert.deepEqual(c.proxy, { always: false, sessionTtlSec: 21600, alignTsSegments: false });
   assert.deepEqual(c.defaults, { uiLanguage: null, preferredAudioLanguage: null });
+  assert.deepEqual(c.trustedProxies, []);
 });
 
 test("relative paths in a config file resolve against the file's directory", async () => {
@@ -29,6 +30,7 @@ test("relative paths in a config file resolve against the file's directory", asy
     JSON.stringify({
       listen: { host: "127.0.0.1", port: 9000 },
       publicUrl: "https://tv.example.test/",
+      trustedProxies: ["127.0.0.1", "::1", "172.16.0.0/12"],
       dataDir: "../var",
       catalog: { dir: "./catalog" },
       resolver: { module: "./resolver/index.js", config: { a: 1 }, deadlineMs: 5000 },
@@ -41,6 +43,7 @@ test("relative paths in a config file resolve against the file's directory", asy
   const c = loadConfig({ path: "conf/izle.json", cwd: dir, env: {} });
   assert.equal(c.configPath, file);
   assert.equal(c.publicUrl, "https://tv.example.test");
+  assert.deepEqual(c.trustedProxies, ["127.0.0.1", "::1", "172.16.0.0/12"]);
   assert.equal(c.dataDir, path.join(dir, "var"));
   assert.equal(c.catalog.dir, path.join(dir, "conf", "catalog"));
   assert.deepEqual(c.resolver, { module: path.join(dir, "conf", "resolver", "index.js"), config: { a: 1 }, deadlineMs: 5000, budgetMs: 30_000 });
@@ -60,6 +63,11 @@ test("rejects unknown keys, bad values, bad JSON and missing files", async () =>
   assert.throws(() => loadConfig({ path: write('{"lisen": {}}'), env: {} }), (e: Error) => e instanceof ConfigError && /unknown property "lisen"/.test(e.message));
   assert.throws(() => loadConfig({ path: write('{"listen": {"port": 70000}}'), env: {} }), ConfigError);
   assert.throws(() => loadConfig({ path: write('{"defaults": {"uiLanguage": "de"}}'), env: {} }), ConfigError);
+  assert.throws(() => loadConfig({ path: write('{"trustedProxies": "127.0.0.1"}'), env: {} }), ConfigError);
+  assert.throws(
+    () => loadConfig({ path: write('{"trustedProxies": ["127.0.0.1", "localhost"]}'), env: {} }),
+    (e: Error) => e instanceof ConfigError && /trustedProxies "localhost" is not an IP address or CIDR range/.test(e.message),
+  );
   assert.throws(() => loadConfig({ path: write("{ not json"), env: {} }), /not valid JSON/);
   assert.throws(() => loadConfig({ path: path.join(dir, "missing.json"), env: {} }), /cannot read config file/);
 });

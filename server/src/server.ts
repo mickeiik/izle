@@ -16,6 +16,7 @@ import { ResolveService } from "./resolve.ts";
 import { loadResolver, type LoadedResolver } from "./resolver.ts";
 import { Store } from "./store.ts";
 import { TvService } from "./tv.ts";
+import { VERSION } from "./version.ts";
 
 export const ADMIN_UI_DIR = fileURLToPath(new URL("../admin", import.meta.url));
 
@@ -95,7 +96,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const port = (server.address() as AddressInfo).port;
   const host = config.listen.host === "0.0.0.0" || config.listen.host === "::" ? "127.0.0.1" : config.listen.host;
   const url = `http://${host.includes(":") ? `[${host}]` : host}:${port}`;
-  log.info("listening", { host: config.listen.host, port, adminAuth: source, catalogDir: catalog.dir, dataDir: config.dataDir });
+  log.info("listening", { version: VERSION, host: config.listen.host, port, adminAuth: source, catalogDir: catalog.dir, dataDir: config.dataDir });
 
   const housekeeping = setInterval(() => {
     const t = now();
