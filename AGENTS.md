@@ -58,9 +58,12 @@ imports, ESM only, erasable syntax only (no enums, no parameter properties, no n
 $ANDROID_HOME/emulator/emulator -avd <tv-avd> -no-window -no-audio -gpu swiftshader_indirect -no-snapshot &
 adb wait-for-device
 (cd android && ./gradlew :app:assembleDebug) && adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n io.github.mickeiik.izle/.MainActivity
-adb shell input keyevent KEYCODE_DPAD_CENTER     # long-press: --longpress KEYCODE_DPAD_CENTER
+adb shell am start -n io.github.mickeiik.izle/.MainActivity --es izle.server http://10.0.2.2:8787   # debug builds
+adb shell input keyevent KEYCODE_DPAD_CENTER     # hidden menu: KEYCODE_MENU or --duration 1000 KEYCODE_DPAD_CENTER
 adb exec-out screencap -p > /tmp/izle.png
 ```
 
-The emulator reaches a server on the host at `http://10.0.2.2:8787`.
+The emulator reaches a server on the host at `http://10.0.2.2:8787`. Approve the TV's pairing code with
+`POST /api/v1/admin/pair/approve` (see the README's curl flow). `input keyevent --longpress` holds OK for only
+400 ms, shorter than the app's 0.6 s long press, so it acts as a click. The UX rules the app implements are in
+[docs/ux/senior-tv.md](docs/ux/senior-tv.md).

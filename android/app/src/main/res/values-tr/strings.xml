@@ -1,4 +1,71 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="hello">%1$s\'den merhaba</string>
+    <!-- Common -->
+    <string name="loading">Yükleniyor…</string>
+    <string name="no_connection">Bağlantı yok</string>
+    <string name="no_connection_detail">Yeniden deneniyor…</string>
+    <string name="go_home">Ana ekran</string>
+
+    <!-- Server address -->
+    <string name="setup_title">Sunucu adresi</string>
+    <string name="setup_hint">izle sunucunuzun adresini girin, örneğin http://192.168.1.10:8787</string>
+    <string name="setup_connect">Bağlan</string>
+    <string name="setup_connecting">Bağlanıyor…</string>
+    <string name="setup_error_invalid">Bu adres geçerli değil.</string>
+    <string name="setup_error_unreachable">Sunucuya ulaşılamıyor.</string>
+
+    <!-- Pairing -->
+    <string name="pair_title">Bu televizyonu eşleştirin</string>
+    <string name="pair_instructions">Bu kodu izle yönetim sayfasında onaylayın</string>
+    <string name="pair_waiting">Onay bekleniyor…</string>
+    <string name="pair_server">Sunucu: %1$s</string>
+    <string name="pair_rate_limited">Çok fazla deneme. Birazdan yeniden denenecek…</string>
+    <string name="pair_back_hint">Geri: sunucu adresini değiştir</string>
+
+    <!-- Home -->
+    <string name="home_empty">Henüz içerik yok</string>
+    <string name="home_empty_detail">Diziler ve filmler izle yönetim sayfasından eklenir.</string>
+    <string name="home_hint">OK: Oynat · Geri: Ana ekran</string>
+    <string name="badge_new">Yeni</string>
+    <string name="badge_continue">Devam et</string>
+    <string name="badge_watch_again">Tekrar izle</string>
+    <string name="badge_continue_episode">Devam et · %1$s</string>
+    <string name="episode_number">Bölüm %1$d</string>
+    <string name="episode_season_number">Sezon %1$d, Bölüm %2$d</string>
+
+    <!-- Player -->
+    <string name="paused">Duraklatıldı</string>
+    <string name="up_next">Sıradaki</string>
+    <string name="up_next_countdown">%1$d sn içinde başlıyor</string>
+    <string name="play_now">Şimdi oynat</string>
+    <string name="finished">Bitti</string>
+    <string name="cannot_play">Şu anda oynatılamıyor</string>
+    <string name="try_again">Tekrar dene</string>
+
+    <!-- Hidden menu -->
+    <string name="menu_title">Menü</string>
+    <string name="menu_episodes">Bölümler</string>
+    <string name="menu_start_over">Baştan başlat</string>
+    <string name="menu_audio">Ses dili</string>
+    <string name="menu_subtitles">Altyazı</string>
+    <string name="menu_settings">Ayarlar</string>
+    <string name="menu_about">Hakkında</string>
+    <string name="menu_back_hint">Geri: kapat</string>
+    <string name="episodes_failed">Bölüm listesi yüklenemedi.</string>
+    <string name="episode_watched">İzlendi</string>
+    <string name="episode_current">Sıradaki</string>
+    <string name="episode_playing">Şimdi oynatılıyor</string>
+    <string name="episode_not_allowed">Kullanılamıyor</string>
+    <string name="audio_automatic">Otomatik</string>
+    <string name="subtitles_off">Kapalı</string>
+    <string name="track_unknown">Bilinmeyen dil</string>
+    <string name="settings_server">Sunucu adresi</string>
+    <string name="settings_language">Dil</string>
+    <string name="settings_language_auto">Otomatik (%1$s)</string>
+    <string name="settings_pair_again">Yeniden eşleştir</string>
+    <string name="about_version">Uygulama sürümü</string>
+    <string name="about_server">Sunucu</string>
+    <string name="about_device">TV adı</string>
+    <string name="about_catalog">Katalog</string>
+    <string name="about_build">Katalog sürümü</string>
 </resources>

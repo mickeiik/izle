@@ -1,0 +1,199 @@
+package io.github.mickeiik.izle.ui.common
+
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.res.Configuration
+import android.content.res.Resources
+import android.text.format.DateFormat
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Text
+import io.github.mickeiik.izle.R
+import io.github.mickeiik.izle.domain.EpisodeName
+import io.github.mickeiik.izle.ui.theme.IzleColors
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+/**
+ * Makes `stringResource` follow the server-set UI language instead of the system locale. The wrapper keeps the
+ * activity as base context so anything looking for it still finds it.
+ */
+@Composable
+fun LocalizedContent(language: String, content: @Composable () -> Unit) {
+    val base = LocalContext.current
+    val localized = remember(base, language) {
+        val config = Configuration(base.resources.configuration).apply { setLocale(Locale.forLanguageTag(language)) }
+        val resources = base.createConfigurationContext(config).resources
+        object : ContextWrapper(base) {
+            override fun getResources(): Resources = resources
+        }
+    }
+    CompositionLocalProvider(
+        LocalContext provides localized,
+        LocalResources provides localized.resources,
+        LocalConfiguration provides localized.resources.configuration,
+        content = content,
+    )
+}
+
+fun Context.currentLocale(): Locale = resources.configuration.locales[0]
+
+@Composable
+fun episodeNameText(name: EpisodeName): String? = when (name) {
+    EpisodeName.None -> null
+    is EpisodeName.Label -> name.text
+    is EpisodeName.Numbered ->
+        if (name.season != null) stringResource(R.string.episode_season_number, name.season, name.number)
+        else stringResource(R.string.episode_number, name.number)
+}
+
+/** 1:05:09 or 5:09. */
+fun formatTime(ms: Long): String {
+    val total = (ms.coerceAtLeast(0) / 1000)
+    val h = total / 3600
+    val m = (total % 3600) / 60
+    val s = total % 60
+    return if (h > 0) "%d:%02d:%02d".format(Locale.ROOT, h, m, s) else "%d:%02d".format(Locale.ROOT, m, s)
+}
+
+/** A language tag as a name in the UI language ("it" → "Italian" / "İtalyanca"). */
+fun languageName(tag: String?, uiLocale: Locale): String? {
+    if (tag.isNullOrBlank() || tag == "und") return null
+    val name = Locale.forLanguageTag(tag).getDisplayName(uiLocale)
+    if (name.isBlank() || name == tag) return tag
+    return name.replaceFirstChar { if (it.isLowerCase()) it.titlecase(uiLocale) else it.toString() }
+}
+
+@Composable
+fun Clock(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(60_000 - now % 60_000)
+        }
+    }
+    val pattern = if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a"
+    val text = remember(now, pattern) { SimpleDateFormat(pattern, context.currentLocale()).format(Date(now)) }
+    Text(text, modifier = modifier, style = MaterialTheme.typography.headlineMedium, color = IzleColors.OnSurface)
+}
+
+@Composable
+fun Spinner(modifier: Modifier = Modifier, size: Dp = 72.dp, color: Color = IzleColors.OnSurface) {
+    val transition = rememberInfiniteTransition(label = "spinner")
+    val angle by transition.animateFloat(0f, 360f, infiniteRepeatable(tween(1_000, easing = LinearEasing), RepeatMode.Restart), label = "angle")
+    Canvas(modifier.size(size)) {
+        val stroke = this.size.minDimension / 10
+        rotate(angle) {
+            drawArc(color, startAngle = 0f, sweepAngle = 270f, useCenter = false, topLeft = Offset(stroke / 2, stroke / 2),
+                size = Size(this.size.width - stroke, this.size.height - stroke), style = Stroke(stroke, cap = StrokeCap.Round))
+        }
+    }
+}
+
+@Composable
+fun PlayIcon(modifier: Modifier = Modifier, color: Color = IzleColors.OnSurface) {
+    Canvas(modifier) {
+        val path = Path().apply {
+            moveTo(size.width * 0.2f, size.height * 0.1f)
+            lineTo(size.width * 0.9f, size.height * 0.5f)
+            lineTo(size.width * 0.2f, size.height * 0.9f)
+            close()
+        }
+        drawPath(path, color)
+    }
+}
+
+@Composable
+fun PauseIcon(modifier: Modifier = Modifier, color: Color = IzleColors.OnSurface) {
+    Canvas(modifier) {
+        val w = size.width * 0.28f
+        drawRect(color, topLeft = Offset(size.width * 0.14f, size.height * 0.1f), size = Size(w, size.height * 0.8f))
+        drawRect(color, topLeft = Offset(size.width * 0.58f, size.height * 0.1f), size = Size(w, size.height * 0.8f))
+    }
+}
+
+@Composable
+fun CheckIcon(modifier: Modifier = Modifier, color: Color = IzleColors.OnSurface) {
+    Canvas(modifier) {
+        val path = Path().apply {
+            moveTo(size.width * 0.12f, size.height * 0.52f)
+            lineTo(size.width * 0.4f, size.height * 0.8f)
+            lineTo(size.width * 0.9f, size.height * 0.22f)
+        }
+        drawPath(path, color, style = Stroke(size.minDimension * 0.14f, cap = StrokeCap.Round))
+    }
+}
+
+/** A thin progress bar (tile progress, player position). */
+@Composable
+fun ProgressBar(fraction: Float, modifier: Modifier = Modifier, height: Dp = 6.dp, color: Color = IzleColors.Accent) {
+    Box(modifier.fillMaxWidth().height(height).background(Color(0x55FFFFFF), RoundedCornerShape(height / 2))) {
+        Box(
+            Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(height)
+                .background(color, RoundedCornerShape(height / 2)),
+        )
+    }
+}
+
+/** A full-screen message in big type (errors, "Nothing here yet"). */
+@Composable
+fun FullScreenMessage(title: String, detail: String? = null, modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxSize().background(IzleColors.Background), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(48.dp)) {
+            Text(title, style = MaterialTheme.typography.displaySmall, color = IzleColors.OnSurface, textAlign = TextAlign.Center)
+            if (detail != null) {
+                Spacer(Modifier.height(16.dp))
+                Text(detail, style = MaterialTheme.typography.bodyLarge, color = IzleColors.Dim, textAlign = TextAlign.Center)
+            }
+        }
+    }
+}
+
+@Composable
+fun languageLabel(tag: String): String = when (tag) {
+    "tr" -> stringResource(R.string.language_tr)
+    else -> stringResource(R.string.language_en)
+}

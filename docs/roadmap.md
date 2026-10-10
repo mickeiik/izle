@@ -4,7 +4,7 @@ This is the project plan, copied from the approved planning document and edited 
 (environment-specific facts and references to private catalogs removed). Routine decisions taken while
 implementing it are recorded in [decisions.md](decisions.md); where the two differ, the decision log wins.
 
-Status: Phases 0–2 implemented. Phase 3 is next.
+Status: Phases 0–3 implemented. Phase 4 is next.
 
 ## Context
 
@@ -208,7 +208,7 @@ Exact URLs live in `sample-catalog/items.json`. Excluded: demo streams whose con
 - Tests: config parsing; pairing flow (expiry, one-shot token, rate limit); cursor/next logic (progress → ended → advance, owner override, `playbackAllowed` skipped, `autoAdvance` boundary); home list cap; resolve ordering (audio match > unknown > mismatch, exclusions, failure penalty, `not_allowed`); SSE connect/ping/version replay and event on home change; auth failures; redaction against hostile fixtures; full boot integration with the sample catalog on port 0.
 - Verify: `npm test -w server`; manual `curl` flow in README.
 
-**Phase 3 — Android TV app MVP**
+**Phase 3 — Android TV app MVP** ✅
 - Gradle project, pairing screen, home, player (resume, auto-next, heartbeat, fallback), SSE live updates, tr/en strings, hidden menu (episodes, restart, audio, subtitles, settings, about), message screens.
 - Tests: JVM unit tests for `PlaybackPlan` and API models; `./gradlew :app:testDebugUnitTest`.
 - Verify on the emulator against the local server with the sample catalog (loop below): pair → tiles appear → OK plays Caminandes ep1 → Back → tile says "Continue: Episode 1 · …" → finish ep1 → auto-next ep2 → admin reorders home → TV updates live → preferred audio `it` on Tears of Steel selects Italian.
@@ -240,7 +240,7 @@ $ANDROID_HOME/emulator/emulator -avd <tv-avd> -no-window -no-audio -gpu swiftsha
 adb wait-for-device
 cd android && ./gradlew :app:assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n io.github.mickeiik.izle/.MainActivity --es izle.server http://10.0.2.2:8787
-adb shell input keyevent KEYCODE_DPAD_CENTER      # drive the UI; long-press: adb shell input keyevent --longpress KEYCODE_DPAD_CENTER
+adb shell input keyevent KEYCODE_DPAD_CENTER      # drive the UI; hidden menu: KEYCODE_MENU or --duration 1000 KEYCODE_DPAD_CENTER (--longpress is only 400 ms)
 adb exec-out screencap -p > /tmp/izle-home.png     # inspect screenshots
 ```
 Automated: `npm test` (contract + server), `./gradlew :app:testDebugUnitTest`, CI on every push.

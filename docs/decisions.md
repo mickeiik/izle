@@ -152,3 +152,88 @@ from the roadmap, the entry wins until the roadmap is updated.
   Phase 5 and `/` redirects to it. SIGINT/SIGTERM close SSE streams and the database; SIGHUP reloads the
   catalog.
 - **Still no `tsc` → `dist/` build** (Phase 6); the bin runs the TypeScript sources through tsx.
+
+## Phase 3 — Android TV app MVP (2026-10-10)
+
+- **Library versions** (latest stable on 2026-10-10, as pinned by the roadmap): Media3 1.11.1 (`exoplayer`,
+  `exoplayer-hls`, `exoplayer-dash`, `datasource-okhttp`, `ui-compose`), OkHttp 5.5.0 + `okhttp-sse`, Coil 3.6.3
+  (`coil-compose`, `coil-network-okhttp`), coroutines 1.11.0, lifecycle 2.11.0, DataStore 1.2.1;
+  `mockwebserver3` 5.5.0 for tests only. No `media3-ui` (View) dependency.
+- **Screens and the hidden menu:** `Screen` is `Starting | Setup | Pairing | Home | Player`; the hidden menu is
+  an overlay (`MenuUi`, a stack of pages) rather than a `Screen`, so the paused video or the home tiles stay
+  visible underneath and Back pops one level. Focus is trapped in the menu panel
+  (`focusProperties { onExit = { cancelFocusChange() } }`) and the home tiles behind it are not focusable while
+  it is open (a page that is still loading has nothing focusable). Every transition to Home goes through one
+  helper that (re)starts live updates when the app is in front.
+- **Key routing in `MainActivity.dispatchKeyEvent`:** OK DOWN is held back; a key repeat ≥ 600 ms after the
+  press (or a release after ≥ 600 ms) opens the hidden menu and the release is swallowed; a short press is
+  re-dispatched as DOWN+UP on release (Compose clicks on UP anyway, so no added latency). A release without a
+  press is ignored (the launcher's OK must not start playback). In the player the activity owns ←/→/↑/↓, OK and
+  the media keys; Back goes through `BackHandler` (works with predictive back on targetSdk 36).
+  `adb shell input keyevent --longpress` holds only 400 ms and therefore clicks; automation uses
+  `--duration 1000` or `KEYCODE_MENU`.
+- **End threshold capped at 10 % of the duration** (deviation from the roadmap's plain max(2 min, 5 %)): with
+  the roadmap rule every episode shorter than 2 minutes — Caminandes 1 is 90 s — counts as finished the moment it
+  starts, so Back would skip it. Short episodes now finish in their last 10 %.
+- **Seeking:** ←/→ move a preview target (10 s per press; while held, a step every 250 ms: 10 s, 30 s after
+  2 s, 60 s after 4 s) and the player seeks once on release, which keeps progressive MP4 responsive.
+- **Tile chip:** movies say New / Continue / Watch again; series name the episode OK plays ("Episode 5",
+  "Season 2, Episode 5" beyond season 1, or the catalog `label`), prefixed "Continue ·" when it will resume.
+  "Continue" appears only when OK really resumes (saved position ≥ 30 s), with a progress bar.
+- **Home layout:** with 190×285 dp posters only one row fits on the 540 dp canvas, so the roadmap's "≤ 8 fit
+  without scrolling" does not hold: ≤ 4 shows fit, more rows scroll with the focus and the second row peeks in.
+  The chip is drawn on the poster (bottom gradient) to save height. Focus returns to the tile played last and
+  follows a show when the owner reorders the list.
+- **Hidden menu content:** Episodes only for series; Start over plays the focused show's episode from 0 (in the
+  player: seek to 0); Audio language only in the player with ≥ 2 audio tracks; Audio and Subtitles choices apply
+  to the current playback only (the owner's settings stay server-side). Settings → Language is a local override
+  (DataStore) cycling Automatic → Türkçe → English; Automatic follows the server.
+- **UI language** = local override, else the server's effective `uiLanguage`, else the system language (before
+  pairing). Implemented with a `ContextWrapper` around the activity carrying localized `Resources`, provided as
+  `LocalContext`, `LocalResources` (which `stringResource` reads since Compose 1.9) and `LocalConfiguration`.
+- **Debug launch extra is `izle.server`** (the roadmap's verification loop name; the UX section's `server_url`
+  is not used), honoured in debug builds only. Pointing at the stored server while paired does nothing; another
+  address forgets the pairing and shows a pairing code.
+- **Server URLs:** typed addresses get `http://` when no scheme is given and always end with `/`; server-relative
+  URLs (`/assets/…`, later `/p/…`) are resolved *below* the base path, so a server behind a reverse proxy at
+  `https://host/izle/` works. The device token is attached per request, never via an interceptor, so media and
+  poster requests sharing the OkHttp pool cannot carry it. Token, server and cached state live in app-private
+  DataStore (EncryptedSharedPreferences is deprecated; app-private storage is the TV norm).
+- **Live updates:** the SSE client's 60 s read timeout is the dead-connection watchdog (server pings every 20 s);
+  reconnect backoff 1 s → 30 s; a broken stream triggers an immediate `/tv/state` check so the "No connection"
+  chip appears within seconds. Network errors and 5xx/408 answers both count as unreachable (behind a reverse
+  proxy a stopped server answers 502). `/tv/state` is polled every 60 s (10 s while offline) regardless of SSE health,
+  rather than only after three SSE failures. The last state is cached in DataStore for offline starts and
+  cleared when the server or pairing changes.
+- **Commands** are acted on only on Home and in the player, deduplicated by id (replays until acknowledged) and
+  acknowledged right after dispatch. `play` uses the normal resume rules.
+- **Progress reports** go through one ordered queue in the application scope, so a late heartbeat can never
+  overwrite `finished` and the report sent when leaving the player still reaches the server after the screen
+  is gone. `stopped` is only reported for a playback that actually started (reached READY). Heartbeats are best
+  effort; `stopped`/`finished` are retried up to 4 times (2/4/6 s apart) and then refresh Home, and a new resolve
+  waits up to 3 s for queued reports so `resume` and the cursor are current.
+- **Errors:** player errors re-resolve with the failed source in `exclude` at the same position (keeping the
+  viewer's pause); HTTP 403/410 after > 5 min re-resolves the same source first, again after each further
+  5 min of playback. A pinned re-resolve returns no alternatives, so the TV keeps the fallback order of the
+  last unpinned resolve and continues with it if the pinned source fails again. When nothing is left: the error
+  screen (Try again / Home, Home after 30 s). Try again restarts at the last known position, or at the server's resume point when
+  playback never started. OK while offline shows "No connection" for 5 s and triggers a refresh instead of
+  resolving. 401 on any TV route forgets the token and shows a new pairing code for the same server.
+- **Pairing loop:** 429 waits `Retry-After` (5–600 s), an unreachable server is retried every 10 s, 404 during
+  the long-poll (server restarted) and 410 start a new code; Back goes to the server address screen. The
+  one-time device token is saved non-cancellably once received, even if the screen is left at that moment.
+- **Player:** one ExoPlayer per player visit (reused across episodes and fallbacks, released on exit and in
+  `onStop`); `OkHttpDataSource` with `User-Agent: izle-tv/<version>`, decoder fallback, audio focus, becoming-noisy
+  handling, `setMaxVideoSize(1280, 720)` in debug builds only; `ContentFrame` with a `SurfaceView`;
+  `keepScreenOn` on the Compose view while loading or playing.
+- **Subtitles** are drawn from `onCues` as large plain text (Media3 `ui-compose` 1.11 has no subtitle composable);
+  bitmap subtitle formats are not rendered.
+- **Up-next overlay is opaque** (end credits showing through the countdown hurt legibility).
+- **Tests:** 49 JVM tests (`PlaybackPlan`, seek accumulator, long-press detector, chip/episode naming, URL
+  handling, DTO decoding/encoding, `ApiClient`, `EventsClient` and `ServerRepository` against an in-process
+  MockWebServer, `DeviceStore` on a temporary file). No instrumented tests (no device in CI); the emulator run is
+  documented in `docs/verification/phase3/`. The Phase 0 hello model and test were removed.
+- **Verification screenshots** are JPEG scaled to 1280×720 (≈ 1 MB for 15 instead of 13 MB of PNG).
+- **Sample media on the emulator:** the blender.org `.mov` fallback of Elephants Dream (H.264 720×405) fails
+  `MediaCodec.configure` on both emulator decoders; recorded in the verification notes, the catalog is unchanged
+  (the archive.org source plays, the `.mov` is untested on hardware).
