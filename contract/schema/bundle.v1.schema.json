@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:izle:schema:bundle:v1",
+  "title": "izle catalog bundle manifest (bundle.json) v1",
+  "type": "object",
+  "required": ["format", "formatVersion", "catalogId", "buildId", "builtAt", "name", "adapters", "items", "assetsDir"],
+  "properties": {
+    "format": { "const": "izle-bundle" },
+    "formatVersion": { "const": 1 },
+    "catalogId": { "$ref": "urn:izle:schema:common:v1#/$defs/Id" },
+    "buildId": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^[^\\s]+$" },
+    "builtAt": { "$ref": "urn:izle:schema:common:v1#/$defs/DateTime" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "generator": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 100 }
+      },
+      "patternProperties": { "^x-": true },
+      "additionalProperties": false
+    },
+    "defaults": {
+      "type": "object",
+      "properties": {
+        "uiLanguage": { "enum": ["tr", "en"] },
+        "preferredAudioLanguage": { "$ref": "urn:izle:schema:common:v1#/$defs/LanguageTag" }
+      },
+      "patternProperties": { "^x-": true },
+      "additionalProperties": false
+    },
+    "adapters": {
+      "type": "array",
+      "items": { "$ref": "urn:izle:schema:common:v1#/$defs/Id" },
+      "uniqueItems": true,
+      "maxItems": 64
+    },
+    "items": { "const": "items.json" },
+    "assetsDir": { "const": "assets" }
+  },
+  "patternProperties": { "^x-": true },
+  "additionalProperties": false
+}

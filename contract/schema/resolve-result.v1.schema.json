@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:izle:schema:resolve-result:v1",
+  "title": "izle resolver module ResolveResult[] v1",
+  "type": "array",
+  "items": { "$ref": "#/$defs/ResolveResult" },
+  "maxItems": 32,
+  "$defs": {
+    "ResolveResult": {
+      "type": "object",
+      "required": ["media"],
+      "properties": {
+        "media": {
+          "anyOf": [
+            {
+              "type": "object",
+              "required": ["kind", "url"],
+              "properties": {
+                "kind": { "$ref": "urn:izle:schema:common:v1#/$defs/MediaKind" },
+                "url": { "$ref": "urn:izle:schema:common:v1#/$defs/HttpUrl" }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": ["kind", "playlist", "baseUrl"],
+              "properties": {
+                "kind": { "const": "hls" },
+                "playlist": { "type": "string", "minLength": 7, "maxLength": 2097152 },
+                "baseUrl": { "$ref": "urn:izle:schema:common:v1#/$defs/HttpUrl" }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "headers": { "$ref": "urn:izle:schema:common:v1#/$defs/Headers" },
+        "languages": { "$ref": "urn:izle:schema:common:v1#/$defs/LanguageFacts" },
+        "subtitleTracks": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "object",
+            "required": ["url", "language", "format"],
+            "properties": {
+              "url": { "$ref": "urn:izle:schema:common:v1#/$defs/HttpUrl" },
+              "language": { "$ref": "urn:izle:schema:common:v1#/$defs/LanguageTag" },
+              "format": { "enum": ["vtt", "srt", "ttml"] },
+              "label": { "type": "string", "minLength": 1, "maxLength": 200 },
+              "headers": { "$ref": "urn:izle:schema:common:v1#/$defs/Headers" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "label": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "expiresAt": { "$ref": "urn:izle:schema:common:v1#/$defs/DateTime" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

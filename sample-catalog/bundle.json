@@ -1,0 +1,19 @@
+{
+  "format": "izle-bundle",
+  "formatVersion": 1,
+  "catalogId": "izle-sample",
+  "buildId": "20261010-247b34f7",
+  "builtAt": "2026-10-10T16:23:18Z",
+  "name": "izle sample catalog",
+  "generator": {
+    "name": "izle sample-catalog/build.mjs",
+    "version": "1"
+  },
+  "defaults": {
+    "uiLanguage": "en",
+    "preferredAudioLanguage": "en"
+  },
+  "adapters": [],
+  "items": "items.json",
+  "assetsDir": "assets"
+}

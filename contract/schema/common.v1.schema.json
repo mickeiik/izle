@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:izle:schema:common:v1",
+  "title": "izle shared definitions v1",
+  "$defs": {
+    "Id": {
+      "description": "URL-path safe, durable across builds, never positional.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._~-]{0,119}$"
+    },
+    "LanguageTag": {
+      "description": "Simplified BCP 47 language tag.",
+      "type": "string",
+      "pattern": "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$",
+      "maxLength": 35
+    },
+    "LanguageList": {
+      "description": "null = unknown, [] = known to have none.",
+      "anyOf": [
+        {
+          "type": "array",
+          "items": { "$ref": "#/$defs/LanguageTag" },
+          "uniqueItems": true,
+          "maxItems": 64
+        },
+        { "type": "null" }
+      ]
+    },
+    "LanguageFacts": {
+      "type": "object",
+      "required": ["audio", "subtitles"],
+      "properties": {
+        "audio": { "$ref": "#/$defs/LanguageList" },
+        "subtitles": { "$ref": "#/$defs/LanguageList" }
+      },
+      "patternProperties": { "^x-": true },
+      "additionalProperties": false
+    },
+    "HttpUrl": {
+      "type": "string",
+      "pattern": "^https?://[^\\s]+$",
+      "maxLength": 8192
+    },
+    "DateTime": {
+      "description": "ISO 8601 date-time with an explicit offset.",
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "Headers": {
+      "description": "Upstream request headers. Never sent to the TV.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}$" },
+      "additionalProperties": { "type": "string", "pattern": "^[^\\r\\n]*$", "maxLength": 8192 },
+      "maxProperties": 32
+    },
+    "MediaKind": { "enum": ["hls", "dash", "mp4"] },
+    "SubtitleTrack": {
+      "type": "object",
+      "required": ["url", "language", "format"],
+      "properties": {
+        "url": { "$ref": "#/$defs/HttpUrl" },
+        "language": { "$ref": "#/$defs/LanguageTag" },
+        "format": { "enum": ["vtt", "srt", "ttml"] },
+        "label": { "type": "string", "minLength": 1, "maxLength": 200 }
+      },
+      "patternProperties": { "^x-": true },
+      "additionalProperties": false
+    }
+  }
+}

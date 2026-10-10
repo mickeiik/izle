@@ -1,0 +1,344 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:izle:schema:items:v1",
+  "title": "izle catalog bundle items (items.json) v1",
+  "type": "object",
+  "required": [
+    "items"
+  ],
+  "properties": {
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CatalogItem"
+      }
+    }
+  },
+  "patternProperties": {
+    "^x-": true
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "NullableString": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 10000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "NullableCount": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "CatalogItem": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "poster",
+        "episodes"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "urn:izle:schema:common:v1#/$defs/Id"
+        },
+        "kind": {
+          "enum": [
+            "movie",
+            "series"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "originalTitle": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "year": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1870,
+              "maximum": 2200
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "synopsis": {
+          "$ref": "#/$defs/NullableString"
+        },
+        "genres": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "uniqueItems": true,
+          "maxItems": 32
+        },
+        "rating": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 10
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "poster": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^assets/[0-9a-f]{64}\\.(jpg|png|webp)$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "autoAdvance": {
+          "type": "boolean"
+        },
+        "episodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Episode"
+          },
+          "minItems": 1,
+          "maxItems": 10000
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "Episode": {
+      "type": "object",
+      "required": [
+        "id",
+        "playbackAllowed",
+        "sources"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "urn:izle:schema:common:v1#/$defs/Id"
+        },
+        "season": {
+          "$ref": "#/$defs/NullableCount"
+        },
+        "number": {
+          "$ref": "#/$defs/NullableCount"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "durationMs": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "playbackAllowed": {
+          "type": "boolean"
+        },
+        "autoAdvance": {
+          "type": "boolean"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Source"
+          },
+          "maxItems": 64
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "Source": {
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "direct",
+            "adapter"
+          ]
+        }
+      },
+      "discriminator": {
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DirectSource"
+        },
+        {
+          "$ref": "#/$defs/AdapterSource"
+        }
+      ]
+    },
+    "SourceLabel": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "SubtitleTracks": {
+      "type": "array",
+      "items": {
+        "$ref": "urn:izle:schema:common:v1#/$defs/SubtitleTrack"
+      },
+      "maxItems": 64
+    },
+    "DirectSource": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "languages",
+        "media"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "urn:izle:schema:common:v1#/$defs/Id"
+        },
+        "type": {
+          "const": "direct"
+        },
+        "label": {
+          "$ref": "#/$defs/SourceLabel"
+        },
+        "languages": {
+          "$ref": "urn:izle:schema:common:v1#/$defs/LanguageFacts"
+        },
+        "subtitleTracks": {
+          "$ref": "#/$defs/SubtitleTracks"
+        },
+        "media": {
+          "type": "object",
+          "required": [
+            "kind",
+            "url"
+          ],
+          "properties": {
+            "kind": {
+              "$ref": "urn:izle:schema:common:v1#/$defs/MediaKind"
+            },
+            "url": {
+              "$ref": "urn:izle:schema:common:v1#/$defs/HttpUrl"
+            },
+            "headers": {
+              "$ref": "urn:izle:schema:common:v1#/$defs/Headers"
+            }
+          },
+          "patternProperties": {
+            "^x-": true
+          },
+          "additionalProperties": false
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    },
+    "AdapterSource": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "languages",
+        "adapter",
+        "ref"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "urn:izle:schema:common:v1#/$defs/Id"
+        },
+        "type": {
+          "const": "adapter"
+        },
+        "label": {
+          "$ref": "#/$defs/SourceLabel"
+        },
+        "languages": {
+          "$ref": "urn:izle:schema:common:v1#/$defs/LanguageFacts"
+        },
+        "subtitleTracks": {
+          "$ref": "#/$defs/SubtitleTracks"
+        },
+        "adapter": {
+          "$ref": "urn:izle:schema:common:v1#/$defs/Id"
+        },
+        "ref": {
+          "type": "object"
+        }
+      },
+      "patternProperties": {
+        "^x-": true
+      },
+      "additionalProperties": false
+    }
+  }
+}

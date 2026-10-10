@@ -41,3 +41,47 @@ from the roadmap, the entry wins until the roadmap is updated.
   source names, private repository references and local paths; the sample-catalog table names hosting parties
   instead of repeating URLs (the URLs live in `sample-catalog/items.json`). Phase 7 is rewritten as a generic
   "private catalog exports live out of tree" note.
+
+## Phase 1 — Contract + sample catalog (2026-10-10)
+
+- **Bundle layout follows the contract** (`bundle.json` + `items.json` + `assets/`); the roadmap's layout sketch
+  mentioned a `catalog.json`, which was a leftover.
+- **`items.json` is an object `{"items": [...]}`**, not a bare array, so the file can grow optional top-level
+  fields within v1.
+- **Episode ids are unique across the whole bundle**, not only within their item. The TV API addresses episodes
+  by `episodeId` alone (`/tv/resolve`, progress, play commands), so per-item uniqueness would be ambiguous.
+  Exporters can prefix with the item id (the sample uses `<item>.film` / `<item>.s01e01`).
+- **LanguageFacts semantics:** `null` = unknown, `[]` = known none; `audio: []` means "no spoken dialogue" and
+  will rank as a match for every preferred audio language in Phase 2.
+- **Schemas** are split into `common`, `bundle`, `items` and `resolve-result` (draft 2020-12, URN `$id`s such as
+  `urn:izle:schema:items:v1`, so no fake web URLs). ajv runs with `strict: true`, `allErrors` and the
+  `discriminator` keyword for the `Source` union.
+- **No `ajv-formats` dependency:** `builtAt`/`expiresAt` use an ISO 8601 pattern plus a calendar check
+  (`Date.parse` accepts 31 February); URLs use an `^https?://` pattern plus `new URL()` parsing.
+- **Extra validator checks** beyond the roadmap list: poster bytes must match the extension (JPEG/PNG/WebP
+  magic), header names must be HTTP tokens and values must not contain CR/LF, source ids unique per episode,
+  `file:`/non-http URLs rejected. Warnings: unused declared adapters, items with no playable episode,
+  unreferenced or > 1 MiB assets.
+- **Probe output never prints full URLs** (they may be signed): only `item/episode/source`, the host, the status
+  and the time. `--probe` uses `GET` with `Range: bytes=0-0` and `User-Agent: izle-validate/1`, concurrency 4,
+  20 s timeout; unreachable URLs make the exit status 1. Added `--json`.
+- **`resolve-result.v1.schema.json` is part of Phase 1** (it belongs to the contract); the server uses it in
+  Phase 4.
+- **Sample catalog media:** every URL from the roadmap, including the ones marked unverified, answered 200/206
+  on 2026-10-10 and is used. Language facts were read from the HLS/DASH manifests: Tears of Steel multi-lang has
+  `en`+`it` audio, the TTML variant has `de/en/fr/ru/es` subtitles, the Mux alternative's subtitles carry no
+  language (`subtitles: null`); Sintel DASH has ten subtitle languages; Big Buck Bunny and Caminandes have no
+  dialogue (`audio: []`).
+- **Elephants Dream source order:** archive.org MP4 first, the blender.org QuickTime `.mov` (declared `kind:
+  "mp4"`, since Media3's MP4 extractor reads QuickTime) second as the fallback.
+- **Caminandes has one source per episode**: no second authorized host was verified.
+- **No external `subtitleTracks` in the sample** (no standalone, clearly licensed subtitle files found); the
+  in-stream subtitles of Tears of Steel and Sintel cover the TV feature, and tests cover `subtitleTracks` with
+  fixtures.
+- **Posters** come from Wikimedia Commons (CC BY 3.0 / 2.5 Blender posters and stills, public-domain *His Girl
+  Friday* poster). `build.mjs` scales to cover 400×600 and crops with a per-item horizontal focus (the two
+  landscape stills are cropped around their subject), JPEG q85 progressive (all ≤ 64 KB). Requires ImageMagick
+  (`magick`) only when rebuilding posters.
+- **`buildId` format:** `YYYYMMDD-<first 8 hex of sha256(items.json)>`, written by `build.mjs`.
+- **Synopses** were written for the sample (no copied text); `NOTICE.md` lists works, authors, licenses, hosting
+  parties and poster sources.

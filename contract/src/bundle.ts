@@ -1,0 +1,125 @@
+// Catalog bundle contract v1. Normative text: docs/spec/catalog-bundle-v1.md.
+// Mirrored by schema/{common,bundle,items}.v1.schema.json; keep both in sync.
+
+export const BUNDLE_FORMAT = "izle-bundle";
+export const BUNDLE_FORMAT_VERSION = 1;
+export const BUNDLE_MANIFEST_FILE = "bundle.json";
+export const BUNDLE_ITEMS_FILE = "items.json";
+export const BUNDLE_ASSETS_DIR = "assets";
+
+/** URL-path safe, durable across builds, never positional. */
+export type Id = string;
+export const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,119}$/;
+
+/** Simplified BCP 47 language tag, e.g. "en", "tr", "pt-BR", "und". */
+export type LanguageTag = string;
+
+export type MediaKind = "hls" | "dash" | "mp4";
+
+/** Extension properties: any object in a bundle may carry keys starting with "x-" (ignored by izle). */
+export type Extensions = { [key: `x-${string}`]: unknown };
+
+export interface BundleManifest {
+  format: typeof BUNDLE_FORMAT;
+  formatVersion: typeof BUNDLE_FORMAT_VERSION;
+  catalogId: Id;
+  buildId: string;
+  /** ISO 8601 date-time with offset. */
+  builtAt: string;
+  name: string;
+  generator?: { name: string; version: string };
+  /** Hints only; per-device settings on the server win. */
+  defaults?: { uiLanguage?: "tr" | "en"; preferredAudioLanguage?: LanguageTag };
+  /** Adapter ids referenced by sources; the server verifies its resolver module provides them. */
+  adapters: string[];
+  items: typeof BUNDLE_ITEMS_FILE;
+  assetsDir: typeof BUNDLE_ASSETS_DIR;
+}
+
+/** Content of items.json. */
+export interface ItemsFile {
+  items: CatalogItem[];
+}
+
+export interface CatalogItem {
+  id: Id;
+  kind: "movie" | "series";
+  title: string;
+  originalTitle?: string | null;
+  year?: number | null;
+  synopsis?: string | null;
+  genres?: string[];
+  rating?: number | null;
+  /** "assets/<sha256-of-content>.<jpg|png|webp>" or null. */
+  poster: string | null;
+  /** Item-level default for auto-advancing to the next episode (true when absent). */
+  autoAdvance?: boolean;
+  /** Array order is the approved play order. A movie has exactly one episode. */
+  episodes: Episode[];
+}
+
+export interface Episode {
+  /** Unique within the whole bundle (not only within its item). */
+  id: Id;
+  season?: number | null;
+  number?: number | null;
+  title?: string | null;
+  label?: string | null;
+  durationMs?: number | null;
+  /** Required and explicit. false = never auto-selected, greyed in the hidden menu. */
+  playbackAllowed: boolean;
+  /** false = never auto-start the next episode after this one (season end / approval boundary). */
+  autoAdvance?: boolean;
+  /** Preference order. May be empty only when playbackAllowed is false. */
+  sources: Source[];
+}
+
+/** BCP 47 tags; null = unknown, [] = known to have none. */
+export interface LanguageFacts {
+  audio: LanguageTag[] | null;
+  subtitles: LanguageTag[] | null;
+}
+
+export interface SubtitleTrack {
+  url: string;
+  language: LanguageTag;
+  format: "vtt" | "srt" | "ttml";
+  label?: string;
+}
+
+interface SourceBase {
+  /** Unique within the episode. */
+  id: Id;
+  label?: string;
+  languages: LanguageFacts;
+  subtitleTracks?: SubtitleTrack[];
+}
+
+export interface DirectMedia {
+  kind: MediaKind;
+  url: string;
+  /** Upstream request headers. Media with headers is only ever played through the server proxy. */
+  headers?: Record<string, string>;
+}
+
+export interface DirectSource extends SourceBase {
+  type: "direct";
+  media: DirectMedia;
+}
+
+export interface AdapterSource extends SourceBase {
+  type: "adapter";
+  /** Adapter id; must be listed in the manifest's `adapters`. */
+  adapter: string;
+  /** Opaque JSON for the adapter. Never logged. */
+  ref: Record<string, unknown>;
+}
+
+export type Source = DirectSource | AdapterSource;
+
+/** A fully loaded, validated bundle. */
+export interface Bundle {
+  dir: string;
+  manifest: BundleManifest;
+  items: CatalogItem[];
+}

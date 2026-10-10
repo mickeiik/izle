@@ -17,8 +17,15 @@ versioned contract — and, optionally, a **resolver module** the owner writes t
 playable streams at play time. A small [sample catalog](sample-catalog/) of openly licensed films (Blender
 Foundation open movies and public-domain titles) is included and served by default.
 
-- Catalog bundle contract: [`docs/spec/catalog-bundle-v1.md`](docs/spec/catalog-bundle-v1.md) *(Phase 1)*
-- Resolver module API: [`docs/spec/resolver-module-v1.md`](docs/spec/resolver-module-v1.md) *(Phase 1)*
+- Catalog bundle contract: [`docs/spec/catalog-bundle-v1.md`](docs/spec/catalog-bundle-v1.md)
+- Resolver module API: [`docs/spec/resolver-module-v1.md`](docs/spec/resolver-module-v1.md)
+
+Check a bundle with the validator from `@izle/contract`:
+
+```bash
+npx izle-validate sample-catalog          # schema + semantic checks
+npm run sample:check                      # also range-GETs every sample media URL (network)
+```
 
 ## Repository layout
 
@@ -32,8 +39,8 @@ Foundation open movies and public-domain titles) is included and served by defau
 
 ## Status
 
-Early development. Phase 0 (bootstrap) is done: the server answers `/healthz` and a hello-world TV app builds
-and installs. See the [roadmap](docs/roadmap.md) for what comes next.
+Early development. Done: Phase 0 (bootstrap: `/healthz` server, hello-world TV app) and Phase 1 (catalog bundle
+contract, validator, sample catalog). See the [roadmap](docs/roadmap.md) for what comes next.
 
 ## Development
 

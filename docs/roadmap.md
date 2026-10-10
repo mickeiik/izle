@@ -4,7 +4,7 @@ This is the project plan, copied from the approved planning document and edited 
 (environment-specific facts and references to private catalogs removed). Routine decisions taken while
 implementing it are recorded in [decisions.md](decisions.md); where the two differ, the decision log wins.
 
-Status: Phase 0 implemented. Phase 1 is next.
+Status: Phases 0–1 implemented. Phase 2 is next.
 
 ## Context
 
@@ -197,7 +197,7 @@ Exact URLs live in `sample-catalog/items.json`. Excluded: demo streams whose con
 - Private GitHub repository `mickeiik/izle`.
 - Verify: `gh repo view mickeiik/izle --json visibility` → PRIVATE; `npm ci && npm test` runs; `curl localhost:8787/healthz`; hello APK installs on the TV emulator.
 
-**Phase 1 — Contract + sample catalog**
+**Phase 1 — Contract + sample catalog** ✅
 - `contract/`: types, JSON Schema, validator (`validateBundle(dir)`), CLI `izle-validate`; `docs/spec/catalog-bundle-v1.md`, `docs/spec/resolver-module-v1.md`.
 - `sample-catalog/` built and validated; `NOTICE.md`; `sample:check` script.
 - Tests (node:test): schema accepts the sample, rejects fixtures (duplicate ids, bad poster hash, unknown adapter, movie with 2 episodes, unknown field).
