@@ -1,0 +1,22 @@
+{
+  "name": "@izle/contract",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "izle catalog bundle contract v1 and resolver module API v1: types, JSON Schema, validator.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema/*": "./schema/*"
+  },
+  "bin": {
+    "izle-validate": "./bin/izle-validate.js"
+  },
+  "scripts": {
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "tsx": "^4.23.15"
+  }
+}

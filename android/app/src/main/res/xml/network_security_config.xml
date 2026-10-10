@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cleartext is allowed so a TV can reach an izle-server on the LAN (the emulator reaches the host at
+     http://10.0.2.2:8787). Internet deployments sit behind an HTTPS reverse proxy. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

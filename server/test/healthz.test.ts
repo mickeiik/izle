@@ -1,0 +1,9 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createApp } from "../src/app.ts";
+
+test("GET /healthz answers ok", async () => {
+  const res = await createApp().request("/healthz");
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true });
+});

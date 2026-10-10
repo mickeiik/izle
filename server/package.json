@@ -1,0 +1,22 @@
+{
+  "name": "@izle/server",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "izle self-hosted server: catalog, pairing, TV and admin APIs.",
+  "bin": {
+    "izle-server": "./bin/izle-server.js"
+  },
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "start": "tsx src/main.ts",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.4",
+    "hono": "^4.13.13",
+    "tsx": "^4.23.15"
+  }
+}

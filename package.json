@@ -1,0 +1,27 @@
+{
+  "name": "izle",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "description": "Senior-first Android TV player and self-hosted server with bring-your-own catalog.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mickeiik/izle.git"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "workspaces": [
+    "contract",
+    "server"
+  ],
+  "scripts": {
+    "test": "npm test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "sample:check": "izle-validate --probe sample-catalog"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "typescript": "^7.0.2"
+  }
+}
