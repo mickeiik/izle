@@ -353,7 +353,7 @@ from the roadmap, the entry wins until the roadmap is updated.
   unminified, no source maps), stages a package around it and runs `npm pack`. The tarball has no dependencies
   and no install scripts, installs offline and runs exactly the dependency versions the tests ran with. The
   bundled packages' licenses are collected into `THIRD_PARTY_LICENSES.md`. Repeated builds of the same sources
-  produce byte-identical tarballs. `esbuild` (already in the tree through `tsx`) became a root dev dependency.
+  produce byte-identical tarballs on the same machine (CI's differ: file modes and npm versions vary). `esbuild` (already in the tree through `tsx`) became a root dev dependency.
 - **Package layout mirrors the sources' relative paths** (`server/dist/` → `../admin`, `../schema`,
   `../../sample-catalog`) instead of changing how the code finds its files; the contract schemas are copied to
   `server/schema/`. The package keeps the name `@izle/server` (`npm pack` names it `izle-server-X.Y.Z.tgz`) and
@@ -424,6 +424,10 @@ from the roadmap, the entry wins until the roadmap is updated.
   Not verified on an API 24 device; on the API 36 emulator system CAs keep working (HTTPS sample media played).
 - **Not done (optional in the roadmap):** a Watch Next channel. It would put a second "continue" path into the
   launcher, against the one-screen principle, and needs the TV provider API; left for later.
+- **Adapter deadlines use an ordinary timer** (cleared when the call ends) instead of `AbortSignal.timeout()`.
+  Node does not let that signal's timer keep the process alive, so on Node 22 the resolver tests with a hanging
+  adapter were cancelled ("the event loop has already resolved"). This had kept the Node 22 CI job red since
+  Phase 4. Inside the server an open request always kept the loop alive, so TVs were not affected.
 - **Make-public checklist** lives in `docs/releasing.md`. Its automated parts were run: gitleaks over the history
   and the working tree found one hit, the made-up device token the redaction tests use, now marked with an inline
   `gitleaks:allow` and a `.gitleaksignore` entry for the commit that introduced it; no token, database, keystore or

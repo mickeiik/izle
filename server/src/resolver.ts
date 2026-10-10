@@ -160,9 +160,10 @@ function semanticProblem(results: ResolveResult[]): string | null {
 }
 
 /**
- * Runs `adapter.resolve` under `AbortSignal.any([signal, AbortSignal.timeout(deadlineMs)])`. A call that ignores
- * the signal is abandoned when the deadline passes. Results are schema-validated; an invalid result counts as an
- * error named `InvalidResult`.
+ * Runs `adapter.resolve` under `AbortSignal.any([signal, <deadline>])`. A call that ignores the signal is abandoned
+ * when the deadline passes. Results are schema-validated; an invalid result counts as an error named
+ * `InvalidResult`. The deadline is an ordinary timer rather than `AbortSignal.timeout()`, whose timer does not keep
+ * the process alive: a CLI run or a test with nothing else pending would end before the deadline fires.
  */
 export async function runAdapter(
   adapter: Adapter,
@@ -171,7 +172,12 @@ export async function runAdapter(
 ): Promise<AdapterOutcome> {
   const started = performance.now();
   const ms = () => Math.round(performance.now() - started);
-  const deadline = AbortSignal.timeout(Math.max(1, opts.deadlineMs));
+  const deadlineController = new AbortController();
+  const timer = setTimeout(
+    () => deadlineController.abort(new DOMException("The operation was aborted due to timeout", "TimeoutError")),
+    Math.max(1, opts.deadlineMs),
+  );
+  const deadline = deadlineController.signal;
   const signal = opts.signal ? AbortSignal.any([opts.signal, deadline]) : deadline;
   let onAbort: (() => void) | undefined;
   const aborted = new Promise<never>((_, reject) => {
@@ -189,6 +195,7 @@ export async function runAdapter(
     const code: AdapterFailureCode = deadline.aborted ? "timeout" : opts.signal?.aborted ? "abort" : "error";
     return { ok: false, code, name: code === "error" ? errorName(err) : code === "timeout" ? "TimeoutError" : "AbortError", ms: ms() };
   } finally {
+    clearTimeout(timer);
     if (onAbort) signal.removeEventListener("abort", onAbort);
   }
   if (!validateResolveResultsSchema(value)) return { ok: false, code: "error", name: "InvalidResult", ms: ms() };
