@@ -84,6 +84,7 @@ test("cursor override: continue from episode X and forget X's position", async (
   assert.deepEqual(prog.json.cursors.map((c: { episodeId: string }) => c.episodeId), ["show.e2"]);
   assert.deepEqual(prog.json.progress.map((p: { episodeId: string }) => p.episodeId), ["show.e4"]);
   assert.equal(prog.json.progress[0].itemTitle, "Şov Dünyası");
+  assert.equal(prog.json.progress[0].kind, "series");
 });
 
 test("now playing follows resolve and heartbeats", async (t) => {

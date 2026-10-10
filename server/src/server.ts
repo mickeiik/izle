@@ -7,11 +7,13 @@ import type { Hono } from "hono";
 import { createApp, type AppContext } from "./app.ts";
 import { loadAdminToken } from "./auth.ts";
 import { CatalogService } from "./catalog.ts";
-import type { ServerConfig } from "./config.ts";
+import { DEFAULT_RESOLVE_BUDGET_MS, DEFAULT_RESOLVE_DEADLINE_MS, type ServerConfig } from "./config.ts";
 import { EventHub } from "./events.ts";
 import { createLogger, type Logger } from "./log.ts";
 import { PairingService, type PairingOptions } from "./pairing.ts";
+import { ProxyService } from "./proxy.ts";
 import { ResolveService } from "./resolve.ts";
+import { loadResolver, type LoadedResolver } from "./resolver.ts";
 import { Store } from "./store.ts";
 import { TvService } from "./tv.ts";
 
@@ -42,19 +44,37 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const now = opts.now ?? Date.now;
 
   const { token: adminToken, source } = loadAdminToken(config, log);
-  const catalog = new CatalogService(config.catalog.dir, log, now, null);
+  // The resolver module comes from a local path in the config; nothing is ever downloaded.
+  const resolverModule: LoadedResolver | null = config.resolver
+    ? await loadResolver({ module: config.resolver.module, config: config.resolver.config, dataDir: config.dataDir, log })
+    : null;
+  const catalog = new CatalogService(config.catalog.dir, log, now, resolverModule ? new Set(resolverModule.adapters.keys()) : null);
   await catalog.load();
-  if (config.resolver) {
-    log.warn("resolver modules are not supported by this version yet; adapter sources stay unavailable");
-  }
   const store = new Store(path.join(config.dataDir, "izle.db"));
   const events = new EventHub();
-  const resolver = new ResolveService(catalog, log, now);
+  const proxy = new ProxyService({
+    log,
+    now,
+    ttlMs: config.proxy.sessionTtlSec * 1000,
+    alignTsSegments: config.proxy.alignTsSegments,
+  });
+  const resolver = new ResolveService({
+    catalog,
+    log,
+    now,
+    proxy,
+    adapters: resolverModule?.adapters ?? null,
+    proxyAlways: config.proxy.always,
+    deadlineMs: config.resolver?.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,
+    budgetMs: config.resolver?.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
+  });
   const services = { config, store, catalog, events, resolver, log, now };
   const ctx: AppContext = {
     ...services,
     tv: new TvService(services),
     pairing: new PairingService(store, log, now, opts.pairing),
+    proxy,
+    resolverModule,
     adminToken,
     pingMs: opts.pingMs ?? 20_000,
     adminUiDir: ADMIN_UI_DIR,

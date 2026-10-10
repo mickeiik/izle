@@ -12,10 +12,12 @@ export interface ServerConfig {
   publicUrl: string | null;
   dataDir: string;
   catalog: { dir: string };
-  resolver: { module: string; config: Record<string, unknown> } | null;
+  /** `deadlineMs` bounds one adapter call, `budgetMs` one TV resolve request (all sources together). */
+  resolver: { module: string; config: Record<string, unknown>; deadlineMs: number; budgetMs: number } | null;
   /** `token` comes from IZLE_ADMIN_TOKEN and wins over `tokenFile`. */
   admin: { tokenFile: string; token: string | null };
-  proxy: { always: boolean; sessionTtlSec: number };
+  /** `alignTsSegments` trims junk bytes before the first MPEG-TS sync byte of proxied HLS segments. */
+  proxy: { always: boolean; sessionTtlSec: number; alignTsSegments: boolean };
   /** Server-wide defaults for devices without their own setting (null = fall back to the catalog's hints). */
   defaults: { uiLanguage: "tr" | "en" | null; preferredAudioLanguage: string | null };
   log: { level: Level };
@@ -29,6 +31,8 @@ export class ConfigError extends Error {
 export const SAMPLE_CATALOG_DIR = fileURLToPath(new URL("../../sample-catalog", import.meta.url));
 
 export const DEFAULT_PORT = 8787;
+export const DEFAULT_RESOLVE_DEADLINE_MS = 12_000;
+export const DEFAULT_RESOLVE_BUDGET_MS = 30_000;
 
 const LANGUAGE_TAG = { type: "string", pattern: "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$" };
 
@@ -57,7 +61,12 @@ const CONFIG_SCHEMA = {
         {
           type: "object",
           required: ["module"],
-          properties: { module: { type: "string", minLength: 1 }, config: { type: "object" } },
+          properties: {
+            module: { type: "string", minLength: 1 },
+            config: { type: "object" },
+            deadlineMs: { type: "integer", minimum: 100, maximum: 120_000 },
+            budgetMs: { type: "integer", minimum: 100, maximum: 120_000 },
+          },
           additionalProperties: false,
         },
         { type: "null" },
@@ -73,6 +82,7 @@ const CONFIG_SCHEMA = {
       properties: {
         always: { type: "boolean" },
         sessionTtlSec: { type: "integer", minimum: 60, maximum: 86400 },
+        alignTsSegments: { type: "boolean" },
       },
       additionalProperties: false,
     },
@@ -100,9 +110,9 @@ interface ConfigFile {
   publicUrl?: string | null;
   dataDir?: string;
   catalog?: { dir: string };
-  resolver?: { module: string; config?: Record<string, unknown> } | null;
+  resolver?: { module: string; config?: Record<string, unknown>; deadlineMs?: number; budgetMs?: number } | null;
   admin?: { tokenFile?: string };
-  proxy?: { always?: boolean; sessionTtlSec?: number };
+  proxy?: { always?: boolean; sessionTtlSec?: number; alignTsSegments?: boolean };
   defaults?: { uiLanguage?: "tr" | "en" | null; preferredAudioLanguage?: string | null };
   log?: { level?: Level };
 }
@@ -159,9 +169,20 @@ export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
     publicUrl: file.publicUrl ? file.publicUrl.replace(/\/+$/, "") : null,
     dataDir,
     catalog: { dir: file.catalog ? resolve(file.catalog.dir) : SAMPLE_CATALOG_DIR },
-    resolver: file.resolver ? { module: resolve(file.resolver.module), config: file.resolver.config ?? {} } : null,
+    resolver: file.resolver
+      ? {
+          module: resolve(file.resolver.module),
+          config: file.resolver.config ?? {},
+          deadlineMs: file.resolver.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,
+          budgetMs: file.resolver.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
+        }
+      : null,
     admin: { tokenFile: file.admin?.tokenFile ? resolve(file.admin.tokenFile) : path.join(dataDir, "admin.token"), token: envToken },
-    proxy: { always: file.proxy?.always ?? false, sessionTtlSec: file.proxy?.sessionTtlSec ?? 21600 },
+    proxy: {
+      always: file.proxy?.always ?? false,
+      sessionTtlSec: file.proxy?.sessionTtlSec ?? 21600,
+      alignTsSegments: file.proxy?.alignTsSegments ?? false,
+    },
     defaults: {
       uiLanguage: file.defaults?.uiLanguage ?? null,
       preferredAudioLanguage: file.defaults?.preferredAudioLanguage ?? null,

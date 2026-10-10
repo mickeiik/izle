@@ -151,7 +151,7 @@ test("resolve: exclusions and the 10-minute failure penalty", async (t) => {
   assert.deepEqual(r.json.alternatives, []);
 });
 
-test("resolve: not_allowed, unknown ids, and sources this version cannot serve", async (t) => {
+test("resolve: not_allowed, unknown ids, header-bound sources proxied, adapter sources without a module", async (t) => {
   const { as } = await setup(t);
   const denied = await as("POST", "/resolve", { episodeId: "show.e3" });
   assert.equal(denied.status, 403);
@@ -160,14 +160,13 @@ test("resolve: not_allowed, unknown ids, and sources this version cannot serve",
   assert.equal((await as("POST", "/resolve", { episodeId: "show.e1", sourceId: "nope" })).status, 404);
 
   const e4 = await as("POST", "/resolve", { episodeId: "show.e4" });
-  assert.equal(e4.json.sourceId, "plain", "header-bound and adapter sources are skipped");
-  assert.deepEqual(e4.json.alternatives, []);
-  const forced = await as("POST", "/resolve", { episodeId: "show.e4", sourceId: "needs-proxy" });
-  assert.equal(forced.status, 502);
-  assert.deepEqual(forced.json.tried, [{ sourceId: "needs-proxy", code: "proxy_unavailable" }]);
+  assert.equal(e4.json.sourceId, "needs-proxy", "header-bound direct sources go through the proxy");
+  assert.match(e4.json.media.url, /^\/p\/[A-Za-z0-9_-]{43}\/index\.m3u8$/);
+  assert.deepEqual(e4.json.alternatives, ["plain"], "adapter sources without a resolver module are left out");
+  assert.ok(!JSON.stringify(e4.json).includes("site.example.test"), "upstream headers never reach the TV");
   const adapter = await as("POST", "/resolve", { episodeId: "show.e4", exclude: ["plain", "needs-proxy"] });
   assert.equal(adapter.status, 502);
-  assert.deepEqual(adapter.json.tried, [{ sourceId: "via-adapter", code: "adapter_unavailable" }]);
+  assert.deepEqual(adapter.json.tried, [{ sourceId: "via-adapter", code: "adapter_unavailable", adapterId: "example" }]);
   assert.ok(!JSON.stringify(adapter.json).includes("ref-value"));
 });
 

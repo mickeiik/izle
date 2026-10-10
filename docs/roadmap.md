@@ -4,7 +4,7 @@ This is the project plan, copied from the approved planning document and edited 
 (environment-specific facts and references to private catalogs removed). Routine decisions taken while
 implementing it are recorded in [decisions.md](decisions.md); where the two differ, the decision log wins.
 
-Status: Phases 0–3 implemented. Phase 4 is next.
+Status: Phases 0–4 implemented. Phase 5 is next.
 
 ## Context
 
@@ -213,7 +213,7 @@ Exact URLs live in `sample-catalog/items.json`. Excluded: demo streams whose con
 - Tests: JVM unit tests for `PlaybackPlan` and API models; `./gradlew :app:testDebugUnitTest`.
 - Verify on the emulator against the local server with the sample catalog (loop below): pair → tiles appear → OK plays Caminandes ep1 → Back → tile says "Continue: Episode 1 · …" → finish ep1 → auto-next ep2 → admin reorders home → TV updates live → preferred audio `it` on Tears of Steel selects Italian.
 
-**Phase 4 — Resolver module API + proxy**
+**Phase 4 — Resolver module API + proxy** ✅
 - Resolver loader (import, apiVersion check, deadlines, validation), proxy sessions with playlist rewriting + header forwarding + inline playlists (+ optional `ts-resync` repair), `server/examples/resolver-example/` (public example BYO module resolving against a local fixture server; used by tests), admin diagnostics endpoint.
 - Tests: Referer-required upstream plays only through the proxy; inline playlist served; playlist rewriting (`URI="…"` attributes, relative resolution — implemented generically); streaming + `Range` passthrough; deadline abort with an adapter that never resolves; stale session → 410 after upstream 403; TS segment prefixed with junk bytes (decides whether `alignTsSegments` is needed); redaction of adapter errors.
 - Verify: TV app plays a proxied fixture end-to-end on the emulator.

@@ -48,7 +48,10 @@ export class CatalogService {
   readonly dir: string;
   private readonly log: Logger;
   private readonly now: () => number;
-  /** Adapter ids the resolver module provides; null = no resolver configured. */
+  /**
+   * Adapter ids the resolver module provides; null = no resolver configured. With a module, a bundle that names
+   * an adapter the module does not provide is refused (at start and on reload).
+   */
   private readonly adapters: ReadonlySet<string> | null;
 
   constructor(dir: string, log: Logger, now: () => number = Date.now, adapters: ReadonlySet<string> | null = null) {
@@ -60,6 +63,13 @@ export class CatalogService {
 
   private async read(): Promise<LoadedCatalog> {
     const { bundle, warnings, stats } = await loadBundle(this.dir);
+    const missing = this.adapters ? bundle.manifest.adapters.filter((a) => !this.adapters!.has(a)) : [];
+    if (missing.length > 0) {
+      throw new BundleValidationError(
+        this.dir,
+        missing.map((a) => ({ severity: "error" as const, file: "bundle.json", path: "/adapters", message: `adapter "${a}" is not provided by the resolver module` })),
+      );
+    }
     const itemsById = new Map<string, CatalogItem>();
     const episodesById = new Map<string, EpisodeRef>();
     for (const item of bundle.items) {
@@ -72,9 +82,10 @@ export class CatalogService {
   private report(c: LoadedCatalog, msg: string): void {
     this.log.info(msg, { catalogId: c.manifest.catalogId, buildId: c.manifest.buildId, items: c.stats.items, episodes: c.stats.episodes });
     for (const w of c.warnings) this.log.warn("catalog warning", { issue: formatIssue(w) });
-    const missing = c.manifest.adapters.filter((a) => !this.adapters?.has(a));
-    if (missing.length > 0) {
-      this.log.warn("catalog references adapters no resolver module provides; their sources are unavailable", { adapters: missing });
+    if (this.adapters === null && c.manifest.adapters.length > 0) {
+      this.log.warn("catalog references adapters but no resolver module is configured; their sources are unavailable", {
+        adapters: c.manifest.adapters,
+      });
     }
   }
 

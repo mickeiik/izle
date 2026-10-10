@@ -1,8 +1,10 @@
 # Resolver module API v1
 
-Status: **stable** (API version 1). Normative. Types: [`contract/src/resolver.ts`](../../contract/src/resolver.ts);
-result schema: [`contract/schema/resolve-result.v1.schema.json`](../../contract/schema/resolve-result.v1.schema.json).
-The server-side loader and proxy are implemented in Phase 4 of the [roadmap](../roadmap.md).
+Status: **stable** (API version 1), implemented by izle-server. Normative. Types:
+[`contract/src/resolver.ts`](../../contract/src/resolver.ts); result schema:
+[`contract/schema/resolve-result.v1.schema.json`](../../contract/schema/resolve-result.v1.schema.json). A complete,
+runnable example (module, a local stand-in upstream and a catalog) is in
+[`server/examples/resolver-example/`](../../server/examples/resolver-example/README.md).
 
 A resolver module is a small ES module, written and trusted by the owner, that turns the opaque `ref` of an
 `adapter` source in a [catalog bundle](catalog-bundle-v1.md) into a playable stream at play time. It exists for
@@ -14,12 +16,22 @@ catalogs whose streams cannot be written into a bundle: signed and expiring URLs
 The server configuration names the module by a **local path** (`resolver.module`) plus a free-form
 `resolver.config` object. The server never downloads or installs modules. At startup it:
 
-1. imports the module with `await import(pathToFileURL(absolutePath).href)` and logs its SHA-256;
+1. imports the module with `await import(pathToFileURL(absolutePath).href)` and logs its SHA-256 (the first 16
+   hex digits; the admin API and `check-resolver` show all of it);
 2. takes the default export if present, otherwise the module namespace, and requires `apiVersion === 1`;
-3. calls `createAdapters(ctx)` **once** and rejects duplicate adapter ids;
-4. checks that every id in the bundle manifest's `adapters` is provided, and refuses to start otherwise.
+3. calls `createAdapters(ctx)` **once** (within 30 s) and rejects anything but an array of adapters with valid,
+   unique ids (catalog id syntax) and a `resolve` function;
+4. checks that every id in the bundle manifest's `adapters` is provided, and refuses to start otherwise. A catalog
+   reload that names an adapter the module does not provide is refused the same way (the previous catalog stays).
 
-`izle-server check-resolver` performs the same steps and then runs every adapter's `healthcheck`.
+Any failure stops the server with a message naming the module file and the error's class name — never the
+error's message. Without a configured module the server still starts; `adapter` sources are then unavailable.
+
+`izle-server check-resolver [--config <file>]` performs the same steps, checks the configured catalog, and runs
+every adapter's `healthcheck` (15 s each); it exits with status 1 on any problem.
+
+The module is written in JavaScript (ES module). izle-server itself runs TypeScript through `tsx` in
+development, so a `.ts` module may load there, but deployments should point at plain `.js`.
 
 ```ts
 export const RESOLVER_API_VERSION = 1;
@@ -52,9 +64,12 @@ export interface ResolveRequest {
 }
 ```
 
-`resolve` returns candidates in preference order. An empty array means "nothing playable right now". Throwing
-(or rejecting) means failure; the server records only the adapter id, a code (`timeout`, `abort`, `error`) and
-the error's `name`, **never its message**, because messages often contain URLs.
+`resolve` returns candidates in preference order. The server uses the **first result it can serve** (see below) and
+ignores the rest; to fall back between distinct streams, list them as separate sources in the bundle, so the TV
+can exclude a failing one. An empty array means "nothing playable right now". Throwing (or rejecting) means
+failure; the server records only the adapter id, a code (`timeout`, `abort`, `error`, or `empty` for an empty
+array) and the error's `name`, **never its message**, because messages often contain URLs. A source whose adapter
+failed is moved behind the episode's other sources for 10 minutes, like a source the TV reported as failing.
 
 ## ResolveResult
 
@@ -73,19 +88,26 @@ export interface ResolveResult {
 - **Plain URL, no headers** — sent to the TV as-is (unless the server sets `proxy.always`).
 - **`headers` present** — the server creates a proxy session and gives the TV a `/p/<token>/…` URL. Headers
   never leave the server. Playlists are rewritten so every URI (segments, keys, variant and subtitle playlists,
-  `URI="…"` attributes) goes through the same session. DASH with headers is not supported in v1: return HLS or
-  MP4 when headers are needed.
+  `URI="…"` attributes) goes through the same session with the same headers. DASH with headers is not supported
+  in v1 (the proxy does not rewrite MPDs): such a result is skipped as `unsupported`; return HLS or MP4 when
+  headers are needed.
 - **Inline `playlist`** — served by the proxy as the session's playlist; relative URIs resolve against
-  `baseUrl`.
-- **`expiresAt`** — lets the TV re-resolve before a signed URL expires. Independently, an upstream 401/403
-  during playback marks the proxy session stale and the TV re-resolves.
+  `baseUrl`. The text must start with `#EXTM3U` and be at most 2 MiB (UTF-8).
+- **`subtitleTracks[].headers`** — that track alone is fetched through the proxy with its own headers.
+- **`languages`, `subtitleTracks`, `label`** — replace the bundle source's values for this playback.
+- **`expiresAt`** — passed to the TV (resolve response `expiresAt`) as a validity hint. Independently, an
+  upstream 401, 403 or 410 during playback marks the proxy session stale; the TV gets 410 and re-resolves.
 
-Results are validated against `resolve-result.v1.schema.json`; an invalid result counts as an `error`.
+Results are validated against `resolve-result.v1.schema.json`; an invalid result counts as an `error` named
+`InvalidResult` (or `NotAPlaylist` / `PlaylistTooLarge` for inline playlists).
 
 ## Execution model
 
 - Each `resolve` runs under `AbortSignal.any([requestSignal, AbortSignal.timeout(deadlineMs)])`; the default
-  deadline is 12 s per source within a 30 s budget per TV request. Synchronous throws are caught.
+  deadline is 12 s per source (`resolver.deadlineMs`) within a 30 s budget per TV request (`resolver.budgetMs`).
+  A call that ignores the signal is abandoned when its deadline passes (code `timeout`); sources left when the
+  budget is used up are reported as `timeout` with the name `BudgetExhausted`. Synchronous throws are caught.
+  `req.ref` is a copy: changing it does not change the catalog.
 - Direct bundle sources never reach adapters.
 - The module is in-process, owner-trusted code. There is no sandbox beyond deadlines and result validation.
   Modules MUST honour `signal`, SHOULD avoid long synchronous work, and MUST NOT log URLs, headers or tokens
@@ -102,3 +124,6 @@ version it does not implement.
 ## Changelog
 
 - **v1 (2026-10-10)** — initial version.
+- **v1, server implementation (2026-10-10)** — no API change. Clarified how the server uses results (first
+  servable one; subtitle-track headers proxied per track), the `empty` failure code, `BudgetExhausted`, and
+  that a catalog reload is refused when it needs an adapter the module does not provide.

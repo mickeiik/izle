@@ -18,8 +18,12 @@ playable streams at play time. A small [sample catalog](sample-catalog/) of open
 Foundation open movies and public-domain titles) is included and served by default.
 
 - Catalog bundle contract: [`docs/spec/catalog-bundle-v1.md`](docs/spec/catalog-bundle-v1.md)
-- Resolver module API: [`docs/spec/resolver-module-v1.md`](docs/spec/resolver-module-v1.md)
+- Resolver module API: [`docs/spec/resolver-module-v1.md`](docs/spec/resolver-module-v1.md), with a runnable
+  [example module](server/examples/resolver-example/README.md)
 - Server API: [`docs/spec/server-api-v1.md`](docs/spec/server-api-v1.md)
+
+Streams that need upstream request headers (a `Referer`, say) or come as playlist text are served to the TV through
+the server's media proxy, so those headers and the upstream URLs never reach the TV.
 
 Check a bundle with the validator from `@izle/contract`:
 
@@ -33,7 +37,8 @@ npm run sample:check                      # also range-GETs every sample media U
 | Path | What |
 |---|---|
 | `contract/` | `@izle/contract` — bundle types, JSON Schema, validator, `izle-validate` CLI |
-| `server/` | `@izle/server` — Hono + `node:sqlite` server: pairing, TV API, admin API, live events |
+| `server/` | `@izle/server` — Hono + `node:sqlite` server: pairing, TV API, admin API, live events, resolver modules, media proxy |
+| `server/examples/resolver-example/` | example resolver module with a local stand-in upstream and catalog |
 | `sample-catalog/` | sample bundle of openly licensed content |
 | `android/` | Android TV app (Kotlin, Compose for TV, Media3) |
 | `docs/` | [roadmap](docs/roadmap.md), [decision log](docs/decisions.md), specs |
@@ -41,11 +46,12 @@ npm run sample:check                      # also range-GETs every sample media U
 ## Status
 
 Early development. Done: Phase 0 (bootstrap), Phase 1 (catalog bundle contract, validator, sample catalog),
-Phase 2 (server core for direct sources: pairing, TV and admin APIs, live events, progress and play order) and
+Phase 2 (server core for direct sources: pairing, TV and admin APIs, live events, progress and play order),
 Phase 3 (the Android TV app: pairing, home tiles, player with resume, auto-next, fallback and live updates, the
-hidden menu, English and Turkish). Next are resolver modules with the media proxy and the browser admin UI; see
-the [roadmap](docs/roadmap.md). How the TV behaves is described in [docs/ux/senior-tv.md](docs/ux/senior-tv.md),
-with screenshots in [docs/verification/phase3/](docs/verification/phase3/README.md).
+hidden menu, English and Turkish) and Phase 4 (resolver modules, the media proxy and admin diagnostics). Next is
+the browser admin UI; see the [roadmap](docs/roadmap.md). How the TV behaves is described in
+[docs/ux/senior-tv.md](docs/ux/senior-tv.md), with screenshots in
+[docs/verification/](docs/verification/phase3/README.md).
 
 ## Development
 
@@ -70,6 +76,18 @@ Print the admin token with:
 ```bash
 npm run -s -w server dev -- admin-token --config server/izle.dev.json
 ```
+
+### Resolver modules
+
+To play a catalog whose streams are resolved at play time, point `resolver.module` in the config at a local
+resolver module and check it:
+
+```bash
+npm run -s -w server dev -- check-resolver --config server/examples/resolver-example/izle.example.json
+```
+
+[`server/examples/resolver-example/`](server/examples/resolver-example/README.md) runs the whole chain locally: an
+example module, a stand-in streaming site with signed, Referer-bound URLs, and a catalog that uses them.
 
 ### Try the API with curl
 

@@ -2,11 +2,15 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadConfig, type ServerConfig } from "../src/config.ts";
 import { createLogger } from "../src/log.ts";
 import { startServer, type RunningServer, type StartOptions } from "../src/server.ts";
 
 export const ADMIN_TOKEN = "test-admin-token-0123456789abcdef";
+
+/** The tests' resolver module: the example module's adapters plus a "test" adapter with hostile behaviours. */
+export const TEST_RESOLVER = fileURLToPath(new URL("./fixtures/test-resolver.js", import.meta.url));
 
 const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",

@@ -16,7 +16,7 @@ test("defaults without a config file", () => {
   assert.equal(c.admin.tokenFile, "/srv/izle/data/admin.token");
   assert.equal(c.admin.token, null);
   assert.equal(c.resolver, null);
-  assert.deepEqual(c.proxy, { always: false, sessionTtlSec: 21600 });
+  assert.deepEqual(c.proxy, { always: false, sessionTtlSec: 21600, alignTsSegments: false });
   assert.deepEqual(c.defaults, { uiLanguage: null, preferredAudioLanguage: null });
 });
 
@@ -31,7 +31,7 @@ test("relative paths in a config file resolve against the file's directory", asy
       publicUrl: "https://tv.example.test/",
       dataDir: "../var",
       catalog: { dir: "./catalog" },
-      resolver: { module: "./resolver/index.js", config: { a: 1 } },
+      resolver: { module: "./resolver/index.js", config: { a: 1 }, deadlineMs: 5000 },
       admin: { tokenFile: "/etc/izle/admin.token" },
       proxy: { always: true, sessionTtlSec: 3600 },
       defaults: { uiLanguage: "tr", preferredAudioLanguage: "tr" },
@@ -43,7 +43,8 @@ test("relative paths in a config file resolve against the file's directory", asy
   assert.equal(c.publicUrl, "https://tv.example.test");
   assert.equal(c.dataDir, path.join(dir, "var"));
   assert.equal(c.catalog.dir, path.join(dir, "conf", "catalog"));
-  assert.deepEqual(c.resolver, { module: path.join(dir, "conf", "resolver", "index.js"), config: { a: 1 } });
+  assert.deepEqual(c.resolver, { module: path.join(dir, "conf", "resolver", "index.js"), config: { a: 1 }, deadlineMs: 5000, budgetMs: 30_000 });
+  assert.deepEqual(c.proxy, { always: true, sessionTtlSec: 3600, alignTsSegments: false });
   assert.equal(c.admin.tokenFile, "/etc/izle/admin.token");
   assert.deepEqual(c.defaults, { uiLanguage: "tr", preferredAudioLanguage: "tr" });
   assert.equal(c.log.level, "warn");

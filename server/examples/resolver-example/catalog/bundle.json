@@ -1,0 +1,17 @@
+{
+  "format": "izle-bundle",
+  "formatVersion": 1,
+  "catalogId": "izle-example",
+  "buildId": "20261010-6b05c8e7",
+  "builtAt": "2026-10-10T19:00:00Z",
+  "name": "izle resolver example",
+  "defaults": {
+    "uiLanguage": "en",
+    "preferredAudioLanguage": "en"
+  },
+  "adapters": [
+    "example"
+  ],
+  "items": "items.json",
+  "assetsDir": "assets"
+}

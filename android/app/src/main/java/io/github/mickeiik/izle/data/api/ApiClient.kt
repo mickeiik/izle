@@ -70,8 +70,9 @@ class ApiClient(
         return exchange(authorize(Request.Builder().url(url)).build()).decode(ItemDetailsResponse.serializer())
     }
 
+    /** The server may spend up to 30 s in the owner's resolver module, longer than the default read timeout. */
     suspend fun resolve(request: ResolveRequest): ResolveResponse =
-        post("api/v1/tv/resolve", json.encodeToString(ResolveRequest.serializer(), request), ResolveResponse.serializer())
+        post("api/v1/tv/resolve", json.encodeToString(ResolveRequest.serializer(), request), ResolveResponse.serializer(), longPollHttp)
 
     suspend fun progress(report: ProgressReport): ProgressAck =
         post("api/v1/tv/progress", json.encodeToString(ProgressReport.serializer(), report), ProgressAck.serializer())
@@ -85,8 +86,8 @@ class ApiClient(
     private suspend fun <T> get(path: String, serializer: KSerializer<T>): T =
         exchange(authorize(Request.Builder().url(url(path))).build()).decode(serializer)
 
-    private suspend fun <T> post(path: String, body: String, serializer: KSerializer<T>): T =
-        exchange(authorize(Request.Builder().url(url(path)).post(body.toRequestBody(JSON))).build()).decode(serializer)
+    private suspend fun <T> post(path: String, body: String, serializer: KSerializer<T>, client: OkHttpClient = http): T =
+        exchange(authorize(Request.Builder().url(url(path)).post(body.toRequestBody(JSON))).build(), client).decode(serializer)
 
     private fun <T> RawResponse.decode(serializer: KSerializer<T>): T {
         requireOk()

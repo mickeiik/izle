@@ -8,15 +8,32 @@ import { HTTPException } from "hono/http-exception";
 import { routePath } from "hono/route";
 import { streamSSE } from "hono/streaming";
 import { bearerToken, secretsEqual, sha256 } from "./auth.ts";
+import { diagnoseEpisode } from "./diagnostics.ts";
 import { HttpError } from "./errors.ts";
 import { MAX_PAIR_WAIT_MS, type PairingService } from "./pairing.ts";
+import { PROXY_TOKEN, type ProxyService, type ProxyTarget } from "./proxy.ts";
+import type { LoadedResolver } from "./resolver.ts";
 import type { Device } from "./store.ts";
 import { HOME_MAX_ITEMS, type Services, type TvService } from "./tv.ts";
-import { approveBody, commandBody, cursorBody, devicePatchBody, homeBody, isId, parseBody, progressBody, resolveBody } from "./validation.ts";
+import {
+  approveBody,
+  commandBody,
+  cursorBody,
+  devicePatchBody,
+  diagnosticsBody,
+  homeBody,
+  isId,
+  parseBody,
+  progressBody,
+  resolveBody,
+} from "./validation.ts";
 
 export interface AppContext extends Services {
   tv: TvService;
   pairing: PairingService;
+  proxy: ProxyService;
+  /** The loaded resolver module, or null when none is configured. */
+  resolverModule: LoadedResolver | null;
   adminToken: string;
   /** SSE keep-alive comment interval. */
   pingMs: number;
@@ -33,6 +50,16 @@ type Env = { Variables: { device: Device } };
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
 
 const CONTENT_TYPES: Record<string, string> = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" };
+
+/** The admin UI's static files (an allow-list: nothing else in the directory is served). */
+const ADMIN_FILES: Record<string, string> = {
+  "app.js": "text/javascript; charset=utf-8",
+  "lib.js": "text/javascript; charset=utf-8",
+  "style.css": "text/css; charset=utf-8",
+  "icon.svg": "image/svg+xml",
+};
+const ADMIN_CSP =
+  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 export function createApp(ctx: AppContext): Hono<Env> {
   const app = new Hono<Env>();
@@ -55,7 +82,8 @@ export function createApp(ctx: AppContext): Hono<Env> {
       ms: Math.round(performance.now() - started),
       deviceId: c.get("device")?.id,
     };
-    if (route === "/healthz") log.debug("request", fields);
+    // Health checks and the proxy's steady stream of segment requests only show up at debug level.
+    if (route === "/healthz" || (route.startsWith("/p/") && c.res.status < 400)) log.debug("request", fields);
     else log.info("request", fields);
   });
 
@@ -125,13 +153,35 @@ export function createApp(ctx: AppContext): Hono<Env> {
     });
   });
 
-  const adminIndex = async (c: Context) => {
-    const html = await readFile(path.join(ctx.adminUiDir, "index.html"), "utf8");
-    c.header("Cache-Control", "no-cache");
-    return c.html(html);
+  const adminFile = async (c: Context, file: string, type: string) => {
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(path.join(ctx.adminUiDir, file));
+    } catch {
+      throw new HttpError(404, "not_found");
+    }
+    return c.body(new Uint8Array(bytes), 200, { "Content-Type": type, "Cache-Control": "no-cache", "Content-Security-Policy": ADMIN_CSP });
   };
   app.get("/admin", (c) => c.redirect("/admin/"));
-  app.get("/admin/", adminIndex);
+  app.get("/admin/", (c) => adminFile(c, "index.html", "text/html; charset=utf-8"));
+  app.get("/admin/:file", (c) => {
+    const file = c.req.param("file");
+    const type = Object.hasOwn(ADMIN_FILES, file) ? ADMIN_FILES[file] : undefined;
+    if (!type) throw new HttpError(404, "not_found");
+    return adminFile(c, file, type);
+  });
+
+  // --- media proxy (the token in the path is the credential; media requests carry no device token) -------------
+
+  const proxyRoute = (target: (c: Context) => ProxyTarget) => (c: Context) => {
+    const token = c.req.param("token") ?? "";
+    if (!PROXY_TOKEN.test(token)) throw new HttpError(404, "not_found");
+    return ctx.proxy.serve(c.req.raw, token, target(c));
+  };
+  app.get("/p/:token/index.m3u8", proxyRoute(() => ({ type: "index" })));
+  app.get("/p/:token/video.mp4", proxyRoute(() => ({ type: "video" })));
+  app.get("/p/:token/u/:ref", proxyRoute((c) => ({ type: "u", ref: c.req.param("ref") ?? "" })));
+  app.get("/p/:token/sub/:file", proxyRoute((c) => ({ type: "sub", file: c.req.param("file") ?? "" })));
 
   // --- pairing (unauthenticated TV side) -----------------------------------------------------------------------
 
@@ -174,7 +224,7 @@ export function createApp(ctx: AppContext): Hono<Env> {
 
   app.post("/api/v1/tv/resolve", async (c) => {
     const body = await parseBody(c, resolveBody);
-    return c.json(await tv.resolve(c.get("device"), body));
+    return c.json(await tv.resolve(c.get("device"), body, c.req.raw.signal));
   });
 
   app.post("/api/v1/tv/progress", async (c) => {
@@ -245,6 +295,8 @@ export function createApp(ctx: AppContext): Hono<Env> {
       return {
         itemId,
         title: item?.title ?? null,
+        kind: item?.kind ?? null,
+        posterUrl: item ? catalog.posterUrl(item) : null,
         missing: !item,
         continue: item ? tv.continueFor(d.id, item) : null,
       };
@@ -280,6 +332,7 @@ export function createApp(ctx: AppContext): Hono<Env> {
     const d = requireDevice(c.req.param("id"));
     store.deleteDevice(d.id);
     events.closeDevice(d.id);
+    ctx.proxy.dropDevice(d.id);
     log.info("device deleted", { deviceId: d.id });
     return c.body(null, 204);
   });
@@ -302,7 +355,9 @@ export function createApp(ctx: AppContext): Hono<Env> {
     const catalogId = catalog.catalogId;
     const titleOf = (episodeId: string) => {
       const ref = catalog.episode(episodeId);
-      return ref ? { itemTitle: ref.item.title, season: ref.episode.season ?? null, number: ref.episode.number ?? null, episodeTitle: ref.episode.title ?? null } : { missing: true };
+      return ref
+        ? { itemTitle: ref.item.title, kind: ref.item.kind, season: ref.episode.season ?? null, number: ref.episode.number ?? null, episodeTitle: ref.episode.title ?? null }
+        : { missing: true };
     };
     return c.json({
       cursors: store.listCursors(d.id, catalogId).map((cur) => ({ itemId: cur.itemId, episodeId: cur.episodeId, updatedAt: iso(cur.updatedAt), ...titleOf(cur.episodeId) })),
@@ -367,6 +422,7 @@ export function createApp(ctx: AppContext): Hono<Env> {
       stats: cur.stats,
       adapters: cur.manifest.adapters,
       warnings: cur.warnings.map((w) => ({ file: w.file, path: w.path, message: w.message })),
+      resolver: ctx.resolverModule ? { sha256: ctx.resolverModule.sha256, adapters: [...ctx.resolverModule.adapters.keys()] } : null,
     };
   };
 
@@ -416,6 +472,11 @@ export function createApp(ctx: AppContext): Hono<Env> {
         })),
       },
     });
+  });
+
+  app.post("/api/v1/admin/diagnostics/resolve", async (c) => {
+    const body = await parseBody(c, diagnosticsBody);
+    return c.json(await diagnoseEpisode({ catalog, resolver: ctx.resolver }, body, c.req.raw.signal));
   });
 
   app.post("/api/v1/admin/catalog/reload", async (c) => {

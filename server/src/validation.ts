@@ -71,6 +71,13 @@ export const resolveBody = compile<{ episodeId: string; sourceId?: string; exclu
   additionalProperties: false,
 });
 
+export const diagnosticsBody = compile<{ episodeId: string; sourceId?: string; preferredAudioLanguage?: string | null; probe?: boolean }>({
+  type: "object",
+  required: ["episodeId"],
+  properties: { episodeId: ID, sourceId: ID, preferredAudioLanguage: { anyOf: [LANGUAGE_TAG, { type: "null" }] }, probe: { type: "boolean" } },
+  additionalProperties: false,
+});
+
 export const progressBody = compile<{
   sessionId?: string | null;
   episodeId: string;

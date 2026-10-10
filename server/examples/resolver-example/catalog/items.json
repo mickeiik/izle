@@ -1,0 +1,354 @@
+{
+  "items": [
+    {
+      "id": "proxy-demo",
+      "kind": "movie",
+      "title": "Proxy demo",
+      "year": 2026,
+      "synopsis": "A test pattern streamed as HLS from signed, expiring URLs that only play with the right Referer. The resolver module asks the upstream for the stream; izle proxies it.",
+      "genres": [
+        "Test"
+      ],
+      "poster": "assets/3955b463f4c1b7528eaaf975d824a77d2c412290bf186990fc92fcf3534d2b3e.jpg",
+      "episodes": [
+        {
+          "id": "proxy-demo.film",
+          "durationMs": 600000,
+          "playbackAllowed": true,
+          "sources": [
+            {
+              "id": "signed-hls",
+              "type": "adapter",
+              "adapter": "example",
+              "ref": {
+                "video": "demo"
+              },
+              "languages": {
+                "audio": [
+                  "en",
+                  "tr"
+                ],
+                "subtitles": [
+                  "en"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "proxy-series",
+      "kind": "series",
+      "title": "Proxy series",
+      "year": 2026,
+      "genres": [
+        "Test"
+      ],
+      "synopsis": "Three episodes of the same test pattern, each delivered differently (signed URL, inline playlist, MP4), to try auto-next and the owner's \"continue from\" through the proxy. The fourth episode is not approved for playback.",
+      "poster": "assets/61703c832aee2f81f8dbf7d93328f81f54137a5d267f8b4b66de3e6648005b02.jpg",
+      "episodes": [
+        {
+          "id": "proxy-series.s01e01",
+          "season": 1,
+          "number": 1,
+          "title": "Signed URL",
+          "durationMs": 600000,
+          "playbackAllowed": true,
+          "sources": [
+            {
+              "id": "main",
+              "type": "adapter",
+              "adapter": "example",
+              "ref": {
+                "video": "demo"
+              },
+              "languages": {
+                "audio": [
+                  "en",
+                  "tr"
+                ],
+                "subtitles": [
+                  "en"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "proxy-series.s01e02",
+          "season": 1,
+          "number": 2,
+          "title": "Inline playlist",
+          "durationMs": 600000,
+          "playbackAllowed": true,
+          "sources": [
+            {
+              "id": "main",
+              "type": "adapter",
+              "adapter": "example",
+              "ref": {
+                "video": "demo",
+                "inline": true
+              },
+              "languages": {
+                "audio": [
+                  "en",
+                  "tr"
+                ],
+                "subtitles": [
+                  "en"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "proxy-series.s01e03",
+          "season": 1,
+          "number": 3,
+          "title": "Progressive MP4",
+          "durationMs": 600000,
+          "playbackAllowed": true,
+          "sources": [
+            {
+              "id": "main",
+              "type": "adapter",
+              "adapter": "example",
+              "ref": {
+                "video": "demo",
+                "format": "mp4"
+              },
+              "languages": {
+                "audio": [
+                  "en",
+                  "tr"
+                ],
+                "subtitles": [
+                  "en"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "id": "proxy-series.s01e04",
+          "season": 1,
+          "number": 4,
+          "title": "Not approved yet",
+          "playbackAllowed": false,
+          "sources": []
+        }
+      ]
+    },
+    {
+      "id": "inline-demo",
+      "kind": "movie",
+      "title": "Inline playlist",
+      "year": 2026,
+      "synopsis": "The adapter returns the master playlist text itself instead of a URL; izle serves it as the session's playlist.",
+      "genres": [
+        "Test"
+      ],
+      "poster": "assets/62a4fc27cb7d405b6b3b823e7bc5bd8e0fc5fa0555bc52f29b824d07ec4115da.jpg",
+      "episodes": [
+        {
+          "id": "inline-demo.film",
+          "durationMs": 600000,
+          "playbackAllowed": true,
+          "sources": [
+            {
+              "id": "inline-hls",
+              "type": "adapter",
+              "adapter": "example",
+              "ref": {
+                "video": "demo",
+                "inline": true
+              },
+              "languages": {
+                "audio": [
+                  "en",
+                  "tr"
+                ],
+                "subtitles": [
+                  "en"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "mp4-demo",
+      "kind": "movie",
+      "title": "MP4 via proxy",
+      "year": 2026,
+      "synopsis": "A progressive MP4 behind a Referer check. Seeking sends byte ranges through the proxy.",
+      "genres": [
+        "Test"
+      ],
+      "poster": "assets/b35e9f4446e40d8e53a8180247467d368212e7a7a928e76d6fadbde361062a60.jpg",
+      "episodes": [
+        {
+          "id": "mp4-demo.film",
+          "durationMs": 600000,
+          "playbackAllowed": true,
+          "sources": [
+            {
+              "id": "signed-mp4",
+              "type": "adapter",
+              "adapter": "example",
+              "ref": {
+                "video": "demo",
+                "format": "mp4"
+              },
+              "languages": {
+                "audio": [
+                  "en",
+                  "tr"
+                ],
+                "subtitles": [
+                  "en"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "junk-demo",
+      "kind": "movie",
+      "title": "Junk before segments",
+      "year": 2026,
+      "synopsis": "Every MPEG-TS segment starts with 1000 junk bytes, as some sites do. Plays only with proxy.alignTsSegments on.",
+      "genres": [
+        "Test"
+      ],
+      "poster": "assets/60a406246e92e28808c2419a2e5337576960b112a32789339128584cd726dfd5.jpg",
+      "episodes": [
+        {
+          "id": "junk-demo.film",
+          "durationMs": 600000,
+          "playbackAllowed": true,
+          "sources": [
+            {
+              "id": "junk-hls",
+              "type": "adapter",
+              "adapter": "example",
+              "ref": {
+                "video": "demo",
+                "junkBytes": 1000
+              },
+              "languages": {
+                "audio": [
+                  "en",
+                  "tr"
+                ],
+                "subtitles": [
+                  "en"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "header-demo",
+      "kind": "movie",
+      "title": "Direct with headers",
+      "year": 2026,
+      "synopsis": "A plain bundle source (no adapter) whose upstream needs a Referer: the bundle lists the header and izle proxies it.",
+      "genres": [
+        "Test"
+      ],
+      "poster": "assets/75ddb00349689074c17a5ae035bc7893650748f2626661b298c0c0a4181d302e.jpg",
+      "episodes": [
+        {
+          "id": "header-demo.film",
+          "durationMs": 600000,
+          "playbackAllowed": true,
+          "sources": [
+            {
+              "id": "static-hls",
+              "type": "direct",
+              "languages": {
+                "audio": [
+                  "en",
+                  "tr"
+                ],
+                "subtitles": [
+                  "en"
+                ]
+              },
+              "media": {
+                "kind": "hls",
+                "url": "http://127.0.0.1:8788/static/demo/master.m3u8",
+                "headers": {
+                  "Referer": "https://player.example.test/"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fallback-demo",
+      "kind": "movie",
+      "title": "Fallback demo",
+      "year": 2026,
+      "synopsis": "The first source resolves to nothing (the upstream does not know the video), so the server moves on to the second.",
+      "genres": [
+        "Test"
+      ],
+      "poster": "assets/a668021864a8a0fdc7f32368b6c6a6733a8d7adb27cd76898ca00c115e317bde.jpg",
+      "episodes": [
+        {
+          "id": "fallback-demo.film",
+          "durationMs": 600000,
+          "playbackAllowed": true,
+          "sources": [
+            {
+              "id": "missing",
+              "type": "adapter",
+              "adapter": "example",
+              "label": "Not on the upstream",
+              "ref": {
+                "video": "missing"
+              },
+              "languages": {
+                "audio": [
+                  "en",
+                  "tr"
+                ],
+                "subtitles": [
+                  "en"
+                ]
+              }
+            },
+            {
+              "id": "signed-hls",
+              "type": "adapter",
+              "adapter": "example",
+              "ref": {
+                "video": "demo"
+              },
+              "languages": {
+                "audio": [
+                  "en",
+                  "tr"
+                ],
+                "subtitles": [
+                  "en"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,9 +1,8 @@
 # izle-server API v1
 
-Status: **draft, implemented for direct sources** (Phase 2). The proxy routes (`/p/…`) and the resolver-backed
-parts arrive in Phase 4, the browser admin UI in Phase 5 (see the [roadmap](../roadmap.md)). Changes within v1 are
-additive only (new optional request fields, new response fields, new routes); clients MUST ignore unknown
-response fields.
+Status: **draft, implemented**: direct sources (Phase 2), resolver modules and the media proxy (Phase 4). Changes
+within v1 are additive only (new optional request fields, new response fields, new routes); clients MUST ignore
+unknown response fields.
 
 ## Conventions
 
@@ -149,7 +148,8 @@ Errors: `404 unknown_item`.
   "next": { "episodeId": "show.e2", "season": 1, "number": 2, "title": "Season finale", "label": null },
   "item": { "id", "kind", "title", "year", "posterUrl" },
   "episode": { "id": "show.e1", "index": 0, "count": 5, "season": 1, "number": 1, "title": "Pilot", "label": null, "durationMs": 1200000 },
-  "resume": { "positionMs": 90000, "durationMs": 1200000 }
+  "resume": { "positionMs": 90000, "durationMs": 1200000 },
+  "expiresAt": null
 }
 ```
 
@@ -161,18 +161,62 @@ Source selection:
    primary subtag, or `audio: []` = no dialogue, or no preference) **> unknown** (`audio: null`) **> known
    mismatch**. Sources the TV reported as failing (by listing them in `exclude`) in the last 10 minutes move to
    the end.
-3. Candidates are tried in order. Direct sources without upstream headers succeed immediately: their URL goes to
-   the TV as-is. *This version* skips sources that need the proxy (direct media with `headers`) or a resolver
-   module (`adapter` sources); both arrive in Phase 4, where header-bound or inline media comes back as a
-   `/p/<session>/…` URL and upstream headers never leave the server.
-4. Nothing playable → `502 no_playable_source` with `tried: [{sourceId, code}]` (`proxy_unavailable`,
-   `adapter_unavailable`).
+3. Candidates are tried in order. Direct sources succeed immediately. `adapter` sources are resolved by the
+   [resolver module](resolver-module-v1.md) under a per-source deadline (`resolver.deadlineMs`, 12 s) within a
+   budget for the whole request (`resolver.budgetMs`, 30 s), so a TV client should allow ~35 s for this call.
+   An adapter source that fails is skipped (and moved last for 10 minutes); the next candidate is tried.
+4. How the TV gets the stream: a plain URL without upstream headers goes to the TV as-is. Media that needs
+   upstream `headers` (bundle `media.headers` or an adapter result's `headers`), and inline playlists, come back
+   as a **server-relative** proxy URL, `/p/<token>/index.m3u8` (HLS) or `/p/<token>/video.mp4` (MP4), which the
+   TV resolves against its server base URL; upstream headers never leave the server. Subtitle tracks that need
+   headers come back as `/p/<token>/sub/<n>.<ext>`. With `proxy.always`, every HLS/MP4 stream and subtitle track
+   is proxied. DASH is never proxied in v1: DASH that needs headers cannot be served.
+5. Nothing playable → `502 no_playable_source` with `tried: [{sourceId, code, adapterId?, name?}]`. Codes:
+   `adapter_unavailable` (no resolver module provides the adapter), `unsupported` (DASH that needs headers),
+   `timeout`, `abort`, `error`, `empty` (the adapter returned no result). `name` is the error's class name (never
+   its message), `InvalidResult` for a result that fails validation, `BudgetExhausted` for sources skipped
+   because the request's time budget ran out.
 
 `alternatives` are the remaining playable candidates in order: on a player error the TV re-resolves with the
 failed source in `exclude` and continues at the same position. `next` is the episode auto-next would start (next
 `playbackAllowed` episode in play order), or null at the end of the item or when the episode (or item) has
 `autoAdvance: false`. `resume` is the saved position when the episode is being watched (the TV applies its own
-resume threshold), else null. `sessionId` identifies this playback in progress reports.
+resume threshold), else null. `sessionId` identifies this playback in progress reports. `expiresAt` is the
+adapter's validity hint for the stream (ISO 8601), or null. `languages` and `subtitleTracks` are the adapter
+result's when it gives them, else the bundle source's.
+
+## Media proxy
+
+`GET /p/<token>/…` serves header-bound and inline-playlist streams. The token (32 random bytes, base64url) is the
+credential: the TV's media player sends no device token. Sessions live in memory only, slide with use
+(`proxy.sessionTtlSec`, 6 h) up to 12 h, and a device keeps at most two (resolving a third ends the oldest).
+
+| Route | |
+|---|---|
+| `GET /p/<token>/index.m3u8` | the session's HLS playlist: fetched upstream with the session's headers (or the adapter's inline text), every URI rewritten |
+| `GET /p/<token>/video.mp4` | the session's MP4, streamed; `Range` is forwarded and `206`/`Content-Range` pass back |
+| `GET /p/<token>/u/<ref>` | a URI from a rewritten playlist: another playlist (rewritten in turn) or a segment, key, init section or subtitle segment (streamed, `Range` forwarded) |
+| `GET /p/<token>/sub/<n>.<vtt\|srt\|ttml>` | subtitle track `n` of the resolve response, with that track's headers |
+
+- **Rewriting** is generic HLS: URI lines and `URI="…"` attributes (`EXT-X-KEY`, `EXT-X-MAP`, `EXT-X-MEDIA`,
+  `EXT-X-I-FRAME-STREAM-INF`, `EXT-X-SESSION-KEY`, `EXT-X-PART`, `EXT-X-PRELOAD-HINT`, `EXT-X-RENDITION-REPORT`, …)
+  are resolved against the playlist's own URL (after redirects) or the inline `baseUrl`, and written as relative
+  `u/<ref>` links. `data:` and other non-HTTP URIs are left alone.
+- **`<ref>`** = `<p|r>.<base64url of the URL>.<HMAC>[.<extension>]`, signed with a per-session key: only URLs the
+  proxy wrote itself can be fetched, so a session cannot be used to reach other hosts. A wrong or foreign ref
+  answers `404`. The extension is a hint for players that infer the format from the path.
+- **Streaming:** segments and MP4 bodies are passed through as they arrive, never buffered; a TV that disconnects
+  cancels the upstream request. Only `Content-Type`, `Content-Length`, `Content-Range`, `Accept-Ranges`,
+  `Last-Modified` and `ETag` are passed back; cookies, redirects and other upstream headers are not.
+- **Errors:** unknown or expired session `410 {"error":"gone"}`. An upstream `401`/`403`/`410` marks the session
+  **stale**: this and every later request answer `410 {"error":"stale"}`, so the TV re-resolves (the same
+  source first when the playback ran for more than 5 minutes: an expired signed URL). Upstream `404` → `404`, other
+  upstream errors → `502`, unreachable → `502`, no headers within 20 s → `504`.
+- **`proxy.alignTsSegments`** (off by default): for segments of proxied HLS (no `Range`, not `.m4s/.mp4/.aac/.vtt/…`),
+  junk before the first MPEG-TS packet — up to 4 KiB, recognized by five 0x47 sync bytes 188 bytes apart — is cut
+  off and the type is set to `video/mp2t`. Some sites prefix segments with such bytes; Media3 rejects segments
+  with more than a few hundred junk bytes ("Cannot find sync byte").
+- DASH manifests are not rewritten (v1).
 
 ### `POST /api/v1/tv/progress`
 
@@ -233,10 +277,31 @@ Every change that affects the TV bumps the device's state version and emits a `s
 
 | Route | Response |
 |---|---|
-| `GET /api/v1/admin/catalog` | `{"id", "buildId", "builtAt", "name", "loadedAt", "stats", "adapters", "warnings"}` |
+| `GET /api/v1/admin/catalog` | `{"id", "buildId", "builtAt", "name", "loadedAt", "stats", "adapters", "warnings", "resolver"}` — `resolver` is `{"sha256", "adapters"}` of the loaded module, or null |
 | `GET /api/v1/admin/catalog/search?q=&limit=` | `{"items": [{"id", "kind", "title", "year", "posterUrl", "episodeCount", "playableCount"}]}` — case-, accent- and dotless-ı-insensitive match on title, original title and id; empty `q` lists everything (by title, `limit` ≤ 200, default 50) |
 | `GET /api/v1/admin/catalog/items/:id` | the item with all episodes; sources as `{id, type, label, languages, kind, needsProxy}` or `{…, adapter}` — upstream URLs, headers and refs are not exposed |
-| `POST /api/v1/admin/catalog/reload` | re-reads the bundle from disk: `200 {"catalog"}`, or `422 {"error": "invalid_catalog", "issues"}` and the previous catalog stays active. `SIGHUP` does the same. All devices get a new state version. |
+| `POST /api/v1/admin/catalog/reload` | re-reads the bundle from disk: `200 {"catalog"}`, or `422 {"error": "invalid_catalog", "issues"}` and the previous catalog stays active (also when the bundle needs an adapter the resolver module does not provide). `SIGHUP` does the same. All devices get a new state version. |
+
+### Diagnostics
+
+`POST /api/v1/admin/diagnostics/resolve` `{"episodeId", "sourceId"?, "preferredAudioLanguage"?, "probe"?: true}`
+runs every source of the episode (or only `sourceId`), in bundle order, through the same path as a TV resolve —
+adapters, deadlines, validation — without creating sessions, and by default probes the upstream (an HLS playlist
+is fetched and summarized; MP4/DASH get `Range: bytes=0-1023`). Nothing secret is returned: hosts and header
+*names* only, never URLs, header values, refs or playlist text.
+
+```json
+{ "itemId": "proxy-demo", "episodeId": "proxy-demo.film", "playbackAllowed": true, "sources": [
+  { "sourceId": "missing", "type": "adapter", "adapterId": "example", "ok": false, "code": "empty", "ms": 1 },
+  { "sourceId": "signed-hls", "type": "adapter", "adapterId": "example", "ok": true, "ms": 2,
+    "results": [ … ],
+    "stream": { "kind": "hls", "inline": false, "host": "127.0.0.1:8788", "headerNames": ["Referer"], "delivery": "proxy",
+                "languages": { "audio": ["en", "tr"], "subtitles": ["en"] }, "subtitleTracks": 0, "label": null, "expiresAt": "…" },
+    "probe": { "ok": true, "status": 200, "contentType": "application/vnd.apple.mpegurl", "ms": 3,
+               "playlist": { "master": true, "variants": 1, "renditions": 3, "segments": 0, "endList": false } } } ] }
+```
+
+`delivery` is `direct`, `proxy` or `unsupported`. Errors: `404 unknown_episode`, `404 unknown_source`.
 
 ## Static routes
 
@@ -245,7 +310,7 @@ Every change that affects the TV bumps the device's state version and emits a `s
 | `GET /healthz` | `{"ok": true}` |
 | `GET /assets/<sha256>.<jpg\|png\|webp>` | catalog posters, `Cache-Control: public, max-age=31536000, immutable` |
 | `GET /admin/` | admin UI (a placeholder page until Phase 5) |
-| `GET /p/:session/…` | media proxy (Phase 4) |
+| `GET /p/<token>/…` | media proxy (see [Media proxy](#media-proxy)) |
 
 ## Logging
 
@@ -254,7 +319,8 @@ step: fields whose name contains a word like `url`, `headers`, `authorization`, 
 `config`, `playlist`, `password`, `secret` or `body` are dropped; `scheme://…` in strings becomes
 `<url host>`; runs of 20 or more base64url characters become `<token>`; errors are reduced to their class name
 (and a short `code`). The access log records the **route template** (e.g. `/api/v1/tv/items/:itemId`), status,
-duration and device id — never the raw path or query.
+duration and device id — never the raw path or query. Successful proxy requests (a steady stream of segments) are
+logged at `debug` level only; proxy errors at `info`.
 
 ## Configuration
 
@@ -266,9 +332,9 @@ duration and device id — never the raw path or query.
   "publicUrl": "https://izle.example.org",
   "dataDir": "./data",
   "catalog": { "dir": "./sample-catalog" },
-  "resolver": null,
+  "resolver": { "module": "/opt/izle/resolver/index.js", "config": {}, "deadlineMs": 12000, "budgetMs": 30000 },
   "admin": { "tokenFile": "./data/admin.token" },
-  "proxy": { "always": false, "sessionTtlSec": 21600 },
+  "proxy": { "always": false, "sessionTtlSec": 21600, "alignTsSegments": false },
   "defaults": { "uiLanguage": "en", "preferredAudioLanguage": "en" },
   "log": { "level": "info" }
 }
@@ -276,4 +342,11 @@ duration and device id — never the raw path or query.
 
 Every key is optional. Without a file the server listens on `0.0.0.0:8787`, serves the sample catalog shipped in
 the repository and keeps its data in `./data` (`izle.db`, `admin.token`). Unknown keys are errors.
-`resolver` and `proxy` are accepted but not used until Phase 4.
+
+- `resolver` (default null): `module` is a **local path** to the owner's resolver module (never downloaded);
+  `config` is handed to it as `ctx.config` and never logged; `deadlineMs` (100–120000, default 12000) bounds one
+  adapter call, `budgetMs` (default 30000) one TV resolve request. The module gets `<dataDir>/resolver` as its
+  own directory.
+- `proxy.always` sends every HLS/MP4 stream through the proxy (the TV never contacts upstream hosts);
+  `proxy.sessionTtlSec` (60–86400) is the sliding session lifetime; `proxy.alignTsSegments` see
+  [Media proxy](#media-proxy).

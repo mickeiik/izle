@@ -40,7 +40,11 @@ npm run sample:check     # probes every sample-catalog media URL (network; manua
 
 - `contract/`: `npm test -w contract`, `npx izle-validate <bundleDir> [--probe]`
 - `server/`: `npm test -w server`, `npm run -w server dev -- --config server/izle.dev.json` (sample catalog on :8787,
-  state in `server/data/`), `npm run -s -w server dev -- admin-token --config server/izle.dev.json`
+  state in `server/data/`), `npm run -s -w server dev -- admin-token --config server/izle.dev.json`,
+  `npm run -s -w server dev -- check-resolver --config <file>`
+- Resolver module + proxy end to end: [server/examples/resolver-example/](server/examples/resolver-example/README.md)
+  (`make-media.sh` needs ffmpeg; `upstream.js` is the local stand-in site; `izle.example.json` the server config,
+  state in `server/data/example/`)
 - `android/` (needs `JAVA_HOME` = JDK 21+ and `ANDROID_HOME`): `./gradlew :app:assembleDebug :app:testDebugUnitTest`
 
 TypeScript is run directly by `tsx`; there is no build step for development. Use `.ts` extensions in relative

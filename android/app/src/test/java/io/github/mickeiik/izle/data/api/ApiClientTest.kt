@@ -12,6 +12,7 @@ import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 /** ApiClient against an in-process MockWebServer (no network). */
 class ApiClientTest {
@@ -62,6 +63,24 @@ class ApiClientTest {
         assertEquals("POST", request.method)
         assertTrue(request.headers["Content-Type"]!!.startsWith("application/json"))
         assertEquals("""{"episodeId":"m.film","exclude":["b"]}""", request.body?.utf8())
+    }
+
+    @Test
+    fun resolveWaitsLongerThanOtherCalls() = runBlocking {
+        // The server may spend its whole resolver budget (30 s) before answering; other calls time out sooner.
+        val short = OkHttpClient.Builder().readTimeout(200, TimeUnit.MILLISECONDS).build()
+        val long = OkHttpClient.Builder().readTimeout(5, TimeUnit.SECONDS).build()
+        val api = ApiClient(server.url("/"), "device-token", short, long)
+        val slow = { body: String -> json(body).newBuilder().headersDelay(600, TimeUnit.MILLISECONDS).build() }
+        server.enqueue(slow("""{"sessionId":"s","sourceId":"a","media":{"kind":"hls","url":"/p/x/index.m3u8"},"item":{"id":"m","kind":"movie","title":"M"},"episode":{"id":"m.film"}}"""))
+        assertEquals("a", api.resolve(ResolveRequest("m.film")).sourceId)
+        server.enqueue(slow("""{"version":1,"device":{"id":"d","name":"TV"},"catalog":{"id":"c","buildId":"b","name":"n"},"home":[]}"""))
+        try {
+            api.state()
+            fail("expected a read timeout")
+        } catch (e: IOException) {
+            // expected
+        }
     }
 
     @Test

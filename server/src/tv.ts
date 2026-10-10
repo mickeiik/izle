@@ -146,8 +146,8 @@ export class TvService {
     };
   }
 
-  async resolve(device: Device, input: ResolveInput) {
-    const r = await this.s.resolver.resolve(device.id, this.settings(device).preferredAudioLanguage, input);
+  async resolve(device: Device, input: ResolveInput, signal?: AbortSignal) {
+    const r = await this.s.resolver.resolve(device.id, this.settings(device).preferredAudioLanguage, input, signal);
     const { item, episode, index } = r.ref;
     const nextIndex = autoNextIndex(item, index);
     const next = nextIndex >= 0 ? item.episodes[nextIndex]! : null;
@@ -173,6 +173,7 @@ export class TvService {
       item: this.itemCard(item),
       episode: { id: episode.id, index, count: item.episodes.length, ...episodeSummary(episode), durationMs: episode.durationMs ?? null },
       resume: progress?.status === "watching" ? { positionMs: progress.positionMs, durationMs: progress.durationMs } : null,
+      expiresAt: r.expiresAt,
     };
   }
 

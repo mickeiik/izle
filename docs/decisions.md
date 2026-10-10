@@ -237,3 +237,74 @@ from the roadmap, the entry wins until the roadmap is updated.
 - **Sample media on the emulator:** the blender.org `.mov` fallback of Elephants Dream (H.264 720×405) fails
   `MediaCodec.configure` on both emulator decoders; recorded in the verification notes, the catalog is unchanged
   (the archive.org source plays, the `.mov` is untested on hardware).
+
+## Phase 4 — Resolver modules and the media proxy (2026-10-10)
+
+- **Loader:** the default export wins over the namespace; `createAdapters` gets 30 s; adapter ids must use the
+  catalog id syntax. Load failures stop the server with the module path and the error's class name only (a module's
+  messages may hold URLs or keys); `check-resolver` says how to see the details (`node <module>`).
+- **The logged module hash is the first 16 hex digits.** The full SHA-256 is a 64-character run that the log
+  redaction turns into `<token>`; the full hash is printed by `check-resolver` and returned by
+  `GET /admin/catalog` (`resolver.sha256`).
+- **Missing adapters refuse the catalog only when a module is configured** (at start and on reload, as a
+  `bundle.json /adapters` validation error). Without a module the Phase 2 behaviour stays: a warning, and adapter
+  sources are `adapter_unavailable`. A bundle can thus be inspected and its direct sources played before the owner
+  sets up the module.
+- **New config keys:** `resolver.deadlineMs` (default 12 000) and `resolver.budgetMs` (30 000), so slow upstreams
+  can be accommodated and tests can use short deadlines; `proxy.alignTsSegments` (default false).
+- **The first servable adapter result is used; the others are ignored.** The TV's fallback works on source ids
+  (`exclude`), so distinct alternatives belong in separate bundle sources. "Servable" excludes DASH with headers.
+- **Failure codes** beyond the roadmap's `timeout|abort|error`: `empty` (the adapter returned `[]`), `unsupported`
+  (DASH that needs headers; replaces Phase 2's `proxy_unavailable`), and the name `BudgetExhausted` for sources
+  skipped once the 30 s budget is spent. Invalid results are `error` named `InvalidResult`, `NotAPlaylist` or
+  `PlaylistTooLarge`. Adapter failures get the same 10-minute "move last" penalty as sources the TV excluded. A
+  TV that disconnects mid-resolve (`abort`) ends the request (`503 aborted`, nobody reads it).
+- **Adapters get a deep copy of `ref`**, so a module cannot change the loaded catalog.
+- **Proxy URLs are signed:** a `u/` link is `<p|r>.<base64url URL>.<HMAC-SHA256 truncated to 128 bits>[.<ext>]`
+  with a random key per session. Without the signature anyone holding a session token (it travels in clear on a
+  LAN) could make the server fetch any URL with the owner's upstream headers. The extension is kept as a hint for
+  players that infer the container from the path.
+- **Links are relative** (`u/…` from the entry playlist, bare refs from playlists already under `u/`), so a server
+  behind a reverse proxy under a path prefix keeps working; the entry URL the TV gets is server-relative, which the
+  TV already resolves below its base URL (Phase 3).
+- **Playlist or not is decided by position**, not by guessing: URIs after `#EXT-X-STREAM-INF` and in
+  `EXT-X-MEDIA` / `EXT-X-I-FRAME-STREAM-INF` / `EXT-X-RENDITION-REPORT` are playlists (`p`, rewritten); everything
+  else is a raw resource (`r`, streamed), except that an `r` answered with an `mpegurl` content type is still
+  rewritten.
+- **Entry routes:** `/p/<token>/index.m3u8`, `/p/<token>/video.mp4`, `/p/<token>/sub/<n>.<ext>` (the roadmap only
+  named the HLS one). A session may have no main media when only subtitle tracks need headers.
+- **Unknown or expired sessions answer 410**, not 404, so a TV that outlived a server restart re-resolves like it
+  does for an expired URL. Upstream 410 also marks a session stale (with 401/403).
+- **Upstream traffic:** response headers pass through an allow-list (type, length, range, validators); raw
+  resources are requested with `Accept-Encoding: identity` and a compressed answer loses its `Content-Length`;
+  upstream headers must arrive within 20 s, bodies then stream without a time limit (the TV's own read timeout ends
+  stalled transfers, and its disconnect cancels the upstream fetch). An upstream that breaks mid-body ends the
+  response like a dropped connection. Playlists are read up to 4 MiB.
+- **`proxy.always` covers bundle `direct` sources too** (not only adapter URLs): it exists so the TV never contacts
+  upstream hosts. DASH is never proxied (no MPD rewriting in v1) and stays direct under `proxy.always`.
+- **Proxy requests are logged at debug level unless they fail** (a playing TV makes a request every few seconds).
+- **`proxy.alignTsSegments` is needed and implemented (off by default).** On the emulator, Media3 1.11.1 refused
+  HLS segments prefixed with 1000 junk bytes (`ParserException: Cannot find sync byte. Most likely not a Transport
+  Stream`) and played them with the option on. Shorter prefixes were not measured on a device. The rule is
+  format-level only: in proxied HLS segments without `Range` and without a known non-TS extension (`.m4s`, `.mp4`,
+  `.aac`, `.vtt`, `.key`, …), find the first offset below 4 KiB with five 0x47 bytes 188 apart, drop what precedes
+  it and label the result `video/mp2t`; otherwise pass the bytes unchanged.
+- **Diagnostics** (`POST /admin/diagnostics/resolve`) test sources in bundle order (not the device's language
+  ranking), take an optional `preferredAudioLanguage` for adapters, probe by default and return hosts and header
+  names only. The upstream host is shown because the redacted log shows it too.
+- **The example module is plain JavaScript with JSDoc types** (`// @ts-check`), so owners can copy it without a
+  build step; the server's `tsconfig` now has `allowJs`/`checkJs` and includes `examples/`, which typechecks the
+  example and the test fixtures against `@izle/contract`.
+- **Example upstream:** a single `upstream.js` serves both the tests (synthetic in-memory files) and the emulator
+  run (a directory generated by `make-media.sh`; generated media is never committed). Signed tokens live in the
+  path so relative segment URIs inherit them. `--verbose` prints one line per request (token replaced by
+  `<token>`). The example catalog (posters drawn with ImageMagick) has six films and one series covering signed
+  HLS, inline playlists, MP4, junk-prefixed segments, a header-bound bundle source and server-side fallback; its
+  config enables `alignTsSegments`, keeps state in `server/data/example/` and uses a dummy API key.
+- **Test resolver:** `server/test/fixtures/test-resolver.js` re-exports the example adapters and adds a `test`
+  adapter whose ref picks a hostile behaviour (hang ignoring the signal, hang honouring it, async and sync throws
+  with secrets in the message, invalid results, logging secrets through `ctx.log`). No test fetches a `.test` host:
+  those URLs only appear in resolve responses.
+- **TV:** `/tv/resolve` now uses the 40 s client (the default read timeout is 20 s, the server's budget 30 s). The
+  TV does not act on `expiresAt` yet; expired URLs are handled by the 410 → re-resolve path, verified on the
+  emulator (`docs/verification/phase4/`).
