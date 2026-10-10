@@ -9,13 +9,15 @@
     "izle-server": "./bin/izle-server.js"
   },
   "scripts": {
-    "dev": "tsx src/main.ts",
-    "start": "tsx src/main.ts",
+    "dev": "tsx src/cli.ts",
+    "start": "tsx src/cli.ts",
     "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.4",
+    "@izle/contract": "^0.1.0",
+    "ajv": "^8.20.0",
     "hono": "^4.13.13",
     "tsx": "^4.23.15"
   }

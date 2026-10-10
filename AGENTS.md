@@ -39,7 +39,8 @@ npm run sample:check     # probes every sample-catalog media URL (network; manua
 ```
 
 - `contract/`: `npm test -w contract`, `npx izle-validate <bundleDir> [--probe]`
-- `server/`: `npm test -w server`, `npm run -w server dev -- --config <file>`
+- `server/`: `npm test -w server`, `npm run -w server dev -- --config server/izle.dev.json` (sample catalog on :8787,
+  state in `server/data/`), `npm run -s -w server dev -- admin-token --config server/izle.dev.json`
 - `android/` (needs `JAVA_HOME` = JDK 21+ and `ANDROID_HOME`): `./gradlew :app:assembleDebug :app:testDebugUnitTest`
 
 TypeScript is run directly by `tsx`; there is no build step for development. Use `.ts` extensions in relative

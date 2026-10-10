@@ -1,0 +1,519 @@
+import { mkdirSync } from "node:fs";
+import path from "node:path";
+import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+
+// Schema migrations, applied in order; PRAGMA user_version records how many ran. Never edit a shipped migration,
+// append a new one.
+const MIGRATIONS: string[] = [
+  `
+  CREATE TABLE devices (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    token_hash TEXT UNIQUE,                 -- sha256 of the device token; NULL while pairing is not completed
+    created_at INTEGER NOT NULL,
+    last_seen_at INTEGER,
+    ui_language TEXT,                       -- NULL = server/catalog default
+    preferred_audio_language TEXT,
+    subtitles_language TEXT,                -- NULL = subtitles off
+    state_version INTEGER NOT NULL DEFAULT 1
+  );
+  CREATE TABLE pair_codes (
+    code TEXT PRIMARY KEY,
+    pair_token_hash TEXT NOT NULL,
+    device_id TEXT REFERENCES devices(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    approved_at INTEGER,
+    delivered_at INTEGER
+  );
+  CREATE TABLE home_entries (
+    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    catalog_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    PRIMARY KEY (device_id, position)
+  );
+  CREATE TABLE progress (
+    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    catalog_id TEXT NOT NULL,
+    episode_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    position_ms INTEGER NOT NULL,
+    duration_ms INTEGER,
+    status TEXT NOT NULL CHECK (status IN ('watching', 'finished')),
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (device_id, catalog_id, episode_id)
+  );
+  CREATE TABLE item_cursor (
+    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    catalog_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    episode_id TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (device_id, catalog_id, item_id)
+  );
+  CREATE TABLE commands (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    acked_at INTEGER
+  );
+  CREATE INDEX commands_by_device ON commands (device_id, acked_at);
+  CREATE TABLE now_playing (
+    device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+    catalog_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    episode_id TEXT NOT NULL,
+    source_id TEXT,
+    position_ms INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER,
+    state TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  `,
+];
+
+export const SCHEMA_VERSION = MIGRATIONS.length;
+
+export interface Device {
+  id: string;
+  name: string;
+  tokenHash: string | null;
+  createdAt: number;
+  lastSeenAt: number | null;
+  uiLanguage: string | null;
+  preferredAudioLanguage: string | null;
+  subtitlesLanguage: string | null;
+  stateVersion: number;
+}
+
+export interface PairCode {
+  code: string;
+  pairTokenHash: string;
+  deviceId: string | null;
+  createdAt: number;
+  expiresAt: number;
+  approvedAt: number | null;
+  deliveredAt: number | null;
+}
+
+export type ProgressStatus = "watching" | "finished";
+
+export interface Progress {
+  catalogId: string;
+  itemId: string;
+  episodeId: string;
+  positionMs: number;
+  durationMs: number | null;
+  status: ProgressStatus;
+  updatedAt: number;
+}
+
+export interface Cursor {
+  catalogId: string;
+  itemId: string;
+  episodeId: string;
+  updatedAt: number;
+}
+
+export interface Command {
+  id: number;
+  deviceId: string;
+  type: string;
+  payload: Record<string, unknown>;
+  createdAt: number;
+  ackedAt: number | null;
+}
+
+export interface NowPlaying {
+  catalogId: string;
+  itemId: string;
+  episodeId: string;
+  sourceId: string | null;
+  positionMs: number;
+  durationMs: number | null;
+  state: string;
+  updatedAt: number;
+}
+
+type Row = Record<string, unknown>;
+const str = (v: unknown) => v as string;
+const strOrNull = (v: unknown) => (v === null || v === undefined ? null : String(v));
+const num = (v: unknown) => Number(v);
+const numOrNull = (v: unknown) => (v === null || v === undefined ? null : Number(v));
+
+function toDevice(r: Row): Device {
+  return {
+    id: str(r.id),
+    name: str(r.name),
+    tokenHash: strOrNull(r.token_hash),
+    createdAt: num(r.created_at),
+    lastSeenAt: numOrNull(r.last_seen_at),
+    uiLanguage: strOrNull(r.ui_language),
+    preferredAudioLanguage: strOrNull(r.preferred_audio_language),
+    subtitlesLanguage: strOrNull(r.subtitles_language),
+    stateVersion: num(r.state_version),
+  };
+}
+
+function toPairCode(r: Row): PairCode {
+  return {
+    code: str(r.code),
+    pairTokenHash: str(r.pair_token_hash),
+    deviceId: strOrNull(r.device_id),
+    createdAt: num(r.created_at),
+    expiresAt: num(r.expires_at),
+    approvedAt: numOrNull(r.approved_at),
+    deliveredAt: numOrNull(r.delivered_at),
+  };
+}
+
+function toProgress(r: Row): Progress {
+  return {
+    catalogId: str(r.catalog_id),
+    itemId: str(r.item_id),
+    episodeId: str(r.episode_id),
+    positionMs: num(r.position_ms),
+    durationMs: numOrNull(r.duration_ms),
+    status: str(r.status) as ProgressStatus,
+    updatedAt: num(r.updated_at),
+  };
+}
+
+function toCommand(r: Row): Command {
+  return {
+    id: num(r.id),
+    deviceId: str(r.device_id),
+    type: str(r.type),
+    payload: JSON.parse(str(r.payload_json)) as Record<string, unknown>,
+    createdAt: num(r.created_at),
+    ackedAt: numOrNull(r.acked_at),
+  };
+}
+
+export type DevicePatch = Partial<Pick<Device, "name" | "uiLanguage" | "preferredAudioLanguage" | "subtitlesLanguage">>;
+
+/** Typed access to the SQLite database. All methods are synchronous (node:sqlite). */
+export class Store {
+  readonly db: DatabaseSync;
+  // Tracked by hand: DatabaseSync#isOpen / #isTransaction need Node 22.15+ / 22.16+.
+  private open = true;
+  private inTransaction = false;
+
+  constructor(file: string) {
+    if (file !== ":memory:") mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    this.db = new DatabaseSync(file, { enableForeignKeyConstraints: true });
+    this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
+    this.migrate();
+  }
+
+  private migrate(): void {
+    const current = Number((this.db.prepare("PRAGMA user_version").get() as Row).user_version);
+    if (current > MIGRATIONS.length) {
+      throw new Error(`database schema version ${current} is newer than this server (${MIGRATIONS.length})`);
+    }
+    for (let v = current; v < MIGRATIONS.length; v++) {
+      this.transaction(() => {
+        this.db.exec(MIGRATIONS[v]!);
+        this.db.exec(`PRAGMA user_version = ${v + 1}`);
+      });
+    }
+  }
+
+  get schemaVersion(): number {
+    return Number((this.db.prepare("PRAGMA user_version").get() as Row).user_version);
+  }
+
+  close(): void {
+    if (this.open) this.db.close();
+    this.open = false;
+  }
+
+  transaction<T>(fn: () => T): T {
+    if (this.inTransaction) return fn();
+    this.db.exec("BEGIN IMMEDIATE");
+    this.inTransaction = true;
+    try {
+      const result = fn();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    } finally {
+      this.inTransaction = false;
+    }
+  }
+
+  private get(sql: string, ...params: SQLInputValue[]): Row | undefined {
+    return this.db.prepare(sql).get(...params) as Row | undefined;
+  }
+
+  private all(sql: string, ...params: SQLInputValue[]): Row[] {
+    return this.db.prepare(sql).all(...params) as Row[];
+  }
+
+  private run(sql: string, ...params: SQLInputValue[]): number {
+    return Number(this.db.prepare(sql).run(...params).changes);
+  }
+
+  // --- devices -------------------------------------------------------------------------------------------------
+
+  createDevice(d: { id: string; name: string; tokenHash: string | null; now: number }): Device {
+    this.run("INSERT INTO devices (id, name, token_hash, created_at) VALUES (?, ?, ?, ?)", d.id, d.name, d.tokenHash, d.now);
+    return this.getDevice(d.id)!;
+  }
+
+  setDeviceToken(id: string, tokenHash: string, now: number): void {
+    this.run("UPDATE devices SET token_hash = ?, last_seen_at = ? WHERE id = ?", tokenHash, now, id);
+  }
+
+  getDevice(id: string): Device | null {
+    const r = this.get("SELECT * FROM devices WHERE id = ?", id);
+    return r ? toDevice(r) : null;
+  }
+
+  getDeviceByTokenHash(tokenHash: string): Device | null {
+    const r = this.get("SELECT * FROM devices WHERE token_hash = ?", tokenHash);
+    return r ? toDevice(r) : null;
+  }
+
+  listDevices(): Device[] {
+    return this.all("SELECT * FROM devices ORDER BY created_at, id").map(toDevice);
+  }
+
+  /** Applies a patch (undefined fields are left alone, null clears) and bumps the state version. */
+  updateDevice(id: string, patch: DevicePatch): Device | null {
+    const columns: Array<[keyof DevicePatch, string]> = [
+      ["name", "name"],
+      ["uiLanguage", "ui_language"],
+      ["preferredAudioLanguage", "preferred_audio_language"],
+      ["subtitlesLanguage", "subtitles_language"],
+    ];
+    const sets: string[] = [];
+    const values: SQLInputValue[] = [];
+    for (const [key, column] of columns) {
+      if (patch[key] !== undefined) {
+        sets.push(`${column} = ?`);
+        values.push(patch[key] ?? null);
+      }
+    }
+    sets.push("state_version = state_version + 1");
+    if (this.run(`UPDATE devices SET ${sets.join(", ")} WHERE id = ?`, ...values, id) === 0) return null;
+    return this.getDevice(id);
+  }
+
+  deleteDevice(id: string): boolean {
+    return this.run("DELETE FROM devices WHERE id = ?", id) > 0;
+  }
+
+  touchDevice(id: string, now: number): void {
+    this.run("UPDATE devices SET last_seen_at = ? WHERE id = ?", now, id);
+  }
+
+  bumpStateVersion(id: string): number {
+    const r = this.get("UPDATE devices SET state_version = state_version + 1 WHERE id = ? RETURNING state_version", id);
+    return r ? num(r.state_version) : 0;
+  }
+
+  bumpAllStateVersions(): Array<{ id: string; stateVersion: number }> {
+    return this.all("UPDATE devices SET state_version = state_version + 1 RETURNING id, state_version").map((r) => ({
+      id: str(r.id),
+      stateVersion: num(r.state_version),
+    }));
+  }
+
+  // --- pairing -------------------------------------------------------------------------------------------------
+
+  insertPairCode(p: { code: string; pairTokenHash: string; now: number; expiresAt: number }): void {
+    this.run(
+      "INSERT INTO pair_codes (code, pair_token_hash, created_at, expires_at) VALUES (?, ?, ?, ?)",
+      p.code,
+      p.pairTokenHash,
+      p.now,
+      p.expiresAt,
+    );
+  }
+
+  getPairCode(code: string): PairCode | null {
+    const r = this.get("SELECT * FROM pair_codes WHERE code = ?", code);
+    return r ? toPairCode(r) : null;
+  }
+
+  /** Codes that are neither expired nor delivered. */
+  listOpenPairCodes(now: number): PairCode[] {
+    return this.all("SELECT * FROM pair_codes WHERE expires_at > ? AND delivered_at IS NULL ORDER BY created_at", now).map(toPairCode);
+  }
+
+  approvePairCode(code: string, deviceId: string, now: number): void {
+    this.run("UPDATE pair_codes SET device_id = ?, approved_at = ? WHERE code = ?", deviceId, now, code);
+  }
+
+  markPairCodeDelivered(code: string, now: number): void {
+    this.run("UPDATE pair_codes SET delivered_at = ? WHERE code = ?", now, code);
+  }
+
+  /**
+   * Deletes pair codes that expired (or were delivered) more than `graceMs` ago, together with devices that were
+   * approved but never collected their token.
+   */
+  purgePairCodes(now: number, graceMs: number): void {
+    this.transaction(() => {
+      this.run(
+        `DELETE FROM devices WHERE token_hash IS NULL AND id IN
+           (SELECT device_id FROM pair_codes WHERE device_id IS NOT NULL AND delivered_at IS NULL AND expires_at <= ?)`,
+        now,
+      );
+      this.run("DELETE FROM pair_codes WHERE expires_at <= ? OR delivered_at <= ?", now - graceMs, now - graceMs);
+    });
+  }
+
+  // --- home ----------------------------------------------------------------------------------------------------
+
+  getHome(deviceId: string, catalogId: string): string[] {
+    return this.all("SELECT item_id FROM home_entries WHERE device_id = ? AND catalog_id = ? ORDER BY position", deviceId, catalogId).map(
+      (r) => str(r.item_id),
+    );
+  }
+
+  setHome(deviceId: string, catalogId: string, itemIds: string[]): void {
+    this.transaction(() => {
+      this.run("DELETE FROM home_entries WHERE device_id = ?", deviceId);
+      const insert = this.db.prepare("INSERT INTO home_entries (device_id, position, catalog_id, item_id) VALUES (?, ?, ?, ?)");
+      itemIds.forEach((itemId, i) => insert.run(deviceId, i, catalogId, itemId));
+    });
+  }
+
+  // --- progress & cursor ---------------------------------------------------------------------------------------
+
+  getProgress(deviceId: string, catalogId: string, episodeId: string): Progress | null {
+    const r = this.get("SELECT * FROM progress WHERE device_id = ? AND catalog_id = ? AND episode_id = ?", deviceId, catalogId, episodeId);
+    return r ? toProgress(r) : null;
+  }
+
+  listProgress(deviceId: string, catalogId: string, itemId?: string): Progress[] {
+    return itemId === undefined
+      ? this.all("SELECT * FROM progress WHERE device_id = ? AND catalog_id = ? ORDER BY updated_at DESC", deviceId, catalogId).map(toProgress)
+      : this.all(
+          "SELECT * FROM progress WHERE device_id = ? AND catalog_id = ? AND item_id = ? ORDER BY updated_at DESC",
+          deviceId,
+          catalogId,
+          itemId,
+        ).map(toProgress);
+  }
+
+  upsertProgress(deviceId: string, p: Progress): void {
+    this.run(
+      `INSERT INTO progress (device_id, catalog_id, episode_id, item_id, position_ms, duration_ms, status, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (device_id, catalog_id, episode_id) DO UPDATE SET
+         item_id = excluded.item_id, position_ms = excluded.position_ms, duration_ms = excluded.duration_ms,
+         status = excluded.status, updated_at = excluded.updated_at`,
+      deviceId,
+      p.catalogId,
+      p.episodeId,
+      p.itemId,
+      p.positionMs,
+      p.durationMs,
+      p.status,
+      p.updatedAt,
+    );
+  }
+
+  deleteProgress(deviceId: string, catalogId: string, episodeId: string): void {
+    this.run("DELETE FROM progress WHERE device_id = ? AND catalog_id = ? AND episode_id = ?", deviceId, catalogId, episodeId);
+  }
+
+  getCursor(deviceId: string, catalogId: string, itemId: string): Cursor | null {
+    const r = this.get("SELECT * FROM item_cursor WHERE device_id = ? AND catalog_id = ? AND item_id = ?", deviceId, catalogId, itemId);
+    return r ? { catalogId: str(r.catalog_id), itemId: str(r.item_id), episodeId: str(r.episode_id), updatedAt: num(r.updated_at) } : null;
+  }
+
+  listCursors(deviceId: string, catalogId: string): Cursor[] {
+    return this.all("SELECT * FROM item_cursor WHERE device_id = ? AND catalog_id = ? ORDER BY updated_at DESC", deviceId, catalogId).map((r) => ({
+      catalogId: str(r.catalog_id),
+      itemId: str(r.item_id),
+      episodeId: str(r.episode_id),
+      updatedAt: num(r.updated_at),
+    }));
+  }
+
+  setCursor(deviceId: string, c: Cursor): void {
+    this.run(
+      `INSERT INTO item_cursor (device_id, catalog_id, item_id, episode_id, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT (device_id, catalog_id, item_id) DO UPDATE SET episode_id = excluded.episode_id, updated_at = excluded.updated_at`,
+      deviceId,
+      c.catalogId,
+      c.itemId,
+      c.episodeId,
+      c.updatedAt,
+    );
+  }
+
+  // --- commands ------------------------------------------------------------------------------------------------
+
+  insertCommand(deviceId: string, type: string, payload: Record<string, unknown>, now: number): Command {
+    const r = this.get(
+      "INSERT INTO commands (device_id, type, payload_json, created_at) VALUES (?, ?, ?, ?) RETURNING *",
+      deviceId,
+      type,
+      JSON.stringify(payload),
+      now,
+    );
+    return toCommand(r!);
+  }
+
+  /** Unacknowledged commands created after `since`, oldest first. */
+  pendingCommands(deviceId: string, since: number): Command[] {
+    return this.all("SELECT * FROM commands WHERE device_id = ? AND acked_at IS NULL AND created_at > ? ORDER BY id", deviceId, since).map(
+      toCommand,
+    );
+  }
+
+  ackCommand(deviceId: string, id: number, now: number): boolean {
+    return this.run("UPDATE commands SET acked_at = COALESCE(acked_at, ?) WHERE id = ? AND device_id = ?", now, id, deviceId) > 0;
+  }
+
+  purgeCommands(before: number): void {
+    this.run("DELETE FROM commands WHERE created_at < ?", before);
+  }
+
+  // --- now playing ---------------------------------------------------------------------------------------------
+
+  setNowPlaying(deviceId: string, n: NowPlaying): void {
+    this.run(
+      `INSERT INTO now_playing (device_id, catalog_id, item_id, episode_id, source_id, position_ms, duration_ms, state, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (device_id) DO UPDATE SET catalog_id = excluded.catalog_id, item_id = excluded.item_id,
+         episode_id = excluded.episode_id, source_id = excluded.source_id, position_ms = excluded.position_ms,
+         duration_ms = excluded.duration_ms, state = excluded.state, updated_at = excluded.updated_at`,
+      deviceId,
+      n.catalogId,
+      n.itemId,
+      n.episodeId,
+      n.sourceId,
+      n.positionMs,
+      n.durationMs,
+      n.state,
+      n.updatedAt,
+    );
+  }
+
+  getNowPlaying(deviceId: string): NowPlaying | null {
+    const r = this.get("SELECT * FROM now_playing WHERE device_id = ?", deviceId);
+    return r
+      ? {
+          catalogId: str(r.catalog_id),
+          itemId: str(r.item_id),
+          episodeId: str(r.episode_id),
+          sourceId: strOrNull(r.source_id),
+          positionMs: num(r.position_ms),
+          durationMs: numOrNull(r.duration_ms),
+          state: str(r.state),
+          updatedAt: num(r.updated_at),
+        }
+      : null;
+  }
+}

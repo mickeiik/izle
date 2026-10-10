@@ -1,0 +1,8 @@
+{
+  "listen": { "host": "0.0.0.0", "port": 8787 },
+  "dataDir": "./data",
+  "catalog": { "dir": "../sample-catalog" },
+  "admin": { "tokenFile": "./data/admin.token" },
+  "defaults": { "uiLanguage": "en", "preferredAudioLanguage": "en" },
+  "log": { "level": "info" }
+}

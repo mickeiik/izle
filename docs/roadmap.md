@@ -4,7 +4,7 @@ This is the project plan, copied from the approved planning document and edited 
 (environment-specific facts and references to private catalogs removed). Routine decisions taken while
 implementing it are recorded in [decisions.md](decisions.md); where the two differ, the decision log wins.
 
-Status: Phases 0–1 implemented. Phase 2 is next.
+Status: Phases 0–2 implemented. Phase 3 is next.
 
 ## Context
 
@@ -203,7 +203,7 @@ Exact URLs live in `sample-catalog/items.json`. Excluded: demo streams whose con
 - Tests (node:test): schema accepts the sample, rejects fixtures (duplicate ids, bad poster hash, unknown adapter, movie with 2 episodes, unknown field).
 - Verify: `npm test -w contract`, `npx izle-validate sample-catalog`, `npm run sample:check`.
 
-**Phase 2 — Server core (direct sources)**
+**Phase 2 — Server core (direct sources)** ✅
 - Config loading, catalog load + validate at start, SQLite store + migrations, pairing, TV API (state/items/resolve for direct sources/progress/ack), admin API, SSE, redacted logging, CLI, `docs/spec/server-api-v1.md`.
 - Tests: config parsing; pairing flow (expiry, one-shot token, rate limit); cursor/next logic (progress → ended → advance, owner override, `playbackAllowed` skipped, `autoAdvance` boundary); home list cap; resolve ordering (audio match > unknown > mismatch, exclusions, failure penalty, `not_allowed`); SSE connect/ping/version replay and event on home change; auth failures; redaction against hostile fixtures; full boot integration with the sample catalog on port 0.
 - Verify: `npm test -w server`; manual `curl` flow in README.
@@ -234,7 +234,7 @@ Exact URLs live in `sample-catalog/items.json`. Excluded: demo streams whose con
 
 ```bash
 # server (from the repository root)
-npm ci && npm run -w server dev -- --config izle.dev.json   # serves sample-catalog on :8787
+npm ci && npm run -w server dev -- --config server/izle.dev.json   # serves sample-catalog on :8787
 # emulator (headless) + app; JAVA_HOME = a JDK 21+ (e.g. Android Studio's bundled JBR), ANDROID_HOME = the Android SDK
 $ANDROID_HOME/emulator/emulator -avd <tv-avd> -no-window -no-audio -gpu swiftshader_indirect &
 adb wait-for-device

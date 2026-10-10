@@ -1,0 +1,171 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import type { Level } from "./log.ts";
+
+export interface ServerConfig {
+  /** Absolute path of the config file, or null when running on defaults. */
+  configPath: string | null;
+  listen: { host: string; port: number };
+  /** Public base URL behind a reverse proxy (informational in v1). */
+  publicUrl: string | null;
+  dataDir: string;
+  catalog: { dir: string };
+  resolver: { module: string; config: Record<string, unknown> } | null;
+  /** `token` comes from IZLE_ADMIN_TOKEN and wins over `tokenFile`. */
+  admin: { tokenFile: string; token: string | null };
+  proxy: { always: boolean; sessionTtlSec: number };
+  /** Server-wide defaults for devices without their own setting (null = fall back to the catalog's hints). */
+  defaults: { uiLanguage: "tr" | "en" | null; preferredAudioLanguage: string | null };
+  log: { level: Level };
+}
+
+export class ConfigError extends Error {
+  override name = "ConfigError";
+}
+
+/** The sample catalog shipped in this repository, used when no catalog is configured. */
+export const SAMPLE_CATALOG_DIR = fileURLToPath(new URL("../../sample-catalog", import.meta.url));
+
+export const DEFAULT_PORT = 8787;
+
+const LANGUAGE_TAG = { type: "string", pattern: "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$" };
+
+const CONFIG_SCHEMA = {
+  type: "object",
+  properties: {
+    $schema: { type: "string" },
+    listen: {
+      type: "object",
+      properties: {
+        host: { type: "string", minLength: 1 },
+        port: { type: "integer", minimum: 0, maximum: 65535 },
+      },
+      additionalProperties: false,
+    },
+    publicUrl: { anyOf: [{ type: "string", pattern: "^https?://[^\\s]+$" }, { type: "null" }] },
+    dataDir: { type: "string", minLength: 1 },
+    catalog: {
+      type: "object",
+      required: ["dir"],
+      properties: { dir: { type: "string", minLength: 1 } },
+      additionalProperties: false,
+    },
+    resolver: {
+      anyOf: [
+        {
+          type: "object",
+          required: ["module"],
+          properties: { module: { type: "string", minLength: 1 }, config: { type: "object" } },
+          additionalProperties: false,
+        },
+        { type: "null" },
+      ],
+    },
+    admin: {
+      type: "object",
+      properties: { tokenFile: { type: "string", minLength: 1 } },
+      additionalProperties: false,
+    },
+    proxy: {
+      type: "object",
+      properties: {
+        always: { type: "boolean" },
+        sessionTtlSec: { type: "integer", minimum: 60, maximum: 86400 },
+      },
+      additionalProperties: false,
+    },
+    defaults: {
+      type: "object",
+      properties: {
+        uiLanguage: { anyOf: [{ enum: ["tr", "en"] }, { type: "null" }] },
+        preferredAudioLanguage: { anyOf: [LANGUAGE_TAG, { type: "null" }] },
+      },
+      additionalProperties: false,
+    },
+    log: {
+      type: "object",
+      properties: { level: { enum: ["debug", "info", "warn", "error"] } },
+      additionalProperties: false,
+    },
+  },
+  additionalProperties: false,
+} as const;
+
+const validateConfigFile = new Ajv2020({ strict: true, allErrors: true }).compile(CONFIG_SCHEMA);
+
+interface ConfigFile {
+  listen?: { host?: string; port?: number };
+  publicUrl?: string | null;
+  dataDir?: string;
+  catalog?: { dir: string };
+  resolver?: { module: string; config?: Record<string, unknown> } | null;
+  admin?: { tokenFile?: string };
+  proxy?: { always?: boolean; sessionTtlSec?: number };
+  defaults?: { uiLanguage?: "tr" | "en" | null; preferredAudioLanguage?: string | null };
+  log?: { level?: Level };
+}
+
+export interface LoadConfigOptions {
+  /** Config file path; relative paths inside it resolve against its directory. */
+  path?: string | null;
+  env?: NodeJS.ProcessEnv;
+  /** Base for a relative `path` and, without a file, for the default data directory. */
+  cwd?: string;
+}
+
+export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
+  const env = opts.env ?? process.env;
+  const cwd = opts.cwd ?? process.cwd();
+  let file: ConfigFile = {};
+  let configPath: string | null = null;
+  let base = cwd;
+
+  if (opts.path) {
+    configPath = path.resolve(cwd, opts.path);
+    base = path.dirname(configPath);
+    let text: string;
+    try {
+      text = readFileSync(configPath, "utf8");
+    } catch {
+      throw new ConfigError(`cannot read config file ${configPath}`);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new ConfigError(`config file ${configPath} is not valid JSON`);
+    }
+    if (!validateConfigFile(parsed)) {
+      const details = (validateConfigFile.errors ?? [])
+        .filter((e) => e.keyword !== "anyOf")
+        .map((e) => {
+          const extra = (e.params as { additionalProperty?: string }).additionalProperty;
+          return `${e.instancePath || "/"} ${extra ? `has unknown property "${extra}"` : e.message}`;
+        });
+      throw new ConfigError(`invalid config file ${configPath}: ${[...new Set(details)].join("; ")}`);
+    }
+    file = parsed as ConfigFile;
+  }
+
+  const resolve = (p: string) => path.resolve(base, p);
+  const dataDir = resolve(file.dataDir ?? "./data");
+  const envToken = env.IZLE_ADMIN_TOKEN?.trim() || null;
+
+  return {
+    configPath,
+    listen: { host: file.listen?.host ?? "0.0.0.0", port: file.listen?.port ?? DEFAULT_PORT },
+    publicUrl: file.publicUrl ? file.publicUrl.replace(/\/+$/, "") : null,
+    dataDir,
+    catalog: { dir: file.catalog ? resolve(file.catalog.dir) : SAMPLE_CATALOG_DIR },
+    resolver: file.resolver ? { module: resolve(file.resolver.module), config: file.resolver.config ?? {} } : null,
+    admin: { tokenFile: file.admin?.tokenFile ? resolve(file.admin.tokenFile) : path.join(dataDir, "admin.token"), token: envToken },
+    proxy: { always: file.proxy?.always ?? false, sessionTtlSec: file.proxy?.sessionTtlSec ?? 21600 },
+    defaults: {
+      uiLanguage: file.defaults?.uiLanguage ?? null,
+      preferredAudioLanguage: file.defaults?.preferredAudioLanguage ?? null,
+    },
+    log: { level: file.log?.level ?? "info" },
+  };
+}

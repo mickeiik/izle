@@ -85,3 +85,70 @@ from the roadmap, the entry wins until the roadmap is updated.
 - **`buildId` format:** `YYYYMMDD-<first 8 hex of sha256(items.json)>`, written by `build.mjs`.
 - **Synopses** were written for the sample (no copied text); `NOTICE.md` lists works, authors, licenses, hosting
   parties and poster sources.
+
+## Phase 2 — Server core (2026-10-10)
+
+- **Config paths:** relative paths inside a config file resolve against the file's directory; a relative
+  `--config` resolves against `INIT_CWD` (set by npm) or the shell's directory, so
+  `npm run -w server dev -- --config server/izle.dev.json` works from the repository root as the roadmap writes
+  it. Without a config file the server serves the sample catalog with `./data`. Unknown keys are errors. Added
+  `log.level` and allowed `$schema`. `server/izle.dev.json` is committed (state goes to the ignored
+  `server/data/`).
+- **Language defaults precedence:** device setting > server `defaults` > catalog `defaults` hints > built-in
+  (`uiLanguage: "en"`, `preferredAudioLanguage: null`). Server defaults are therefore nullable.
+- **Admin token bootstrap:** when neither `IZLE_ADMIN_TOKEN` nor the token file exists, the server creates the
+  file (32 random bytes, mode 0600) instead of refusing to start; tokens shorter than 24 characters still stop
+  it. The token is never logged; `izle-server admin-token` prints it to stdout.
+- **Resolver modules are not loaded yet** (Phase 4): a configured `resolver` only logs a warning. Adapter
+  sources and direct sources with upstream `headers` (which need the proxy) are skipped by resolve with
+  `adapter_unavailable` / `proxy_unavailable`. A bundle declaring adapters without a resolver logs a warning
+  instead of refusing to start; Phase 4 enforces the check when a resolver is configured.
+- **Pairing:** approval creates the device immediately (status `pending`, no token hash) so the owner can set it
+  up before the TV collects its token; the device token is generated at the moment `pair/wait` delivers it, so
+  the plaintext never touches the database. Unknown code and wrong pair token both answer 404; expired and
+  already-delivered codes both answer 410. `pair/wait` takes `wait=<0..25>` seconds (tests use 0).
+  `pair/start` allows 10 calls per 10 minutes per socket address (no `X-Forwarded-For` trust yet: behind a
+  reverse proxy all TVs share the limit) and at most 5 open codes server-wide. Pending devices whose code
+  expires uncollected are deleted.
+- **Progress statuses** are `playing | paused | stopped | finished` (`finished` covers the roadmap's `ended`). The
+  server trusts the TV's `finished` (resume/finish thresholds live in the TV's `PlaybackPlan`) and does not
+  re-derive it from positions.
+- **State version** bumps on home/settings/cursor changes, catalog reloads, `stopped` and `finished`, but not on
+  plain `playing`/`paused` heartbeats (the TV itself is the source of those, and it re-reads state when it
+  returns home).
+- **Cursor rules:** after the last allowed episode is finished the cursor wraps to the first allowed episode
+  (OK on a fully watched item starts it again); without a cursor OK plays the first allowed unfinished episode.
+  `autoAdvance` never stops the cursor, only automatic playback.
+- **Additive response fields:** `continue.status` (`new`/`watching`/`finished`, positionMs 0 when finished),
+  `continue.title`/`label`; resolve also returns `item`, `episode` and `resume`; `next` carries
+  season/number/title/label so the TV can label the auto-next overlay.
+- **Failure penalty input:** source ids the TV lists in `exclude` are recorded as failed for 10 minutes (direct
+  sources are never probed by the server).
+- **Home list validation:** unknown, duplicate and non-playable items are rejected on `PUT`; items that
+  disappear in a later catalog build stay stored, are hidden on the TV and flagged `missing` in the admin API.
+- **Extra admin routes** (additive): `GET /admin/devices/:id`, `DELETE /admin/devices/:id`,
+  `GET /admin/pair/pending`, `GET /admin/catalog`. The admin item view hides upstream URLs, headers and refs.
+  `POST /admin/diagnostics/resolve` and `izle-server check-resolver` are adapter tools and move to Phase 4.
+- **Commands:** play commands are validated (episode exists and is allowed); unacknowledged commands younger than
+  2 minutes are replayed on every SSE connect, older ones are not (a stale "play" should not fire hours later);
+  commands are purged after 7 days.
+- **SSE:** event ids `s<version>` / `c<commandId>`, `retry: 5000`, `: ping` every 20 s, `X-Accel-Buffering: no`.
+  `Last-Event-ID` is not needed: state events are idempotent and commands replay until acknowledged.
+- **posterUrl is relative** (`/assets/<sha256>.<ext>`); the TV resolves it against its server URL, which also
+  works behind reverse proxies. `publicUrl` is accepted but informational for now.
+- **Ids:** device ids are 12 and playback session ids 16 random alphanumeric characters. (Base64url ids could
+  start with `-`/`_`, which the id pattern rejects — found through a flaky test.)
+- **Logging details:** secret keys are matched per word of the key (camelCase/snake/kebab split), so
+  `preferredAudioLanguage` survives while `baseUrl`, `pairToken` or `set-cookie` are dropped; `uri`, `href`,
+  `password`, `secret` and `body` were added to the roadmap's list; any `scheme://` URL is reduced to its host.
+  Accepted trade-off: catalog ids containing a run of 20+ `[A-Za-z0-9_-]` characters show up as `<token>` in
+  logs. `/healthz` requests are logged at debug level.
+- **Database:** `home_entries`, `progress`, `item_cursor` and `now_playing` carry `catalog_id` (multi-catalog
+  ready); `pair_codes.delivered_at` and `now_playing.source_id` were added; WAL mode; migrations via
+  `PRAGMA user_version`. Only `node:sqlite` APIs available in Node 22.13 are used (no `isOpen`,
+  `isTransaction` or `timeout` option).
+- **HTTP hardening:** `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`,
+  `Cache-Control: no-store` on the API, 64 KiB request bodies. `/admin/` serves a placeholder page until
+  Phase 5 and `/` redirects to it. SIGINT/SIGTERM close SSE streams and the database; SIGHUP reloads the
+  catalog.
+- **Still no `tsc` → `dist/` build** (Phase 6); the bin runs the TypeScript sources through tsx.
