@@ -37,7 +37,7 @@ npm run sample:check                      # also range-GETs every sample media U
 | Path | What |
 |---|---|
 | `contract/` | `@izle/contract` — bundle types, JSON Schema, validator, `izle-validate` CLI |
-| `server/` | `@izle/server` — Hono + `node:sqlite` server: pairing, TV API, admin API, live events, resolver modules, media proxy |
+| `server/` | `@izle/server` — Hono + `node:sqlite` server: pairing, TV and admin APIs, live events, resolver modules, media proxy, admin page (`server/admin/`) |
 | `server/examples/resolver-example/` | example resolver module with a local stand-in upstream and catalog |
 | `sample-catalog/` | sample bundle of openly licensed content |
 | `android/` | Android TV app (Kotlin, Compose for TV, Media3) |
@@ -48,9 +48,9 @@ npm run sample:check                      # also range-GETs every sample media U
 Early development. Done: Phase 0 (bootstrap), Phase 1 (catalog bundle contract, validator, sample catalog),
 Phase 2 (server core for direct sources: pairing, TV and admin APIs, live events, progress and play order),
 Phase 3 (the Android TV app: pairing, home tiles, player with resume, auto-next, fallback and live updates, the
-hidden menu, English and Turkish) and Phase 4 (resolver modules, the media proxy and admin diagnostics). Next is
-the browser admin UI; see the [roadmap](docs/roadmap.md). How the TV behaves is described in
-[docs/ux/senior-tv.md](docs/ux/senior-tv.md), with screenshots in
+hidden menu, English and Turkish), Phase 4 (resolver modules, the media proxy and admin diagnostics) and Phase 5
+(the browser admin page). Next are deployment docs and releases; see the [roadmap](docs/roadmap.md). How the TV
+behaves is described in [docs/ux/senior-tv.md](docs/ux/senior-tv.md), with screenshots in
 [docs/verification/](docs/verification/phase3/README.md).
 
 ## Development
@@ -76,6 +76,13 @@ Print the admin token with:
 ```bash
 npm run -s -w server dev -- admin-token --config server/izle.dev.json
 ```
+
+### Admin page
+
+Open `http://localhost:8787/admin/` and sign in with the admin token. From there the owner approves the pairing
+code a TV shows, picks and orders the shows on each TV's home screen, sets "continue from episode X", the menu,
+audio and subtitle languages, starts or stops playback, sees what is playing, reloads the catalog and tests
+episode sources. Screenshots: [docs/verification/phase5/](docs/verification/phase5/README.md).
 
 ### Resolver modules
 
@@ -145,8 +152,8 @@ adb shell am start -n io.github.mickeiik.izle/.MainActivity --es izle.server htt
 
 The emulator reaches a server on the host at `http://10.0.2.2:8787` (debug builds also prefill that address on
 the first-run screen; `--es izle.server` skips typing it). The TV then shows a 6-digit pairing code: approve it
-as in step 2 of the curl flow above, put shows on its home screen (step 4), and the tiles appear on the TV
-without a restart. Everything else the owner controls — order, "continue from", languages, play/stop — applies
+on the admin page (or as in step 2 of the curl flow above), put shows on its home screen, and the tiles appear on
+the TV without a restart. Everything else the owner controls — order, "continue from", languages, play/stop — applies
 live the same way. On the TV, the remote's Menu key or holding OK opens a hidden menu (episodes, start over,
 audio, subtitles, settings, about).
 

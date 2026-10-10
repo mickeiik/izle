@@ -3,18 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>izle admin</title>
-  <style>
-    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-    body { max-width: 40rem; margin: 3rem auto; padding: 0 1rem; line-height: 1.5; }
-    code { font-size: 0.95em; }
-  </style>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
 </head>
 <body>
-  <h1>izle admin</h1>
-  <p>The browser admin interface is not part of this version yet. The server is running and its admin API is
-    available under <code>/api/v1/admin/</code> with <code>Authorization: Bearer &lt;admin token&gt;</code>.</p>
-  <p>Print the admin token with <code>izle-server admin-token</code>. The API is described in
-    <code>docs/spec/server-api-v1.md</code> in the izle repository.</p>
+  <header class="top">
+    <a class="brand" href="#/devices"><img src="icon.svg" alt="" width="28" height="28"> izle <span>admin</span></a>
+    <nav id="nav" hidden>
+      <a href="#/devices">TVs</a>
+      <a href="#/catalog">Catalog</a>
+      <button id="signout" type="button" class="link">Sign out</button>
+    </nav>
+  </header>
+  <main id="app">
+    <noscript><p>The izle admin page needs JavaScript.</p></noscript>
+  </main>
+  <div id="toasts" aria-live="polite"></div>
 </body>
 </html>

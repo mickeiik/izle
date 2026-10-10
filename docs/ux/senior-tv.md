@@ -2,7 +2,7 @@
 
 How the izle TV app behaves for its viewer: someone who knows classic TV (switch on, pick a channel, it plays)
 and should never need to read small text, browse or configure anything. Everything else is the owner's job,
-done remotely from the admin API (Phase 5: admin UI) or, on the TV itself, behind a hidden menu.
+done remotely from the browser admin page (`/admin/` on the server) or, on the TV itself, behind a hidden menu.
 
 Screenshots of every screen below are in [`docs/verification/phase3/`](../verification/phase3/README.md).
 

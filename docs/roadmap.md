@@ -4,7 +4,7 @@ This is the project plan, copied from the approved planning document and edited 
 (environment-specific facts and references to private catalogs removed). Routine decisions taken while
 implementing it are recorded in [decisions.md](decisions.md); where the two differ, the decision log wins.
 
-Status: Phases 0–4 implemented. Phase 5 is next.
+Status: Phases 0–5 implemented. Phase 6 is next.
 
 ## Context
 
@@ -218,7 +218,7 @@ Exact URLs live in `sample-catalog/items.json`. Excluded: demo streams whose con
 - Tests: Referer-required upstream plays only through the proxy; inline playlist served; playlist rewriting (`URI="…"` attributes, relative resolution — implemented generically); streaming + `Range` passthrough; deadline abort with an adapter that never resolves; stale session → 410 after upstream 403; TS segment prefixed with junk bytes (decides whether `alignTsSegments` is needed); redaction of adapter errors.
 - Verify: TV app plays a proxied fixture end-to-end on the emulator.
 
-**Phase 5 — Admin UI**
+**Phase 5 — Admin UI** ✅
 - Static SPA in `server/admin/`; pairing approval, devices, home editor, now playing, cursor, settings, commands, diagnostics.
 - Verify: browser against local server; optional Playwright smoke test.
 

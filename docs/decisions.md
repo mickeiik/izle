@@ -308,3 +308,38 @@ from the roadmap, the entry wins until the roadmap is updated.
 - **TV:** `/tv/resolve` now uses the 40 s client (the default read timeout is 20 s, the server's budget 30 s). The
   TV does not act on `expiresAt` yet; expired URLs are handled by the 410 → re-resolve path, verified on the
   emulator (`docs/verification/phase4/`).
+
+## Phase 5 — Admin UI (2026-10-10)
+
+- **Plain ES modules, no framework, no build, no dependencies** (`server/admin/index.html`, `app.js`, `lib.js`,
+  `style.css`, `icon.svg`). The server serves an allow-list of these files (nothing else in the directory) with
+  `Cache-Control: no-cache` and a strict CSP (`default-src 'none'; script-src 'self'; style-src 'self'; …`). There
+  are no inline scripts or styles; server text is only ever inserted with `textContent` (a test rejects
+  `innerHTML` and friends). Progress bar widths are set through CSSOM, which the CSP allows.
+- **Typechecked as part of `npm run typecheck`** through `server/admin/tsconfig.json` (JSDoc, DOM types, no Node
+  types), separate from the server program so server code cannot use DOM globals by accident. The pure helpers
+  (`lib.js`) are unit-tested from node; the page itself is verified in a browser.
+- **Sign-in:** the token is checked against `GET /admin/catalog` and kept in `localStorage` (as the roadmap says);
+  any 401 forgets it and returns to the sign-in page; "Sign out" forgets it.
+- **Hash routing** (`#/devices`, `#/devices/<id>`, `#/catalog`, `#/catalog/items/<id>`), so the server needs one
+  route for the page.
+- **Polling, not a live channel:** pairing codes and the TV list every 3 s, "now playing" every 5 s, the device's
+  home list and history every 15 s, all paused while the browser tab is hidden. Pairing rows are kept while their
+  code exists, so a name being typed survives a refresh; approving needs a name.
+- **Home list edits save immediately** (add, move up/down, remove each `PUT` the list), with a toast; there is no
+  separate Save step. "Play" plays the episode OK would play; for series, "Episodes…" opens the "continue from"
+  picker (watched / next / progress / not allowed per episode) with "Continue from here" and "Play now".
+- **"Continues at"** is only shown when the TV will actually resume (saved position ≥ 30 s, the TV's
+  `PlaybackPlan` threshold); below it the page says "starts from the beginning".
+- **Settings** use selects: menu language (server default / English / Türkçe), preferred audio and subtitles from a
+  short list of languages; a tag set through the API that is not in the list stays selectable. "Server default"
+  shows the effective value when the device has no own setting.
+- **Additive API fields for the page:** device home entries carry `kind` and `posterUrl`, progress entries `kind`.
+- **"Forget this TV"** asks with the browser's `confirm()`; the TV shows a new pairing code within a second.
+- **English only**, as planned; light and dark follow the browser; the layout works down to phone width.
+- **No Playwright test in CI:** it would need a browser download and the tests never touch the network. The flows
+  were verified in a browser against the example server and the emulator; screenshots in
+  `docs/verification/phase5/` were taken with a locally installed Playwright, which is not a project dependency.
+- **Example catalog:** a series ("Proxy series", three episodes delivered differently plus one not approved) was
+  added so "continue from", auto-next and the not-allowed state can be tried through the proxy; it was loaded
+  with the page's "Reload from disk".

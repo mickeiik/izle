@@ -1,6 +1,7 @@
 # izle-server API v1
 
-Status: **draft, implemented**: direct sources (Phase 2), resolver modules and the media proxy (Phase 4). Changes
+Status: **draft, implemented**: direct sources (Phase 2), resolver modules and the media proxy (Phase 4), browser
+admin UI over the admin API (Phase 5). Changes
 within v1 are additive only (new optional request fields, new response fields, new routes); clients MUST ignore
 unknown response fields.
 
@@ -254,12 +255,12 @@ are display only.
 | Route | Body | Response |
 |---|---|---|
 | `GET /api/v1/admin/devices` | | `{"devices": [Device & {"homeCount"}]}` |
-| `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "missing", "continue"}], "homeMax": 12}` |
+| `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "missing", "continue"}], "homeMax": 12}` |
 | `PATCH /api/v1/admin/devices/:id` | any of `name`, `uiLanguage` (`"tr"`/`"en"`/null), `preferredAudioLanguage` (tag/null), `subtitlesLanguage` (tag/null = off) | `{"device": Device}` |
 | `DELETE /api/v1/admin/devices/:id` | | `204` — the TV must pair again |
 | `PUT /api/v1/admin/devices/:id/home` | `{"itemIds": [...]}` (≤ 12, in display order) | `{"version", "home"}` |
 | `PUT /api/v1/admin/devices/:id/cursor` | `{"itemId", "episodeId"}` | `{"version"}` |
-| `GET /api/v1/admin/devices/:id/progress` | | `{"cursors": [...], "progress": [...]}` with titles |
+| `GET /api/v1/admin/devices/:id/progress` | | `{"cursors": [...], "progress": [...]}` with `itemTitle`, `kind`, `season`, `number`, `episodeTitle` (or `missing: true`) |
 | `GET /api/v1/admin/devices/:id/now` | | `{"online", "nowPlaying": {itemId, episodeId, sourceId, itemTitle, episodeTitle, positionMs, durationMs, state, updatedAt} \| null}` |
 | `POST /api/v1/admin/devices/:id/commands` | `{"type": "play", "episodeId"}` or `{"type": "stop"}` | `202 {"id", "online"}` |
 
@@ -309,7 +310,7 @@ is fetched and summarized; MP4/DASH get `Range: bytes=0-1023`). Nothing secret i
 |---|---|
 | `GET /healthz` | `{"ok": true}` |
 | `GET /assets/<sha256>.<jpg\|png\|webp>` | catalog posters, `Cache-Control: public, max-age=31536000, immutable` |
-| `GET /admin/` | admin UI (a placeholder page until Phase 5) |
+| `GET /admin/` | the admin UI: `index.html` plus an allow-list of files (`app.js`, `lib.js`, `style.css`, `icon.svg`), `Cache-Control: no-cache`, `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; …` |
 | `GET /p/<token>/…` | media proxy (see [Media proxy](#media-proxy)) |
 
 ## Logging

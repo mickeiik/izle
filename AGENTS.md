@@ -47,6 +47,10 @@ npm run sample:check     # probes every sample-catalog media URL (network; manua
   state in `server/data/example/`)
 - `android/` (needs `JAVA_HOME` = JDK 21+ and `ANDROID_HOME`): `./gradlew :app:assembleDebug :app:testDebugUnitTest`
 
+The admin UI (`server/admin/`, served at `/admin/`) is plain ES modules without a build step or dependencies,
+typechecked by `server/admin/tsconfig.json` (DOM types) as part of `npm run typecheck`; its pure helpers in
+`lib.js` are unit-tested from node. It runs under a strict CSP: no inline scripts or styles, no `innerHTML`.
+
 TypeScript is run directly by `tsx`; there is no build step for development. Use `.ts` extensions in relative
 imports, ESM only, erasable syntax only (no enums, no parameter properties, no namespaces).
 
