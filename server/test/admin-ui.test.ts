@@ -2,6 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
+  candidateOptions,
+  clockOffset,
+  companionTarget,
   continueText,
   episodeName,
   episodeStates,
@@ -9,13 +12,19 @@ import {
   formatClock,
   formatCode,
   formatCountdown,
+  formatDrift,
+  formatPosition,
   formatRelative,
   isActive,
   languageLabel,
   moveItem,
+  parseCandidate,
   percent,
   plural,
+  pushSample,
+  syncDecision,
   triedText,
+  tvPositionAt,
 } from "../admin/lib.js";
 import { startTestServer } from "./helpers.ts";
 
@@ -102,20 +111,88 @@ test("the admin UI is served from an allow-list with a strict CSP and no inline 
   assert.match(html, /<script type="module" src="app.js"><\/script>/);
   assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>/.test(html), "no inline scripts");
   assert.ok(!/\sstyle=|\son[a-z]+=/i.test(html), "no inline styles or handlers");
+  assert.match(csp, /media-src 'self' blob:(;|$)/, "the Listen along audio element loads proxied media and hls.js object URLs only");
   for (const [file, type] of [
     ["app.js", "text/javascript; charset=utf-8"],
     ["lib.js", "text/javascript; charset=utf-8"],
+    ["companion.js", "text/javascript; charset=utf-8"],
     ["style.css", "text/css; charset=utf-8"],
     ["icon.svg", "image/svg+xml"],
+    ["vendor/hls.min.js", "text/javascript; charset=utf-8"],
   ]) {
     const res = await fetch(`${s.base}/admin/${file}`);
     assert.equal(res.status, 200, file);
     assert.equal(res.headers.get("content-type"), type);
     assert.equal(await res.text(), await readFile(new URL(`../admin/${file}`, import.meta.url), "utf8"));
   }
-  for (const bad of ["tsconfig.json", "index.html", "..%2Fpackage.json", "%2e%2e/src/app.ts", "constructor", "toString"]) {
+  for (const bad of ["tsconfig.json", "index.html", "..%2Fpackage.json", "%2e%2e/src/app.ts", "constructor", "toString", "vendor/README.md", "vendor/LICENSE-hls.js", "vendor/..%2Fapp.js"]) {
     assert.equal((await fetch(`${s.base}/admin/${bad}`)).status, 404, bad);
   }
-  const js = await readFile(new URL("../admin/app.js", import.meta.url), "utf8");
-  assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/.test(js), "server text is never parsed as HTML");
+  for (const file of ["app.js", "companion.js"]) {
+    const js = await readFile(new URL(`../admin/${file}`, import.meta.url), "utf8");
+    assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/.test(js), `${file}: server text is never parsed as HTML`);
+  }
+});
+
+test("listen along helpers: TV position, companion target, sync decisions, clock offset, candidate options", () => {
+  const anchor = { positionMs: 42_000, atMs: NOW, playing: true, rate: 1 };
+  assert.equal(tvPositionAt(anchor, NOW + 2_500), 44_500);
+  assert.equal(tvPositionAt({ ...anchor, playing: false }, NOW + 2_500), 42_000);
+  assert.equal(tvPositionAt(anchor, NOW - 100), 42_000, "never before the anchor");
+  assert.equal(tvPositionAt(null, NOW), null);
+
+  assert.equal(companionTarget(600_000, { rate: 1.0427, offsetMs: -1_250 }, 80), 600_000 * 1.0427 - 1_250 + 80);
+  assert.equal(companionTarget(0, { rate: 1, offsetMs: 0 }), 0);
+
+  const decide = (errorMs: number, nominalRate = 1, tvPlaying = true) =>
+    syncDecision({ targetMs: 100_000, actualMs: 100_000 - errorMs, tvPlaying, nominalRate });
+  assert.deepEqual(decide(2_000), { action: "seek", toMs: 100_000, rate: 1, state: "seeking", errorMs: 2_000 });
+  assert.equal(decide(-2_000).action, "seek");
+  assert.deepEqual(decide(500), { action: "play", rate: 1.05, state: "catching up", errorMs: 500 });
+  assert.deepEqual(decide(100), { action: "play", rate: 1.02, state: "catching up", errorMs: 100 });
+  assert.deepEqual(decide(20), { action: "play", rate: 1, state: "synced", errorMs: 20 });
+  assert.deepEqual(decide(-500), { action: "play", rate: 0.95, state: "holding back", errorMs: -500 });
+  assert.equal(decide(500, 1.08).rate, 1.1, "clamped");
+  assert.equal(decide(-500, 0.92).rate, 0.9, "clamped");
+  assert.equal(decide(20, 1.0427).rate, 1.0427, "the nominal rate within tolerance");
+  assert.deepEqual(decide(500, 1, false), { action: "pause", rate: 1, state: "paused", errorMs: 500 });
+  assert.equal(syncDecision({ targetMs: -3_000, actualMs: 0, tvPlaying: true, nominalRate: 1 }).state, "waiting");
+
+  const quick = { sentAt: 1_000, receivedAt: 1_040, serverNowMs: 6_020 };
+  const slow = { sentAt: 2_000, receivedAt: 2_400, serverNowMs: 7_250 };
+  const longPoll = { sentAt: 3_000, receivedAt: 23_000, serverNowMs: 99_000 };
+  assert.equal(clockOffset([slow, quick, longPoll]), 6_020 - 1_020);
+  assert.equal(clockOffset([longPoll]), null);
+  assert.equal(clockOffset([]), null);
+  assert.equal(pushSample([quick, slow], longPoll, 2).length, 2);
+  assert.deepEqual(pushSample([quick, slow], longPoll, 2)[0], slow);
+
+  const options = candidateOptions([
+    { sourceId: "hls-multi-audio", label: "Unified", languages: { audio: ["en", "it"], subtitles: [] }, current: true, supported: true, reason: null },
+    { sourceId: "fr-dub", label: null, languages: { audio: ["fr"], subtitles: null }, current: false, supported: true, reason: null },
+    { sourceId: "silent", label: null, languages: { audio: [], subtitles: null }, current: false, supported: true, reason: null },
+    { sourceId: "mystery", label: null, languages: { audio: null, subtitles: null }, current: false, supported: true, reason: null },
+    { sourceId: "dash", label: null, languages: { audio: ["de"], subtitles: [] }, current: false, supported: false, reason: "dash" },
+  ]);
+  assert.deepEqual(
+    options.map((o) => [o.sourceId, o.language, o.disabled, o.label]),
+    [
+      ["hls-multi-audio", "en", false, "hls-multi-audio — Unified · English (en) · the TV's source"],
+      ["hls-multi-audio", "it", false, "hls-multi-audio — Unified · Italiano (it) · the TV's source"],
+      ["fr-dub", null, false, "fr-dub · Français (fr)"],
+      ["silent", null, false, "silent · no dialogue"],
+      ["mystery", null, false, "mystery"],
+      ["dash", null, true, "dash · Deutsch (de) · DASH, cannot play on a phone"],
+    ],
+  );
+  assert.deepEqual(parseCandidate(options[1]!.value), { sourceId: "hls-multi-audio", language: "it" });
+  assert.deepEqual(parseCandidate(options[2]!.value), { sourceId: "fr-dub", language: null });
+
+  assert.equal(formatDrift(600), "+600 ms");
+  assert.equal(formatDrift(-12.4), "−12 ms");
+  assert.equal(formatDrift(1_540), "+1.5 s");
+  assert.equal(formatDrift(null), "–");
+  assert.equal(formatPosition(3_725_450), "1:02:05.4");
+  assert.equal(formatPosition(65_000), "1:05.0");
+  assert.equal(formatPosition(-1), "–");
 });

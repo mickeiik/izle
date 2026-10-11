@@ -191,6 +191,8 @@ Older TVs: Android 7.0 does not know Let's Encrypt's root certificates. The app 
   127.0.0.1 only.
 - The server makes outgoing connections only for resolver modules and the media proxy (to the upstream hosts your
   catalog uses). TVs fetch direct (non-proxied) streams themselves.
+- "Listen along" (companion audio on your phone) runs inside the admin page and fetches its stream through the
+  server's proxy, so the phone needs the same reachability as the admin page and nothing more.
 
 ## 8. Install the TV app
 
@@ -275,7 +277,8 @@ journalctl -u izle -n 5 -o cat                  # "listening" with the new versi
 
 The database is migrated on start. An older server refuses a database a newer one has migrated, so to go back,
 install the older package **and** restore the backup taken before the update. The admin page's Catalog tab shows
-the running server version.
+the running server version. Update the server before the TVs: a newer app may report fields an older server
+rejects (the app then falls back, but the first report after each start is lost).
 
 ## 11. Troubleshooting
 

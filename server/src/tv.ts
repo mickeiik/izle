@@ -6,10 +6,13 @@ import type { EventHub } from "./events.ts";
 import type { Logger } from "./log.ts";
 import { autoNextIndex, cursorAfterFinished, cursorIndex, isPlayable, type ProgressLike } from "./playback.ts";
 import type { ResolveInput, ResolveService } from "./resolve.ts";
-import type { Device, Progress, Store } from "./store.ts";
+import type { Device, NowPlaying, Progress, Store } from "./store.ts";
 
 /** The server caps every device's home list (the TV shows a 4-column grid; ≤ 8 fits without scrolling). */
 export const HOME_MAX_ITEMS = 12;
+
+/** Longest an admin "now" long-poll waits for the next playback report. */
+export const MAX_NOW_WAIT_MS = 25_000;
 
 export type ProgressReportStatus = "playing" | "paused" | "stopped" | "finished";
 
@@ -19,6 +22,10 @@ export interface ProgressInput {
   positionMs: number;
   durationMs: number | null;
   status: ProgressReportStatus;
+  /** Whether the player was actually advancing (false during a rebuffer stall); defaults to `status === "playing"`. */
+  playing?: boolean;
+  /** How long before sending the position was sampled, so a delayed report still anchors correctly. */
+  ageMs?: number;
 }
 
 export interface EffectiveSettings {
@@ -46,9 +53,42 @@ function episodeSummary(episode: Episode) {
 /** What the TV sees: home state, item details, resolve and progress. Also used by the admin API. */
 export class TvService {
   private readonly s: Services;
+  /** Admin long-polls waiting for a device's next now-playing write. */
+  private readonly nowWaiters = new Map<string, Set<() => void>>();
 
   constructor(services: Services) {
     this.s = services;
+  }
+
+  private wakeNow(deviceId: string): void {
+    for (const wake of this.nowWaiters.get(deviceId) ?? []) wake();
+  }
+
+  /**
+   * The device's now-playing row. With `seq` equal to the row's current sequence number, waits up to `waitMs`
+   * for the next write (a resolve or a progress report); any other `seq`, or `null`, answers at once.
+   */
+  async waitNow(deviceId: string, seq: number | null, waitMs: number, signal?: AbortSignal): Promise<NowPlaying | null> {
+    const current = this.s.store.getNowPlaying(deviceId);
+    if (seq === null || waitMs <= 0 || (current?.seq ?? 0) !== seq) return current;
+    await new Promise<void>((resolve) => {
+      let set = this.nowWaiters.get(deviceId);
+      if (!set) {
+        set = new Set();
+        this.nowWaiters.set(deviceId, set);
+      }
+      const done = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", done);
+        set.delete(done);
+        if (set.size === 0) this.nowWaiters.delete(deviceId);
+        resolve();
+      };
+      const timer = setTimeout(done, Math.min(waitMs, MAX_NOW_WAIT_MS));
+      signal?.addEventListener("abort", done, { once: true });
+      set.add(done);
+    });
+    return this.s.store.getNowPlaying(deviceId);
   }
 
   settings(device: Device): EffectiveSettings {
@@ -161,7 +201,10 @@ export class TvService {
       durationMs: progress?.durationMs ?? episode.durationMs ?? null,
       state: "starting",
       updatedAt: this.s.now(),
+      playing: false,
+      anchorAt: this.s.now(),
     });
+    this.wakeNow(device.id);
     return {
       sessionId: r.session.id,
       sourceId: r.source.id,
@@ -190,6 +233,8 @@ export class TvService {
     const sourceId = session && session.deviceId === device.id && session.episodeId === episode.id ? session.sourceId : null;
     const t = this.s.now();
     const durationMs = input.durationMs ?? null;
+    const playing = input.playing ?? input.status === "playing";
+    const anchorAt = t - (input.ageMs ?? 0);
     let changed = false;
 
     this.s.store.transaction(() => {
@@ -230,8 +275,11 @@ export class TvService {
         durationMs,
         state: input.status,
         updatedAt: t,
+        playing,
+        anchorAt,
       });
     });
+    this.wakeNow(device.id);
 
     return { version: changed ? this.bump(device.id) : (this.s.store.getDevice(device.id)?.stateVersion ?? device.stateVersion) };
   }

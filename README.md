@@ -8,7 +8,9 @@ advance on their own, and Back always returns to that single home screen. There 
 list, no settings in the viewer's path.
 
 Everything else is done remotely by the owner: which shows are on the home screen and in what order, "continue
-from episode X", language settings, play/stop.
+from episode X", language settings, play/stop. The owner's phone can also **listen along**: from the same admin
+page it plays another source of the episode the TV is showing (a dub in another language) in sync with the
+picture, with an adjustable offset and speed for releases that differ in timing.
 
 ## Bring your own catalog
 

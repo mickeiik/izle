@@ -1,9 +1,9 @@
 # izle-server API v1
 
 Status: **draft, implemented**: direct sources (Phase 2), resolver modules and the media proxy (Phase 4), browser
-admin UI over the admin API (Phase 5), reverse-proxy client addresses (Phase 6). Changes
-within v1 are additive only (new optional request fields, new response fields, new routes); clients MUST ignore
-unknown response fields.
+admin UI over the admin API (Phase 5), reverse-proxy client addresses (Phase 6), companion audio on the owner's
+phone ([Listen along](#listen-along)). Changes within v1 are additive only (new optional request fields, new
+response fields, new routes); clients MUST ignore unknown response fields.
 
 ## Conventions
 
@@ -191,7 +191,9 @@ result's when it gives them, else the bundle source's.
 
 `GET /p/<token>/…` serves header-bound and inline-playlist streams. The token (32 random bytes, base64url) is the
 credential: the TV's media player sends no device token. Sessions live in memory only, slide with use
-(`proxy.sessionTtlSec`, 6 h) up to 12 h, and a device keeps at most two (resolving a third ends the oldest).
+(`proxy.sessionTtlSec`, 6 h) up to 12 h, and an owner keeps at most two (resolving a third ends the oldest). Owners
+are a TV (its device id) and, separately, a TV's [Listen along](#listen-along) scope, so the phone never ends the
+TV's sessions.
 
 | Route | |
 |---|---|
@@ -222,12 +224,17 @@ credential: the TV's media player sends no device token. Sessions live in memory
 
 ### `POST /api/v1/tv/progress`
 
-`{"sessionId"?: "…", "episodeId": "…", "positionMs": 90000, "durationMs"?: 1200000, "status": "playing"}` →
-`{"ok": true, "version": 8}`.
+`{"sessionId"?: "…", "episodeId": "…", "positionMs": 90000, "durationMs"?: 1200000, "status": "playing",
+"playing"?: true, "ageMs"?: 0}` → `{"ok": true, "version": 8}`.
 
 `status` is one of `playing`, `paused`, `stopped` (left the player), `finished` (ended, or stopped within the
-TV's end threshold). The TV sends one every 15 s while playing and on pause, seek, stop, end and when the app
-goes to the background.
+TV's end threshold). The TV sends one every 15 s while playing and on pause, seek, stop, end, every rebuffer stall
+and its end, and when the app goes to the background.
+
+`playing` (optional, default `status === "playing"`) says whether the player was actually advancing when it sampled
+`positionMs`: a rebuffer stall is `status: "playing", playing: false`. `ageMs` (optional, 0–60000) is how long
+before sending the position was sampled (a queued report). The server anchors the TV's timeline on them for
+[Listen along](#listen-along): `anchor.atMs = receipt time − ageMs`.
 
 - `playing`/`paused`/`stopped` save the position (status `watching`) and point the item's cursor at this episode.
 - `finished` marks the episode finished and moves the cursor to the next `playbackAllowed` episode in play order
@@ -262,7 +269,7 @@ are display only.
 | `PUT /api/v1/admin/devices/:id/home` | `{"itemIds": [...]}` (≤ 12, in display order) | `{"version", "home"}` |
 | `PUT /api/v1/admin/devices/:id/cursor` | `{"itemId", "episodeId"}` | `{"version"}` |
 | `GET /api/v1/admin/devices/:id/progress` | | `{"cursors": [...], "progress": [...]}` with `itemTitle`, `kind`, `season`, `number`, `episodeTitle` (or `missing: true`) |
-| `GET /api/v1/admin/devices/:id/now` | | `{"online", "nowPlaying": {itemId, episodeId, sourceId, itemTitle, episodeTitle, positionMs, durationMs, state, updatedAt} \| null}` |
+| `GET /api/v1/admin/devices/:id/now?seq=&wait=` | | `{"online", "serverNowMs", "seq", "nowPlaying": {itemId, episodeId, sourceId, itemTitle, episodeTitle, positionMs, durationMs, state, updatedAt, playing} \| null, "anchor": {positionMs, atMs, playing, rate} \| null}` — with `seq` equal to the current `seq` and `wait` (0–25 s, default 0) the answer waits for the next resolve or progress report (long-poll); see [Listen along](#listen-along) |
 | `POST /api/v1/admin/devices/:id/commands` | `{"type": "play", "episodeId"}` or `{"type": "stop"}` | `202 {"id", "online"}` |
 
 `Device` = `{"id", "name", "status": "pending"|"active", "online", "createdAt", "lastSeenAt", "stateVersion",
@@ -305,13 +312,44 @@ is fetched and summarized; MP4/DASH get `Range: bytes=0-1023`). Nothing secret i
 
 `delivery` is `direct`, `proxy` or `unsupported`. Errors: `404 unknown_episode`, `404 unknown_source`.
 
+### Listen along
+
+The owner's phone plays **another source of the episode the TV is playing** (a dubbed release, or another audio
+language inside the same multi-audio stream), in sync with the picture, from the admin page. The TV side is
+unchanged; the senior sees nothing.
+
+- **Anchor.** `GET …/now` carries `serverNowMs` (the server clock), `seq` (bumped on every now-playing write) and
+  `anchor`: the TV's `positionMs` as of `atMs` (server clock, = receipt of the report − its `ageMs`), advancing at
+  `rate` (1) while `playing`. The phone extrapolates `tv = positionMs + (serverNow − atMs)` and estimates its clock
+  offset from `serverNowMs` and the round trip. `?seq=<current>&wait=25` returns on the next write, so a pause,
+  seek or stall reaches the phone within a round trip.
+- **Links** (device-independent: timing belongs to the two releases, not to a TV): per episode and source,
+  `offsetMs` (companion position when the TV is at 0, ±6 h), `rate` (companion seconds per TV second, 0.5–2; a
+  PAL transfer against a film-rate source is 1.0427) and `language` (audio language to pick inside the stream, or
+  null). The companion target is `rate · tv + offsetMs`. Earphone latency is a per-phone nudge kept in the browser.
+- **Companion media is always proxied** (`/p/<token>/…`, under the owner key `companion:<deviceId>` with its own
+  two-session limit), so the page only loads same-origin media (plus `blob:` object URLs when hls.js feeds the
+  element through Media Source Extensions). DASH cannot be proxied and is refused. A companion
+  resolve never writes `now_playing`, creates no TV playback session and never penalizes a source for the TV.
+
+| Route | Body | Response |
+|---|---|---|
+| `GET /api/v1/admin/devices/:id/companion` | | `{"nowPlaying": {itemId, itemKind, episodeId, sourceId, itemTitle, episodeTitle, state} \| null, "candidates": [{sourceId, type, kind, label, languages, current, supported, reason, link}]}` — the sources of the episode now playing (`kind` for direct sources, `supported: false, reason: "dash"` for DASH), each with its stored link or the defaults; no URLs, headers or refs |
+| `POST /api/v1/admin/devices/:id/companion/resolve` | `{"episodeId", "sourceId", "language"?}` | `{"episodeId", "sourceId", "media": {"kind", "url": "/p/…"}, "languages", "expiresAt", "link"}` |
+| `PUT /api/v1/admin/companion/links/:episodeId/:sourceId` | `{"offsetMs", "rate", "language"?}` | `{"link": {episodeId, sourceId, offsetMs, rate, language, updatedAt}}` |
+| `POST /api/v1/admin/companion/links/:episodeId/:sourceId/copy-to-item` | | `{"updated", "episodeIds"}` — the same values written for every other episode of the item that has a source with that id |
+
+`link` = `{"offsetMs", "rate", "language", "updatedAt"}` (`updatedAt` null = defaults, nothing stored). Errors:
+`404 unknown_episode`, `404 unknown_source`, `403 not_allowed`, `400 unsupported_media` (DASH), `404 no_link`
+(copy without a stored link), `502 no_playable_source`.
+
 ## Static routes
 
 | Route | |
 |---|---|
 | `GET /healthz` | `{"ok": true}` |
 | `GET /assets/<sha256>.<jpg\|png\|webp>` | catalog posters, `Cache-Control: public, max-age=31536000, immutable` |
-| `GET /admin/` | the admin UI: `index.html` plus an allow-list of files (`app.js`, `lib.js`, `style.css`, `icon.svg`), `Cache-Control: no-cache`, `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; …` |
+| `GET /admin/` | the admin UI: `index.html` plus an allow-list of files (`app.js`, `lib.js`, `companion.js`, `style.css`, `icon.svg`, and `vendor/hls.min.js`, the pinned hls.js build listed in `server/admin/vendor/README.md`), `Cache-Control: no-cache`, `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; …` |
 | `GET /p/<token>/…` | media proxy (see [Media proxy](#media-proxy)) |
 
 ## Logging

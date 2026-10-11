@@ -100,6 +100,8 @@ try {
   const page = await call("GET", "/admin/");
   check(page.res.status === 200 && page.text.includes("app.js") && /script-src 'self'/.test(page.res.headers.get("content-security-policy") ?? ""), "the admin page is served with its CSP");
   check((await call("GET", "/admin/app.js")).res.status === 200, "the admin page's script is served");
+  check((await call("GET", "/admin/vendor/hls.min.js")).res.status === 200, "the vendored hls.js is packaged and served");
+  check(/media-src 'self'/.test(page.res.headers.get("content-security-policy") ?? ""), "the admin CSP allows same-origin media (Listen along)");
 
   const info = await call("GET", "/api/v1/admin/catalog", { token: admin });
   check(info.json?.id === "izle-sample" && info.json.server?.version === version, "the admin API answers with the catalog and server version");

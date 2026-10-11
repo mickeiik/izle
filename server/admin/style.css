@@ -147,6 +147,13 @@ details { margin-top: 0.75rem; }
 .toast { padding: 0.7rem 1rem; border-radius: 8px; background: var(--text); color: var(--bg); box-shadow: 0 4px 16px rgb(0 0 0 / 20%); }
 .toast.error { background: var(--danger); color: #fff; }
 
+.companion .timing { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1rem; max-width: 30rem; }
+.companion .nudge { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; }
+.companion .nudge span { min-width: 7rem; font-variant-numeric: tabular-nums; }
+.companion .status { margin: 0.75rem 0 0; font-variant-numeric: tabular-nums; }
+.companion .status.synced { color: var(--ok); }
+.companion audio { display: none; }
+
 @media (max-width: 640px) {
   main { padding: 0.75rem; }
   .row { flex-wrap: wrap; }

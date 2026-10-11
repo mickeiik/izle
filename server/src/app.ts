@@ -9,17 +9,21 @@ import { routePath } from "hono/route";
 import { streamSSE } from "hono/streaming";
 import { bearerToken, secretsEqual, sha256 } from "./auth.ts";
 import { clientAddress, compileTrustedProxies } from "./clientip.ts";
+import type { CompanionService } from "./companion.ts";
 import { diagnoseEpisode } from "./diagnostics.ts";
 import { HttpError } from "./errors.ts";
 import { MAX_PAIR_WAIT_MS, type PairingService } from "./pairing.ts";
 import { PROXY_TOKEN, type ProxyService, type ProxyTarget } from "./proxy.ts";
+import { companionScope } from "./resolve.ts";
 import type { LoadedResolver } from "./resolver.ts";
 import type { Device } from "./store.ts";
-import { HOME_MAX_ITEMS, type Services, type TvService } from "./tv.ts";
+import { HOME_MAX_ITEMS, MAX_NOW_WAIT_MS, type Services, type TvService } from "./tv.ts";
 import { VERSION } from "./version.ts";
 import {
   approveBody,
   commandBody,
+  companionLinkBody,
+  companionResolveBody,
   cursorBody,
   devicePatchBody,
   diagnosticsBody,
@@ -32,6 +36,7 @@ import {
 
 export interface AppContext extends Services {
   tv: TvService;
+  companion: CompanionService;
   pairing: PairingService;
   proxy: ProxyService;
   /** The loaded resolver module, or null when none is configured. */
@@ -51,17 +56,31 @@ type Env = { Variables: { device: Device } };
 
 const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
 
+/** The `wait=<seconds>` query parameter of the long-poll routes. */
+function parseWait(param: string | undefined, defaultSec: number, maxSec: number): number {
+  const sec = param === undefined ? defaultSec : Number(param);
+  if (!Number.isInteger(sec) || sec < 0 || sec > maxSec) throw new HttpError(400, "invalid_request", `wait must be an integer between 0 and ${maxSec}`);
+  return sec;
+}
+
 const CONTENT_TYPES: Record<string, string> = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" };
 
 /** The admin UI's static files (an allow-list: nothing else in the directory is served). */
 const ADMIN_FILES: Record<string, string> = {
   "app.js": "text/javascript; charset=utf-8",
   "lib.js": "text/javascript; charset=utf-8",
+  "companion.js": "text/javascript; charset=utf-8",
   "style.css": "text/css; charset=utf-8",
   "icon.svg": "image/svg+xml",
 };
+/** Third-party files vendored under `server/admin/vendor/` (pinned builds; see the README there). */
+const ADMIN_VENDOR_FILES: Record<string, string> = {
+  "hls.min.js": "text/javascript; charset=utf-8",
+};
+// media-src: the "Listen along" audio element plays companion streams through the same-origin proxy, and
+// blob: object URLs when hls.js feeds it through Media Source Extensions (page-local, nothing is fetched).
 const ADMIN_CSP =
-  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+  "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
 export function createApp(ctx: AppContext): Hono<Env> {
   const app = new Hono<Env>();
@@ -172,6 +191,12 @@ export function createApp(ctx: AppContext): Hono<Env> {
     if (!type) throw new HttpError(404, "not_found");
     return adminFile(c, file, type);
   });
+  app.get("/admin/vendor/:file", (c) => {
+    const file = c.req.param("file");
+    const type = Object.hasOwn(ADMIN_VENDOR_FILES, file) ? ADMIN_VENDOR_FILES[file] : undefined;
+    if (!type) throw new HttpError(404, "not_found");
+    return adminFile(c, path.join("vendor", file), type);
+  });
 
   // --- media proxy (the token in the path is the credential; media requests carry no device token) -------------
 
@@ -208,11 +233,7 @@ export function createApp(ctx: AppContext): Hono<Env> {
     if (!/^[0-9]{6}$/.test(code)) throw new HttpError(400, "invalid_request", "code must be 6 digits");
     const pairToken = bearerToken(c.req.header("Authorization"));
     if (!pairToken) throw new HttpError(401, "unauthorized", "the pair token is required", {}, { "WWW-Authenticate": 'Bearer realm="izle-pair"' });
-    const waitParam = c.req.query("wait");
-    const waitSec = waitParam === undefined ? MAX_PAIR_WAIT_MS / 1000 : Number(waitParam);
-    if (!Number.isInteger(waitSec) || waitSec < 0 || waitSec > MAX_PAIR_WAIT_MS / 1000) {
-      throw new HttpError(400, "invalid_request", `wait must be an integer between 0 and ${MAX_PAIR_WAIT_MS / 1000}`);
-    }
+    const waitSec = parseWait(c.req.query("wait"), MAX_PAIR_WAIT_MS / 1000, MAX_PAIR_WAIT_MS / 1000);
     const r = await pairing.wait(code, pairToken, waitSec * 1000, c.req.raw.signal);
     return c.json(r);
   });
@@ -338,6 +359,7 @@ export function createApp(ctx: AppContext): Hono<Env> {
     store.deleteDevice(d.id);
     events.closeDevice(d.id);
     ctx.proxy.dropDevice(d.id);
+    ctx.proxy.dropDevice(companionScope(d.id));
     log.info("device deleted", { deviceId: d.id });
     return c.body(null, 204);
   });
@@ -378,12 +400,19 @@ export function createApp(ctx: AppContext): Hono<Env> {
     });
   });
 
-  app.get("/api/v1/admin/devices/:id/now", (c) => {
+  // `?seq=<n>&wait=<s>` long-polls until the row changes (the phone's "Listen along" follows the TV with it).
+  app.get("/api/v1/admin/devices/:id/now", async (c) => {
     const d = requireDevice(c.req.param("id"));
-    const n = store.getNowPlaying(d.id);
+    const seqParam = c.req.query("seq");
+    const seq = seqParam === undefined ? null : Number(seqParam);
+    if (seq !== null && (!Number.isSafeInteger(seq) || seq < 0)) throw new HttpError(400, "invalid_request", "seq must be a non-negative integer");
+    const waitSec = parseWait(c.req.query("wait"), 0, MAX_NOW_WAIT_MS / 1000);
+    const n = await tv.waitNow(d.id, seq, waitSec * 1000, c.req.raw.signal);
     const ref = n ? catalog.episode(n.episodeId) : undefined;
     return c.json({
       online: events.isOnline(d.id),
+      serverNowMs: ctx.now(),
+      seq: n?.seq ?? 0,
       nowPlaying: n
         ? {
             itemId: n.itemId,
@@ -395,9 +424,41 @@ export function createApp(ctx: AppContext): Hono<Env> {
             durationMs: n.durationMs,
             state: n.state,
             updatedAt: iso(n.updatedAt),
+            playing: n.playing,
           }
         : null,
+      // Where the TV is: positionMs as of atMs (server clock), advancing at `rate` while `playing`.
+      anchor: n ? { positionMs: n.positionMs, atMs: n.anchorAt ?? n.updatedAt, playing: n.playing, rate: 1 } : null,
     });
+  });
+
+  // --- Listen along (companion audio on the owner's phone) -----------------------------------------------------
+
+  app.get("/api/v1/admin/devices/:id/companion", (c) => c.json(ctx.companion.candidates(requireDevice(c.req.param("id")))));
+
+  app.post("/api/v1/admin/devices/:id/companion/resolve", async (c) => {
+    const d = requireDevice(c.req.param("id"));
+    const body = await parseBody(c, companionResolveBody);
+    return c.json(await ctx.companion.resolve(d, body, c.req.raw.signal));
+  });
+
+  const linkParams = (c: Context) => {
+    const episodeId = c.req.param("episodeId") ?? "";
+    const sourceId = c.req.param("sourceId") ?? "";
+    if (!isId(episodeId)) throw new HttpError(404, "unknown_episode");
+    if (!isId(sourceId)) throw new HttpError(404, "unknown_source");
+    return { episodeId, sourceId };
+  };
+
+  app.put("/api/v1/admin/companion/links/:episodeId/:sourceId", async (c) => {
+    const { episodeId, sourceId } = linkParams(c);
+    const body = await parseBody(c, companionLinkBody);
+    return c.json({ link: ctx.companion.putLink(episodeId, sourceId, body) });
+  });
+
+  app.post("/api/v1/admin/companion/links/:episodeId/:sourceId/copy-to-item", (c) => {
+    const { episodeId, sourceId } = linkParams(c);
+    return c.json(ctx.companion.copyToItem(episodeId, sourceId));
   });
 
   app.post("/api/v1/admin/devices/:id/commands", async (c) => {

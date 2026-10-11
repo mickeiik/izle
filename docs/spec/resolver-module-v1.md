@@ -71,6 +71,10 @@ failure; the server records only the adapter id, a code (`timeout`, `abort`, `er
 array) and the error's `name`, **never its message**, because messages often contain URLs. A source whose adapter
 failed is moved behind the episode's other sources for 10 minutes, like a source the TV reported as failing.
 
+An adapter may be asked for the **same episode a second time while the TV is playing it**: the owner's phone
+resolves another source (or the same one) for "Listen along". Results must therefore be reproducible and side
+effects idempotent; a site that counts plays or rate-limits per title is the owner's concern.
+
 ## ResolveResult
 
 ```ts
@@ -127,3 +131,5 @@ version it does not implement.
 - **v1, server implementation (2026-10-10)** — no API change. Clarified how the server uses results (first
   servable one; subtitle-track headers proxied per track), the `empty` failure code, `BudgetExhausted`, and
   that a catalog reload is refused when it needs an adapter the module does not provide.
+- **v1, Listen along (2026-10-11)** — no API change. An adapter may be called a second time for an episode the TV
+  is playing (the owner's phone); failures of such calls do not penalize the source for the TV.

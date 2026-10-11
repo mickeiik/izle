@@ -70,6 +70,7 @@ async function copyFiles(/** @type {string} */ from, /** @type {string} */ into,
 }
 
 await copyFiles(at("server", "admin"), to("server", "admin"), (n) => /\.(html|js|css|svg)$/.test(n));
+await copyFiles(at("server", "admin", "vendor"), to("server", "admin", "vendor"), (n) => n.endsWith(".js") || n.startsWith("LICENSE-") || n === "README.md");
 await copyFiles(at("contract", "schema"), to("server", "schema"), (n) => n.endsWith(".schema.json"));
 await copyFiles(at("sample-catalog"), to("sample-catalog"), (n) => n.endsWith(".json") || n === "NOTICE.md");
 await copyFiles(at("sample-catalog", "assets"), to("sample-catalog", "assets"));
@@ -111,9 +112,16 @@ for (const dir of [...packageDirs].sort()) {
   const text = (await readFile(path.join(dir, licenseFile), "utf8")).trim();
   notices.push(`## ${pkg.name} ${pkg.version} (${pkg.license})\n\n\`\`\`\n${text}\n\`\`\``);
 }
+// Files vendored into the admin page (server/admin/vendor/README.md lists versions and hashes).
+const vendored = [];
+for (const name of (await readdir(at("server", "admin", "vendor"))).filter((n) => n.startsWith("LICENSE-")).sort()) {
+  const text = (await readFile(at("server", "admin", "vendor", name), "utf8")).trim();
+  vendored.push(`## ${name.slice("LICENSE-".length)} (vendored in server/admin/vendor/)\n\n\`\`\`\n${text}\n\`\`\``);
+}
 await writeFile(
   to("THIRD_PARTY_LICENSES.md"),
-  `# Third-party licenses\n\n\`server/dist/izle-server.js\` includes the following npm packages.\n\n${notices.join("\n\n")}\n`,
+  `# Third-party licenses\n\n\`server/dist/izle-server.js\` includes the following npm packages.\n\n${notices.join("\n\n")}\n\n` +
+    `The admin page (\`server/admin/\`) vendors the following files; see \`server/admin/vendor/README.md\`.\n\n${vendored.join("\n\n")}\n`,
 );
 
 // --- package.json and README -----------------------------------------------------------------------------------

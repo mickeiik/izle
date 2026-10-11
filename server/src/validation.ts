@@ -84,6 +84,8 @@ export const progressBody = compile<{
   positionMs: number;
   durationMs?: number | null;
   status: "playing" | "paused" | "stopped" | "finished";
+  playing?: boolean;
+  ageMs?: number;
 }>({
   type: "object",
   required: ["episodeId", "positionMs", "status"],
@@ -93,7 +95,27 @@ export const progressBody = compile<{
     positionMs: MS,
     durationMs: { anyOf: [MS, { type: "null" }] },
     status: { enum: ["playing", "paused", "stopped", "finished"] },
+    // Listen along: whether the player was actually advancing, and how old the sample is (queue delays).
+    playing: { type: "boolean" },
+    ageMs: { type: "integer", minimum: 0, maximum: 60_000 },
   },
+  additionalProperties: false,
+});
+
+const OFFSET_MS = { type: "integer", minimum: -21_600_000, maximum: 21_600_000 };
+const RATE = { type: "number", minimum: 0.5, maximum: 2 };
+
+export const companionLinkBody = compile<{ offsetMs: number; rate: number; language?: string | null }>({
+  type: "object",
+  required: ["offsetMs", "rate"],
+  properties: { offsetMs: OFFSET_MS, rate: RATE, language: { anyOf: [LANGUAGE_TAG, { type: "null" }] } },
+  additionalProperties: false,
+});
+
+export const companionResolveBody = compile<{ episodeId: string; sourceId: string; language?: string | null }>({
+  type: "object",
+  required: ["episodeId", "sourceId"],
+  properties: { episodeId: ID, sourceId: ID, language: { anyOf: [LANGUAGE_TAG, { type: "null" }] } },
   additionalProperties: false,
 });
 

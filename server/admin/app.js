@@ -3,6 +3,7 @@
 // build step, no inline scripts (the page is served with a strict Content-Security-Policy). All text from the
 // server is inserted with textContent, never as HTML.
 
+import { companionCard } from "./companion.js";
 import {
   HOME_MAX,
   LANGUAGES,
@@ -88,15 +89,17 @@ const token = () => {
  * @param {string} path below /api/v1/admin
  * @param {unknown} [body]
  * @param {string | null} [withToken]
+ * @param {AbortSignal} [signal]
  * @returns {Promise<any>}
  */
-async function api(method, path, body, withToken = token()) {
+async function api(method, path, body, withToken = token(), signal) {
   let res;
   try {
     res = await fetch(`/api/v1/admin${path}`, {
       method,
       headers: { Authorization: `Bearer ${withToken ?? ""}`, ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      ...(signal ? { signal } : {}),
     });
   } catch {
     throw new ApiError(0, "network", null);
@@ -357,6 +360,10 @@ function deviceView(id) {
   let entries = [];
   /** Item id whose "continue from" panel is open. */
   let openPicker = /** @type {string | null} */ (null);
+
+  // "Listen along": the owner's phone plays another source of what the TV plays, in sync (companion.js).
+  const listenAlong = companionCard({ deviceId: id, h, api, toast, busy });
+  cleanups.push(() => listenAlong.stop());
 
   const sendCommand = async (/** @type {any} */ body, /** @type {string} */ what) => {
     const r = await attempt(() => api("POST", `/devices/${encodeURIComponent(id)}/commands`, body));
@@ -657,6 +664,7 @@ function deviceView(id) {
     renderSettings();
     poll(async () => {
       await refreshNow();
+      await listenAlong.refresh();
     }, 5000);
     poll(async () => {
       const before = JSON.stringify(entries.map((e) => [e.itemId, e.continue?.episodeId, e.continue?.status, e.continue?.positionMs]));
@@ -672,6 +680,7 @@ function deviceView(id) {
     h("p", null, h("a", { href: "#/devices" }, "← TVs")),
     h("div", { class: "title" }, title, chip, seen),
     card("Now playing", now),
+    listenAlong.element,
     h(
       "section",
       { class: "card" },

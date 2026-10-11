@@ -68,6 +68,10 @@ class ModelsTest {
             """{"episodeId":"e","positionMs":1000,"status":"stopped"}""",
             ApiJson.encodeToString(ProgressReport.serializer(), ProgressReport(null, "e", 1_000, null, "stopped")),
         )
+        assertEquals(
+            """{"sessionId":"s","episodeId":"e","positionMs":1000,"durationMs":2000,"status":"playing","playing":false,"ageMs":120}""",
+            ApiJson.encodeToString(ProgressReport.serializer(), ProgressReport("s", "e", 1_000, 2_000, "playing", playing = false, ageMs = 120)),
+        )
     }
 
     @Test

@@ -7,6 +7,7 @@ import type { Hono } from "hono";
 import { createApp, type AppContext } from "./app.ts";
 import { loadAdminToken } from "./auth.ts";
 import { CatalogService } from "./catalog.ts";
+import { CompanionService } from "./companion.ts";
 import { DEFAULT_RESOLVE_BUDGET_MS, DEFAULT_RESOLVE_DEADLINE_MS, type ServerConfig } from "./config.ts";
 import { EventHub } from "./events.ts";
 import { createLogger, type Logger } from "./log.ts";
@@ -73,6 +74,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const ctx: AppContext = {
     ...services,
     tv: new TvService(services),
+    companion: new CompanionService(services),
     pairing: new PairingService(store, log, now, opts.pairing),
     proxy,
     resolverModule,

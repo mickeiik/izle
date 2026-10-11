@@ -13,6 +13,20 @@ class PlaybackPlanTest {
     private val ninetySeconds = 90_000L
 
     @Test
+    fun reportAgeIsClampedToWhatTheServerAccepts() {
+        assertEquals(0L, PlaybackPlan.reportAgeMs(sampledAtMs = 5_000, nowMs = 5_000))
+        assertEquals(700L, PlaybackPlan.reportAgeMs(sampledAtMs = 5_000, nowMs = 5_700))
+        assertEquals(0L, PlaybackPlan.reportAgeMs(sampledAtMs = 6_000, nowMs = 5_000)) // clocks never run backwards, but never negative
+        assertEquals(PlaybackPlan.MAX_REPORT_AGE_MS, PlaybackPlan.reportAgeMs(sampledAtMs = 0, nowMs = 70_000))
+    }
+
+    @Test
+    fun liveStatusFollowsWhatTheViewerWants() {
+        assertEquals("playing", PlaybackPlan.liveStatus(playWhenReady = true))
+        assertEquals("paused", PlaybackPlan.liveStatus(playWhenReady = false))
+    }
+
+    @Test
     fun endThresholdIsTwoMinutesOrFivePercentCappedAtTenPercent() {
         assertEquals(360_000L, PlaybackPlan.endThresholdMs(twoHours)) // 5 % > 2 min
         assertEquals(120_000L, PlaybackPlan.endThresholdMs(twentyFiveMinutes)) // 2 min > 5 %, < 10 %

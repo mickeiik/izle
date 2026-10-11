@@ -4,7 +4,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 
 // Schema migrations, applied in order; PRAGMA user_version records how many ran. Never edit a shipped migration,
 // append a new one.
-const MIGRATIONS: string[] = [
+export const MIGRATIONS: string[] = [
   `
   CREATE TABLE devices (
     id TEXT PRIMARY KEY,
@@ -73,6 +73,24 @@ const MIGRATIONS: string[] = [
     updated_at INTEGER NOT NULL
   );
   `,
+  // 2 — "Listen along": a precise playback anchor on now_playing and the owner's companion links.
+  `
+  ALTER TABLE now_playing ADD COLUMN playing INTEGER NOT NULL DEFAULT 0;   -- the player was actually advancing
+  ALTER TABLE now_playing ADD COLUMN anchor_at INTEGER;                    -- when position_ms was sampled (epoch ms)
+  ALTER TABLE now_playing ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;       -- bumped on every write (admin long-polls)
+  CREATE TABLE companion_links (
+    catalog_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    episode_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    language TEXT,                          -- NULL = the player's default audio track
+    offset_ms INTEGER NOT NULL DEFAULT 0,   -- companion position when the TV is at 0
+    rate REAL NOT NULL DEFAULT 1.0,         -- companion seconds per TV second
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (catalog_id, episode_id, source_id)
+  );
+  CREATE INDEX companion_links_by_item ON companion_links (catalog_id, item_id);
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
@@ -136,6 +154,27 @@ export interface NowPlaying {
   durationMs: number | null;
   state: string;
   updatedAt: number;
+  /** Whether the player was actually advancing when it sampled `positionMs` (a rebuffer stall reports false). */
+  playing: boolean;
+  /** When `positionMs` was sampled: the report's receipt time minus its age (epoch ms); null for old rows. */
+  anchorAt: number | null;
+  /** Bumped on every write; the admin "now" route long-polls on it. */
+  seq: number;
+}
+
+/** Owner-set timing between a TV source and a companion source of the same episode ("Listen along"). */
+export interface CompanionLink {
+  catalogId: string;
+  itemId: string;
+  episodeId: string;
+  sourceId: string;
+  /** Audio language to pick inside the companion stream; null = the player's default. */
+  language: string | null;
+  /** Companion position when the TV is at 0. */
+  offsetMs: number;
+  /** Companion seconds per TV second (1.0427 for a PAL transfer against a film-rate source). */
+  rate: number;
+  updatedAt: number;
 }
 
 type Row = Record<string, unknown>;
@@ -178,6 +217,19 @@ function toProgress(r: Row): Progress {
     positionMs: num(r.position_ms),
     durationMs: numOrNull(r.duration_ms),
     status: str(r.status) as ProgressStatus,
+    updatedAt: num(r.updated_at),
+  };
+}
+
+function toCompanionLink(r: Row): CompanionLink {
+  return {
+    catalogId: str(r.catalog_id),
+    itemId: str(r.item_id),
+    episodeId: str(r.episode_id),
+    sourceId: str(r.source_id),
+    language: strOrNull(r.language),
+    offsetMs: num(r.offset_ms),
+    rate: num(r.rate),
     updatedAt: num(r.updated_at),
   };
 }
@@ -482,13 +534,16 @@ export class Store {
 
   // --- now playing ---------------------------------------------------------------------------------------------
 
-  setNowPlaying(deviceId: string, n: NowPlaying): void {
-    this.run(
-      `INSERT INTO now_playing (device_id, catalog_id, item_id, episode_id, source_id, position_ms, duration_ms, state, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  /** Upserts the device's now-playing row and returns its sequence number, bumped on every write. */
+  setNowPlaying(deviceId: string, n: Omit<NowPlaying, "seq">): number {
+    const r = this.get(
+      `INSERT INTO now_playing (device_id, catalog_id, item_id, episode_id, source_id, position_ms, duration_ms, state, updated_at, playing, anchor_at, seq)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
        ON CONFLICT (device_id) DO UPDATE SET catalog_id = excluded.catalog_id, item_id = excluded.item_id,
          episode_id = excluded.episode_id, source_id = excluded.source_id, position_ms = excluded.position_ms,
-         duration_ms = excluded.duration_ms, state = excluded.state, updated_at = excluded.updated_at`,
+         duration_ms = excluded.duration_ms, state = excluded.state, updated_at = excluded.updated_at,
+         playing = excluded.playing, anchor_at = excluded.anchor_at, seq = now_playing.seq + 1
+       RETURNING seq`,
       deviceId,
       n.catalogId,
       n.itemId,
@@ -498,7 +553,10 @@ export class Store {
       n.durationMs,
       n.state,
       n.updatedAt,
+      n.playing ? 1 : 0,
+      n.anchorAt,
     );
+    return num(r!.seq);
   }
 
   getNowPlaying(deviceId: string): NowPlaying | null {
@@ -513,7 +571,38 @@ export class Store {
           durationMs: numOrNull(r.duration_ms),
           state: str(r.state),
           updatedAt: num(r.updated_at),
+          playing: num(r.playing) === 1,
+          anchorAt: numOrNull(r.anchor_at),
+          seq: num(r.seq),
         }
       : null;
+  }
+
+  // --- companion links -----------------------------------------------------------------------------------------
+
+  getCompanionLink(catalogId: string, episodeId: string, sourceId: string): CompanionLink | null {
+    const r = this.get("SELECT * FROM companion_links WHERE catalog_id = ? AND episode_id = ? AND source_id = ?", catalogId, episodeId, sourceId);
+    return r ? toCompanionLink(r) : null;
+  }
+
+  listCompanionLinks(catalogId: string, episodeId: string): CompanionLink[] {
+    return this.all("SELECT * FROM companion_links WHERE catalog_id = ? AND episode_id = ? ORDER BY source_id", catalogId, episodeId).map(toCompanionLink);
+  }
+
+  putCompanionLink(l: CompanionLink): void {
+    this.run(
+      `INSERT INTO companion_links (catalog_id, item_id, episode_id, source_id, language, offset_ms, rate, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (catalog_id, episode_id, source_id) DO UPDATE SET item_id = excluded.item_id, language = excluded.language,
+         offset_ms = excluded.offset_ms, rate = excluded.rate, updated_at = excluded.updated_at`,
+      l.catalogId,
+      l.itemId,
+      l.episodeId,
+      l.sourceId,
+      l.language,
+      l.offsetMs,
+      l.rate,
+      l.updatedAt,
+    );
   }
 }

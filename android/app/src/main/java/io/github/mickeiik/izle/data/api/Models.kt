@@ -164,7 +164,11 @@ data class EpisodeRef(
 @Serializable
 data class Resume(val positionMs: Long, val durationMs: Long? = null)
 
-/** `status`: `playing`, `paused`, `stopped` (left the player) or `finished`. */
+/**
+ * `status`: `playing`, `paused`, `stopped` (left the player) or `finished`. `playing` says whether the player was
+ * actually advancing when the position was sampled (false during a rebuffer stall) and `ageMs` how old the sample
+ * is when the report is sent: the server anchors "Listen along" on them. Both are omitted when null.
+ */
 @Serializable
 data class ProgressReport(
     val sessionId: String?,
@@ -172,6 +176,8 @@ data class ProgressReport(
     val positionMs: Long,
     val durationMs: Long?,
     val status: String,
+    val playing: Boolean? = null,
+    val ageMs: Long? = null,
 )
 
 @Serializable

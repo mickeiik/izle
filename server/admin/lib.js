@@ -169,6 +169,10 @@ const ERRORS = /** @type {Record<string, string>} */ ({
   body_too_large: "The request was too large.",
   network: "The server cannot be reached.",
   internal: "The server ran into an error. Its log has details.",
+  unknown_source: "That source is not in the catalog (any more).",
+  unsupported_media: "That source is DASH, which a phone cannot play through the server.",
+  no_playable_source: "The source could not be resolved right now.",
+  no_link: "Save the timing for this episode first.",
 });
 
 /**
@@ -251,4 +255,135 @@ export function episodeStates(episodes, cursorEpisodeId, progress) {
       percent: p && p.status !== "finished" ? percent(p.positionMs, p.durationMs) : null,
     };
   });
+}
+
+// --- Listen along (companion audio on the owner's phone) ----------------------------------------------------------
+
+/** Sync loop tuning: when to seek, how hard to nudge the playback rate, which clock samples to trust. */
+export const SYNC = { seekMs: 1500, coarseMs: 300, fineMs: 40, coarseAdj: 0.05, fineAdj: 0.02, minRate: 0.9, maxRate: 1.1, sampleMaxRttMs: 1000 };
+
+/**
+ * @typedef {{ positionMs: number, atMs: number, playing: boolean, rate?: number }} Anchor
+ * @typedef {{ offsetMs: number, rate: number }} LinkTiming
+ * @typedef {{ sentAt: number, receivedAt: number, serverNowMs: number }} ClockSample
+ */
+
+/**
+ * Where the TV is at `serverNowMs` (server clock): the anchor's position, advanced while it was playing.
+ * @param {Anchor | null | undefined} anchor
+ * @param {number} serverNowMs
+ */
+export function tvPositionAt(anchor, serverNowMs) {
+  if (!anchor) return null;
+  const run = anchor.playing ? Math.max(0, serverNowMs - anchor.atMs) * (anchor.rate ?? 1) : 0;
+  return anchor.positionMs + run;
+}
+
+/**
+ * The companion position matching a TV position: `rate · tv + offset`, plus this phone's nudge for its own
+ * output latency.
+ * @param {number} tvPositionMs
+ * @param {LinkTiming} link
+ * @param {number} [nudgeMs]
+ */
+export function companionTarget(tvPositionMs, link, nudgeMs = 0) {
+  return link.rate * tvPositionMs + link.offsetMs + nudgeMs;
+}
+
+/**
+ * What the phone's player should do to stay on target: pause with the TV, seek when far off, otherwise play a
+ * little faster or slower than the nominal rate until the error is within `SYNC.fineMs`.
+ * @param {{ targetMs: number, actualMs: number, tvPlaying: boolean, nominalRate: number }} p
+ * @returns {{ action: "pause" | "seek" | "play", rate: number, state: string, errorMs: number, toMs?: number }}
+ */
+export function syncDecision({ targetMs, actualMs, tvPlaying, nominalRate }) {
+  const errorMs = targetMs - actualMs;
+  if (!tvPlaying) return { action: "pause", rate: nominalRate, state: "paused", errorMs };
+  if (targetMs < 0) return { action: "pause", rate: nominalRate, state: "waiting", errorMs };
+  if (Math.abs(errorMs) > SYNC.seekMs) return { action: "seek", toMs: targetMs, rate: nominalRate, state: "seeking", errorMs };
+  const adj = Math.abs(errorMs) > SYNC.coarseMs ? SYNC.coarseAdj : Math.abs(errorMs) > SYNC.fineMs ? SYNC.fineAdj : 0;
+  const rate = Math.min(SYNC.maxRate, Math.max(SYNC.minRate, nominalRate * (1 + Math.sign(errorMs) * adj)));
+  return { action: "play", rate, state: adj === 0 ? "synced" : errorMs > 0 ? "catching up" : "holding back", errorMs };
+}
+
+/**
+ * Server clock minus phone clock, from round trips measured on the phone: the sample with the shortest round
+ * trip wins; long ones (a long-poll that waited) are ignored. Null without a usable sample.
+ * @param {ClockSample[]} samples
+ */
+export function clockOffset(samples) {
+  /** @type {ClockSample | null} */
+  let best = null;
+  for (const s of samples) {
+    const rtt = s.receivedAt - s.sentAt;
+    if (rtt < 0 || rtt > SYNC.sampleMaxRttMs) continue;
+    if (!best || rtt < best.receivedAt - best.sentAt) best = s;
+  }
+  return best ? best.serverNowMs - (best.sentAt + best.receivedAt) / 2 : null;
+}
+
+/**
+ * @param {ClockSample[]} samples @param {ClockSample} sample @param {number} [keep]
+ */
+export function pushSample(samples, sample, keep = 8) {
+  return [...samples, sample].slice(-keep);
+}
+
+/**
+ * @typedef {object} Candidate
+ * @property {string} sourceId
+ * @property {string | null} label
+ * @property {{ audio: string[] | null, subtitles: string[] | null }} languages
+ * @property {boolean} current
+ * @property {boolean} supported
+ * @property {string | null} reason
+ */
+
+/**
+ * Select options for the companion candidates: one per source, or one per audio language when a source has
+ * several. `value` is `<sourceId>\u0000<language>` (see `parseCandidate`).
+ * @param {Candidate[]} candidates
+ */
+export function candidateOptions(candidates) {
+  const out = [];
+  for (const c of candidates) {
+    const langs = c.languages?.audio ?? null;
+    const perLanguage = langs && langs.length >= 2 ? langs : [null];
+    for (const lang of perLanguage) {
+      const parts = [c.label ? `${c.sourceId} — ${c.label}` : c.sourceId];
+      if (lang) parts.push(languageLabel(lang));
+      else if (langs && langs.length === 1) parts.push(languageLabel(langs[0]));
+      else if (langs && langs.length === 0) parts.push("no dialogue");
+      if (c.current) parts.push("the TV's source");
+      if (!c.supported) parts.push(c.reason === "dash" ? "DASH, cannot play on a phone" : "cannot play");
+      out.push({ value: `${c.sourceId}\u0000${lang ?? ""}`, label: parts.join(" · "), sourceId: c.sourceId, language: lang, disabled: !c.supported });
+    }
+  }
+  return out;
+}
+
+/** @param {string} value */
+export function parseCandidate(value) {
+  const [sourceId, language] = value.split("\u0000");
+  return { sourceId: sourceId ?? "", language: language || null };
+}
+
+/**
+ * `+0.6 s`, `−12 ms`; `–` when unknown.
+ * @param {number | null | undefined} ms
+ */
+export function formatDrift(ms) {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return "–";
+  const sign = ms < 0 ? "−" : "+";
+  const abs = Math.abs(ms);
+  return abs >= 1000 ? `${sign}${(abs / 1000).toFixed(1)} s` : `${sign}${Math.round(abs)} ms`;
+}
+
+/**
+ * `1:02:03.4` — a position with tenths of a second, for the sync status line.
+ * @param {number | null | undefined} ms
+ */
+export function formatPosition(ms) {
+  if (ms === null || ms === undefined || !Number.isFinite(ms) || ms < 0) return "–";
+  return `${formatClock(ms)}.${Math.floor((ms % 1000) / 100)}`;
 }

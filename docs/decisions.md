@@ -432,3 +432,63 @@ from the roadmap, the entry wins until the roadmap is updated.
   and the working tree found one hit, the made-up device token the redaction tests use, now marked with an inline
   `gitleaks:allow` and a `.gitleaksignore` entry for the commit that introduced it; no token, database, keystore or
   local config is tracked. Private names and author e-mail addresses are for the owner to review.
+
+## Listen along — companion audio on the owner's phone (2026-10-11)
+
+The owner's phone plays another source of the episode the TV is playing, in sync with the picture (a dub in another
+language through earphones). Decisions taken with the owner before implementation: the listener is the owner, via the
+existing admin page (no share links, no third kind of token); the companion is another source of the same episode
+(or another audio language of the same multi-audio stream), so the catalog contract is unchanged; the TV app may
+change so the sync is precise; links carry an offset and a speed factor (PAL/NTSC). Routine decisions:
+
+- **Anchor fields on the progress report** (`playing`, `ageMs`, both optional and additive). `playing` is ExoPlayer's
+  `isPlaying` so a rebuffer stall is visible (`status: "playing", playing: false`); the TV reports on every
+  `onIsPlayingChanged`. `ageMs` is computed when a queued report is finally sent (retries carry the grown age), so a
+  report delayed behind a retrying terminal report still anchors correctly. The heartbeat stays at 15 s: ExoPlayer's
+  position is driven by the audio clock and does not drift measurably between heartbeats; what matters is reporting
+  the transitions.
+- **A persisted `seq` on `now_playing`**, bumped in the upsert, with in-memory waiters (the pairing long-poll
+  pattern) behind `GET …/now?seq=&wait=`. Persisting it keeps it monotonic across restarts, so a phone holding an old
+  number never waits a cycle for nothing. The admin page keeps polling for everything else; the phone's loop is the
+  only long-poll client.
+- **Links are device-independent** (`companion_links`, keyed by catalog, episode and source): the timing between two
+  releases is a property of the media, not of the TV that plays it. "Apply to all episodes" copies a link to every
+  episode of the item with a source of the same id (exporters reuse ids such as `tr-dub` across episodes). The
+  earphone nudge is per phone, in `localStorage`.
+- **Companion resolves run in their own proxy scope** (`companion:<deviceId>`, the same two-session limit) so a
+  phone can never end the TV's sessions; they are always proxied (the admin CSP gains `media-src 'self' blob:` and
+  nothing else: the proxied stream, and the page-local object URL hls.js hands the element for Media Source
+  Extensions — without `blob:` the element fails with `MEDIA_ERR_SRC_NOT_SUPPORTED` before anything loads; hls.js
+  fetches playlists with XHR, which same-origin avoids CORS for), never write `now_playing`, and never penalize a
+  source for the TV. DASH is refused (`400 unsupported_media`): the proxy does not rewrite manifests.
+- **hls.js is vendored** (`server/admin/vendor/hls.min.js`, 1.7.3, full build, Apache-2.0, pinned with its SHA-256
+  in the README there, served from `/admin/vendor/` by its own allow-list, copied by `pack-server.mjs` and listed in
+  `THIRD_PARTY_LICENSES.md`). This is the one exception to the admin page's "no dependencies" rule: Android Chrome
+  has no native HLS, and most companion sources are HLS. The light build was rejected because it drops
+  alternate-audio support, which choosing a language inside a multi-audio stream needs. It runs without a worker
+  (`enableWorker: false`) rather than loosening the CSP with `worker-src blob:`, is loaded lazily only when the
+  browser cannot play HLS natively (iOS Safari can), and is capped to the lowest variant (the video is decoded and
+  discarded).
+- **An `<audio>` element**, not a hidden `<video>`: Android Chrome pauses backgrounded video but keeps audio playing
+  with the screen off, which is how the phone will be used. Media Session metadata gives lock-screen controls. iOS
+  Safari freezes page scripts in the background, so drift correction pauses there until the page is in front again
+  (documented limitation; the loop reseeks on return).
+- **Native HLS is used only when it can do the job.** Chromium 152 answers `canPlayType("application/vnd.apple.mpegurl")`
+  with "maybe" and plays HLS natively, but exposes no `audioTracks` API, so a chosen language would be silently
+  ignored. The page therefore uses the native player only when no specific language is wanted or the element has
+  `audioTracks` (Safari), and otherwise hls.js; a native player that errors makes the page switch to hls.js for the
+  rest of its life. Verified in the desktop app's browser: native HLS synced to within 40 ms, and the hls.js path
+  picks the Italian rendition of the sample's multi-audio stream.
+- **Two reports per pause or resume are accepted.** The explicit report in `pause()`/`resume()` and the one from
+  `onIsPlayingChanged` both go out (a few milliseconds apart, the same position); the server upserts, the phone only
+  uses the latest anchor, and de-duplicating on the TV would buy nothing. Verified on the emulator: a report at
+  playback start, two per pause and resume, `playing: false` while paused.
+- **Sync loop**: every 250 ms the phone computes the TV position from the anchor and its clock offset (best of the
+  last eight round trips, long-poll answers excluded), maps it through `rate · tv + offset + nudge`, seeks when more
+  than 1.5 s off (with a 1 s settle time and a 150 ms lead) and otherwise plays at the nominal rate ±5 % / ±2 %
+  (clamped to 0.9–1.1; browsers preserve pitch). Pure functions in `lib.js`, unit-tested.
+- **Auto-next**: the long-poll shows the new episode id; the phone re-resolves the same source id with that episode's
+  own link. If the next episode lacks the source, listening ends with a toast.
+- **Compatibility**: `progressBody` is `additionalProperties: false`, so a newer TV against an older server would get
+  400 and silently stop saving progress. The TV therefore resends once without the anchor fields on a 400 and keeps
+  omitting them for the rest of the process; the docs still say "update the server before the TVs".

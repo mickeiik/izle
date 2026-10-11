@@ -32,6 +32,7 @@ export type ProxyMain =
   | { kind: "hls"; playlist: string; baseUrl: string; url?: undefined };
 
 export interface ProxySessionInit {
+  /** Owner key of the session-limit bucket: the TV's device id, or `companion:<deviceId>` for the phone. */
   deviceId: string;
   /** Null when only subtitle tracks need the proxy. */
   main: ProxyMain | null;
@@ -127,7 +128,7 @@ export class ProxyService {
     this.headersTimeoutMs = opts.headersTimeoutMs ?? UPSTREAM_HEADERS_TIMEOUT_MS;
   }
 
-  /** Creates a session and returns its token. A device keeps at most two; older ones end (410). */
+  /** Creates a session and returns its token. An owner keeps at most two; older ones end (410). */
   create(init: ProxySessionInit): string {
     const t = this.now();
     this.prune(t);
@@ -138,7 +139,7 @@ export class ProxyService {
     return token;
   }
 
-  /** Ends every session of a device (it was deleted). */
+  /** Ends every session of an owner key (the device was deleted). */
   dropDevice(deviceId: string): void {
     for (const s of this.sessions.values()) if (s.deviceId === deviceId) this.sessions.delete(s.token);
   }

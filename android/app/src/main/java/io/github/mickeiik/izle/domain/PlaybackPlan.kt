@@ -32,6 +32,15 @@ object PlaybackPlan {
     /** HTTP 403/410 after this much playback most likely means an expired URL: re-resolve the same source. */
     const val EXPIRED_URL_MIN_PLAYED_MS = 5 * 60_000L
 
+    /** Largest sample age a progress report may carry (the server rejects more). */
+    const val MAX_REPORT_AGE_MS = 60_000L
+
+    /** How old a queued report's position sample is when it is finally sent. */
+    fun reportAgeMs(sampledAtMs: Long, nowMs: Long): Long = (nowMs - sampledAtMs).coerceIn(0, MAX_REPORT_AGE_MS)
+
+    /** The status of a live report: what the viewer wants, whatever the player is doing at that instant. */
+    fun liveStatus(playWhenReady: Boolean): String = if (playWhenReady) "playing" else "paused"
+
     /** Remaining time at or below which an episode counts as finished. */
     fun endThresholdMs(durationMs: Long): Long {
         if (durationMs <= 0) return 0

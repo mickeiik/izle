@@ -16,6 +16,18 @@ export interface ResolveInput {
   exclude?: string[];
 }
 
+export interface ResolveOptions {
+  /**
+   * `companion`: the owner's phone resolving a second source of the episode the TV plays ("Listen along"). Its
+   * proxy sessions live under their own owner key, the stream is always proxied (the admin page only loads
+   * same-origin media), DASH is refused, and failures do not reorder the TV's fallback.
+   */
+  scope?: "tv" | "companion";
+}
+
+/** Proxy-session owner key of a device's companion streams (separate from the TV's own two sessions). */
+export const companionScope = (deviceId: string): string => `companion:${deviceId}`;
+
 export interface PlaybackSession {
   id: string;
   deviceId: string;
@@ -217,16 +229,16 @@ export class ResolveService {
     };
   }
 
-  /** Turns an upstream stream into what the TV gets, creating a proxy session when needed. */
-  private deliver(deviceId: string, s: UpstreamStream): Pick<ResolvedStream, "media" | "subtitleTracks" | "delivery"> {
+  /** Turns an upstream stream into what the client gets, creating a proxy session (owned by `owner`) when needed. */
+  private deliver(owner: string, s: UpstreamStream, proxyAlways: boolean): Pick<ResolvedStream, "media" | "subtitleTracks" | "delivery"> {
     const inline = "playlist" in s.media;
-    const proxyMain = inline || (s.media.kind !== "dash" && (hasHeaders(s.headers) || this.o.proxyAlways));
-    const proxySub = s.subtitleTracks.map((t) => hasHeaders(t.headers) || this.o.proxyAlways);
+    const proxyMain = inline || (s.media.kind !== "dash" && (hasHeaders(s.headers) || proxyAlways));
+    const proxySub = s.subtitleTracks.map((t) => hasHeaders(t.headers) || proxyAlways);
     let token: string | null = null;
     if (proxyMain || proxySub.some(Boolean)) {
       const m = s.media;
       token = this.o.proxy.create({
-        deviceId,
+        deviceId: owner,
         main: !proxyMain
           ? null
           : "playlist" in m
@@ -249,14 +261,22 @@ export class ResolveService {
     };
   }
 
-  async resolve(deviceId: string, preferredAudioLanguage: string | null, input: ResolveInput, signal?: AbortSignal): Promise<ResolvedStream> {
+  async resolve(
+    deviceId: string,
+    preferredAudioLanguage: string | null,
+    input: ResolveInput,
+    signal?: AbortSignal,
+    opts: ResolveOptions = {},
+  ): Promise<ResolvedStream> {
     const ref = this.catalog.episode(input.episodeId);
     if (!ref) throw new HttpError(404, "unknown_episode");
     const { episode } = ref;
     if (!episode.playbackAllowed) throw new HttpError(403, "not_allowed", "playback of this episode is not allowed");
+    const companion = opts.scope === "companion";
+    const owner = companion ? companionScope(deviceId) : deviceId;
 
     const exclude = new Set(input.exclude ?? []);
-    for (const id of exclude) if (episode.sources.some((s) => s.id === id)) this.markFailed(episode.id, id);
+    if (!companion) for (const id of exclude) if (episode.sources.some((s) => s.id === id)) this.markFailed(episode.id, id);
 
     let candidates: Source[];
     if (input.sourceId !== undefined) {
@@ -285,16 +305,20 @@ export class ResolveService {
         if (a.tried.code === "abort") throw new HttpError(503, "aborted");
         tried.push(a.tried);
         if (source.type === "adapter" && a.tried.code !== "adapter_unavailable") {
-          this.markFailed(episode.id, source.id);
-          this.o.log.warn("adapter failed", { deviceId, episodeId: episode.id, ...a.tried, ms: a.ms });
+          // A phone's failure must not reorder the TV's fallback.
+          if (!companion) this.markFailed(episode.id, source.id);
+          this.o.log.warn("adapter failed", { deviceId, episodeId: episode.id, ...a.tried, ms: a.ms, ...(companion ? { companion: true } : {}) });
         }
         continue;
+      }
+      if (companion && a.stream.media.kind === "dash") {
+        throw new HttpError(400, "unsupported_media", "DASH cannot be played on the phone: the proxy does not rewrite manifests", { kind: "dash" });
       }
       const t = this.now();
       this.pruneSessions(t);
       const session: PlaybackSession = {
         id: newId(16),
-        deviceId,
+        deviceId: owner,
         catalogId: this.catalog.catalogId,
         itemId: ref.item.id,
         episodeId: episode.id,
@@ -302,7 +326,7 @@ export class ResolveService {
         createdAt: t,
       };
       this.sessions.set(session.id, session);
-      const delivered = this.deliver(deviceId, a.stream);
+      const delivered = this.deliver(owner, a.stream, this.o.proxyAlways || companion);
       const alternatives = candidates.slice(i + 1).filter((s) => this.staticCheck(s) === null).map((s) => s.id);
       this.o.log.info("resolved", {
         deviceId,
@@ -311,6 +335,7 @@ export class ResolveService {
         sourceId: source.id,
         kind: delivered.media.kind,
         delivery: delivered.delivery,
+        ...(companion ? { companion: true } : {}),
         ...(source.type === "adapter" ? { adapterId: source.adapter, ms: a.ms } : {}),
       });
       return {
