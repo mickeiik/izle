@@ -52,7 +52,8 @@ data class SetupUi(val address: String = "", val busy: Boolean = false, val erro
 
 enum class PairingProblem { Unreachable, RateLimited }
 
-data class PairingUi(val server: String = "", val code: String? = null, val problem: PairingProblem? = null)
+/** `adminUrl` is the admin page's address, shown so the owner knows what to open on the phone. */
+data class PairingUi(val adminUrl: String = "", val code: String? = null, val problem: PairingProblem? = null)
 
 enum class HomeMessage { NoConnection }
 
@@ -283,7 +284,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     private fun showPairing() {
         _screen.value = Screen.Pairing
-        _pairing.value = PairingUi(server = serverUrl?.let(ServerUrls::display).orEmpty())
+        _pairing.value = PairingUi(adminUrl = serverUrl?.let(ServerUrls::adminPage).orEmpty())
         startPairing()
     }
 

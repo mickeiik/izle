@@ -38,4 +38,7 @@ object ServerUrls {
         val path = url.encodedPath.trimEnd('/')
         return "${url.scheme}://${url.host}$port$path"
     }
+
+    /** The server's admin page, as the owner would type it on a phone (the server redirects to the trailing slash). */
+    fun adminPage(url: HttpUrl): String = "${display(url)}/admin"
 }

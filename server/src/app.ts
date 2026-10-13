@@ -330,7 +330,7 @@ export function createApp(ctx: AppContext): Hono<Env> {
 
   app.post("/api/v1/admin/pair/approve", async (c) => {
     const body = await parseBody(c, approveBody);
-    return c.json(pairing.approve(body.code, body.name.trim()));
+    return c.json(pairing.approve(body.code, body.name));
   });
 
   app.get("/api/v1/admin/pair/pending", (c) =>

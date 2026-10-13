@@ -26,14 +26,22 @@ import io.github.mickeiik.izle.ui.PairingUi
 import io.github.mickeiik.izle.ui.common.Spinner
 import io.github.mickeiik.izle.ui.theme.IzleColors
 
-/** The 6-digit code the owner approves from the admin page; the TV long-polls until it gets its token. */
+/**
+ * The 6-digit code the owner approves from the admin page, with that page's address so the owner knows what to open
+ * on the phone; the TV long-polls until it gets its token.
+ */
 @Composable
 fun PairingScreen(ui: PairingUi) {
     Box(Modifier.fillMaxSize().background(IzleColors.Background).padding(horizontal = 48.dp, vertical = 32.dp)) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.align(Alignment.Center)) {
             Text(stringResource(R.string.pair_title), style = MaterialTheme.typography.displaySmall, color = IzleColors.OnSurface)
             Spacer(Modifier.height(12.dp))
-            Text(stringResource(R.string.pair_instructions), style = MaterialTheme.typography.bodyLarge, color = IzleColors.Dim, textAlign = TextAlign.Center)
+            Text(
+                stringResource(R.string.pair_instructions, ui.adminUrl),
+                style = MaterialTheme.typography.bodyLarge,
+                color = IzleColors.Dim,
+                textAlign = TextAlign.Center,
+            )
             Spacer(Modifier.height(28.dp))
             Box(
                 Modifier.background(IzleColors.Surface, RoundedCornerShape(24.dp)).padding(horizontal = 56.dp, vertical = 12.dp),
@@ -60,9 +68,11 @@ fun PairingScreen(ui: PairingUi) {
                 }
             }
         }
-        Column(Modifier.align(Alignment.BottomCenter), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(stringResource(R.string.pair_server, ui.server), style = MaterialTheme.typography.bodySmall, color = IzleColors.Dim)
-            Text(stringResource(R.string.pair_back_hint), style = MaterialTheme.typography.bodySmall, color = IzleColors.Dim)
-        }
+        Text(
+            stringResource(R.string.pair_back_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = IzleColors.Dim,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
     }
 }

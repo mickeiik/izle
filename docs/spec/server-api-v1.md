@@ -26,7 +26,7 @@ response fields, new routes); clients MUST ignore unknown response fields.
 
 | Secret | Where it comes from | Stored as |
 |---|---|---|
-| Admin token | `IZLE_ADMIN_TOKEN`, else `admin.tokenFile` (created with 32 random bytes, mode 0600, on first start). Shorter than 24 characters → the server refuses to start. `izle-server admin-token [--rotate]` prints / replaces it. | the file (owner's responsibility) |
+| Admin token | `IZLE_ADMIN_TOKEN`, else `admin.tokenFile` (created with 32 random bytes, mode 0600, on first start). Shorter than 24 characters → the server refuses to start. `izle-server admin-token [--rotate]` prints / replaces it; `--link` prints a sign-in link for the admin page (`<base>/admin/#token=<token>`, the token in the URL fragment, which browsers never send) and its QR code. | the file (owner's responsibility) |
 | Pair token | `POST /pair/start`, 32 random bytes base64url | sha256 |
 | Device token | handed out once by `GET /pair/wait` after approval, 32 random bytes base64url | sha256 |
 
@@ -57,9 +57,10 @@ a reverse proxy see `trustedProxies` in [Configuration](#configuration)),
 
 ### `POST /api/v1/admin/pair/approve`
 
-`{"code": "483920", "name": "Living room"}` (name 1–60 characters) → `200 {"deviceId": "…"}`. The device exists
-from now on (status `pending`) and can be configured before the TV collects its token. If the code expires
-uncollected, the pending device is removed.
+`{"code": "483920", "name"?: "Living room"}` (name 1–60 characters; without one the TV is called `TV`, or the first
+free `TV 2`, `TV 3`, …) → `200 {"deviceId": "…", "name": "…"}`. The device exists from now on (status `pending`) and
+can be configured before the TV collects its token. If the code expires uncollected, the pending device is removed.
+`izle-server pair approve <code> [name…]` calls this route on the running server (and `pair pending` the next one).
 
 Errors: `404 unknown_code`, `409 already_approved`.
 

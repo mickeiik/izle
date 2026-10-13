@@ -21,6 +21,8 @@ import {
   moveItem,
   percent,
   plural,
+  serverAddress,
+  tokenFromHash,
   triedText,
 } from "./lib.js";
 
@@ -180,9 +182,29 @@ function signOut(/** @type {string} */ message = "") {
   if (message) toast(message, "info");
 }
 
+/** A sign-in link (`#token=…`) signs the browser in; the token leaves the address bar and history first. */
+async function signInFromLink() {
+  const linked = tokenFromHash(location.hash);
+  if (!linked) return;
+  history.replaceState(null, "", `${location.pathname}${location.search}#/devices`);
+  try {
+    await api("GET", "/catalog", undefined, linked);
+    localStorage.setItem(TOKEN_KEY, linked);
+    toast("Signed in.");
+  } catch (err) {
+    toast(
+      err instanceof ApiError && err.status === 401
+        ? "This sign-in link is not valid any more. Print a new one with izle-server admin-token --link."
+        : errorMessage(err instanceof ApiError ? err.code : "network"),
+      "error",
+    );
+  }
+}
+
 async function route() {
   for (const c of cleanups) c();
   cleanups = [];
+  await signInFromLink();
   const path = location.hash.replace(/^#/, "") || "/devices";
   const parts = path.split("/").filter(Boolean).map(decodeURIComponent);
   const signedIn = Boolean(token());
@@ -268,7 +290,7 @@ function devicesView() {
 
   /** One row per open code; rows are kept while they exist so a half-typed name survives the polling. */
   const pendingRow = (/** @type {any} */ c) => {
-    const name = h("input", { type: "text", maxlength: 60, placeholder: "TV name, e.g. Living room", "aria-label": `Name for the TV showing ${c.code}` });
+    const name = h("input", { type: "text", maxlength: 60, placeholder: "Name (optional), e.g. Living room", "aria-label": `Name for the TV showing ${c.code}` });
     const countdown = h("span", { class: "muted" });
     const approve = h("button", { class: "primary", type: "submit" }, "Approve");
     const row = h(
@@ -278,13 +300,12 @@ function devicesView() {
         onsubmit: async (/** @type {SubmitEvent} */ e) => {
           e.preventDefault();
           const n = name.value.trim();
-          if (!n) {
-            name.focus();
-            return toast("Give the TV a name first.", "info");
-          }
           await busy(approve, async () => {
-            const r = await attempt(() => api("POST", "/pair/approve", { code: c.code, name: n }), "Approved. The TV will show its home screen in a moment.");
-            if (r) await refresh();
+            const r = await attempt(() => api("POST", "/pair/approve", { code: c.code, ...(n ? { name: n } : {}) }));
+            if (r) {
+              toast(`Approved as “${r.name}”. The TV will show its home screen in a moment.`);
+              await refresh();
+            }
           });
         },
       },
@@ -318,7 +339,11 @@ function devicesView() {
       }
       r.update(c);
     }
-    if (pendingRows.size === 0) pending.replaceChildren(h("p", { class: "muted" }, "No TV is waiting. Open izle on the TV: it shows a 6-digit code when it is not paired."));
+    if (pendingRows.size === 0) {
+      pending.replaceChildren(
+        h("p", { class: "muted" }, "No TV is waiting. Open izle on the TV and enter ", h("code", null, serverAddress(location.origin, location.pathname)), " as the server address: it then shows a 6-digit code."),
+      );
+    }
     else pending.replaceChildren(...[...pendingRows.values()].map((r) => r.row));
     // Devices
     if (list.devices.length === 0) devices.replaceChildren(h("p", { class: "muted" }, "No TV is paired yet."));

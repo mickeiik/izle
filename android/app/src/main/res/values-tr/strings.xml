@@ -16,9 +16,8 @@
 
     <!-- Pairing -->
     <string name="pair_title">Bu televizyonu eşleştirin</string>
-    <string name="pair_instructions">Bu kodu izle yönetim sayfasında onaylayın</string>
+    <string name="pair_instructions">Telefonunuzda veya bilgisayarınızda %1$s adresini açın ve bu kodu onaylayın</string>
     <string name="pair_waiting">Onay bekleniyor…</string>
-    <string name="pair_server">Sunucu: %1$s</string>
     <string name="pair_rate_limited">Çok fazla deneme. Birazdan yeniden denenecek…</string>
     <string name="pair_back_hint">Geri: sunucu adresini değiştir</string>
 

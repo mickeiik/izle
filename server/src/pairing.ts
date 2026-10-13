@@ -70,21 +70,31 @@ export class PairingService {
     return { code, pairToken, expiresAt };
   }
 
-  /** Owner approval. Creates the device (pending until the TV collects its token). */
-  approve(code: string, name: string): { deviceId: string } {
+  /**
+   * Owner approval. Creates the device (pending until the TV collects its token). Without a name the TV is called
+   * "TV", or the first free "TV n", so two unnamed TVs stay apart in the admin page; the owner can rename it later.
+   */
+  approve(code: string, name?: string | null): { deviceId: string; name: string } {
     const t = this.now();
-    const deviceId = this.store.transaction(() => {
+    const device = this.store.transaction(() => {
       const row = this.store.getPairCode(code);
       if (!row || row.deliveredAt !== null || row.expiresAt <= t) throw new HttpError(404, "unknown_code", "no open pairing code with this value");
       if (row.approvedAt !== null) throw new HttpError(409, "already_approved", "this code is already approved");
       const id = newId();
-      this.store.createDevice({ id, name, tokenHash: null, now: t });
+      const deviceName = name?.trim() || this.defaultName();
+      this.store.createDevice({ id, name: deviceName, tokenHash: null, now: t });
       this.store.approvePairCode(code, id, t);
-      return id;
+      return { deviceId: id, name: deviceName };
     });
-    this.log.info("pairing approved", { deviceId });
+    this.log.info("pairing approved", { deviceId: device.deviceId });
     for (const wake of this.waiters.get(code) ?? []) wake();
-    return { deviceId };
+    return device;
+  }
+
+  private defaultName(): string {
+    const taken = new Set(this.store.listDevices().map((d) => d.name.trim().toLowerCase()));
+    if (!taken.has("tv")) return "TV";
+    for (let n = 2; ; n++) if (!taken.has(`tv ${n}`)) return `TV ${n}`;
   }
 
   /** Delivers the device token exactly once, or reports the code's state. */

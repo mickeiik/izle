@@ -60,6 +60,30 @@ export function formatCode(code) {
 }
 
 /**
+ * The admin token carried by a sign-in link (`…/admin/#token=<token>`, printed by `izle-server admin-token --link`),
+ * or null when the fragment is something else (a route, nothing).
+ * @param {string | null | undefined} hash `location.hash`
+ */
+export function tokenFromHash(hash) {
+  const m = /^#token=(.+)$/.exec(hash ?? "");
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The address to type on a TV for this server: the page's origin plus whatever path precedes `/admin/`, so a
+ * server behind a reverse proxy under a prefix is right too.
+ * @param {string} origin `location.origin` @param {string} pathname `location.pathname`
+ */
+export function serverAddress(origin, pathname) {
+  return `${origin}${pathname.replace(/\/admin(\/.*)?$/, "")}`;
+}
+
+/**
  * @typedef {object} EpisodeLike
  * @property {number | null} [season]
  * @property {number | null} [number]

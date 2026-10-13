@@ -94,8 +94,9 @@ npm run -s -w server dev -- admin-token --config server/izle.dev.json
 
 ### Admin page
 
-Open `http://localhost:8787/admin/` and sign in with the admin token. From there the owner approves the pairing
-code a TV shows, picks and orders the shows on each TV's home screen, sets "continue from episode X", the menu,
+Open `http://localhost:8787/admin/` and sign in with the admin token (`admin-token --link` prints a sign-in link and
+its QR code for a phone). From there the owner approves the pairing code a TV shows, picks and orders the shows on
+each TV's home screen, sets "continue from episode X", the menu,
 audio and subtitle languages, starts or stops playback, sees what is playing, reloads the catalog and tests
 episode sources. Screenshots: [docs/verification/phase5/](docs/verification/phase5/README.md).
 
@@ -125,7 +126,8 @@ START=$(curl -s -X POST $B/api/v1/pair/start)
 CODE=$(echo "$START" | jq -r .code); PAIR=$(echo "$START" | jq -r .pairToken)
 echo "code on the TV: $CODE"
 
-# 2. The owner approves the code and names the TV.
+# 2. The owner approves the code and names the TV (the name is optional; the shell equivalent is
+#    `npm run -s -w server dev -- pair approve $CODE Living room --config server/izle.dev.json`).
 curl -s -X POST $B/api/v1/admin/pair/approve -H "Authorization: Bearer $ADMIN" \
   -H 'Content-Type: application/json' -d "{\"code\":\"$CODE\",\"name\":\"Living room\"}"; echo
 
@@ -166,9 +168,9 @@ adb shell am start -n io.github.mickeiik.izle/.MainActivity --es izle.server htt
 ```
 
 The emulator reaches a server on the host at `http://10.0.2.2:8787` (debug builds also prefill that address on
-the first-run screen; `--es izle.server` skips typing it). The TV then shows a 6-digit pairing code: approve it
-on the admin page (or as in step 2 of the curl flow above), put shows on its home screen, and the tiles appear on
-the TV without a restart. Everything else the owner controls — order, "continue from", languages, play/stop — applies
+the first-run screen; `--es izle.server` skips typing it). The TV then shows a 6-digit pairing code and the admin
+page's address: approve it on the admin page (or with `pair approve`, as in step 2 of the curl flow above), put
+shows on its home screen, and the tiles appear on the TV without a restart. Everything else the owner controls — order, "continue from", languages, play/stop — applies
 live the same way. On the TV, the remote's Menu key or holding OK opens a hidden menu (episodes, start over,
 audio, subtitles, settings, about).
 

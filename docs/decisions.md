@@ -492,3 +492,35 @@ change so the sync is precise; links carry an offset and a speed factor (PAL/NTS
 - **Compatibility**: `progressBody` is `additionalProperties: false`, so a newer TV against an older server would get
   400 and silently stop saving progress. The TV therefore resends once without the anchor fields on a 400 and keeps
   omitting them for the rest of the process; the docs still say "update the server before the TVs".
+
+## Pairing and sign-in with less typing (2026-10-14)
+
+The owner reviewed a list of ways to shorten pairing and admin sign-in and picked these; LAN discovery (the server
+sits on a Tailscale network, and any form of auto-claiming is unwanted), a default port on the TV's address screen
+and a baked-in server address in owner-built APKs were rejected.
+
+- **The TV name is optional on approve.** `POST /admin/pair/approve` takes `{code}` alone and calls the TV `TV`, or
+  the first free `TV 2`, `TV 3`, … (existing names compared case-insensitively) so two unnamed TVs stay apart; the
+  answer now carries `name`. A blank name is still `400`: it is a mistake, not a request for the default. The admin
+  page approves without a name and shows the name it got in the toast.
+- **Shell path for pairing:** `izle-server pair pending` and `pair approve <code> [name…]` (unquoted words form the
+  name) call the running server's admin API over loopback with the admin token the CLI already reads, so the TV's
+  long-poll is woken exactly as from the page; writing to the database directly would have bypassed the waiters.
+  The server address comes from `listen` (a wildcard host becomes loopback), `--server <url>` overrides it. The
+  token file must already exist (`create: false`): the server has started at least once if a TV is waiting.
+- **Sign-in link with a QR code:** `izle-server admin-token --link` prints `<base>/admin/#token=<token>` and the
+  same link as a QR code (`uqr`, MIT, zero dependencies, ESM, bundled like the other packages; error correction
+  level M, two-module-rows-per-line rendering so it fits a small terminal). The base is `--base`, else `publicUrl`,
+  else a specific `listen.host`, else this host's first non-internal IPv4 address (with a note on stderr pointing at
+  `publicUrl`/`--base`, since the first address of a host on a VPN is often not the one the phone reaches). The
+  admin page reads `#token=` on load, replaces the history entry with `#/devices` before anything else, verifies the
+  token against `GET /admin/catalog`, stores it like a typed one and otherwise toasts an error without touching a
+  token that was already stored. The fragment never reaches the server or a reverse proxy; the link is documented
+  as being as secret as the token.
+- **A passphrase as the admin token** is documented rather than implemented: the server already accepts any token of
+  24 or more characters without spaces (the `Bearer` grammar), so the guide shows writing one into the token file.
+- **The TV's pairing screen shows the admin page's address** (`<server>/admin`, below the typed base path so a
+  reverse-proxy prefix is kept) instead of the bare server address, and the admin page's "no TV is waiting" text
+  shows the address to type on the TV (the page's origin plus whatever precedes `/admin/`).
+- The phase 5 verification notes still describe the "name required" behaviour as it was verified then; they are
+  historical and were left alone.

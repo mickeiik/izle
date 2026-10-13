@@ -109,6 +109,25 @@ test("pairing: input validation", async (t) => {
   t.after(() => s.close());
   assert.equal((await s.call("GET", "/api/v1/pair/wait?code=12ab&wait=0", { token: "x" })).status, 400);
   assert.equal((await s.call("GET", "/api/v1/pair/wait?code=123456&wait=99", { token: "x" })).status, 400);
-  assert.equal((await s.admin("POST", "/pair/approve", { code: "123456" })).status, 400);
+  assert.equal((await s.admin("POST", "/pair/approve", { code: "123456" })).status, 404, "the name is optional");
+  assert.equal((await s.admin("POST", "/pair/approve", { code: "123456", name: "   " })).status, 400, "a blank name is a mistake");
   assert.equal((await s.admin("POST", "/pair/approve", { code: "123456", name: "TV" })).status, 404);
+});
+
+test("pairing: approving without a name calls the TV \"TV\", then \"TV 2\", …", async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  const approve = async (name?: string) => {
+    const start = await s.call("POST", "/api/v1/pair/start");
+    const r = await s.admin("POST", "/pair/approve", { code: start.json.code, ...(name === undefined ? {} : { name }) });
+    assert.equal(r.status, 200);
+    return r.json as { deviceId: string; name: string };
+  };
+  assert.equal((await approve()).name, "TV");
+  assert.equal((await approve()).name, "TV 2");
+  assert.equal((await approve("  Kitchen ")).name, "Kitchen", "a given name is trimmed and kept");
+  assert.equal((await approve("tv 3")).name, "tv 3");
+  assert.equal((await approve()).name, "TV 4", "taken names are skipped regardless of case");
+  const devices = (await s.admin("GET", "/devices")).json.devices.map((d: { name: string }) => d.name).sort();
+  assert.deepEqual(devices, ["Kitchen", "TV", "TV 2", "TV 4", "tv 3"]);
 });

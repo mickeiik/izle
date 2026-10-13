@@ -14,9 +14,9 @@ function compile<T>(schema: object): ValidateFunction<T> {
   return ajv.compile<T>(schema);
 }
 
-export const approveBody = compile<{ code: string; name: string }>({
+export const approveBody = compile<{ code: string; name?: string }>({
   type: "object",
-  required: ["code", "name"],
+  required: ["code"],
   properties: { code: { type: "string", pattern: "^[0-9]{6}$" }, name: NAME },
   additionalProperties: false,
 });

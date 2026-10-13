@@ -44,4 +44,10 @@ class ServerUrlsTest {
         assertEquals("http://10.0.2.2:8787", ServerUrls.display("http://10.0.2.2:8787/".toHttpUrl()))
         assertEquals("https://example.org/izle", ServerUrls.display("https://example.org:443/izle/".toHttpUrl()))
     }
+
+    @Test
+    fun adminPageIsBelowTheBasePath() {
+        assertEquals("http://192.168.1.54:8787/admin", ServerUrls.adminPage("http://192.168.1.54:8787/".toHttpUrl()))
+        assertEquals("https://example.org/izle/admin", ServerUrls.adminPage("https://example.org/izle/".toHttpUrl()))
+    }
 }

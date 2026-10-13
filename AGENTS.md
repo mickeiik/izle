@@ -48,7 +48,8 @@ The package mirrors the source tree's relative paths (`server/dist/` → `../adm
 
 - `contract/`: `npm test -w contract`, `npx izle-validate <bundleDir> [--probe]`
 - `server/`: `npm test -w server`, `npm run -w server dev -- --config server/izle.dev.json` (sample catalog on :8787,
-  state in `server/data/`), `npm run -s -w server dev -- admin-token --config server/izle.dev.json`,
+  state in `server/data/`), `npm run -s -w server dev -- admin-token [--link] --config server/izle.dev.json`,
+  `npm run -s -w server dev -- pair approve <code> [name] --config server/izle.dev.json`,
   `npm run -s -w server dev -- check-resolver --config <file>`
 - Resolver module + proxy end to end: [server/examples/resolver-example/](server/examples/resolver-example/README.md)
   (`make-media.sh` needs ffmpeg; `upstream.js` is the local stand-in site; `izle.example.json` the server config,
@@ -82,6 +83,7 @@ adb exec-out screencap -p > /tmp/izle.png
 ```
 
 The emulator reaches a server on the host at `http://10.0.2.2:8787`. Approve the TV's pairing code with
-`POST /api/v1/admin/pair/approve` (see the README's curl flow). `input keyevent --longpress` holds OK for only
+`npm run -s -w server dev -- pair approve <code> --config server/izle.dev.json` (or `POST /api/v1/admin/pair/approve`,
+see the README's curl flow). `input keyevent --longpress` holds OK for only
 400 ms, shorter than the app's 0.6 s long press, so it acts as a click. The UX rules the app implements are in
 [docs/ux/senior-tv.md](docs/ux/senior-tv.md).

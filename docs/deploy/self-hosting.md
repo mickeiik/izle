@@ -139,7 +139,29 @@ sudo -u izle /opt/izle/bin/izle-server admin-token --config /etc/izle/izle.json
 
 Open `http://<server>:8787/admin/` (or `https://izle.example.org/admin/`) and sign in with it. Treat it like a
 password: it controls every TV. The page keeps it in the browser's local storage, so use **Sign out** on shared
-computers. To replace it (every signed-in browser has to sign in again):
+computers.
+
+**From a phone**, skip the typing: `--link` prints a sign-in link and the same link as a QR code to scan with the
+phone's camera. The link uses `publicUrl` from the config (or `--base <url>` for another address); the token sits in
+the URL fragment, which browsers never send anywhere, and the page removes it from the address bar as soon as it is
+signed in. The link is as secret as the token itself. The QR code is drawn for a dark terminal; on a light one it
+appears inverted, which phone cameras usually read anyway.
+
+```bash
+sudo -u izle /opt/izle/bin/izle-server admin-token --config /etc/izle/izle.json --link
+```
+
+**A passphrase instead of the random token:** the server accepts any token of 24 characters or more without spaces,
+so a memorable one such as `correct-horse-battery-staple-9` works for typing on a phone. Put it in the token file
+(`IZLE_ADMIN_TOKEN` in the unit's environment works too, but then the shell commands below need it as well) and
+restart:
+
+```bash
+echo 'correct-horse-battery-staple-9' | sudo -u izle tee /var/lib/izle/admin.token > /dev/null
+sudo systemctl restart izle
+```
+
+To replace the token with a new random one (every signed-in browser has to sign in again):
 
 ```bash
 sudo -u izle /opt/izle/bin/izle-server admin-token --config /etc/izle/izle.json --rotate
@@ -225,9 +247,12 @@ phone, send the APK, open it on the TV with a file manager and allow that app to
 asked. A USB stick and any file manager work the same way.
 
 **First start:** the app asks for the server address (`http://192.168.1.10:8787` or `https://izle.example.org`),
-then shows a 6-digit pairing code. On the admin page (**TVs**), give the waiting code a name and approve it, then
-add shows to that TV's home screen. The tiles appear on the TV right away. Put izle first in the TV launcher's
-favourites so it is the first thing on screen.
+then shows a 6-digit pairing code and the admin page's address. On the admin page (**TVs**), approve the waiting
+code (a name is optional; the TV is called "TV" otherwise and can be renamed later), then add shows to that TV's
+home screen. The tiles appear on the TV right away. From the server's shell the same approval is
+`sudo -u izle /opt/izle/bin/izle-server pair approve 483920 Living room --config /etc/izle/izle.json`
+(`pair pending` lists the waiting codes). Put izle first in the TV launcher's favourites so it is the first thing
+on screen.
 
 ## 9. Docker (alternative to systemd)
 

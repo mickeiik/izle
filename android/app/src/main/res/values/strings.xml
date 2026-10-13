@@ -18,9 +18,8 @@
 
     <!-- Pairing -->
     <string name="pair_title">Pair this TV</string>
-    <string name="pair_instructions">Approve this code on the izle admin page</string>
+    <string name="pair_instructions">Open %1$s on your phone or computer and approve this code</string>
     <string name="pair_waiting">Waiting for approval…</string>
-    <string name="pair_server">Server: %1$s</string>
     <string name="pair_rate_limited">Too many attempts. Trying again shortly…</string>
     <string name="pair_back_hint">Back: change the server address</string>
 

@@ -2,7 +2,7 @@
 // @ts-check
 // Installs a server package the way the self-hosting guide does (`npm install --global --prefix`, offline: the
 // package has no dependencies) into a temporary directory and checks that the installed server works: version,
-// catalog validation, admin token, the admin page, pairing, the home state with posters, resolve, catalog reload
+// catalog validation, admin token and sign-in link, the admin page, pairing (admin API and shell), the home state with posters, resolve, catalog reload
 // on SIGHUP and a clean stop on SIGTERM. Only loopback HTTP; nothing is fetched from the network.
 //
 // Usage: node scripts/smoke-server.mjs [<izle-server-x.y.z.tgz>] [--keep]
@@ -114,6 +114,16 @@ try {
   const wait = await call("GET", `/api/v1/pair/wait?code=${start.json.code}&wait=0`, { token: start.json.pairToken });
   check(wait.json?.status === "approved" && typeof wait.json.deviceToken === "string", "the TV receives its device token");
   const tv = wait.json.deviceToken;
+
+  const second = await call("POST", "/api/v1/pair/start", { headers: viaProxy });
+  const shell = await cli(["pair", "approve", second.json.code, "Kitchen", "TV", "--config", config, "--server", base]);
+  check(/^approved: "Kitchen TV" /m.test(shell.stdout), "izle-server pair approve approves a code from the shell");
+  check((await cli(["pair", "pending", "--config", config, "--server", base])).stdout.includes(`${second.json.code}  approved`), "izle-server pair pending lists it as approved");
+  const third = await call("POST", "/api/v1/pair/start", { headers: viaProxy });
+  const unnamed = await call("POST", "/api/v1/admin/pair/approve", { token: admin, body: { code: third.json.code } });
+  check(unnamed.res.status === 200 && unnamed.json.name === "TV", "approving without a name calls the TV \"TV\"");
+  const link = (await cli(["admin-token", "--config", config, "--link", "--base", base])).stdout;
+  check(link.startsWith(`${base}/admin/#token=${admin}\n`) && /█/.test(link), "izle-server admin-token --link prints the sign-in link and its QR code");
 
   const home = await call("PUT", `/api/v1/admin/devices/${wait.json.deviceId}/home`, { token: admin, body: { itemIds: ["caminandes", "sintel"] } });
   check(home.res.status === 200, "the owner sets the home list");

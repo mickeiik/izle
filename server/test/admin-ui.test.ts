@@ -22,7 +22,9 @@ import {
   percent,
   plural,
   pushSample,
+  serverAddress,
   syncDecision,
+  tokenFromHash,
   triedText,
   tvPositionAt,
 } from "../admin/lib.js";
@@ -47,6 +49,19 @@ test("admin helpers: clocks, relative times, codes", () => {
   assert.equal(formatCountdown(new Date(NOW + 125_000).toISOString(), NOW), "2:05");
   assert.equal(formatCountdown(ago(1000), NOW), "0:00");
   assert.equal(formatCode("483920"), "483 920");
+});
+
+test("admin helpers: sign-in links and the address to type on the TV", () => {
+  assert.equal(tokenFromHash("#token=abc-DEF_123"), "abc-DEF_123");
+  assert.equal(tokenFromHash("#token=correct%20horse%20battery"), "correct horse battery", "the link encodes the token");
+  assert.equal(tokenFromHash("#/devices"), null);
+  assert.equal(tokenFromHash("#token="), null);
+  assert.equal(tokenFromHash("#token=%E0%A4%A"), null, "a broken encoding is not a token");
+  assert.equal(tokenFromHash(""), null);
+  assert.equal(tokenFromHash(undefined), null);
+  assert.equal(serverAddress("http://192.168.1.54:8787", "/admin/"), "http://192.168.1.54:8787");
+  assert.equal(serverAddress("https://izle.example.org", "/admin/index.html"), "https://izle.example.org");
+  assert.equal(serverAddress("https://host.example.org", "/izle/admin/"), "https://host.example.org/izle", "a reverse proxy prefix is kept");
 });
 
 test("admin helpers: episode names and what OK does", () => {

@@ -64,8 +64,8 @@ closes it.
 1. **Server address**: a large text field (the TV keyboard opens), prefilled with `http://10.0.2.2:8787` in
    debug builds; Connect checks `/healthz`. Debug builds also accept
    `adb shell am start -n io.github.mickeiik.izle/.MainActivity --es izle.server <url>` to skip typing.
-2. **Pairing code**: "Pair this TV", the 6-digit code in 96 sp, "Waiting for approval…". The owner approves it
-   from the admin side; the TV long-polls, then shows Home. Expired codes are replaced on their own; Back returns
+2. **Pairing code**: "Pair this TV", the admin page's address to open on a phone, the 6-digit code in 96 sp,
+   "Waiting for approval…". The owner approves it from the admin side; the TV long-polls, then shows Home. Expired codes are replaced on their own; Back returns
    to the address screen. If the owner later deletes the TV, it shows a new pairing code by itself.
 
 ## Remote key map
@@ -113,7 +113,7 @@ launcher) is ignored so the app never starts playing by accident.
 | Up next | Up next · Starts in 10 s · Play now · Home | Sıradaki · 10 sn içinde başlıyor · Şimdi oynat · Ana ekran |
 | End | The end | Bitti |
 | Error | Can't play right now · Try again · Home | Şu anda oynatılamıyor · Tekrar dene · Ana ekran |
-| Pairing | Pair this TV · Approve this code on the izle admin page · Waiting for approval… | Bu televizyonu eşleştirin · Bu kodu izle yönetim sayfasında onaylayın · Onay bekleniyor… |
+| Pairing | Pair this TV · Open http://… /admin on your phone or computer and approve this code · Waiting for approval… | Bu televizyonu eşleştirin · Telefonunuzda veya bilgisayarınızda http://… /admin adresini açın ve bu kodu onaylayın · Onay bekleniyor… |
 | Server address | Server address · Connect · The server cannot be reached. | Sunucu adresi · Bağlan · Sunucuya ulaşılamıyor. |
 | Menu | Episodes · Start over · Audio language · Subtitles · Settings · About | Bölümler · Baştan başlat · Ses dili · Altyazı · Ayarlar · Hakkında |
 
