@@ -575,3 +575,57 @@ release within the major the workflows already used:
   and anything about out-of-tree catalogs; the dev server's LAN address stays because the pairing screenshot shows
   it. The screenshots stay as captured (960×540). One open issue was found and recorded there, not fixed: on a TV
   without a 12/24-hour setting the clock follows the app's language instead of the TV's locale.
+
+## Server: admin sign-in throttle and the backup command (2026-10-14)
+
+- **Failed admin authentications are throttled per client address.** A missing or wrong bearer on `/api/v1/admin/*`
+  counts as a failure, keyed by the same client address as the `pair/start` limit (socket address, or the rightmost
+  untrusted `X-Forwarded-For` hop behind `trustedProxies`): 10 per fixed 10-minute window that starts with the first
+  failure (the existing `RateLimiter`, plus a `check` that does not count). The tenth failure is still a `401`; from
+  then on every admin request from the address, the right token included, answers `429 too_many_attempts` with
+  `Retry-After` until the window ends, so the lockout says nothing about a guess. Locked-out requests are not counted,
+  so the lockout does not extend itself. It lives in memory like the pairing limit: a restart clears it.
+- **Successes neither count nor reset the count.** A reset on success would let a guesser who shares an address with a
+  signed-in admin page (a reverse proxy without `trustedProxies`, a shared NAT) keep the count low, since the page polls
+  every few seconds. The other side of the same coin: a guesser at such an address locks the owner out too, for at most
+  10 minutes; the guide points at `trustedProxies`. Loopback is not exempt, because without `trustedProxies` every
+  proxied request comes from loopback.
+- **IPv6 addresses are counted one by one** (as for `pair/start`), not per /64 prefix: the throttle stops one guessing
+  host; against many addresses the defence is the token's length (24 characters or more; a generated token has 256
+  random bits).
+- **Logging:** one `warn` per failure (`admin auth failed`: `client`, `route` template, `reason` `no token` or
+  `wrong token`) and one when the limit trips (`admin auth locked out`: `client`, `failures`, `retryAfterSec`).
+  Requests answered `429` only produce the usual access-log line, so the warnings are bounded at eleven per address and
+  window. The tests' hostile guess contains no run of 20 token characters, which the log's string scrubbing would
+  replace, so only never logging the presented token keeps it out of the captured lines.
+- **Admin page:** its behaviour is unchanged (a `401` signs it out; a `429` does not, since the stored token may be
+  right). The new code has owner-facing text in `lib.js` ("Too many wrong admin tokens were tried from this address.
+  Try again in 10 minutes."), which the sign-in form, the `#token=` link and toasts show.
+- **`izle-server backup <file> [--config <file>] [--force]`** runs `VACUUM INTO` on a connection of its own: one
+  consistent snapshot, including what is still in the write-ahead log, while the server keeps writing. The copy is a
+  self-contained file in rollback-journal mode. The database is opened with `DatabaseSync`, not the `Store`, so a newer
+  CLI never migrates the database of an older running server. The copy is written to `.<name>.partial-<pid>` next to
+  the target (created with `O_EXCL` and mode 0600; `VACUUM INTO` accepts an empty file and keeps its mode), fsynced,
+  then renamed over the target: the target path only ever holds a complete copy (a backup tool syncing the directory
+  at the same time cannot pick up half a file), and a failed `--force` run keeps the previous copy. The output is the
+  path and size, then what the copy does not contain (the admin token file or `IZLE_ADMIN_TOKEN`, the config file, the
+  catalog unless it is the packaged sample, the resolver module). A relative `<file>` resolves like `--config`.
+- **Refused with exit status 1:** no database (checked first, since opening would create an empty one), an existing
+  target without `--force`, a directory, a missing parent directory (not created, so a typo does not make
+  directories), and the database's own files (`izle.db` and its `-wal`, `-shm`, `-journal`, also through symlinked
+  directories or hard links), even with `--force`.
+- **Daily backups are packaged units** (`docs/deploy/izle-backup.service` and `.timer`, shipped in the package's
+  `deploy/` like `izle.service`; the smoke test checks that they are there). The service is a `oneshot` as `izle` with
+  `StateDirectory=izle izle/backups` and `StateDirectoryMode=0700` (systemd applies the mode to `/var/lib/izle` each
+  time the unit starts, so it must match `izle.service`'s). It runs `backup --force` to `izle-YYYY-MM-DD.db` (a second
+  run on the same day replaces that day's copy; `$$` and `%%` escape the shell's `$(date +%F)`), deletes `izle-*.db`
+  files older than 30 days only after a successful backup, and has the server's sandbox plus `PrivateNetwork=yes`. The
+  timer is `OnCalendar=daily` with `RandomizedDelaySec=1h` and `Persistent=true`. The copies stay on the server's disk;
+  the guide tells owners to let their usual backup tool pick them up. `systemd-analyze verify` passes and the offline
+  security rating is 2.1 ("OK"); the installed package's `backup` ran in a user-level transient unit with the same
+  sandbox (system call filter, `PrivateNetwork`, `ProtectSystem=strict`; home directories read-only instead of hidden)
+  against a running server's database.
+- **Restore** is: stop, remove `izle.db-wal` and `izle.db-shm`, install the copy as `izle.db` (0600, `izle:izle`),
+  start. A write-ahead log left behind by a crashed server would otherwise be applied to the restored file. The update
+  steps now take a `before-X.Y.Z.db` copy, which the timer's pruning leaves alone. Docker: `docker exec … backup` into
+  the volume, then `docker cp`.

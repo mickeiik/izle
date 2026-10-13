@@ -1,0 +1,39 @@
+# A copy of the izle database while the server keeps running, started daily by izle-backup.timer; setup in
+# docs/deploy/self-hosting.md (Updates and backups). Copies go to /var/lib/izle/backups/izle-YYYY-MM-DD.db (mode
+# 0600); copies older than 30 days are deleted. Copy that directory off the machine with your usual backup tool.
+#   sudo install -m 0644 izle-backup.service izle-backup.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now izle-backup.timer
+#   sudo systemctl start izle-backup      # one backup now
+
+[Unit]
+Description=izle database backup
+Documentation=https://github.com/mickeiik/izle/blob/main/docs/deploy/self-hosting.md
+
+[Service]
+Type=oneshot
+User=izle
+Group=izle
+# Like izle.service: /var/lib/izle (and its backups/ directory, created here) is the only writable place. The mode
+# must match izle.service's, since systemd applies it to /var/lib/izle whenever this unit starts.
+StateDirectory=izle izle/backups
+StateDirectoryMode=0700
+UMask=0077
+ExecStart=/bin/sh -c 'exec /opt/izle/bin/izle-server backup --force --config /etc/izle/izle.json /var/lib/izle/backups/izle-$$(date +%%F).db'
+ExecStartPost=/usr/bin/find /var/lib/izle/backups -maxdepth 1 -name 'izle-*.db' -mtime +30 -delete
+
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM

@@ -60,7 +60,7 @@ The example ([`izle.example.json`](izle.example.json)) is set up for HTTPS behin
 |---|---|---|
 | `listen` | `127.0.0.1:8787` | use `"host": "0.0.0.0"` for the LAN-only setup |
 | `publicUrl` | `https://izle.example.org` | informational for now; set it to the address TVs use |
-| `trustedProxies` | `127.0.0.1`, `::1` | reverse proxies whose `X-Forwarded-For` names the real client (addresses or CIDR ranges), so the pairing rate limit counts each TV separately. Leave it empty (`[]`) when nothing sits in front of the server |
+| `trustedProxies` | `127.0.0.1`, `::1` | reverse proxies whose `X-Forwarded-For` names the real client (addresses or CIDR ranges), so the pairing rate limit and the admin sign-in throttle count each client separately. Leave it empty (`[]`) when nothing sits in front of the server |
 | `dataDir` | `/var/lib/izle` | database, admin token, the resolver module's directory |
 | `catalog.dir` | (absent) | absent = the sample catalog in the package; see below for your own |
 | `resolver` | `null` | your resolver module, see below |
@@ -160,6 +160,10 @@ restart:
 echo 'correct-horse-battery-staple-9' | sudo -u izle tee /var/lib/izle/admin.token > /dev/null
 sudo systemctl restart izle
 ```
+
+Guessing is throttled: after 10 wrong tokens from one address within 10 minutes, the server refuses every admin
+request from that address, even one with the right token, until the 10 minutes are over. Each wrong token is logged as
+a warning ("admin auth failed") with the address it came from.
 
 To replace the token with a new random one (every signed-in browser has to sign in again):
 
@@ -283,27 +287,54 @@ new release's sources and recreate the container. The volume keeps the data.
 
 ## 10. Updates and backups
 
-**Back up** `/var/lib/izle` (database and admin token), `/etc/izle` and `/srv/izle`. The database uses SQLite's
-write-ahead log, so copy it while the service is stopped:
+**Back up** the database, the admin token (`/var/lib/izle/admin.token`), `/etc/izle` and `/srv/izle`. The database
+changes all the time; copy it with `izle-server backup`, which takes a consistent snapshot while the service keeps
+running (copying `izle.db` by hand is not enough: recent changes sit in `izle.db-wal` next to it). The copy is a
+single file, readable by the `izle` user only:
+
+```bash
+sudo -u izle mkdir -p /var/lib/izle/backups
+sudo -u izle /opt/izle/bin/izle-server backup --config /etc/izle/izle.json /var/lib/izle/backups/izle-$(date +%F).db
+```
+
+**Daily, with systemd:** the package's [`izle-backup.service`](izle-backup.service) and
+[`izle-backup.timer`](izle-backup.timer) write such a copy every day and delete copies older than 30 days. The copies
+stay on the server's disk, so let your usual backup tool pick up `/var/lib/izle/backups` along with `/etc/izle`,
+`/srv/izle` and the admin token.
+
+```bash
+sudo install -m 0644 $PKG/deploy/izle-backup.service $PKG/deploy/izle-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now izle-backup.timer
+sudo systemctl start izle-backup && ls -l /var/lib/izle/backups      # a first copy right away
+```
+
+**With Docker:** `docker exec izle izle-server backup --force --config /etc/izle/izle.json /var/lib/izle/backup.db &&
+docker cp izle:/var/lib/izle/backup.db ./izle-$(date +%F).db`.
+
+**Restore** a copy with the service stopped. Remove the write-ahead files of the database being replaced, so they are
+not applied to the restored one. TVs paired after the copy was taken have to pair again.
 
 ```bash
 sudo systemctl stop izle
-sudo tar -C / -czf izle-backup-$(date +%F).tgz var/lib/izle etc/izle srv/izle   # leave out what you do not have
+sudo rm -f /var/lib/izle/izle.db-wal /var/lib/izle/izle.db-shm
+sudo install -m 0600 -o izle -g izle /var/lib/izle/backups/izle-2026-10-14.db /var/lib/izle/izle.db
 sudo systemctl start izle
 ```
 
 **Update the server:**
 
 ```bash
+sudo -u izle /opt/izle/bin/izle-server backup --config /etc/izle/izle.json /var/lib/izle/backups/before-X.Y.Z.db
 sudo npm install --global --prefix /opt/izle ./izle-server-X.Y.Z.tgz
 sudo systemctl restart izle
 journalctl -u izle -n 5 -o cat                  # "listening" with the new version
 ```
 
 The database is migrated on start. An older server refuses a database a newer one has migrated, so to go back,
-install the older package **and** restore the backup taken before the update. The admin page's Catalog tab shows
-the running server version. Update the server before the TVs: a newer app may report fields an older server
-rejects (the app then falls back, but the first report after each start is lost).
+install the older package **and** restore the copy taken before the update (`before-X.Y.Z.db`). The admin page's
+Catalog tab shows the running server version. Update the server before the TVs: a newer app may report fields an
+older server rejects (the app then falls back, but the first report after each start is lost).
 
 ## 11. Troubleshooting
 
@@ -314,4 +345,5 @@ rejects (the app then falls back, but the first report after each start is lost)
 | "the catalog bundle is invalid" | run `izle-server validate-catalog <dir>` for the full report |
 | The TV shows "No connection" behind a proxy | buffering or a short timeout on `/api/v1/tv/events`; `curl -N https://<domain>/api/v1/tv/events` should answer `401` at once, not hang |
 | The TV's pairing screen says to wait, and the log shows `429` on `/api/v1/pair/start` | many pairing attempts from one address; behind a proxy, check `trustedProxies` |
+| `429` on admin routes after wrong tokens ("Too many wrong admin tokens" on the admin page) | 10 wrong tokens from one address within 10 minutes lock it out, even with the right token: wait 10 minutes. Behind a proxy, check `trustedProxies` (otherwise every client shares the proxy's address). The log's warnings (§4) show where the attempts came from |
 | An Android 7 TV cannot reach an HTTPS server | a certificate from a CA other than the TV's or Let's Encrypt's roots; use Caddy's default issuer |

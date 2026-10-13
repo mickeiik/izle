@@ -26,4 +26,12 @@ export class RateLimiter {
     w.count++;
     return w.count <= this.max ? { ok: true, retryAfterSec: 0 } : { ok: false, retryAfterSec: Math.ceil((w.resetAt - t) / 1000) };
   }
+
+  /** Whether one more hit would be allowed now, without counting one; if not, after how many seconds to retry. */
+  check(key: string): { ok: boolean; retryAfterSec: number } {
+    const t = this.now();
+    const w = this.windows.get(key);
+    if (!w || w.resetAt <= t || w.count < this.max) return { ok: true, retryAfterSec: 0 };
+    return { ok: false, retryAfterSec: Math.ceil((w.resetAt - t) / 1000) };
+  }
 }

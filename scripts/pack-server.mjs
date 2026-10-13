@@ -12,7 +12,7 @@
 //   server/admin/                    admin page
 //   server/schema/                   catalog bundle and resolve-result JSON Schemas (from contract/schema)
 //   sample-catalog/                  the sample bundle served when no catalog is configured
-//   deploy/                          example config, systemd unit and Caddyfile (from docs/deploy)
+//   deploy/                          example config, systemd units (server, backup) and Caddyfile (from docs/deploy)
 //   LICENSE, THIRD_PARTY_LICENSES.md, README.md
 //
 // Usage: node scripts/pack-server.mjs [--out <dir>] [--keep-stage]
@@ -162,8 +162,8 @@ sudo npm install --global --prefix /opt/izle ./izle-server-${version}.tgz
 \`\`\`
 
 Without \`--config\` the server listens on port 8787, serves the sample catalog in \`sample-catalog/\` and keeps its
-data in \`./data\`. \`deploy/\` holds an example config, a systemd unit and a Caddyfile; the setup is described in
-the self-hosting guide: ${docs}
+data in \`./data\`. \`deploy/\` holds an example config, systemd units for the server and a daily database backup, and
+a Caddyfile; the setup is described in the self-hosting guide: ${docs}
 
 Licenses: [LICENSE](LICENSE) (MIT), bundled npm packages in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), the
 sample catalog's media and posters in [sample-catalog/NOTICE.md](sample-catalog/NOTICE.md).

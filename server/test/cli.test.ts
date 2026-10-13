@@ -1,8 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readdirSync, statSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { main } from "../src/cli.ts";
 import { linkBase, localServerUrl, qrCode, signInLink } from "../src/shell.ts";
-import { ADMIN_TOKEN, startTestServer } from "./helpers.ts";
+import { SCHEMA_VERSION } from "../src/store.ts";
+import { ADMIN_TOKEN, startTestServer, tempDir } from "./helpers.ts";
 
 // The CLI reads the admin token the way the server does; the test server runs with the token from the environment.
 process.env.IZLE_ADMIN_TOKEN = ADMIN_TOKEN;
@@ -153,4 +158,81 @@ test("shell helpers: local address, link base and link format", () => {
   assert.equal(signInLink("https://host.example.org/izle", "a b&c"), "https://host.example.org/izle/admin/#token=a%20b%26c");
   const qr = qrCode("https://izle.example.org/admin/#token=0123456789abcdefghijklmnopqrstuvwxyz0123456");
   assert.ok(qr.split("\n").length >= 20 && /█/.test(qr));
+});
+
+/** What a backup holds: its schema version, the devices and the home list. */
+function readBackup(file: string) {
+  const db = new DatabaseSync(file);
+  try {
+    return {
+      schemaVersion: Number(db.prepare("PRAGMA user_version").get()?.user_version),
+      devices: db.prepare("SELECT id, name FROM devices ORDER BY name").all().map((r) => [r.id, r.name]),
+      home: db.prepare("SELECT item_id FROM home_entries ORDER BY position").all().map((r) => r.item_id),
+    };
+  } finally {
+    db.close();
+  }
+}
+
+test("cli: backup copies the running server's database; an existing file needs --force", async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  const tv = await s.pair("Salon");
+  assert.equal((await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["show", "film"] })).status, 200);
+  const dir = await tempDir("izle-backup-");
+  const target = path.join(dir, "izle-backup.db");
+  const cfg = ["--config", s.config.configPath!];
+  assert.ok(statSync(path.join(s.config.dataDir, "izle.db-wal")).size > 0, "the server's latest writes are still in its write-ahead log");
+
+  let r = await run(["backup", target, ...cfg]);
+  assert.equal(r.code, 0, r.err);
+  const [written, reminder, end] = r.out.split("\n");
+  assert.ok(written!.startsWith(`backup written to ${target} (`) && /\(\d+ KiB\)$/.test(written!), written);
+  assert.equal(
+    reminder,
+    `not in the backup: the admin token (IZLE_ADMIN_TOKEN), the config file (${s.config.configPath}) and the catalog (${s.bundleDir}); back them up separately`,
+  );
+  assert.equal(end, "");
+  assert.equal(statSync(target).mode & 0o777, 0o600, "only the owner can read the copy");
+  // The running server holds the database open in WAL mode; what it wrote is in the copy.
+  assert.deepEqual(readBackup(target), { schemaVersion: SCHEMA_VERSION, devices: [[tv.deviceId, "Salon"]], home: ["show", "film"] });
+
+  r = await run(["backup", target, ...cfg]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /already exists; pass --force to replace it/);
+  assert.equal((await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["film"] })).status, 200, "the server keeps working");
+  r = await run(["backup", target, "--force", ...cfg]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(readBackup(target).home, ["film"], "--force replaces the copy");
+  assert.equal(statSync(target).mode & 0o777, 0o600);
+
+  for (const own of ["izle.db", "izle.db-wal"]) {
+    r = await run(["backup", path.join(s.config.dataDir, own), "--force", ...cfg]);
+    assert.equal(r.code, 1, `${own} is never a target`);
+    assert.match(r.err, /is the database itself/);
+  }
+  r = await run(["backup", dir, "--force", ...cfg]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /is a directory/);
+  r = await run(["backup", path.join(dir, "missing", "copy.db"), ...cfg]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /the directory .*missing does not exist/);
+  assert.deepEqual(readdirSync(dir), ["izle-backup.db"], "no partial files are left behind");
+  assert.deepEqual((await s.admin("GET", `/devices/${tv.deviceId}`)).json.home.map((h: { itemId: string }) => h.itemId), ["film"], "the database is untouched");
+
+  assert.equal((await run(["backup", ...cfg])).code, 2, "the file is required");
+  assert.equal((await run(["backup", target, "extra", ...cfg])).code, 2);
+  r = await run(["admin-token", "--force", ...cfg]);
+  assert.equal(r.code, 2);
+  assert.match(r.err, /--force belongs to the backup command/);
+});
+
+test("cli: backup without a database says so and creates nothing", async () => {
+  const dir = await tempDir("izle-backup-");
+  const config = path.join(dir, "izle.json");
+  await writeFile(config, JSON.stringify({ dataDir: "./data" }));
+  const r = await run(["backup", path.join(dir, "copy.db"), "--config", config]);
+  assert.equal(r.code, 1);
+  assert.equal(r.err, `izle-server: there is no database at ${path.join(dir, "data", "izle.db")}; the server creates it when it first starts\n`);
+  assert.deepEqual(readdirSync(dir), ["izle.json"]);
 });

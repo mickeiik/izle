@@ -10,7 +10,8 @@ response fields, new routes); clients MUST ignore unknown response fields.
 - Base path `/api/v1`. JSON request and response bodies (`Content-Type: application/json`), request bodies ≤ 64 KiB.
 - **TV routes** (`/api/v1/tv/*`) need `Authorization: Bearer <deviceToken>`; **admin routes**
   (`/api/v1/admin/*`) need `Authorization: Bearer <adminToken>`. A missing or wrong token answers `401` with a
-  `WWW-Authenticate: Bearer` header. Device tokens never work on admin routes and vice versa.
+  `WWW-Authenticate: Bearer` header (on admin routes, `429` after repeated failures: see
+  [Authentication model](#authentication-model)). Device tokens never work on admin routes and vice versa.
 - Errors: `{"error": "<code>", "message"?: "<human text>", …details}` with an HTTP status; codes are listed per
   route. `400 invalid_json`, `400 invalid_request` (with `details: [{path, message}]`), `413 body_too_large` and
   `500 internal` can happen anywhere.
@@ -31,6 +32,12 @@ response fields, new routes); clients MUST ignore unknown response fields.
 | Device token | handed out once by `GET /pair/wait` after approval, 32 random bytes base64url | sha256 |
 
 Tokens are compared in constant time. They never appear in logs (see [Logging](#logging)).
+
+Failed admin authentications (a missing or wrong token on `/api/v1/admin/*`) are counted per client address (see
+`trustedProxies` in [Configuration](#configuration)): after 10 within 10 minutes of the first, every admin request
+from that address — even with the right token — answers `429 too_many_attempts` with a `Retry-After` header until
+those 10 minutes are over. Successful requests are never counted. Each failure is logged as a warning with the client
+address and the route template, never the presented token. TV routes and pairing are not affected.
 
 ## Pairing
 
@@ -389,8 +396,8 @@ the server and keeps its data in `./data` (`izle.db`, `admin.token`). Unknown ke
 - `trustedProxies` (default `[]`): IP addresses or CIDR ranges (IPv4 or IPv6) of reverse proxies in front of the
   server. For a request whose socket address is in the list, the client address is taken from
   `X-Forwarded-For`, walking from the right past further trusted hops; entries left of the first untrusted hop are
-  ignored. The client address is only used for the `pair/start` rate limit. Without the setting the header is
-  ignored, so behind a proxy all TVs share one limit.
+  ignored. The client address is only used for the `pair/start` rate limit and the admin sign-in throttle. Without
+  the setting the header is ignored, so behind a proxy all clients share one limit (and one admin lockout).
 
 - `resolver` (default null): `module` is a **local path** to the owner's resolver module (never downloaded);
   `config` is handed to it as `ctx.config` and never logged; `deadlineMs` (100–120000, default 12000) bounds one

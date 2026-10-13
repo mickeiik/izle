@@ -179,6 +179,7 @@ export function isActive(n, online, now = Date.now()) {
 /** Owner-facing text for API error codes. */
 const ERRORS = /** @type {Record<string, string>} */ ({
   unauthorized: "The admin token is not valid.",
+  too_many_attempts: "Too many wrong admin tokens were tried from this address. Try again in 10 minutes.",
   unknown_code: "That code is not waiting for approval any more. It may have expired: the TV shows a new one.",
   already_approved: "That code is already approved; the TV will pick it up in a moment.",
   too_many_items: `A home screen holds at most ${HOME_MAX} shows.`,

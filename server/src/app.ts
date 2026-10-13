@@ -14,6 +14,7 @@ import { diagnoseEpisode } from "./diagnostics.ts";
 import { HttpError } from "./errors.ts";
 import { MAX_PAIR_WAIT_MS, type PairingService } from "./pairing.ts";
 import { PROXY_TOKEN, type ProxyService, type ProxyTarget } from "./proxy.ts";
+import { RateLimiter } from "./ratelimit.ts";
 import { companionScope } from "./resolve.ts";
 import type { LoadedResolver } from "./resolver.ts";
 import type { Device } from "./store.ts";
@@ -50,6 +51,9 @@ export interface AppContext extends Services {
 
 /** Unacknowledged commands younger than this are replayed when a TV (re)connects to the event stream. */
 export const COMMAND_REPLAY_MS = 2 * 60_000;
+/** Failed admin authentications allowed per client address and window before the address is locked out. */
+export const ADMIN_AUTH_MAX_FAILURES = 10;
+export const ADMIN_AUTH_WINDOW_MS = 10 * 60_000;
 const API_BODY_LIMIT = 64 * 1024;
 
 type Env = { Variables: { device: Device } };
@@ -140,9 +144,23 @@ export function createApp(ctx: AppContext): Hono<Env> {
     await next();
   });
 
+  // Failed admin authentications are counted per client address (clientKey below, as for pair/start). Once an
+  // address has used up its failures, every admin request from it answers 429 until the window ends, even with the
+  // right token, so the lockout tells a guesser nothing. Successes are never counted.
+  const adminFailures = new RateLimiter(ADMIN_AUTH_MAX_FAILURES, ADMIN_AUTH_WINDOW_MS, ctx.now);
   const adminAuth = createMiddleware<Env>(async (c, next) => {
+    const client = clientKey(c);
+    const locked = adminFailures.check(client);
+    if (!locked.ok) {
+      throw new HttpError(429, "too_many_attempts", "too many wrong admin tokens from this address; try again later", {}, { "Retry-After": String(locked.retryAfterSec) });
+    }
     const token = bearerToken(c.req.header("Authorization"));
     if (!token || !secretsEqual(token, ctx.adminToken)) {
+      adminFailures.hit(client);
+      // Where the attempt came from and what it tried to reach; never the presented token.
+      log.warn("admin auth failed", { client, route: routePath(c, -1), reason: token ? "wrong token" : "no token" });
+      const after = adminFailures.check(client);
+      if (!after.ok) log.warn("admin auth locked out", { client, failures: ADMIN_AUTH_MAX_FAILURES, retryAfterSec: after.retryAfterSec });
       throw new HttpError(401, "unauthorized", "missing or invalid admin token", {}, { "WWW-Authenticate": 'Bearer realm="izle-admin"' });
     }
     await next();

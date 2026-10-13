@@ -2,8 +2,9 @@
 // @ts-check
 // Installs a server package the way the self-hosting guide does (`npm install --global --prefix`, offline: the
 // package has no dependencies) into a temporary directory and checks that the installed server works: version,
-// catalog validation, admin token and sign-in link, the admin page, pairing (admin API and shell), the home state with posters, resolve, catalog reload
-// on SIGHUP and a clean stop on SIGTERM. Only loopback HTTP; nothing is fetched from the network.
+// catalog validation, admin token and sign-in link, the admin page, pairing (admin API and shell), the home state
+// with posters, resolve, a database backup while the server runs, catalog reload on SIGHUP and a clean stop on
+// SIGTERM. Only loopback HTTP; nothing is fetched from the network.
 //
 // Usage: node scripts/smoke-server.mjs [<izle-server-x.y.z.tgz>] [--keep]
 import { execFile, spawn } from "node:child_process";
@@ -42,7 +43,7 @@ try {
   check(true, `installed ${path.basename(tarball)} offline into a temporary prefix`);
 
   check((await cli(["--version"])).stdout.trim() === version, `izle-server --version prints ${version}`);
-  const deployFiles = ["izle.example.json", "izle.service", "Caddyfile"];
+  const deployFiles = ["izle.example.json", "izle.service", "izle-backup.service", "izle-backup.timer", "Caddyfile"];
   /** @type {string[]} */
   const missing = [];
   for (const f of deployFiles) await stat(path.join(pkgDir, "deploy", f)).catch(() => missing.push(f));
@@ -133,6 +134,17 @@ try {
   check(poster.status === 200 && poster.headers.get("content-type") === "image/jpeg", "posters are served");
   const resolve = await call("POST", "/api/v1/tv/resolve", { token: tv, body: { episodeId: state.json.home[0].continue.episodeId } });
   check(resolve.res.status === 200 && /^https:\/\//.test(resolve.json.media?.url), "resolve returns the episode's stream");
+
+  const backupFile = path.join(work, "izle-backup.db");
+  const backup = await cli(["backup", backupFile, "--config", config]);
+  const { DatabaseSync } = await import("node:sqlite");
+  const copy = new DatabaseSync(backupFile);
+  const copied = copy.prepare("SELECT item_id FROM home_entries ORDER BY position").all().map((r) => r.item_id).join();
+  copy.close();
+  check(
+    backup.stdout.startsWith(`backup written to ${backupFile} (`) && ((await stat(backupFile)).mode & 0o777) === 0o600 && copied === "caminandes,sintel",
+    "izle-server backup copies the running server's database (mode 0600, with the home list)",
+  );
 
   const before = logs.length;
   child.kill("SIGHUP");

@@ -3,7 +3,8 @@ import { parseArgs } from "node:util";
 import { main as validateMain } from "@izle/contract/cli";
 import { BundleValidationError, formatIssue, loadBundle } from "@izle/contract";
 import { loadAdminToken } from "./auth.ts";
-import { ConfigError, loadConfig, type ServerConfig } from "./config.ts";
+import { BackupError, backupDatabase } from "./backup.ts";
+import { ConfigError, loadConfig, SAMPLE_CATALOG_DIR, type ServerConfig } from "./config.ts";
 import { createLogger } from "./log.ts";
 import { healthcheckAll, loadResolver, ResolverLoadError } from "./resolver.ts";
 import { startServer } from "./server.ts";
@@ -21,6 +22,9 @@ const USAGE = `usage:
                                                    approve the code a TV shows (name: "TV", "TV 2", … when omitted)
                                                    pair talks to the running server; --server <url> if it does not
                                                    listen where the config says
+  izle-server backup <file> [--config <file>] [--force]
+                                                   copy the database to <file> (mode 0600) while the server keeps
+                                                   running; --force replaces an existing file
   izle-server validate-catalog <dir>               validate a catalog bundle (same as izle-validate)
   izle-server check-resolver [--config <file>]     load the configured resolver module, check that it provides
                                                    the catalog's adapters, and run every adapter's healthcheck
@@ -110,6 +114,23 @@ async function pair(config: ServerConfig, args: string[], serverUrl: string | un
   }
 }
 
+const size = (bytes: number) => (bytes < 1024 ? `${bytes} bytes` : bytes < 1024 ** 2 ? `${Math.round(bytes / 1024)} KiB` : `${(bytes / 1024 ** 2).toFixed(1)} MiB`);
+
+/** `backup <file>`: a consistent copy of the database, taken while the server keeps running (BackupError → exit 1). */
+function backup(config: ServerConfig, file: string, force: boolean): number {
+  const target = path.resolve(invocationDir(), file);
+  const { bytes } = backupDatabase(path.join(config.dataDir, "izle.db"), target, { force });
+  const separately = [
+    `the admin token (${config.admin.token ? "IZLE_ADMIN_TOKEN" : config.admin.tokenFile})`,
+    config.configPath ? `the config file (${config.configPath})` : null,
+    config.catalog.dir !== SAMPLE_CATALOG_DIR ? `the catalog (${config.catalog.dir})` : null,
+    config.resolver ? `the resolver module (${config.resolver.module})` : null,
+  ].filter((x) => x !== null);
+  const list = separately.length > 1 ? `${separately.slice(0, -1).join(", ")} and ${separately.at(-1)}` : separately[0];
+  process.stdout.write(`backup written to ${target} (${size(bytes)})\nnot in the backup: ${list}; back them up separately\n`);
+  return 0;
+}
+
 /** npm sets INIT_CWD to where `npm run` was invoked, so `npm run -w server dev -- --config x` behaves as typed. */
 function invocationDir(): string {
   return process.env.INIT_CWD ?? process.cwd();
@@ -121,7 +142,7 @@ export async function main(argv: string[]): Promise<number> {
 
   if (command === "validate-catalog") return validateMain(rest);
 
-  let values: { config?: string; rotate?: boolean; link?: boolean; base?: string; server?: string; help?: boolean; version?: boolean };
+  let values: { config?: string; rotate?: boolean; link?: boolean; base?: string; server?: string; force?: boolean; help?: boolean; version?: boolean };
   let positionals: string[];
   try {
     ({ values, positionals } = parseArgs({
@@ -133,6 +154,7 @@ export async function main(argv: string[]): Promise<number> {
         link: { type: "boolean" },
         base: { type: "string" },
         server: { type: "string" },
+        force: { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
       },
@@ -141,11 +163,12 @@ export async function main(argv: string[]): Promise<number> {
     process.stderr.write(`${(err as Error).message}\n${USAGE}\n`);
     return 2;
   }
-  if (command !== "pair" && positionals.length > 0) {
-    process.stderr.write(`unexpected argument "${positionals[0]}"\n${USAGE}\n`);
+  const maxPositionals = command === "pair" ? Infinity : command === "backup" ? 1 : 0;
+  if (positionals.length > maxPositionals) {
+    process.stderr.write(`unexpected argument "${positionals[maxPositionals]}"\n${USAGE}\n`);
     return 2;
   }
-  for (const [flag, owner] of [["rotate", "admin-token"], ["link", "admin-token"], ["base", "admin-token"], ["server", "pair"]] as const) {
+  for (const [flag, owner] of [["rotate", "admin-token"], ["link", "admin-token"], ["base", "admin-token"], ["server", "pair"], ["force", "backup"]] as const) {
     if (values[flag] !== undefined && command !== owner) {
       process.stderr.write(`--${flag} belongs to the ${owner} command\n${USAGE}\n`);
       return 2;
@@ -167,12 +190,17 @@ export async function main(argv: string[]): Promise<number> {
     process.stdout.write(`${VERSION}\n`);
     return 0;
   }
+  if (command === "backup" && positionals.length === 0) {
+    process.stderr.write(`backup needs the file to write the copy to\n${USAGE}\n`);
+    return 2;
+  }
 
   try {
     const config = loadConfig({ path: values.config ?? null, cwd: invocationDir() });
     const log = createLogger({ level: config.log.level });
 
     if (command === "check-resolver") return await checkResolver(config);
+    if (command === "backup") return backup(config, positionals[0]!, values.force ?? false);
 
     if (command === "admin-token") {
       const { token, source } = loadAdminToken(config, createLogger({ write: (l) => void process.stderr.write(`${l}\n`) }), {
@@ -216,7 +244,7 @@ export async function main(argv: string[]): Promise<number> {
       process.stderr.write(`izle-server: ${err.message}\n`);
       return 1;
     }
-    if (err instanceof ResolverLoadError) {
+    if (err instanceof ResolverLoadError || err instanceof BackupError) {
       process.stderr.write(`izle-server: ${err.message}\n`);
       return 1;
     }

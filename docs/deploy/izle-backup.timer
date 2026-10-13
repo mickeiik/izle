@@ -1,0 +1,13 @@
+# Starts izle-backup.service once a day (and at boot when a run was missed); setup in
+# docs/deploy/self-hosting.md (Updates and backups).
+
+[Unit]
+Description=Daily izle database backup
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
