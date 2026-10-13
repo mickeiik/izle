@@ -64,6 +64,41 @@ android {
         compose = true
         buildConfig = true
     }
+
+    // The Compose UI tests run MainActivity under Robolectric, which needs the merged manifest and resources.
+    testOptions.unitTests.isIncludeAndroidResources = true
+}
+
+// Robolectric runs the UI tests on this Android framework jar (one SDK: see the UI tests' @Config). Gradle resolves it
+// like any other dependency and the tests read it from there (offline mode), so a test run never downloads anything.
+val robolectricSdk: Configuration = configurations.create("robolectricSdk") {
+    isCanBeConsumed = false
+    isTransitive = false
+}
+
+class RobolectricOffline(
+    @get:InputFiles @get:PathSensitive(PathSensitivity.NAME_ONLY) val sdkJar: FileCollection,
+) : CommandLineArgumentProvider {
+    override fun asArguments() = listOf(
+        "-Drobolectric.offline=true",
+        "-Drobolectric.dependency.dir=${sdkJar.singleFile.parentFile.absolutePath}",
+    )
+}
+
+tasks.withType<Test>().configureEach {
+    jvmArgumentProviders.add(RobolectricOffline(robolectricSdk))
+    // On Java 17+ Robolectric needs these JDK internals opened (https://robolectric.org/getting-started/).
+    jvmArgs(
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
+        "--add-opens=java.base/java.io=ALL-UNNAMED",
+        "--add-opens=java.base/java.net=ALL-UNNAMED",
+        "--add-opens=java.base/java.security=ALL-UNNAMED",
+        "--add-opens=java.base/java.text=ALL-UNNAMED",
+        "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",
+        "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED",
+        "--add-opens=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED",
+    )
 }
 
 dependencies {
@@ -93,4 +128,9 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(libs.robolectric)
+    robolectricSdk(libs.robolectric.android.all)
 }

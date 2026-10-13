@@ -629,3 +629,57 @@ release within the major the workflows already used:
   start. A write-ahead log left behind by a crashed server would otherwise be applied to the restored file. The update
   steps now take a `before-X.Y.Z.db` copy, which the timer's pruning leaves alone. Docker: `docker exec … backup` into
   the volume, then `docker cp`.
+
+## Compose UI tests for the senior invariants (2026-10-14)
+
+- **Robolectric 4.17 with Compose `ui-test-junit4`** (1.12.1 from BOM 2026.09.00) and `androidx.test:core` 1.7.0, test
+  dependencies only. The UI tests run with the JVM tests in `:app:testDebugUnitTest` (no device, no emulator, CI
+  unchanged). 4.17 (2026-09-10) is the latest stable Robolectric and supports SDKs up to 37; it works with AGP 9.4.1,
+  compileSdk 37 and Kotlin 2.4.20 as they are. Espresso 3.5.0 and `ext:junit` 1.1.5 come in through `ui-test` and are
+  left at those versions. The rule is the `v2` `createEmptyComposeRule()` (the v1 one is deprecated in Compose 1.12).
+- **SDK 36** (`@Config(sdk = [36])`, the targetSdk) on a 960×540 dp landscape TV
+  (`qualifiers = "w960dp-h540dp-land-television"`): tiles measure 190×285 dp as on a TV, and the window is not in
+  touch mode, as on a TV.
+- **No network at test time.** Robolectric's Android framework jar for SDK 36
+  (`org.robolectric:android-all-instrumented:16-robolectric-13921718-i7`, 213 MB) is a dependency in its own
+  configuration (`robolectricSdk`), so Gradle resolves it during the build, and the test JVM gets
+  `robolectric.offline=true` and `robolectric.dependency.dir` pointing at it. Robolectric's own downloader, which would
+  fetch the jar into `~/.m2` during the first test run, is never used. The jar's version sits in the catalog next to
+  Robolectric's and must change with it: Robolectric's `DefaultSdkProvider` names it.
+- **JDK flags:** on Java 17+ Robolectric needs JDK internals opened (otherwise the first test fails with an
+  `IllegalAccessException` on `jdk.internal.access`), so the test tasks get the `--add-opens` list from Robolectric's
+  getting-started page. Checked on JBR 25 (local) and Temurin 21 (CI's exact command,
+  `--no-configuration-cache :app:assembleDebug :app:testDebugUnitTest`). The configuration cache stores and reuses the
+  setup.
+- **No seams in the main code.** The tests start the real `MainActivity` with `ActivityScenario` after pairing the app
+  through its own store (`IzleApp.graph.deviceStore`: an in-process `MockWebServer` as the server and a device token),
+  so the app goes straight to Home and fetches `/tv/state` as on a TV. `/tv/events` answers 404: the app backs off, and
+  Robolectric's paused clock never reaches the retry. `/tv/resolve` answers 404, so a play attempt ends on the player's
+  error screen and nothing needs ExoPlayer. A live update comes from the public `graph.repository.refreshSoon()`, the
+  current screen is read from the activity's `AppViewModel` through `ViewModelProvider`, and teardown cancels
+  `graph.appScope`.
+- **Keys go through `MainActivity.dispatchKeyEvent`**, the way the system delivers a remote's keys. Back is tested on
+  both of its routes into the app: as a key event (Android 15 and older; Robolectric 4.17 reports predictive back as
+  off at SDK 36, so the key reaches `onBackPressed`), and through `onBackPressedDispatcher.onBackPressed()`, which the
+  system's back callback runs on Android 16 with predictive back. Robolectric's `Activity.onBackPressed` finishes the
+  activity, so a Back the app does not handle fails the "not finished" check.
+- **What the six tests check:** Back on Home (also on an empty Home) does nothing; the first tile has the focus,
+  D-pad right moves it, and after the owner reorders the list the focus stays on the same show rather than the same
+  position; an OK release without a press (the launcher's) neither plays nor moves the focus, while a short press
+  resolves the focused show's episode and opens the player; the Menu key opens the hidden menu with its first entry
+  focused, the focus cannot leave the menu, and Back closes it and gives the focus back to the tiles; holding OK opens
+  the menu and the release does not choose an entry; an empty list shows "Nothing here yet".
+- **Each test was checked against a deliberately broken app** (temporary edits, reverted): without `BackHandler`
+  3 tests fail; with OK not intercepted on Home the hold test fails; without the initial tile focus 4 fail; with grid
+  items not keyed by show the reorder test fails; with the Menu key ignored the menu test fails; without the empty-list
+  message the empty test fails; with `OkPressDetector` turning an orphan release into a click the OK test fails. Not
+  intercepting OK on Home does not make the launcher's release play: Compose 1.12 itself drops a key-up that has no
+  key-down, so that rule is enforced twice.
+- **Cost:** about 4.5 s per run (warm: 59 tests in about 7.5 s instead of 53 in 3 s), most of it the start of
+  Robolectric's sandbox (once per run, before the first UI test), plus the 213 MB jar download on a cold Gradle cache.
+- **Not tested:** anything that needs ExoPlayer (playing, pause, seeking, up next, the end screen, subtitles), the
+  hidden menu's pages below the root, setup and pairing, the offline chip and "No connection" message, Turkish copy
+  and server commands over SSE. Keys are handed to the activity directly, as Robolectric's own key injection does, so
+  `ViewRootImpl`'s input stages do not run: Android 16's interception of Back before the view tree is not simulated
+  (the dispatcher call stands in for it), nor is leaving touch mode on a key press (the window starts outside touch
+  mode, as on a TV).

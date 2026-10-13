@@ -13,6 +13,10 @@ media3 = "1.11.1"
 okhttp = "5.5.0"
 coil = "3.6.3"
 junit = "4.13.2"
+robolectric = "4.17"
+# Robolectric's SDK 36 framework jar, as Robolectric 4.17 names it (DefaultSdkProvider): bump together with robolectric.
+robolectricAndroidAll = "16-robolectric-13921718-i7"
+androidxTestCore = "1.7.0"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
@@ -40,6 +44,10 @@ kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serializa
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
 junit = { module = "junit:junit", version.ref = "junit" }
+androidx-compose-ui-test-junit4 = { module = "androidx.compose.ui:ui-test-junit4" }
+androidx-test-core = { module = "androidx.test:core", version.ref = "androidxTestCore" }
+robolectric = { module = "org.robolectric:robolectric", version.ref = "robolectric" }
+robolectric-android-all = { module = "org.robolectric:android-all-instrumented", version.ref = "robolectricAndroidAll" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
