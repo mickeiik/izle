@@ -524,3 +524,54 @@ and a baked-in server address in owner-built APKs were rejected.
   shows the address to type on the TV (the page's origin plus whatever precedes `/admin/`).
 - The phase 5 verification notes still describe the "name required" behaviour as it was verified then; they are
   historical and were left alone.
+
+## Repository: changelog, security policy, pinned actions, Dependabot; real-device notes (2026-10-14)
+
+Repository work for publishing, done alongside the 2026-10-14 features. The actions were resolved on 2026-10-14
+through the GitHub API (`git/matching-refs/tags/vN`, annotated tags dereferenced to their commit), each at the newest
+release within the major the workflows already used:
+
+| Action | Tag | Commit |
+|---|---|---|
+| `actions/checkout` | v7.0.1 | `3d3c42e5aac5ba805825da76410c181273ba90b1` |
+| `actions/setup-node` | v7.1.0 | `949feb2413d6458794dcd2491c4babbbce0c15c1` |
+| `actions/setup-java` | v6.0.1 | `de7274f081f381c8f8158605e0321c36c376e2e6` |
+| `gradle/actions/setup-gradle` | v6.4.0 (annotated tag object `b9bee63ef481cc545e4517ec730544a4d8b1dfa0`) | `3f5f9adaf7d9fecd50b5935e54106014257a94e6` |
+| `actions/upload-artifact` | v7.0.2 | `cf430e030ddbb5b0abf93d22962f4752f3646cd9` |
+| `actions/download-artifact` | v8.0.2 | `9000827ccba6bdab643e8b6fd33ac0654aef8333` |
+
+- **Pinned by commit SHA with the tag as a comment** (`uses: actions/checkout@<sha> # v7.0.1`), in both workflows,
+  with nothing else changed. The floating major tags (`v7`, `v6`, `v8`) pointed at the same commits, so CI runs what
+  it ran before. gradle/actions' `v6.4.0-rc.1` pre-release was skipped; no action changed its major version.
+- **No separate `gradle/actions/wrapper-validation` step.** setup-gradle v6.4.0 validates every `gradle-wrapper.jar`
+  by default (`validate-wrappers` defaults to `true` in its `action.yml`, and its documentation says the dedicated
+  action is not needed since v4). It searches the whole `GITHUB_WORKSPACE`, so `android/gradle/wrapper/` is covered
+  although the Android jobs run Gradle in `android/`.
+- **Dependabot** (`.github/dependabot.yml`): npm (the root, which covers the `contract` and `server` workspaces and
+  the one lockfile), gradle (`/android`: version catalog and wrapper), github-actions and docker (the Dockerfile's
+  Node images), weekly on Monday, at most 5 open pull requests each. Minor and patch updates are grouped per
+  ecosystem (`<ecosystem>-minor-patch`); every major update is a pull request of its own. Commit messages start with
+  `Deps:`, in the repository's "Area: sentence" style. `@types/node` majors are ignored (22.x for the engine floor,
+  Phase 0). The Docker tags carry only the major (`node:24-slim`), so a Node image update is always a pull request of
+  its own; merging one should also update "Node 24" in the self-hosting guide's Docker section. esbuild is 0.x, so
+  Dependabot counts 0.28 → 0.29 as a minor update and groups it; CI's package build and smoke test guard it.
+- **Make-public checklist:** "Switch the visibility" now comes before "After publishing", which gains Dependabot
+  alerts and security updates, private vulnerability reporting (GitHub offers it for public repositories only) and
+  the `gh api` calls for the security switches. A new item checks that every `uses:` stays pinned with its comment.
+- **CHANGELOG.md** follows Keep a Changelog 1.1.0 and is written for self-hosters (what changes for them), with a
+  "Compatibility" subsection where an update needs care. Dates are the GitHub releases' publication dates in UTC
+  (`v0.1.0` was tagged at 01:01 local time on 10-11 and published at 23:31 UTC on 10-10). The Node 22
+  adapter-deadline fix (`ecba24f`) is listed under 0.1.0, not 0.2.0: the `v0.1.0` tag points at that commit.
+  Unreleased lists what is on `main` plus the branches being merged on 2026-10-14; an entry whose branch does not
+  land is removed. "Cutting a release" gains the step that moves the Unreleased entries under the new version, and
+  AGENTS.md one line asking for an Unreleased entry with every user-visible change.
+- **SECURITY.md:** reports go through GitHub's private vulnerability reporting only, with no e-mail address (Phase 0:
+  none is written into the repository); only the latest release gets fixes; the scope is the approved list (resolver
+  modules run as trusted in-process code and are out of scope, like the sample catalog's CDNs).
+- **Real-device notes** (`docs/verification/real-device/`) were reconstructed from the transcript of the 2026-10-11
+  session and its two screenshots, which had stayed untracked. The session ran the setup, pairing and home screen
+  checks, then handed over to the owner, who tested by hand without recording results, so 10 of its 12 planned
+  checks are "not run". Left out: the box's own address, the development machine's other addresses, the time zone
+  and anything about out-of-tree catalogs; the dev server's LAN address stays because the pairing screenshot shows
+  it. The screenshots stay as captured (960×540). One open issue was found and recorded there, not fixed: on a TV
+  without a 12/24-hour setting the clock follows the app's language instead of the TV's locale.

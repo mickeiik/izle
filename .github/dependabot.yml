@@ -1,0 +1,66 @@
+# Dependabot version updates: weekly on Monday, one grouped pull request per ecosystem for minor and patch
+# updates, and a pull request of its own for every major update. Dependabot alerts and security updates are
+# switched on in the repository settings (docs/releasing.md, make-public checklist).
+version: 2
+updates:
+  # Root package.json with the npm workspaces `contract` and `server` (one lockfile for all of them).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: Deps
+    groups:
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # Type-checking must catch APIs newer than the engine floor (Node 22.13), so @types/node stays on 22.x.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  # Android app: the version catalog (android/gradle/libs.versions.toml) and the Gradle wrapper.
+  - package-ecosystem: gradle
+    directory: /android
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: Deps
+    groups:
+      gradle-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # Workflow actions are pinned by commit SHA with the release as a comment (`@<sha> # vX.Y.Z`); Dependabot
+  # updates both.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: Deps
+    groups:
+      actions-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  # The Node base images of the Dockerfile. Their tags carry only the major (`node:24-slim`), so every update is a
+  # major one and gets its own pull request.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: Deps
+    groups:
+      docker-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]

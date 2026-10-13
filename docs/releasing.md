@@ -19,12 +19,17 @@ Owners install them as described in [deploy/self-hosting.md](deploy/self-hosting
    ```bash
    npm run version:set -- 0.2.0
    npm run version:check                 # prints 0.2.0
+   ```
+2. In [`CHANGELOG.md`](../CHANGELOG.md), move the entries under `## [Unreleased]` to a new `## [0.2.0] - YYYY-MM-DD`
+   heading with the release date, leave the Unreleased heading empty above it, and update the compare links at the
+   bottom of the file. Then commit both steps together:
+   ```bash
    git commit -am "Release 0.2.0"
    git push
    ```
-2. Wait for CI to pass. Optionally do a dry run of the release workflow (same builds, artifacts attached to the run,
+3. Wait for CI to pass. Optionally do a dry run of the release workflow (same builds, artifacts attached to the run,
    no release): `gh workflow run release.yml --ref main`, or Actions → Release → Run workflow.
-3. Tag and push:
+4. Tag and push:
    ```bash
    git tag -a v0.2.0 -m "izle 0.2.0"
    git push origin v0.2.0
@@ -109,7 +114,21 @@ automated session) goes through this list.
   verification screenshots show only sample or generated content.
 - [ ] **If something must go**, rewrite the history (`git filter-repo`) before publishing, and rotate whatever
   leaked anyway.
-- [ ] **After publishing:** turn on secret scanning with push protection and Dependabot alerts, protect `main`, add
-  a ruleset so only maintainers can create `v*` tags, and keep "require approval for first-time contributors"
-  for Actions.
+- [ ] **Pinned actions.** Every `uses:` in the workflows names a commit SHA, with the release it belongs to as a
+  comment (`actions/checkout@<40-hex SHA> # v7.0.1`). Dependabot's weekly `github-actions` updates
+  ([`.github/dependabot.yml`](../.github/dependabot.yml)) bump the SHA and the comment together, so keep the comment
+  on every pin and pin a new action the same way:
+  `grep -h 'uses:' .github/workflows/*.yml | grep -v -E '@[0-9a-f]{40} # v[0-9]'` prints nothing.
 - [ ] **Switch the visibility:** `gh repo edit mickeiik/izle --visibility public --accept-visibility-change-consequences`.
+- [ ] **After publishing**, in the repository's security settings: turn on Dependabot alerts and Dependabot security
+  updates (version updates run from `.github/dependabot.yml` already), secret scanning with push protection, and
+  private vulnerability reporting, where [`SECURITY.md`](../SECURITY.md) sends reporters (GitHub offers it for public
+  repositories only). Then protect `main`, add a ruleset so only maintainers can create `v*` tags, and keep "require
+  approval for first-time contributors" for Actions. The security switches with `gh`:
+  ```bash
+  gh api -X PUT repos/mickeiik/izle/vulnerability-alerts             # Dependabot alerts
+  gh api -X PUT repos/mickeiik/izle/automated-security-fixes         # Dependabot security updates
+  gh api -X PUT repos/mickeiik/izle/private-vulnerability-reporting
+  gh api -X PATCH repos/mickeiik/izle -f 'security_and_analysis[secret_scanning][status]=enabled' \
+    -f 'security_and_analysis[secret_scanning_push_protection][status]=enabled'
+  ```

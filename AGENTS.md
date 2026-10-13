@@ -45,6 +45,7 @@ Releases (tag `vX.Y.Z` → `.github/workflows/release.yml`), Android release sig
 [docs/releasing.md](docs/releasing.md). Deployment (systemd, Caddy, Docker): [docs/deploy/](docs/deploy/self-hosting.md).
 The package mirrors the source tree's relative paths (`server/dist/` → `../admin`, `../schema`,
 `../../sample-catalog`); the smoke test catches a resource that moved.
+User-visible changes get an entry under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md), in the same commit.
 
 - `contract/`: `npm test -w contract`, `npx izle-validate <bundleDir> [--probe]`
 - `server/`: `npm test -w server`, `npm run -w server dev -- --config server/izle.dev.json` (sample catalog on :8787,

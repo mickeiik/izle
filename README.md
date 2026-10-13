@@ -61,11 +61,12 @@ screenshots in [docs/verification/](docs/verification/phase3/README.md).
 ## Self-hosting
 
 Each [release](https://github.com/mickeiik/izle/releases) has the server as one dependency-free package
-(`izle-server-X.Y.Z.tgz`, Node.js ≥ 22.13) and the TV app as an APK. The
-[self-hosting guide](docs/deploy/self-hosting.md) covers installing the server as a systemd service, HTTPS with
-Caddy, the admin token, the firewall, Docker, updates and backups, and installing the app on a TV. How releases
-are made, Android release signing and the checklist for publishing the repository are in
-[docs/releasing.md](docs/releasing.md).
+(`izle-server-X.Y.Z.tgz`, Node.js ≥ 22.13) and the TV app as an APK; what changed between releases:
+[CHANGELOG.md](CHANGELOG.md). The [self-hosting guide](docs/deploy/self-hosting.md) covers installing the server as
+a systemd service, HTTPS with Caddy, the admin token, the firewall, Docker, updates and backups, and installing the
+app on a TV. How releases are made, Android release signing and the checklist for publishing the repository are in
+[docs/releasing.md](docs/releasing.md). Security problems are reported privately, as described in
+[SECURITY.md](SECURITY.md).
 
 ## Development
 
