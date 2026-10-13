@@ -99,7 +99,9 @@ Open `http://localhost:8787/admin/` and sign in with the admin token (`admin-tok
 its QR code for a phone). From there the owner approves the pairing code a TV shows, picks and orders the shows on
 each TV's home screen, sets "continue from episode X", the menu,
 audio and subtitle languages, starts or stops playback, sees what is playing, reloads the catalog and tests
-episode sources. Screenshots: [docs/verification/phase5/](docs/verification/phase5/README.md).
+episode sources. It can also pause, resume, seek and skip episodes on the TV, send it a short message, turn on
+autoplay when the TV starts, and see the problems a TV ran into (its own reports, and failed resolves or proxy
+requests the server saw). Screenshots: [docs/verification/phase5/](docs/verification/phase5/README.md).
 
 ### Resolver modules
 

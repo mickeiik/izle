@@ -91,6 +91,27 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX companion_links_by_item ON companion_links (catalog_id, item_id);
   `,
+  // 3 — problem reports (what went wrong on a TV, for the remote owner) and the per-TV "autoplay on start" setting.
+  `
+  CREATE TABLE problems (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    at INTEGER NOT NULL,                    -- when it happened (epoch ms)
+    origin TEXT NOT NULL CHECK (origin IN ('tv', 'server')),
+    kind TEXT NOT NULL,                     -- playback | resolve | proxy | network | other
+    code TEXT NOT NULL,
+    catalog_id TEXT,                        -- with item_id: set when the episode was in the catalog
+    item_id TEXT,
+    episode_id TEXT,
+    source_id TEXT,
+    position_ms INTEGER,
+    http_status INTEGER,
+    detail TEXT,                            -- redacted before it is stored; never logged
+    app_version TEXT
+  );
+  CREATE INDEX problems_by_device ON problems (device_id, at);
+  ALTER TABLE devices ADD COLUMN autoplay_on_start INTEGER NOT NULL DEFAULT 0;
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
@@ -105,6 +126,8 @@ export interface Device {
   preferredAudioLanguage: string | null;
   subtitlesLanguage: string | null;
   stateVersion: number;
+  /** When the app opens, the show watched last (else the first tile) starts after a countdown. */
+  autoplayOnStart: boolean;
 }
 
 export interface PairCode {
@@ -143,6 +166,29 @@ export interface Command {
   payload: Record<string, unknown>;
   createdAt: number;
   ackedAt: number | null;
+}
+
+export type ProblemOrigin = "tv" | "server";
+
+/** Something that went wrong on a TV: reported by the TV itself, or recorded by the server for it. */
+export interface Problem {
+  id: number;
+  deviceId: string;
+  /** When it happened (epoch ms). */
+  at: number;
+  origin: ProblemOrigin;
+  /** `playback`, `resolve`, `proxy`, `network` or `other`. */
+  kind: string;
+  code: string;
+  /** Set (with `itemId`) when the episode was in the catalog when the problem was recorded. */
+  catalogId: string | null;
+  itemId: string | null;
+  episodeId: string | null;
+  sourceId: string | null;
+  positionMs: number | null;
+  httpStatus: number | null;
+  detail: string | null;
+  appVersion: string | null;
 }
 
 export interface NowPlaying {
@@ -194,6 +240,7 @@ function toDevice(r: Row): Device {
     preferredAudioLanguage: strOrNull(r.preferred_audio_language),
     subtitlesLanguage: strOrNull(r.subtitles_language),
     stateVersion: num(r.state_version),
+    autoplayOnStart: num(r.autoplay_on_start) === 1,
   };
 }
 
@@ -245,7 +292,26 @@ function toCommand(r: Row): Command {
   };
 }
 
-export type DevicePatch = Partial<Pick<Device, "name" | "uiLanguage" | "preferredAudioLanguage" | "subtitlesLanguage">>;
+function toProblem(r: Row): Problem {
+  return {
+    id: num(r.id),
+    deviceId: str(r.device_id),
+    at: num(r.at),
+    origin: str(r.origin) as ProblemOrigin,
+    kind: str(r.kind),
+    code: str(r.code),
+    catalogId: strOrNull(r.catalog_id),
+    itemId: strOrNull(r.item_id),
+    episodeId: strOrNull(r.episode_id),
+    sourceId: strOrNull(r.source_id),
+    positionMs: numOrNull(r.position_ms),
+    httpStatus: numOrNull(r.http_status),
+    detail: strOrNull(r.detail),
+    appVersion: strOrNull(r.app_version),
+  };
+}
+
+export type DevicePatch = Partial<Pick<Device, "name" | "uiLanguage" | "preferredAudioLanguage" | "subtitlesLanguage" | "autoplayOnStart">>;
 
 /** Typed access to the SQLite database. All methods are synchronous (node:sqlite). */
 export class Store {
@@ -343,13 +409,15 @@ export class Store {
       ["uiLanguage", "ui_language"],
       ["preferredAudioLanguage", "preferred_audio_language"],
       ["subtitlesLanguage", "subtitles_language"],
+      ["autoplayOnStart", "autoplay_on_start"],
     ];
     const sets: string[] = [];
     const values: SQLInputValue[] = [];
     for (const [key, column] of columns) {
-      if (patch[key] !== undefined) {
+      const value = patch[key];
+      if (value !== undefined) {
         sets.push(`${column} = ?`);
-        values.push(patch[key] ?? null);
+        values.push(typeof value === "boolean" ? (value ? 1 : 0) : value);
       }
     }
     sets.push("state_version = state_version + 1");
@@ -530,6 +598,57 @@ export class Store {
 
   purgeCommands(before: number): void {
     this.run("DELETE FROM commands WHERE created_at < ?", before);
+  }
+
+  // --- problems ------------------------------------------------------------------------------------------------
+
+  /** Stores a problem and keeps only the device's newest `keep` (by time, then insertion order). */
+  insertProblem(p: Omit<Problem, "id">, keep: number): Problem {
+    return this.transaction(() => {
+      const r = this.get(
+        `INSERT INTO problems (device_id, at, origin, kind, code, catalog_id, item_id, episode_id, source_id, position_ms, http_status, detail, app_version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+        p.deviceId,
+        p.at,
+        p.origin,
+        p.kind,
+        p.code,
+        p.catalogId,
+        p.itemId,
+        p.episodeId,
+        p.sourceId,
+        p.positionMs,
+        p.httpStatus,
+        p.detail,
+        p.appVersion,
+      );
+      this.run(
+        "DELETE FROM problems WHERE device_id = ? AND id NOT IN (SELECT id FROM problems WHERE device_id = ? ORDER BY at DESC, id DESC LIMIT ?)",
+        p.deviceId,
+        p.deviceId,
+        keep,
+      );
+      return toProblem(r!);
+    });
+  }
+
+  /** The device's problems, newest first. */
+  listProblems(deviceId: string, limit: number): Problem[] {
+    return this.all("SELECT * FROM problems WHERE device_id = ? ORDER BY at DESC, id DESC LIMIT ?", deviceId, limit).map(toProblem);
+  }
+
+  /** How many problems happened since `since`, and when the latest one did (null: none stored). */
+  problemStats(deviceId: string, since: number): { recent: number; lastAt: number | null } {
+    const r = this.get("SELECT COUNT(CASE WHEN at >= ? THEN 1 END) AS recent, MAX(at) AS last_at FROM problems WHERE device_id = ?", since, deviceId)!;
+    return { recent: num(r.recent), lastAt: numOrNull(r.last_at) };
+  }
+
+  clearProblems(deviceId: string): number {
+    return this.run("DELETE FROM problems WHERE device_id = ?", deviceId);
+  }
+
+  purgeProblems(before: number): void {
+    this.run("DELETE FROM problems WHERE at < ?", before);
   }
 
   // --- now playing ---------------------------------------------------------------------------------------------

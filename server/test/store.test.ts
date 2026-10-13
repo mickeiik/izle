@@ -94,3 +94,38 @@ test("migration 2: now_playing gains its anchor and seq, companion links exist; 
   assert.deepEqual(s.listCompanionLinks("c", "other"), []);
   s.close();
 });
+
+test("migration 3: devices gain autoplay (off), problems are kept per device, newest first, and go with the device", async () => {
+  const file = path.join(await tempDir(), "izle.db");
+  const raw = new DatabaseSync(file);
+  raw.exec(MIGRATIONS[0]!);
+  raw.exec(MIGRATIONS[1]!);
+  raw.exec("PRAGMA user_version = 2");
+  raw.exec("INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'TV', 'h', 1)");
+  raw.close();
+
+  const s = new Store(file);
+  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  assert.equal(s.getDevice("d1")?.autoplayOnStart, false);
+  assert.equal(s.updateDevice("d1", { autoplayOnStart: true })?.autoplayOnStart, true);
+  assert.equal(s.updateDevice("d1", { name: "Salon" })?.autoplayOnStart, true, "other patches leave it alone");
+  assert.equal(s.updateDevice("d1", { autoplayOnStart: false })?.autoplayOnStart, false);
+
+  s.createDevice({ id: "d2", name: "TV2", tokenHash: "h2", now: 1 });
+  const base = { origin: "tv" as const, kind: "playback", catalogId: null, itemId: null, episodeId: null, sourceId: null, positionMs: null, httpStatus: null, detail: null, appVersion: null };
+  const at = [50, 10, 30, 30, 20];
+  at.forEach((t, i) => s.insertProblem({ ...base, deviceId: "d1", at: t, code: `c${i}` }, 4));
+  s.insertProblem({ ...base, deviceId: "d2", at: 5, code: "other" }, 4);
+  assert.deepEqual(s.listProblems("d1", 10).map((p) => p.code), ["c0", "c3", "c2", "c4"], "the oldest (c1, at 10) went; ties newest-inserted first");
+  assert.deepEqual(s.listProblems("d1", 2).map((p) => p.code), ["c0", "c3"]);
+  assert.deepEqual(s.problemStats("d1", 25), { recent: 3, lastAt: 50 });
+  assert.deepEqual(s.problemStats("d2", 25), { recent: 0, lastAt: 5 });
+  s.purgeProblems(30);
+  assert.deepEqual(s.listProblems("d1", 10).map((p) => p.code), ["c0", "c3", "c2"]);
+  assert.equal(s.clearProblems("d1"), 3);
+  assert.deepEqual(s.problemStats("d1", 0), { recent: 0, lastAt: null });
+  assert.throws(() => s.insertProblem({ ...base, deviceId: "ghost", at: 1, code: "x" }, 4), /FOREIGN KEY/);
+  s.deleteDevice("d2");
+  assert.deepEqual(s.listProblems("d2", 10), [], "deleting a device deletes its problems");
+  s.close();
+});

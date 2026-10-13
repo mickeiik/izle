@@ -64,6 +64,56 @@ test("SSE: initial state, pings, state events on change, commands with replay un
   await assert.rejects(es4.next((m) => m.event === "command", 300), /timed out/);
 });
 
+test("SSE: pause, resume, next, previous, seek and message commands reach the TV with their payloads", async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  const tv = await s.pair("TV");
+  const es = await openEvents(s.base, tv.token);
+  t.after(() => es.close());
+  const v0 = JSON.parse((await es.next()).data!).version;
+  await eventually(() => s.srv.ctx.events.isOnline(tv.deviceId));
+
+  const cases: Array<[{ type: string } & Record<string, unknown>, Record<string, unknown>]> = [
+    [{ type: "pause" }, {}],
+    [{ type: "resume" }, {}],
+    [{ type: "next" }, {}],
+    [{ type: "previous" }, {}],
+    [{ type: "seek", deltaMs: -30_000 }, { deltaMs: -30_000 }],
+    [{ type: "seek", positionMs: 600_000 }, { positionMs: 600_000 }],
+    [{ type: "message", text: " Yemek hazır! " }, { text: "Yemek hazır!", durationSec: 15 }],
+    [{ type: "message", text: "Good night", durationSec: 30 }, { text: "Good night", durationSec: 30 }],
+  ];
+  const ids: number[] = [];
+  for (const [body, payload] of cases) {
+    const r = await s.admin("POST", `/devices/${tv.deviceId}/commands`, body);
+    assert.equal(r.status, 202);
+    assert.equal(r.json.online, true);
+    const ev = await es.next();
+    assert.equal(ev.event, "command");
+    assert.equal(ev.id, `c${r.json.id}`);
+    assert.deepEqual(JSON.parse(ev.data!), { id: r.json.id, type: body.type, payload });
+    ids.push(r.json.id);
+  }
+
+  // Unacknowledged commands come again, in order and with the same payloads, when the TV reconnects.
+  await s.call("POST", `/api/v1/tv/commands/${ids[0]}/ack`, { token: tv.token });
+  es.close();
+  await eventually(() => !s.srv.ctx.events.isOnline(tv.deviceId));
+  const again = await openEvents(s.base, tv.token);
+  t.after(() => again.close());
+  await again.next((m) => m.event === "state");
+  const replayed = [];
+  for (let i = 1; i < cases.length; i++) replayed.push(JSON.parse((await again.next((m) => m.event === "command")).data!));
+  assert.deepEqual(
+    replayed.map((c) => [c.id, c.type, c.payload]),
+    cases.slice(1).map(([body, payload], i) => [ids[i + 1], body.type, payload]),
+  );
+
+  // The autoplay setting is part of the TV's state: a change is announced like any other.
+  await s.admin("PATCH", `/devices/${tv.deviceId}`, { autoplayOnStart: true });
+  assert.deepEqual(JSON.parse((await again.next((m) => m.event === "state")).data!), { version: v0 + 1 });
+});
+
 test("SSE: deleting a device ends its stream", async (t) => {
   const s = await startTestServer();
   t.after(() => s.close());

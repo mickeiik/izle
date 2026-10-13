@@ -27,13 +27,14 @@ test("devices: list, detail, patch settings, delete", async (t) => {
   const d = list.json.devices[0];
   assert.equal(d.id, tv.deviceId);
   assert.equal(d.online, false);
-  assert.deepEqual(d.settings, { uiLanguage: null, preferredAudioLanguage: null, subtitlesLanguage: null });
-  assert.deepEqual(d.effective, { uiLanguage: "tr", preferredAudioLanguage: "tr", subtitlesLanguage: null });
+  assert.deepEqual(d.settings, { uiLanguage: null, preferredAudioLanguage: null, subtitlesLanguage: null, autoplayOnStart: false });
+  assert.deepEqual(d.effective, { uiLanguage: "tr", preferredAudioLanguage: "tr", subtitlesLanguage: null, autoplayOnStart: false });
+  assert.deepEqual(d.problems, { recent: 0, lastAt: null });
 
   const patched = await s.admin("PATCH", `/devices/${tv.deviceId}`, { name: "Yatak odası", uiLanguage: "en", subtitlesLanguage: "tr" });
   assert.equal(patched.status, 200);
   assert.equal(patched.json.device.name, "Yatak odası");
-  assert.deepEqual(patched.json.device.effective, { uiLanguage: "en", preferredAudioLanguage: "tr", subtitlesLanguage: "tr" });
+  assert.deepEqual(patched.json.device.effective, { uiLanguage: "en", preferredAudioLanguage: "tr", subtitlesLanguage: "tr", autoplayOnStart: false });
   assert.equal(patched.json.device.stateVersion, d.stateVersion + 1);
   const reset = await s.admin("PATCH", `/devices/${tv.deviceId}`, { uiLanguage: null });
   assert.equal(reset.json.device.effective.uiLanguage, "tr");
@@ -117,6 +118,105 @@ test("commands: validated, stored, acknowledged by the TV", async (t) => {
   assert.equal((await s.call("POST", "/api/v1/tv/commands/9999/ack", { token: tv.token })).status, 404);
   const other = await s.pair("Other");
   assert.equal((await s.call("POST", `/api/v1/tv/commands/${play.json.id}/ack`, { token: other.token })).status, 404, "only the target device can ack");
+});
+
+test("commands: pause, resume, next, previous, seek and message are validated and stored with their payloads", async (t) => {
+  const { s, tv } = await setup(t);
+  const send = (body: unknown) => s.admin("POST", `/devices/${tv.deviceId}/commands`, body);
+  const TEXT = "Yemek hazır, anneanne!";
+  const good: Array<[unknown, Record<string, unknown>]> = [
+    [{ type: "pause" }, {}],
+    [{ type: "resume" }, {}],
+    [{ type: "next" }, {}],
+    [{ type: "previous" }, {}],
+    [{ type: "seek", deltaMs: -30_000 }, { deltaMs: -30_000 }],
+    [{ type: "seek", deltaMs: 3_600_000 }, { deltaMs: 3_600_000 }],
+    [{ type: "seek", deltaMs: -3_600_000 }, { deltaMs: -3_600_000 }],
+    [{ type: "seek", positionMs: 0 }, { positionMs: 0 }],
+    [{ type: "seek", positionMs: 754_000 }, { positionMs: 754_000 }],
+    [{ type: "message", text: `  ${TEXT}\n` }, { text: TEXT, durationSec: 15 }],
+    [{ type: "message", text: "x".repeat(200), durationSec: 3 }, { text: "x".repeat(200), durationSec: 3 }],
+    [{ type: "message", text: "Bye", durationSec: 120 }, { text: "Bye", durationSec: 120 }],
+  ];
+  for (const [body] of good) {
+    const r = await send(body);
+    assert.equal(r.status, 202, JSON.stringify(body));
+    assert.equal(r.json.online, false);
+    assert.ok(Number.isSafeInteger(r.json.id));
+  }
+  const stored = s.srv.ctx.store.pendingCommands(tv.deviceId, 0);
+  assert.deepEqual(
+    stored.map((c) => [c.type, c.payload]),
+    good.map(([body, payload]) => [(body as { type: string }).type, payload]),
+    "the payload each command is replayed with",
+  );
+
+  const bad: unknown[] = [
+    { type: "seek" },
+    { type: "seek", deltaMs: 30_000, positionMs: 10_000 },
+    { type: "seek", deltaMs: 3_600_001 },
+    { type: "seek", deltaMs: -3_600_001 },
+    { type: "seek", deltaMs: 1.5 },
+    { type: "seek", positionMs: -1 },
+    { type: "seek", positionMs: "10" },
+    { type: "message" },
+    { type: "message", text: "" },
+    { type: "message", text: "   " },
+    { type: "message", text: "\n\t" },
+    { type: "message", text: "x".repeat(201) },
+    { type: "message", text: 42 },
+    { type: "message", text: "Hi", durationSec: 2 },
+    { type: "message", text: "Hi", durationSec: 121 },
+    { type: "message", text: "Hi", durationSec: 10.5 },
+    { type: "message", text: "Hi", extra: true },
+    { type: "pause", episodeId: "show.e1" },
+    { type: "next", deltaMs: 1000 },
+    { type: "rewind" },
+    { type: "PAUSE" },
+    {},
+  ];
+  for (const body of bad) {
+    const r = await send(body);
+    assert.equal(r.status, 400, JSON.stringify(body));
+    assert.equal(r.json.error, "invalid_request");
+  }
+  assert.equal(s.srv.ctx.store.pendingCommands(tv.deviceId, 0).length, good.length, "nothing was stored for refused bodies");
+
+  // The log has the type and ids, never a message's text.
+  const queued = s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === "command queued");
+  assert.deepEqual(queued.map((l) => l.type), good.map(([body]) => (body as { type: string }).type));
+  for (const l of queued) assert.deepEqual(Object.keys(l).sort(), ["commandId", "deviceId", "level", "msg", "time", "type"]);
+  assert.ok(!s.logs.some((l) => l.includes("Yemek") || l.includes("xxxxxxxx")), "message text never reaches the log");
+});
+
+test("autoplay on start: off by default, PATCH round-trip, in the TV's state, bumps the version, booleans only", async (t) => {
+  const { s, tv } = await setup(t);
+  const state = () => s.call("GET", "/api/v1/tv/state", { token: tv.token });
+  const before = await state();
+  assert.equal(before.json.device.autoplayOnStart, false);
+
+  const on = await s.admin("PATCH", `/devices/${tv.deviceId}`, { autoplayOnStart: true });
+  assert.equal(on.status, 200);
+  assert.equal(on.json.device.settings.autoplayOnStart, true);
+  assert.equal(on.json.device.effective.autoplayOnStart, true);
+  assert.equal(on.json.device.stateVersion, before.json.version + 1);
+  assert.equal(on.json.device.settings.uiLanguage, null, "other settings are untouched");
+  const after = await state();
+  assert.equal(after.json.version, before.json.version + 1, "the TV re-reads its state");
+  assert.equal(after.json.device.autoplayOnStart, true);
+  assert.equal((await s.admin("GET", `/devices/${tv.deviceId}`)).json.device.settings.autoplayOnStart, true);
+  assert.equal((await s.admin("GET", "/devices")).json.devices[0].effective.autoplayOnStart, true);
+
+  for (const bad of ["yes", 1, null, "true"]) {
+    const r = await s.admin("PATCH", `/devices/${tv.deviceId}`, { autoplayOnStart: bad });
+    assert.equal(r.status, 400, JSON.stringify(bad));
+    assert.equal(r.json.error, "invalid_request");
+  }
+  const off = await s.admin("PATCH", `/devices/${tv.deviceId}`, { autoplayOnStart: false, name: "Salon 2" });
+  assert.equal(off.json.device.settings.autoplayOnStart, false);
+  assert.equal(off.json.device.name, "Salon 2");
+  assert.equal((await state()).json.device.autoplayOnStart, false);
+  assert.equal((await state()).json.version, before.json.version + 2);
 });
 
 test("catalog: info, accent-insensitive search, item detail without upstream URLs", async (t) => {

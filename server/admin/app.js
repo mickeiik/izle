@@ -8,6 +8,7 @@ import {
   HOME_MAX,
   LANGUAGES,
   RESUME_MIN_MS,
+  canControlPlayback,
   continueText,
   episodeName,
   episodeStates,
@@ -19,8 +20,10 @@ import {
   isActive,
   languageLabel,
   moveItem,
+  originLabel,
   percent,
   plural,
+  problemContext,
   serverAddress,
   tokenFromHash,
   triedText,
@@ -238,6 +241,12 @@ function statusChip(device) {
   return device.online ? h("span", { class: "chip ok" }, "Online") : h("span", { class: "chip" }, "Offline");
 }
 
+/** "3 problems" when the TV had problems in the last 24 hours. @param {any} device */
+function problemsChip(device) {
+  const n = device.problems?.recent ?? 0;
+  return n > 0 ? h("span", { class: "chip warn", title: `${plural(n, "problem")} in the last 24 hours` }, plural(n, "problem")) : null;
+}
+
 /** @param {number | null} value */
 const progressBar = (value) => (value === null ? null : h("div", { class: "bar", role: "img", "aria-label": `${value}%` }, h("span", { "data-w": value })));
 
@@ -354,6 +363,7 @@ function devicesView() {
             "a",
             { class: "row link", href: `#/devices/${encodeURIComponent(d.id)}` },
             h("div", { class: "grow" }, h("strong", null, d.name), h("div", { class: "muted" }, `${d.homeCount} show${d.homeCount === 1 ? "" : "s"} on Home · seen ${formatRelative(d.lastSeenAt)}`)),
+            problemsChip(d),
             statusChip(d),
           ),
         ),
@@ -379,6 +389,7 @@ function deviceView(id) {
   const home = h("div", null, loading());
   const settings = h("div", null, loading());
   const history = h("div", null, loading());
+  const problems = h("div", null, loading());
   /** @type {any} */
   let device = null;
   /** @type {any[]} */
@@ -390,9 +401,11 @@ function deviceView(id) {
   const listenAlong = companionCard({ deviceId: id, h, api, toast, busy });
   cleanups.push(() => listenAlong.stop());
 
+  /** Sends a command; returns whether the server took it. */
   const sendCommand = async (/** @type {any} */ body, /** @type {string} */ what) => {
     const r = await attempt(() => api("POST", `/devices/${encodeURIComponent(id)}/commands`, body));
     if (r) toast(r.online ? `${what} sent to the TV.` : `${what} queued: the TV is offline and gets it if it connects within 2 minutes.`, r.online ? "ok" : "info");
+    return Boolean(r);
   };
 
   const loadDevice = async () => {
@@ -411,6 +424,7 @@ function deviceView(id) {
     document.title = `${device.name} · izle admin`;
     chip.replaceChildren(statusChip(device));
     seen.textContent = device.status === "active" ? `last seen ${formatRelative(device.lastSeenAt)}` : "approved, waiting for the TV to collect its token";
+    messageSend.disabled = device.status !== "active";
   };
 
   const saveHome = async (/** @type {string[]} */ itemIds, /** @type {string} */ message) => {
@@ -420,10 +434,61 @@ function deviceView(id) {
   };
 
   // Now playing ---------------------------------------------------------------------------------------------------
+  // The remote control and the message box are built once (polling must not lose a half-typed message); the
+  // buttons are enabled while the TV's last report says it is playing or paused.
+  /** @type {Array<[string, string, string, any]>} */
+  const remote = [
+    ["Pause", "Pause", "Pause", { type: "pause" }],
+    ["Resume", "Resume", "Resume", { type: "resume" }],
+    ["−30 s", "Back 30 seconds", "Back 30 s", { type: "seek", deltaMs: -30_000 }],
+    ["+30 s", "Forward 30 seconds", "Forward 30 s", { type: "seek", deltaMs: 30_000 }],
+    ["Previous episode", "Previous episode", "Previous episode", { type: "previous" }],
+    ["Next episode", "Next episode", "Next episode", { type: "next" }],
+  ];
+  const remoteButtons = remote.map(([label, aria, what, body]) =>
+    h(
+      "button",
+      {
+        type: "button",
+        "aria-label": aria,
+        disabled: true,
+        onclick: async () => {
+          // The TV reports the new state right away; show it without waiting for the next poll.
+          if (await sendCommand(body, what)) setTimeout(() => void refreshNow().catch(() => {}), 1500);
+        },
+      },
+      label,
+    ),
+  );
+  const controls = h("div", { class: "buttons remote", role: "group", "aria-label": "Remote control", hidden: true }, remoteButtons);
+
+  const messageText = h("input", { type: "text", id: "m-text", maxlength: 200, autocomplete: "off", placeholder: "e.g. Dinner is ready!" });
+  const messageSend = h("button", { type: "submit", class: "primary", disabled: true }, "Send");
+  const messageForm = h(
+    "form",
+    {
+      class: "message",
+      onsubmit: async (/** @type {SubmitEvent} */ e) => {
+        e.preventDefault();
+        const text = messageText.value.trim();
+        if (!text) return toast("Type a message first.", "info");
+        await busy(messageSend, async () => {
+          if (await sendCommand({ type: "message", text }, "Message")) messageText.value = "";
+        });
+        messageSend.disabled = device?.status !== "active";
+      },
+    },
+    h("label", { for: "m-text" }, "Message to the TV"),
+    h("div", { class: "row" }, messageText, messageSend),
+    h("p", { class: "hint" }, "Shown in large letters for 15 seconds, on the home screen or over the picture."),
+  );
+
   const refreshNow = async () => {
     const r = await api("GET", `/devices/${encodeURIComponent(id)}/now`);
     const n = r.nowPlaying;
     const active = isActive(n, r.online);
+    controls.hidden = !n;
+    for (const b of remoteButtons) b.disabled = !canControlPlayback(n);
     if (!n) return now.replaceChildren(h("p", { class: "muted" }, "Nothing played yet."));
     const pct = percent(n.positionMs, n.durationMs);
     const stop = h("button", { class: "danger", onclick: () => sendCommand({ type: "stop" }, "Stop") }, "Stop");
@@ -601,6 +666,23 @@ function deviceView(id) {
     const audio = select("s-audio", [["", `Server default${s.preferredAudioLanguage ? "" : ` — ${languageLabel(eff.preferredAudioLanguage, "none")}`}`], ...langs], s.preferredAudioLanguage);
     const subs = select("s-subs", [["", "Off"], ...langs], s.subtitlesLanguage);
     const save = h("button", { class: "primary", type: "submit" }, "Save settings");
+    // Saved on its own, at once (the form's fields wait for "Save settings").
+    const autoplay = h("input", {
+      type: "checkbox",
+      id: "s-autoplay",
+      checked: Boolean(s.autoplayOnStart),
+      onchange: async () => {
+        const on = autoplay.checked;
+        autoplay.disabled = true;
+        const r = await attempt(
+          () => api("PATCH", `/devices/${encodeURIComponent(id)}`, { autoplayOnStart: on }),
+          on ? "Autoplay is on: it starts the next time the app opens on the TV." : "Autoplay is off.",
+        );
+        autoplay.disabled = false;
+        if (r) device = r.device;
+        else autoplay.checked = !on;
+      },
+    });
     settings.replaceChildren(
       h(
         "form",
@@ -636,6 +718,16 @@ function deviceView(id) {
         subs,
         h("div", { class: "actions" }, save),
       ),
+      h(
+        "div",
+        { class: "toggle" },
+        h("label", { class: "check", for: "s-autoplay" }, autoplay, "Autoplay when the TV starts"),
+        h(
+          "p",
+          { class: "hint" },
+          "When the app opens, the show the viewer watched last (else the first tile) starts after a 10-second countdown. Any key stops the countdown.",
+        ),
+      ),
     );
   };
 
@@ -662,6 +754,50 @@ function deviceView(id) {
             ),
           ),
         ),
+      ),
+    );
+  };
+
+  // Problems ------------------------------------------------------------------------------------------------------
+  const clearProblems = h(
+    "button",
+    {
+      class: "danger",
+      type: "button",
+      hidden: true,
+      onclick: () =>
+        busy(clearProblems, async () => {
+          const r = await attempt(() => api("DELETE", `/devices/${encodeURIComponent(id)}/problems`), "Problems cleared.");
+          if (r !== undefined) await refreshProblems().catch(() => {});
+        }),
+    },
+    "Clear",
+  );
+
+  const refreshProblems = async () => {
+    const r = await api("GET", `/devices/${encodeURIComponent(id)}/problems?limit=50`);
+    clearProblems.hidden = r.problems.length === 0;
+    if (r.problems.length === 0) return problems.replaceChildren(h("p", { class: "muted" }, "No problems recorded."));
+    problems.replaceChildren(
+      h(
+        "ul",
+        { class: "list problems" },
+        r.problems.map((/** @type {any} */ p) => {
+          const context = problemContext(p);
+          return h(
+            "li",
+            null,
+            h(
+              "div",
+              { class: "row" },
+              h("span", { class: `chip${p.origin === "server" ? " server" : ""}` }, originLabel(p.origin)),
+              h("strong", { class: "grow" }, `${p.kind} · ${p.code}`),
+              h("time", { class: "muted", datetime: p.at, title: new Date(p.at).toLocaleString() }, formatRelative(p.at)),
+            ),
+            context ? h("div", null, context) : null,
+            p.detail ? h("div", { class: "muted detail" }, p.detail) : null,
+          );
+        }),
       ),
     );
   };
@@ -695,7 +831,7 @@ function deviceView(id) {
       const before = JSON.stringify(entries.map((e) => [e.itemId, e.continue?.episodeId, e.continue?.status, e.continue?.positionMs]));
       await loadDevice();
       if (JSON.stringify(entries.map((e) => [e.itemId, e.continue?.episodeId, e.continue?.status, e.continue?.positionMs])) !== before) renderHome();
-      await refreshHistory();
+      await Promise.all([refreshHistory(), refreshProblems()]);
     }, 15000);
   })();
 
@@ -704,7 +840,7 @@ function deviceView(id) {
     { class: "page" },
     h("p", null, h("a", { href: "#/devices" }, "← TVs")),
     h("div", { class: "title" }, title, chip, seen),
-    card("Now playing", now),
+    card("Now playing", now, controls, messageForm),
     listenAlong.element,
     h(
       "section",
@@ -718,6 +854,13 @@ function deviceView(id) {
     ),
     card("Settings", settings),
     card("Recently watched", history),
+    h(
+      "section",
+      { class: "card" },
+      h("div", { class: "card-head" }, h("h2", null, "Recent problems"), clearProblems),
+      h("p", { class: "muted" }, "What went wrong on this TV: its own reports, and what the server ran into while finding or relaying its streams."),
+      problems,
+    ),
     card("Remove", h("p", { class: "muted" }, "Forgetting a TV signs it out; it shows a pairing code again."), forget),
   );
 }

@@ -154,6 +154,20 @@ details { margin-top: 0.75rem; }
 .companion .status.synced { color: var(--ok); }
 .companion audio { display: none; }
 
+.remote { justify-content: flex-start; margin-top: 0.75rem; }
+.message { max-width: 36rem; }
+.message .row { flex-wrap: nowrap; }
+.message .row input { flex: 1; min-width: 0; }
+
+.toggle { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--line); max-width: 30rem; }
+.check { display: flex; align-items: center; gap: 0.6rem; margin: 0; }
+input[type="checkbox"] { width: 1.2rem; height: 1.2rem; min-height: 0; padding: 0; margin: 0; flex: none; accent-color: var(--accent); }
+
+.problems strong { overflow-wrap: anywhere; }
+.problems time { font-size: 0.9rem; white-space: nowrap; }
+.problems .detail { font-size: 0.9rem; overflow-wrap: anywhere; }
+.chip.server { background: transparent; color: var(--accent); border-color: var(--accent); }
+
 @media (max-width: 640px) {
   main { padding: 0.75rem; }
   .row { flex-wrap: wrap; }

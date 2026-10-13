@@ -46,15 +46,33 @@ export function isSecretKey(key: string): boolean {
   return keyWords(key).some((w) => SECRET_WORDS.has(w));
 }
 
+function urlPlaceholder(match: string): string {
+  try {
+    return `<url ${new URL(match).host || "?"}>`;
+  } catch {
+    return "<url>";
+  }
+}
+
 export function redactString(value: string): string {
-  let out = value.replace(URL_RE, (match) => {
-    try {
-      return `<url ${new URL(match).host || "?"}>`;
-    } catch {
-      return "<url>";
-    }
-  });
-  out = out.replace(TOKEN_RE, "<token>");
+  const out = value.replace(URL_RE, urlPlaceholder).replace(TOKEN_RE, "<token>");
+  return out.length > MAX_STRING ? `${out.slice(0, MAX_STRING)}…` : out;
+}
+
+/**
+ * Long runs that read as words, not secrets: SCREAMING_SNAKE and snake/kebab case (whole number segments of up to
+ * four digits allowed) and CamelCase of words with three or more letters, without digits. Player error names take
+ * these shapes (`ERROR_CODE_IO_BAD_HTTP_STATUS`, `InvalidResponseCodeException`); random base64url runs of 20
+ * characters match about 2 in 100 000 times, of 32 characters practically never (they mix cases and digits).
+ */
+const IDENTIFIER_RE = /^(?:[A-Z]+(?:[_-](?:[A-Z]+|[0-9]{1,4}))+|[a-z]+(?:[_-](?:[a-z]+|[0-9]{1,4}))+|(?:[A-Z][a-z]{2,}){2,}|[a-z]{2,}(?:[A-Z][a-z]{2,})+)$/;
+
+/**
+ * The same redaction for text a TV reports about a problem (stored for the owner, never logged): URLs become
+ * `<url host>` and token-like runs `<token>`, except runs that read as identifiers, so error names survive.
+ */
+export function redactReportText(value: string): string {
+  const out = value.replace(URL_RE, urlPlaceholder).replace(TOKEN_RE, (run) => (IDENTIFIER_RE.test(run) ? run : "<token>"));
   return out.length > MAX_STRING ? `${out.slice(0, MAX_STRING)}…` : out;
 }
 

@@ -36,7 +36,14 @@ test("state: home list in owner order with continue info; settings fall back to 
   const { s, tv, as } = await setup(t);
   let state = await as("GET", "/state");
   assert.deepEqual(state.json.home, []);
-  assert.deepEqual(state.json.device, { id: tv.deviceId, name: "Salon", uiLanguage: "tr", preferredAudioLanguage: "tr", subtitlesLanguage: null });
+  assert.deepEqual(state.json.device, {
+    id: tv.deviceId,
+    name: "Salon",
+    uiLanguage: "tr",
+    preferredAudioLanguage: "tr",
+    subtitlesLanguage: null,
+    autoplayOnStart: false,
+  });
   assert.deepEqual(state.json.catalog, { id: "fixture", buildId: "fixture-1", name: "Fixture catalog" });
 
   await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["film", "show", "silent"] });

@@ -12,6 +12,7 @@ import { DEFAULT_RESOLVE_BUDGET_MS, DEFAULT_RESOLVE_DEADLINE_MS, type ServerConf
 import { EventHub } from "./events.ts";
 import { createLogger, type Logger } from "./log.ts";
 import { PairingService, type PairingOptions } from "./pairing.ts";
+import { ProblemService } from "./problems.ts";
 import { ProxyService } from "./proxy.ts";
 import { ResolveService } from "./resolve.ts";
 import { loadResolver, type LoadedResolver } from "./resolver.ts";
@@ -54,11 +55,14 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   await catalog.load();
   const store = new Store(path.join(config.dataDir, "izle.db"));
   const events = new EventHub();
+  // Problem reports name the episode and source of a TV's playback session (the resolver is created below).
+  const problems = new ProblemService({ store, catalog, log, now, session: (id) => resolver.session(id) });
   const proxy = new ProxyService({
     log,
     now,
     ttlMs: config.proxy.sessionTtlSec * 1000,
     alignTsSegments: config.proxy.alignTsSegments,
+    onProblem: (p) => problems.recordProxy(p),
   });
   const resolver = new ResolveService({
     catalog,
@@ -70,7 +74,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     deadlineMs: config.resolver?.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,
     budgetMs: config.resolver?.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
   });
-  const services = { config, store, catalog, events, resolver, log, now };
+  const services = { config, store, catalog, events, resolver, problems, log, now };
   const ctx: AppContext = {
     ...services,
     tv: new TvService(services),
@@ -104,6 +108,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     const t = now();
     store.purgePairCodes(t, 60 * 60_000);
     store.purgeCommands(t - 7 * 24 * 60 * 60_000);
+    problems.purge();
   }, 10 * 60_000);
   housekeeping.unref();
 

@@ -27,6 +27,8 @@ export interface ResolveOptions {
 
 /** Proxy-session owner key of a device's companion streams (separate from the TV's own two sessions). */
 export const companionScope = (deviceId: string): string => `companion:${deviceId}`;
+/** Whether a proxy-session owner key is a companion scope rather than a TV's device id. */
+export const isCompanionScope = (owner: string): boolean => owner.startsWith("companion:");
 
 export interface PlaybackSession {
   id: string;
@@ -60,6 +62,8 @@ export interface ResolvedStream {
   alternatives: string[];
   delivery: "direct" | "proxy";
   expiresAt: string | null;
+  /** Candidates tried before this one that produced nothing (the server fell back past them). */
+  failed: Tried[];
 }
 
 /**
@@ -229,8 +233,16 @@ export class ResolveService {
     };
   }
 
-  /** Turns an upstream stream into what the client gets, creating a proxy session (owned by `owner`) when needed. */
-  private deliver(owner: string, s: UpstreamStream, proxyAlways: boolean): Pick<ResolvedStream, "media" | "subtitleTracks" | "delivery"> {
+  /**
+   * Turns an upstream stream into what the client gets, creating a proxy session (owned by `owner`, labelled with
+   * the episode and source for problem reports) when needed.
+   */
+  private deliver(
+    owner: string,
+    s: UpstreamStream,
+    proxyAlways: boolean,
+    playing: { episodeId: string; sourceId: string },
+  ): Pick<ResolvedStream, "media" | "subtitleTracks" | "delivery"> {
     const inline = "playlist" in s.media;
     const proxyMain = inline || (s.media.kind !== "dash" && (hasHeaders(s.headers) || proxyAlways));
     const proxySub = s.subtitleTracks.map((t) => hasHeaders(t.headers) || proxyAlways);
@@ -239,6 +251,7 @@ export class ResolveService {
       const m = s.media;
       token = this.o.proxy.create({
         deviceId: owner,
+        ...playing,
         main: !proxyMain
           ? null
           : "playlist" in m
@@ -326,7 +339,7 @@ export class ResolveService {
         createdAt: t,
       };
       this.sessions.set(session.id, session);
-      const delivered = this.deliver(owner, a.stream, this.o.proxyAlways || companion);
+      const delivered = this.deliver(owner, a.stream, this.o.proxyAlways || companion, { episodeId: episode.id, sourceId: source.id });
       const alternatives = candidates.slice(i + 1).filter((s) => this.staticCheck(s) === null).map((s) => s.id);
       this.o.log.info("resolved", {
         deviceId,
@@ -346,6 +359,7 @@ export class ResolveService {
         languages: a.stream.languages,
         alternatives,
         expiresAt: a.stream.expiresAt,
+        failed: tried,
       };
     }
     this.o.log.warn("no playable source", { deviceId, episodeId: episode.id, tried: tried.length });

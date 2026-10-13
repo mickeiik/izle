@@ -26,6 +26,7 @@ export const devicePatchBody = compile<{
   uiLanguage?: "tr" | "en" | null;
   preferredAudioLanguage?: string | null;
   subtitlesLanguage?: string | null;
+  autoplayOnStart?: boolean;
 }>({
   type: "object",
   minProperties: 1,
@@ -34,6 +35,7 @@ export const devicePatchBody = compile<{
     uiLanguage: { anyOf: [{ enum: ["tr", "en"] }, { type: "null" }] },
     preferredAudioLanguage: { anyOf: [LANGUAGE_TAG, { type: "null" }] },
     subtitlesLanguage: { anyOf: [LANGUAGE_TAG, { type: "null" }] },
+    autoplayOnStart: { type: "boolean" },
   },
   additionalProperties: false,
 });
@@ -52,7 +54,21 @@ export const cursorBody = compile<{ itemId: string; episodeId: string }>({
   additionalProperties: false,
 });
 
-export const commandBody = compile<{ type: "play"; episodeId: string } | { type: "stop" }>({
+/** Commands that carry no payload (the SSE payload is `{}`). */
+export const PLAIN_COMMANDS = ["stop", "pause", "resume", "next", "previous"] as const;
+/** The longest relative seek, either way. */
+export const MAX_SEEK_DELTA_MS = 3_600_000;
+export const MESSAGE_MAX_CHARS = 200;
+export const MESSAGE_DURATION_SEC = { min: 3, max: 120, default: 15 };
+
+export type CommandBody =
+  | { type: "play"; episodeId: string }
+  | { type: (typeof PLAIN_COMMANDS)[number] }
+  | { type: "seek"; deltaMs: number; positionMs?: undefined }
+  | { type: "seek"; positionMs: number; deltaMs?: undefined }
+  | { type: "message"; text: string; durationSec?: number };
+
+export const commandBody = compile<CommandBody>({
   oneOf: [
     {
       type: "object",
@@ -60,7 +76,25 @@ export const commandBody = compile<{ type: "play"; episodeId: string } | { type:
       properties: { type: { const: "play" }, episodeId: ID },
       additionalProperties: false,
     },
-    { type: "object", required: ["type"], properties: { type: { const: "stop" } }, additionalProperties: false },
+    { type: "object", required: ["type"], properties: { type: { enum: PLAIN_COMMANDS } }, additionalProperties: false },
+    // A seek is relative (deltaMs) or absolute (positionMs), never both: each branch forbids the other field.
+    {
+      type: "object",
+      required: ["type", "deltaMs"],
+      properties: { type: { const: "seek" }, deltaMs: { type: "integer", minimum: -MAX_SEEK_DELTA_MS, maximum: MAX_SEEK_DELTA_MS } },
+      additionalProperties: false,
+    },
+    { type: "object", required: ["type", "positionMs"], properties: { type: { const: "seek" }, positionMs: MS }, additionalProperties: false },
+    {
+      type: "object",
+      required: ["type", "text"],
+      properties: {
+        type: { const: "message" },
+        text: { type: "string", minLength: 1, maxLength: MESSAGE_MAX_CHARS, pattern: "\\S" },
+        durationSec: { type: "integer", minimum: MESSAGE_DURATION_SEC.min, maximum: MESSAGE_DURATION_SEC.max },
+      },
+      additionalProperties: false,
+    },
   ],
 });
 
@@ -98,6 +132,41 @@ export const progressBody = compile<{
     // Listen along: whether the player was actually advancing, and how old the sample is (queue delays).
     playing: { type: "boolean" },
     ageMs: { type: "integer", minimum: 0, maximum: 60_000 },
+  },
+  additionalProperties: false,
+});
+
+/** Problem kinds a TV may report (`proxy` problems are only recorded by the server). */
+export const TV_PROBLEM_KINDS = ["playback", "resolve", "network", "other"] as const;
+
+export interface ProblemReportBody {
+  kind: (typeof TV_PROBLEM_KINDS)[number];
+  code: string;
+  ageMs?: number;
+  episodeId?: string;
+  sourceId?: string;
+  sessionId?: string;
+  positionMs?: number;
+  httpStatus?: number;
+  detail?: string;
+  appVersion?: string;
+}
+
+export const problemBody = compile<ProblemReportBody>({
+  type: "object",
+  required: ["kind", "code"],
+  properties: {
+    kind: { enum: TV_PROBLEM_KINDS },
+    code: { type: "string", minLength: 1, maxLength: 64, pattern: "^[A-Za-z0-9_.:-]+$" },
+    // How long ago it happened: a report queued while the server was unreachable keeps its time.
+    ageMs: { type: "integer", minimum: 0, maximum: 86_400_000 },
+    episodeId: ID,
+    sourceId: ID,
+    sessionId: { type: "string", maxLength: 64 },
+    positionMs: MS,
+    httpStatus: { type: "integer", minimum: 100, maximum: 599 },
+    detail: { type: "string", maxLength: 500 },
+    appVersion: { type: "string", maxLength: 40 },
   },
   additionalProperties: false,
 });

@@ -5,7 +5,8 @@ import { HttpError } from "./errors.ts";
 import type { EventHub } from "./events.ts";
 import type { Logger } from "./log.ts";
 import { autoNextIndex, cursorAfterFinished, cursorIndex, isPlayable, type ProgressLike } from "./playback.ts";
-import type { ResolveInput, ResolveService } from "./resolve.ts";
+import { noPlayableDetail, triedDetail, type ProblemService } from "./problems.ts";
+import type { ResolvedStream, ResolveInput, ResolveService, Tried } from "./resolve.ts";
 import type { Device, NowPlaying, Progress, Store } from "./store.ts";
 
 /** The server caps every device's home list (the TV shows a 4-column grid; ≤ 8 fits without scrolling). */
@@ -32,6 +33,7 @@ export interface EffectiveSettings {
   uiLanguage: "tr" | "en";
   preferredAudioLanguage: string | null;
   subtitlesLanguage: string | null;
+  autoplayOnStart: boolean;
 }
 
 export interface Services {
@@ -40,6 +42,7 @@ export interface Services {
   catalog: CatalogService;
   events: EventHub;
   resolver: ResolveService;
+  problems: ProblemService;
   log: Logger;
   now: () => number;
 }
@@ -98,6 +101,7 @@ export class TvService {
       uiLanguage: ui === "tr" ? "tr" : "en",
       preferredAudioLanguage: device.preferredAudioLanguage ?? this.s.config.defaults.preferredAudioLanguage ?? hints.preferredAudioLanguage ?? null,
       subtitlesLanguage: device.subtitlesLanguage,
+      autoplayOnStart: device.autoplayOnStart,
     };
   }
 
@@ -187,7 +191,22 @@ export class TvService {
   }
 
   async resolve(device: Device, input: ResolveInput, signal?: AbortSignal) {
-    const r = await this.s.resolver.resolve(device.id, this.settings(device).preferredAudioLanguage, input, signal);
+    let r: ResolvedStream;
+    try {
+      r = await this.s.resolver.resolve(device.id, this.settings(device).preferredAudioLanguage, input, signal);
+    } catch (err) {
+      // "Can't play right now" on the TV: the owner learns which sources were tried and why each failed.
+      if (err instanceof HttpError && err.code === "no_playable_source") {
+        const tried = (err.extra.tried ?? []) as Tried[];
+        this.s.problems.record(device.id, { kind: "resolve", code: "no_playable_source", episodeId: input.episodeId, detail: noPlayableDetail(tried, input.exclude) });
+      }
+      throw err;
+    }
+    // Sources the server fell back past. A missing adapter is a configuration warning on the catalog page instead.
+    for (const t of r.failed) {
+      if (t.code === "adapter_unavailable") continue;
+      this.s.problems.record(device.id, { kind: "resolve", code: "source_failed", episodeId: r.ref.episode.id, sourceId: t.sourceId, detail: triedDetail(t) });
+    }
     const { item, episode, index } = r.ref;
     const nextIndex = autoNextIndex(item, index);
     const next = nextIndex >= 0 ? item.episodes[nextIndex]! : null;

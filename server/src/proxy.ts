@@ -34,6 +34,9 @@ export type ProxyMain =
 export interface ProxySessionInit {
   /** Owner key of the session-limit bucket: the TV's device id, or `companion:<deviceId>` for the phone. */
   deviceId: string;
+  /** What the session plays, for problem reports. */
+  episodeId?: string | null;
+  sourceId?: string | null;
   /** Null when only subtitle tracks need the proxy. */
   main: ProxyMain | null;
   /** Upstream headers for the main media and everything its playlists reference. */
@@ -53,6 +56,22 @@ interface Session extends ProxySessionInit {
 
 export type ProxyTarget = { type: "index" } | { type: "video" } | { type: "u"; ref: string } | { type: "sub"; file: string };
 
+/** An upstream request of a session that failed in a way the owner should hear about. */
+export interface ProxyProblem {
+  /** The session's owner key: a TV's device id, or `companion:<deviceId>`. */
+  owner: string;
+  episodeId: string | null;
+  sourceId: string | null;
+  /**
+   * `upstream_<status>` (401/403/410: the session went stale), `upstream_error` (5xx, or a playlist that broke
+   * off), `upstream_unreachable` (network error or no answer in time), `not_a_playlist`, `playlist_too_large`.
+   */
+  code: string;
+  httpStatus: number | null;
+  /** What was requested (`playlist`, `segment`, `video`, `subtitles`) and, when unreachable, why. Never a URL. */
+  detail: string;
+}
+
 export interface ProxyOptions {
   log: Logger;
   now?: () => number;
@@ -61,6 +80,8 @@ export interface ProxyOptions {
   alignTsSegments?: boolean;
   fetch?: typeof fetch;
   headersTimeoutMs?: number;
+  /** Told about failed upstream requests (problem reports). */
+  onProblem?: (problem: ProxyProblem) => void;
 }
 
 export function entryPath(token: string, kind: "hls" | "mp4"): string {
@@ -92,6 +113,12 @@ function prematureClose(): Error {
   return Object.assign(new Error("upstream closed early"), { code: "ERR_STREAM_PREMATURE_CLOSE" });
 }
 
+/** Why a fetch failed, without its message: the network error code (`ECONNREFUSED`, `ENOTFOUND`) or the class name. */
+function networkReason(err: unknown): string {
+  const code = (err as { cause?: { code?: unknown } } | null)?.cause?.code;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]{1,39}$/.test(code) ? code : errorName(err);
+}
+
 async function readText(res: Response, limit: number): Promise<string | null> {
   if (!res.body) return "";
   const reader = res.body.getReader();
@@ -118,6 +145,7 @@ export class ProxyService {
   private readonly alignTs: boolean;
   private readonly fetch: typeof fetch;
   private readonly headersTimeoutMs: number;
+  private readonly onProblem: ((problem: ProxyProblem) => void) | undefined;
 
   constructor(opts: ProxyOptions) {
     this.log = opts.log.child({ component: "proxy" });
@@ -126,6 +154,16 @@ export class ProxyService {
     this.alignTs = opts.alignTsSegments ?? false;
     this.fetch = opts.fetch ?? globalThis.fetch;
     this.headersTimeoutMs = opts.headersTimeoutMs ?? UPSTREAM_HEADERS_TIMEOUT_MS;
+    this.onProblem = opts.onProblem;
+  }
+
+  private problem(s: Session, code: string, httpStatus: number | null, detail: string): void {
+    if (!this.onProblem) return;
+    try {
+      this.onProblem({ owner: s.deviceId, episodeId: s.episodeId ?? null, sourceId: s.sourceId ?? null, code, httpStatus, detail });
+    } catch (err) {
+      this.log.warn("problem hook failed", { error: err });
+    }
   }
 
   /** Creates a session and returns its token. An owner keeps at most two; older ones end (410). */
@@ -188,22 +226,22 @@ export class ProxyService {
       case "index": {
         if (s.main?.kind !== "hls") return json(404, "not_found");
         if (s.main.playlist !== undefined) return this.playlistResponse(s, s.main.playlist, s.main.baseUrl, "u/");
-        return this.forward(req, s, s.main.url, s.headers, { kind: "p", prefix: "u/" });
+        return this.forward(req, s, s.main.url, s.headers, { kind: "p", prefix: "u/", what: "playlist" });
       }
       case "video": {
         if (s.main?.kind !== "mp4" || s.main.url === undefined) return json(404, "not_found");
-        return this.forward(req, s, s.main.url, s.headers, { kind: "r", prefix: null });
+        return this.forward(req, s, s.main.url, s.headers, { kind: "r", prefix: null, what: "video" });
       }
       case "u": {
         const link = this.verify(s, target.ref);
         if (!link) return json(404, "not_found");
-        return this.forward(req, s, link.url, s.headers, { kind: link.kind, prefix: "" });
+        return this.forward(req, s, link.url, s.headers, { kind: link.kind, prefix: "", what: link.kind === "p" ? "playlist" : "segment" });
       }
       case "sub": {
         const m = /^(\d{1,2})\.(vtt|srt|ttml)$/.exec(target.file);
         const sub = m ? s.subtitles[Number(m[1])] : undefined;
         if (!m || !sub) return json(404, "not_found");
-        return this.forward(req, s, sub.url, sub.headers, { kind: "r", prefix: null, contentType: SUBTITLE_TYPES[m[2]!] });
+        return this.forward(req, s, sub.url, sub.headers, { kind: "r", prefix: null, contentType: SUBTITLE_TYPES[m[2]!], what: "subtitles" });
       }
     }
   }
@@ -216,14 +254,15 @@ export class ProxyService {
   /**
    * Fetches `url` with the upstream headers. Playlists (`kind` p, or a playlist content type) are read, rewritten
    * and answered; anything else streams through with `Range` forwarded. `prefix` is how rewritten URIs are
-   * written relative to the requested path (null: the response is never treated as a playlist).
+   * written relative to the requested path (null: the response is never treated as a playlist). `what` names the
+   * request in problem reports.
    */
   private async forward(
     req: Request,
     s: Session,
     url: string,
     headers: Record<string, string>,
-    opts: { kind: LinkKind; prefix: string | null; contentType?: string | undefined },
+    opts: { kind: LinkKind; prefix: string | null; contentType?: string | undefined; what: string },
   ): Promise<Response> {
     const range = opts.kind === "r" ? req.headers.get("range") : null;
     const timeout = new AbortController();
@@ -239,6 +278,8 @@ export class ProxyService {
       if (req.signal.aborted) return json(503, "aborted");
       const timedOut = timeout.signal.aborted;
       this.log.warn("upstream unreachable", { deviceId: s.deviceId, code: timedOut ? "timeout" : "network", error: errorName(err) });
+      const why = timedOut ? `no answer within ${Math.round(this.headersTimeoutMs / 1000)} s` : networkReason(err);
+      this.problem(s, "upstream_unreachable", null, `${opts.what}: ${why}`);
       return json(timedOut ? 504 : 502, timedOut ? "upstream_timeout" : "upstream_unreachable");
     } finally {
       clearTimeout(timer);
@@ -249,11 +290,13 @@ export class ProxyService {
       await upstream.body?.cancel().catch(() => {});
       s.stale = true;
       this.log.warn("upstream refused the session; marked stale", { deviceId: s.deviceId, status });
+      this.problem(s, `upstream_${status}`, status, opts.what);
       return json(410, "stale");
     }
     if (status >= 400 && status !== 416) {
       await upstream.body?.cancel().catch(() => {});
       this.log.warn("upstream error", { deviceId: s.deviceId, status });
+      if (status >= 500) this.problem(s, "upstream_error", status, opts.what);
       return status === 404 ? json(404, "upstream_not_found") : json(502, "upstream_error", { status });
     }
 
@@ -265,10 +308,19 @@ export class ProxyService {
       } catch (err) {
         if (req.signal.aborted) return json(503, "aborted");
         this.log.warn("upstream playlist read failed", { deviceId: s.deviceId, error: errorName(err) });
+        this.problem(s, "upstream_error", status, `${opts.what}: broke off (${errorName(err)})`);
         return json(502, "upstream_error");
       }
-      if (text === null) return json(502, "playlist_too_large");
-      if (!isPlaylistText(text)) return json(502, "not_a_playlist");
+      if (text === null) {
+        this.problem(s, "playlist_too_large", status, `${opts.what}: larger than ${MAX_PLAYLIST_BYTES / (1024 * 1024)} MiB`);
+        return json(502, "playlist_too_large");
+      }
+      if (!isPlaylistText(text)) {
+        // The media type says what came instead (an HTML page is a block or captcha page); its text is never kept.
+        const type = contentType.split(";")[0]!.trim();
+        this.problem(s, "not_a_playlist", status, `${opts.what}: ${/^[\w.+-]{1,40}\/[\w.+-]{1,60}$/.test(type) ? type : "unknown content type"}`);
+        return json(502, "not_a_playlist");
+      }
       return this.playlistResponse(s, text, upstream.url || url, opts.prefix);
     }
 

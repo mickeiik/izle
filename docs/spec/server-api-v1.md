@@ -2,8 +2,9 @@
 
 Status: **draft, implemented**: direct sources (Phase 2), resolver modules and the media proxy (Phase 4), browser
 admin UI over the admin API (Phase 5), reverse-proxy client addresses (Phase 6), companion audio on the owner's
-phone ([Listen along](#listen-along)). Changes within v1 are additive only (new optional request fields, new
-response fields, new routes); clients MUST ignore unknown response fields.
+phone ([Listen along](#listen-along)), remote control beyond play/stop ([commands](#commands)),
+[problem reports](#problem-reports) and autoplay on start. Changes within v1 are additive only (new optional
+request fields, new response fields, new routes); clients MUST ignore unknown response fields.
 
 ## Conventions
 
@@ -84,7 +85,7 @@ Everything the home screen needs.
 ```json
 {
   "version": 7,
-  "device": { "id": "aZ3…", "name": "Living room", "uiLanguage": "tr", "preferredAudioLanguage": "tr", "subtitlesLanguage": null },
+  "device": { "id": "aZ3…", "name": "Living room", "uiLanguage": "tr", "preferredAudioLanguage": "tr", "subtitlesLanguage": null, "autoplayOnStart": false },
   "catalog": { "id": "izle-sample", "buildId": "20261010-247b34f7", "name": "izle sample catalog" },
   "home": [
     {
@@ -104,6 +105,8 @@ Everything the home screen needs.
 - `device.*Language` are **effective** values: the device's own setting, else the server's `defaults`, else the
   catalog's `defaults` hints, else `uiLanguage: "en"` / `preferredAudioLanguage: null`. `subtitlesLanguage: null`
   means subtitles off.
+- `device.autoplayOnStart` (owner setting, default false): when the app opens, the show the viewer watched last
+  (else the first tile) starts after a 10-second countdown that any key stops. The TV decides what "last" is.
 - `home` is the owner's list in the owner's order (at most 12 entries). Items that vanished from the catalog or
   have no episode with `playbackAllowed` are left out.
 - `posterUrl` is relative to the server's base URL (null when the item has no poster).
@@ -118,11 +121,32 @@ Server-sent events (`text/event-stream`, `X-Accel-Buffering: no`; reverse proxie
 - On connect: `event: state` with `{"version": n}` (id `s<n>`, `retry: 5000`), then every unacknowledged command
   younger than 2 minutes.
 - `event: state` `{"version": n}` whenever the state version changes.
-- `event: command` `{"id": 12, "type": "play", "payload": {"itemId": "…", "episodeId": "…"}}` or
-  `{"id": 13, "type": "stop", "payload": {}}` (id `c<id>`). The TV acknowledges with `POST
-  /tv/commands/:id/ack`; unacknowledged commands are replayed on reconnect for 2 minutes.
+- `event: command` `{"id": 12, "type": "play", "payload": {"itemId": "…", "episodeId": "…"}}` (id `c<id>`), one of
+  the [commands](#commands) below. The TV acknowledges every command it receives, also those it ignores, with
+  `POST /tv/commands/:id/ack`; unacknowledged commands are replayed on reconnect for 2 minutes (and deleted after
+  7 days).
 - A `: ping` comment every 20 seconds. The TV should treat 60 s of silence as a dead connection, reconnect with
   backoff, and additionally poll `/tv/state` every 60 s and when it comes to the foreground.
+
+#### Commands
+
+The owner sends them with `POST /api/v1/admin/devices/:id/commands` (the body is the `type` plus the request fields
+below); the TV gets `{"id", "type", "payload"}`. What a command does is the TV's business:
+
+| `type` | Request fields | `payload` | On the TV |
+|---|---|---|---|
+| `play` | `episodeId` (allowed episode) | `{"itemId", "episodeId"}` | plays that episode (from its saved position) |
+| `stop` | | `{}` | in the player: saves and goes home |
+| `pause` | | `{}` | in the player: pauses |
+| `resume` | | `{}` | in the player: plays on |
+| `seek` | exactly one of `deltaMs` (integer −3 600 000…3 600 000) and `positionMs` (integer 0…10¹²) | `{"deltaMs"}` or `{"positionMs"}` | in the player: jumps by `deltaMs` (negative: back), or to `positionMs` |
+| `next` / `previous` | | `{}` | in the player: switches to the nearest `playbackAllowed` episode after / before the current one in play order, if there is one |
+| `message` | `text` (1–200 characters with a non-space; leading and trailing white space is trimmed), `durationSec`? (integer 3–120, default 15) | `{"text", "durationSec"}` (default applied by the server) | shows `text` as a large banner, on Home and in the player, for `durationSec` seconds |
+
+Transport commands (`stop`, `pause`, `resume`, `seek`, `next`, `previous`) act only while the TV is in the player;
+otherwise they are acknowledged and ignored. A TV acknowledges and ignores command types it does not know, so new
+types can be added within v1; the server refuses unknown types (`400 invalid_request`). The server logs a
+command's type and ids, never a message's text.
 
 ### `GET /api/v1/tv/items/:itemId`
 
@@ -256,6 +280,34 @@ Errors: `404 unknown_episode`.
 
 → `{"ok": true}`. Errors: `404 unknown_command` (not this device's command).
 
+### `POST /api/v1/tv/problems`
+
+Something went wrong on the TV ("Can't play right now", a player error, the server unreachable for a while). The
+owner is usually not in the room; the report shows up on the admin page ([Problem reports](#problem-reports)).
+
+```json
+{ "kind": "playback", "code": "ERROR_CODE_IO_BAD_HTTP_STATUS", "ageMs": 4000, "episodeId": "show.e1",
+  "sourceId": "tr-dub", "sessionId": "Q8m…", "positionMs": 754000, "httpStatus": 403,
+  "detail": "InvalidResponseCodeException: Response code: 403", "appVersion": "0.3.0" }
+```
+
+→ `202 {"ok": true}`.
+
+- `kind` (required): `playback`, `resolve`, `network` or `other`. `code` (required): 1–64 characters of
+  `A-Z a-z 0-9 _ . : -`.
+- `ageMs` (0–86 400 000): how long ago it happened, for a report the TV had to queue; stored time = receipt − `ageMs`.
+- `episodeId`, `sourceId` (catalog ids), `sessionId` (≤ 64 characters: the resolve's `sessionId`; when it names this
+  TV's playback session, a missing `episodeId`/`sourceId` is taken from it), `positionMs` (≥ 0), `httpStatus`
+  (100–599), `detail` (≤ 500 characters), `appVersion` (≤ 40 characters) are optional; no other fields, and no
+  `null`s.
+- `code`, `detail` and `appVersion` are redacted before they are stored: URLs become `<url host>`, runs of 20 or more
+  letters, digits, `_` and `-` become `<token>` unless they read as an identifier (`SCREAMING_SNAKE`, `snake_case`,
+  `CamelCase` without digits, such as player error names). The server logs a report's kind and code, never its
+  detail.
+
+Errors: `429 too_many_problems` (more than 30 reports in 10 minutes from one TV; `Retry-After` header). A report
+for an episode the catalog does not have is stored all the same.
+
 ## Play order and the cursor
 
 Each device has, per item, a **cursor**: the episode OK plays. The server maintains it from progress reports
@@ -272,23 +324,54 @@ are display only.
 |---|---|---|
 | `GET /api/v1/admin/devices` | | `{"devices": [Device & {"homeCount"}]}` |
 | `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "missing", "continue"}], "homeMax": 12}` |
-| `PATCH /api/v1/admin/devices/:id` | any of `name`, `uiLanguage` (`"tr"`/`"en"`/null), `preferredAudioLanguage` (tag/null), `subtitlesLanguage` (tag/null = off) | `{"device": Device}` |
+| `PATCH /api/v1/admin/devices/:id` | any of `name`, `uiLanguage` (`"tr"`/`"en"`/null), `preferredAudioLanguage` (tag/null), `subtitlesLanguage` (tag/null = off), `autoplayOnStart` (boolean) | `{"device": Device}` |
 | `DELETE /api/v1/admin/devices/:id` | | `204` — the TV must pair again |
 | `PUT /api/v1/admin/devices/:id/home` | `{"itemIds": [...]}` (≤ 12, in display order) | `{"version", "home"}` |
 | `PUT /api/v1/admin/devices/:id/cursor` | `{"itemId", "episodeId"}` | `{"version"}` |
 | `GET /api/v1/admin/devices/:id/progress` | | `{"cursors": [...], "progress": [...]}` with `itemTitle`, `kind`, `season`, `number`, `episodeTitle` (or `missing: true`) |
 | `GET /api/v1/admin/devices/:id/now?seq=&wait=` | | `{"online", "serverNowMs", "seq", "nowPlaying": {itemId, episodeId, sourceId, itemTitle, episodeTitle, positionMs, durationMs, state, updatedAt, playing} \| null, "anchor": {positionMs, atMs, playing, rate} \| null}` — with `seq` equal to the current `seq` and `wait` (0–25 s, default 0) the answer waits for the next resolve or progress report (long-poll); see [Listen along](#listen-along) |
-| `POST /api/v1/admin/devices/:id/commands` | `{"type": "play", "episodeId"}` or `{"type": "stop"}` | `202 {"id", "online"}` |
+| `POST /api/v1/admin/devices/:id/commands` | `{"type": "play", "episodeId"}`, `{"type": "stop"}`, `pause`, `resume`, `next`, `previous`, `{"type": "seek", "deltaMs" \| "positionMs"}`, `{"type": "message", "text", "durationSec"?}` — see [Commands](#commands) | `202 {"id", "online"}` — `online: false`: queued, the TV gets it if it connects within 2 minutes |
+| `GET /api/v1/admin/devices/:id/problems?limit=` | | `{"problems": [Problem]}`, newest first (`limit` default 50, at most 100) — see [Problem reports](#problem-reports) |
+| `DELETE /api/v1/admin/devices/:id/problems` | | `204` — forgets the TV's problems |
 
 `Device` = `{"id", "name", "status": "pending"|"active", "online", "createdAt", "lastSeenAt", "stateVersion",
-"settings": {stored values, null = default}, "effective": {resolved values}}`.
+"settings": {stored values, null = default}, "effective": {resolved values}, "problems": {"recent", "lastAt"}}`.
+`settings`/`effective` hold `uiLanguage`, `preferredAudioLanguage`, `subtitlesLanguage` and `autoplayOnStart`
+(a boolean, false by default; no server default exists, so both show the stored value). `problems.recent` is the
+number of problems in the last 24 hours, `lastAt` when the latest stored one happened (ISO, or null).
 
 Home list errors: `400 too_many_items` (`max`), `duplicate_item`, `unknown_item`, `not_playable` (`itemId`).
 Cursor errors: `404 unknown_item`, `400 unknown_episode` (not in this item), `400 not_allowed`; setting the cursor
 also forgets that episode's saved position, so "continue from episode X" starts X from the beginning.
-Command errors: `400 unknown_episode`, `400 not_allowed`. All `:id` routes answer `404 unknown_device`.
+Command errors: `400 unknown_episode`, `400 not_allowed` (play), `400 invalid_request` (unknown type, a seek with
+both or neither field, a blank or too long message, `durationSec` out of range). All `:id` routes answer
+`404 unknown_device`.
 
 Every change that affects the TV bumps the device's state version and emits a `state` event.
+
+### Problem reports
+
+What went wrong on a TV, kept for the owner: the TV's own reports (`origin: "tv"`, [`POST
+/tv/problems`](#post-apiv1tvproblems)) and the problems the server ran into for it (`origin: "server"`):
+
+| `kind` · `code` | Recorded when | Also |
+|---|---|---|
+| `resolve` · `no_playable_source` | a TV resolve answers `502 no_playable_source` | `detail`: the `tried` list in short (`src-a: timeout; src-b: error InvalidResult`) and the sources the TV excluded |
+| `resolve` · `source_failed` | a source failed during a TV resolve and a later candidate played | `sourceId`; `detail`: `<code> <name?>` (`error InvalidResult`, `timeout`, `empty`). Missing adapters are not recorded (the catalog page warns about them) |
+| `proxy` · `upstream_401` / `upstream_403` / `upstream_410` | the upstream refused a request of a TV's proxy session, which is now stale | `httpStatus`; `detail`: what was requested (`playlist`, `segment`, `video`, `subtitles`) |
+| `proxy` · `upstream_error` | the upstream answered 5xx, or a playlist broke off | `httpStatus`; `detail` as above |
+| `proxy` · `upstream_unreachable` | network error, or no answer within 20 s | `detail`: what was requested and why (`ECONNREFUSED`, `no answer within 20 s`) |
+| `proxy` · `not_a_playlist` / `playlist_too_large` | the upstream sent something else than a playlist (`detail` gives its media type), or more than 4 MiB | |
+
+Server-origin proxy problems are recorded at most once per TV and code a minute, so a flapping upstream cannot flood
+the list. [Listen along](#listen-along) resolves and companion proxy sessions are never recorded: they are not the
+TV's problems. `kind` values overall: `playback`, `resolve`, `proxy`, `network`, `other`.
+
+`Problem` = `{"id", "at", "origin": "tv"|"server", "kind", "code", "itemId", "itemTitle", "itemKind", "episodeId",
+"episodeTitle", "season", "number", "sourceId", "positionMs", "httpStatus", "detail", "appVersion", "missing"}` —
+`at` is when it happened (ISO); titles come from the current catalog; `missing: true` (with null titles) when the
+episode is not in the catalog (any more). Each TV keeps its newest 100 problems; problems older than 30 days are
+deleted.
 
 ### Catalog
 
@@ -368,7 +451,8 @@ step: fields whose name contains a word like `url`, `headers`, `authorization`, 
 `<url host>`; runs of 20 or more base64url characters become `<token>`; errors are reduced to their class name
 (and a short `code`). The access log records the **route template** (e.g. `/api/v1/tv/items/:itemId`), status,
 duration and device id — never the raw path or query. Successful proxy requests (a steady stream of segments) are
-logged at `debug` level only; proxy errors at `info`.
+logged at `debug` level only; proxy errors at `info`. Commands are logged with their type and ids (never a
+message's text), problem reports with their kind and code (never their detail).
 
 ## Configuration
 

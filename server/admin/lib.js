@@ -176,6 +176,57 @@ export function isActive(n, online, now = Date.now()) {
   return now - Date.parse(n.updatedAt) < 2 * 60_000;
 }
 
+/**
+ * Whether the remote-control buttons (pause, resume, seek, previous/next episode) make sense: the TV's last report
+ * says it is in the player, playing or paused. An offline TV gets the command queued.
+ * @param {{ state: string } | null | undefined} n
+ */
+export function canControlPlayback(n) {
+  return Boolean(n) && (n?.state === "playing" || n?.state === "paused");
+}
+
+/**
+ * @typedef {object} ProblemLike
+ * @property {"tv" | "server" | string} origin
+ * @property {string} kind
+ * @property {string} code
+ * @property {string | null} itemId
+ * @property {string | null} itemTitle
+ * @property {string | null} [itemKind]
+ * @property {string | null} episodeId
+ * @property {string | null} episodeTitle
+ * @property {number | null} season
+ * @property {number | null} number
+ * @property {string | null} sourceId
+ * @property {number | null} positionMs
+ * @property {number | null} httpStatus
+ * @property {string | null} appVersion
+ * @property {boolean} missing
+ */
+
+/** @param {string} origin */
+export function originLabel(origin) {
+  return origin === "tv" ? "TV" : origin === "server" ? "server" : origin;
+}
+
+/**
+ * Where and when a problem happened, in a few words: show · episode · source · position · HTTP status · app version.
+ * @param {ProblemLike} p
+ */
+export function problemContext(p) {
+  const parts = [];
+  if (p.missing) parts.push(`${p.itemId ?? p.episodeId} (no longer in the catalog)`);
+  else if (p.itemTitle) {
+    parts.push(p.itemTitle);
+    if (p.itemKind !== "movie") parts.push(episodeName({ season: p.season, number: p.number, title: p.episodeTitle }, p.itemKind));
+  }
+  if (p.sourceId) parts.push(`source ${p.sourceId}`);
+  if (p.positionMs !== null && p.positionMs !== undefined) parts.push(`at ${formatClock(p.positionMs)}`);
+  if (p.httpStatus !== null && p.httpStatus !== undefined) parts.push(`HTTP ${p.httpStatus}`);
+  if (p.appVersion) parts.push(`app ${p.appVersion}`);
+  return parts.join(" · ");
+}
+
 /** Owner-facing text for API error codes. */
 const ERRORS = /** @type {Record<string, string>} */ ({
   unauthorized: "The admin token is not valid.",

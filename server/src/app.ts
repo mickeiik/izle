@@ -13,6 +13,7 @@ import type { CompanionService } from "./companion.ts";
 import { diagnoseEpisode } from "./diagnostics.ts";
 import { HttpError } from "./errors.ts";
 import { MAX_PAIR_WAIT_MS, type PairingService } from "./pairing.ts";
+import { PROBLEM_LIST_DEFAULT, PROBLEM_LIST_MAX } from "./problems.ts";
 import { PROXY_TOKEN, type ProxyService, type ProxyTarget } from "./proxy.ts";
 import { RateLimiter } from "./ratelimit.ts";
 import { companionScope } from "./resolve.ts";
@@ -30,9 +31,12 @@ import {
   diagnosticsBody,
   homeBody,
   isId,
+  MESSAGE_DURATION_SEC,
   parseBody,
+  problemBody,
   progressBody,
   resolveBody,
+  type CommandBody,
 } from "./validation.ts";
 
 export interface AppContext extends Services {
@@ -285,6 +289,13 @@ export function createApp(ctx: AppContext): Hono<Env> {
     return c.json({ ok: true });
   });
 
+  // Something went wrong on the TV ("Can't play right now", a player error): kept for the owner's admin page.
+  app.post("/api/v1/tv/problems", async (c) => {
+    const body = await parseBody(c, problemBody);
+    ctx.problems.report(c.get("device"), body);
+    return c.json({ ok: true }, 202);
+  });
+
   app.get("/api/v1/tv/events", (c) => {
     const device = c.get("device");
     c.header("X-Accel-Buffering", "no");
@@ -329,8 +340,14 @@ export function createApp(ctx: AppContext): Hono<Env> {
     createdAt: iso(d.createdAt),
     lastSeenAt: iso(d.lastSeenAt),
     stateVersion: d.stateVersion,
-    settings: { uiLanguage: d.uiLanguage, preferredAudioLanguage: d.preferredAudioLanguage, subtitlesLanguage: d.subtitlesLanguage },
+    settings: {
+      uiLanguage: d.uiLanguage,
+      preferredAudioLanguage: d.preferredAudioLanguage,
+      subtitlesLanguage: d.subtitlesLanguage,
+      autoplayOnStart: d.autoplayOnStart,
+    },
     effective: tv.settings(d),
+    problems: ctx.problems.stats(d.id),
   });
 
   const homeJson = (d: Device) =>
@@ -479,20 +496,45 @@ export function createApp(ctx: AppContext): Hono<Env> {
     return c.json(ctx.companion.copyToItem(episodeId, sourceId));
   });
 
+  /** What the TV gets with a command (the SSE `payload`); a message's display time defaults here. */
+  const commandPayload = (body: CommandBody): Record<string, unknown> => {
+    switch (body.type) {
+      case "play": {
+        const ref = catalog.episode(body.episodeId);
+        if (!ref) throw new HttpError(400, "unknown_episode");
+        if (!ref.episode.playbackAllowed) throw new HttpError(400, "not_allowed", "playback of this episode is not allowed");
+        return { itemId: ref.item.id, episodeId: ref.episode.id };
+      }
+      case "seek":
+        return body.deltaMs !== undefined ? { deltaMs: body.deltaMs } : { positionMs: body.positionMs };
+      case "message":
+        return { text: body.text.trim(), durationSec: body.durationSec ?? MESSAGE_DURATION_SEC.default };
+      default:
+        return {}; // stop, pause, resume, next, previous
+    }
+  };
+
   app.post("/api/v1/admin/devices/:id/commands", async (c) => {
     const d = requireDevice(c.req.param("id"));
     const body = await parseBody(c, commandBody);
-    let payload: Record<string, unknown> = {};
-    if (body.type === "play") {
-      const ref = catalog.episode(body.episodeId);
-      if (!ref) throw new HttpError(400, "unknown_episode");
-      if (!ref.episode.playbackAllowed) throw new HttpError(400, "not_allowed", "playback of this episode is not allowed");
-      payload = { itemId: ref.item.id, episodeId: ref.episode.id };
-    }
-    const cmd = store.insertCommand(d.id, body.type, payload, ctx.now());
+    const cmd = store.insertCommand(d.id, body.type, commandPayload(body), ctx.now());
     events.publish(d.id, { type: "command", data: { id: cmd.id, type: cmd.type, payload: cmd.payload } });
+    // Type and ids only: never a message's text.
     log.info("command queued", { deviceId: d.id, type: cmd.type, commandId: cmd.id });
     return c.json({ id: cmd.id, online: events.isOnline(d.id) }, 202);
+  });
+
+  app.get("/api/v1/admin/devices/:id/problems", (c) => {
+    const d = requireDevice(c.req.param("id"));
+    const asked = Math.trunc(Number(c.req.query("limit") ?? PROBLEM_LIST_DEFAULT)) || PROBLEM_LIST_DEFAULT;
+    return c.json({ problems: ctx.problems.list(d.id, Math.min(Math.max(asked, 1), PROBLEM_LIST_MAX)) });
+  });
+
+  app.delete("/api/v1/admin/devices/:id/problems", (c) => {
+    const d = requireDevice(c.req.param("id"));
+    ctx.problems.clear(d.id);
+    log.info("problems cleared", { deviceId: d.id });
+    return c.body(null, 204);
   });
 
   const catalogInfo = () => {

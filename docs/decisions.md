@@ -683,3 +683,78 @@ release within the major the workflows already used:
   `ViewRootImpl`'s input stages do not run: Android 16's interception of Back before the view tree is not simulated
   (the dispatcher call stands in for it), nor is leaving touch mode on a key press (the window starts outside touch
   mode, as on a TV).
+
+## Server: pause/seek/next/message commands, problem reports, autoplay setting (2026-10-14)
+
+The owner approved a batch of improvements: more remote control from the admin page, problem reports so the remote
+owner learns why the TV said "Can't play right now", and autoplay when the TV starts. The command, report and
+setting names were fixed beforehand so the TV app could be built against them in parallel; this entry covers the
+server and the admin page. Routine decisions:
+
+- **Commands are validated per type.** `commandBody` is a `oneOf` of strict branches: `play`; the payload-less types
+  (`stop`, `pause`, `resume`, `next`, `previous`); two `seek` branches (`deltaMs` or `positionMs`, each forbidding the
+  other field, so both or neither is a 400); `message`. Unknown types are refused with 400 (the TV ignores types it
+  does not know, so later additions stay compatible). The server trims a message (white space at its ends is noise on
+  a banner; "must contain a non-space" still holds) and applies the 15 s default itself, so the TV needs no default.
+  A message's text is stored with the command (it must be replayed for 2 minutes; commands are purged after 7 days)
+  but never logged: the log line keeps type and ids.
+- **The remote control on the device page is built once** and only enabled or disabled by the 5 s poll, so polling
+  cannot drop a half-typed message or the keyboard focus. The row shows once something has played and is enabled while
+  `nowPlaying.state` is `playing` or `paused` (as asked; an offline TV gets the command queued, with the existing
+  sent/queued toast). After a transport command the card refreshes 1.5 s later instead of waiting for the next poll.
+  Send is enabled while the TV is `active`; a blank message toasts instead of sending; the page has no duration
+  control (the server's 15 s).
+- **Deviation — redaction of reported text keeps identifiers.** The brief said `code` and `detail` go through the
+  log's string redaction. Applied literally, the names a TV is most likely to report (`ERROR_CODE_IO_BAD_HTTP_STATUS`,
+  `InvalidResponseCodeException`: runs of 20+ letters and `_`) would be stored as `<token>`. `redactReportText` (in
+  `log.ts`, beside `redactString`) uses the same URL and token rules but keeps runs that read as identifiers:
+  SCREAMING_SNAKE, snake and kebab case (number segments of up to four digits) and CamelCase of words with three or
+  more letters, without digits. On 2 million random base64url runs, 1.4·10⁻⁵ of the 20-character ones and none of 32
+  characters or more survived; the hostile fixtures (a URL with a token in its query, a 40-character run) are
+  redacted. `appVersion` gets the same treatment; blank `detail`/`appVersion` are stored as null. The log itself keeps
+  the strict rule (the "problem reported" line shows `<token>` for such codes) and never carries the detail.
+- **Reports:** `sessionId` is not stored; when it names this TV's own playback session (and no other episode is
+  given), a missing `episodeId`/`sourceId` is taken from it. A report for an episode the catalog does not have is
+  stored (listed as `missing`); catalog and item ids are stored only when the episode exists. Optional fields take no
+  `null`s (strict like the contract; the app's JSON encoder omits nulls). The 30-per-10-minutes limit counts valid
+  reports only and lives in memory, like the pairing limit.
+- **Retention:** each device keeps its newest 100 problems by time (then insertion order, the order the list shows),
+  trimmed in the insert's transaction; problems older than 30 days go in the existing 10-minute housekeeping run
+  (next to commands). Server-origin rows count towards both.
+- **Server-origin problems are recorded by `TvService` around the TV resolve**, not inside `ResolveService` (no store
+  there, and it also serves "Listen along" and diagnostics); `ResolvedStream.failed` carries the attempts the server
+  fell back past. Companion resolves go through `CompanionService` and are never recorded; companion proxy sessions
+  are recognized by their owner key (`isCompanionScope`). `source_failed` leaves out `adapter_unavailable`: that is a
+  configuration problem the catalog page already warns about, and it would add a row to every play of such an
+  episode. The `no_playable_source` detail also names the sources the TV excluded, so "everything already failed on
+  the TV" reads differently from server-side failures; `TimeoutError` is not repeated after `timeout`.
+- **Proxy problems:** proxy sessions now carry `episodeId`/`sourceId`; an `onProblem` hook reports 401/403/410
+  (`upstream_<status>`), 5xx and playlists that break off (`upstream_error`), network errors and the 20 s header
+  timeout (both `upstream_unreachable`; the detail gives the network error code such as `ECONNREFUSED`, or "no answer
+  within 20 s"). Two codes were added to the brief's list: `not_a_playlist` (detail: the media type that came instead,
+  only when it is a plain `type/subtype`) and `playlist_too_large` — an HTML block or captcha page instead of a
+  playlist is a common way for a site to start refusing a TV. Upstream 404 and other 4xx are not recorded. The detail
+  names what was requested (`playlist`, `segment`, `video`, `subtitles`), never a URL. The limit of one problem per
+  device and code a minute is a fixed window in memory. Server-origin problems carry no position. Recording never
+  throws: a failed insert is a warning, and the "problem recorded" line is at debug level because the event itself
+  is already logged at warn.
+- **Admin API:** `?limit=` is lenient like the catalog search (anything but a number → 50, clamped to 1–100)
+  rather than a 400. Each problem gains the additive field `itemKind` (the problem's own `kind` is taken), so the page
+  can leave the episode out for films. Titles come from the current catalog; a row stored under another catalog id
+  counts as missing. `Device.problems` is one indexed query per device per device JSON (the TV list polls every 3 s;
+  an owner has a few TVs).
+- **Autoplay** is a column added by migration 3 (with the problems table). `settings.autoplayOnStart` and
+  `effective.autoplayOnStart` both show the stored boolean (there is no server default); `/tv/state` gets it through
+  the effective settings; like every device PATCH it bumps the state version.
+- **Admin page:** the autoplay checkbox sits below the settings form and is saved on change, with a toast, reverted
+  if the server refuses (the form's other fields keep their Save button). "Recent problems" lists 50 rows (origin
+  chip, the server's outlined in the accent colour; `kind · code`; relative time with the absolute one in `title`;
+  show · episode · source · position · HTTP status · app version; muted detail); Clear needs no confirmation (the
+  list is diagnostics, nothing the TV uses). The TV list's warning chip says "N problems" for the last 24 hours.
+- **Verified** with node tests (commands and their SSE payloads and replays, reports, redaction with hostile
+  fixtures in the stored row, the admin list and the log, rate limit, retention, stats, migration 3, server-origin
+  rows from the test resolver's failing adapters and from a Referer-bound upstream whose signed URL expired, 5xx, an
+  HTML page and a refused connection), then by hand: curl as a fake TV against a dev server, and the admin page in
+  the desktop app's browser (TV list chip, remote buttons enabled while playing and disabled after a stop, a message
+  reaching the TV's event stream, autoplay toggle, the problems card and Clear, no horizontal scroll at 375 px). The
+  TV side is not part of this change.

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createLogger, isSecretKey, redact, redactString } from "../src/log.ts";
+import { createLogger, isSecretKey, redact, redactReportText, redactString } from "../src/log.ts";
 
 const DEVICE_TOKEN = "Zq3v9Kx2LmN8pQ4rT6uW1yA5bC7dE0fGhIjKlMnOpQr"; // gitleaks:allow (made-up hostile fixture)
 
@@ -23,6 +23,19 @@ test("URLs become <url host> and token-like runs become <token>", () => {
   assert.equal(redactString(`token ${DEVICE_TOKEN} leaked`), "token <token> leaked");
   assert.equal(redactString("ftp://user:pw@files.example.test/x"), "<url files.example.test>");
   assert.equal(redactString("caminandes.s01e01 / hls-multi-audio"), "caminandes.s01e01 / hls-multi-audio");
+});
+
+test("problem text from a TV: URLs and tokens go, error names stay; the log itself stays strict", () => {
+  const hostile = `ERROR_CODE_IO_BAD_HTTP_STATUS InvalidResponseCodeException: https://cdn.example.test/v.m3u8?token=${DEVICE_TOKEN} ${DEVICE_TOKEN}`;
+  assert.equal(redactReportText(hostile), "ERROR_CODE_IO_BAD_HTTP_STATUS InvalidResponseCodeException: <url cdn.example.test> <token>");
+  for (const kept of ["UnknownHostException", "io_bad_http_status_403", "ERROR_CODE_DRM_LICENSE_ACQUISITION_FAILED", "onPlayerErrorChangedEvent"]) {
+    assert.equal(redactReportText(kept), kept);
+  }
+  for (const token of [DEVICE_TOKEN, "A1B2C3D4E5F6A7B8C9D0E1", "9f86d081884c7d659a2feaa0c55ad015", "abcdefghijklmnopqrstUVWXYZ", "Tq4_Lm9-Zx2Kp8Rw3Yv6Nb"]) {
+    assert.equal(redactReportText(`x ${token} y`), "x <token> y", token);
+  }
+  assert.equal(redactReportText("ab ".repeat(200)).length, 501, "capped like log strings");
+  assert.equal(redactString("ERROR_CODE_IO_BAD_HTTP_STATUS"), "<token>", "log lines keep the strict rule");
 });
 
 test("hostile fixture: nothing secret survives a log line", () => {

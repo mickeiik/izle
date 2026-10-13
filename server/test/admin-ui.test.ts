@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
+  canControlPlayback,
   candidateOptions,
   clockOffset,
   companionTarget,
@@ -18,9 +19,11 @@ import {
   isActive,
   languageLabel,
   moveItem,
+  originLabel,
   parseCandidate,
   percent,
   plural,
+  problemContext,
   pushSample,
   serverAddress,
   syncDecision,
@@ -110,6 +113,41 @@ test("admin helpers: list moves, playback activity, episode states, labels, erro
   assert.equal(triedText("timeout", "TimeoutError"), "timed out");
   assert.equal(triedText("timeout", "BudgetExhausted"), "skipped: the time budget of the request ran out");
   assert.equal(errorMessage("weird_code"), "The server answered: weird_code.");
+});
+
+test("admin helpers: when the remote-control buttons apply, and how a problem reads", () => {
+  assert.equal(canControlPlayback(null), false);
+  assert.equal(canControlPlayback(undefined), false);
+  assert.equal(canControlPlayback({ state: "playing" }), true);
+  assert.equal(canControlPlayback({ state: "paused" }), true);
+  for (const state of ["starting", "stopped", "finished"]) assert.equal(canControlPlayback({ state }), false, state);
+
+  assert.equal(originLabel("tv"), "TV");
+  assert.equal(originLabel("server"), "server");
+  const p = {
+    origin: "tv",
+    kind: "playback",
+    code: "ERROR_CODE_IO_BAD_HTTP_STATUS",
+    itemId: "show",
+    itemTitle: "Şov Dünyası",
+    itemKind: "series",
+    episodeId: "show.e1",
+    episodeTitle: "Pilot",
+    season: 1,
+    number: 1,
+    sourceId: "tr-dub",
+    positionMs: 754_000,
+    httpStatus: 403,
+    appVersion: "0.3.0 (300)",
+    missing: false,
+  };
+  assert.equal(problemContext(p), "Şov Dünyası · S1 · E1 — Pilot · source tr-dub · at 12:34 · HTTP 403 · app 0.3.0 (300)");
+  const bare = { ...p, sourceId: null, positionMs: null, httpStatus: null, appVersion: null };
+  assert.equal(problemContext({ ...bare, itemTitle: "Film", itemKind: "movie", season: null, number: null, episodeTitle: null }), "Film", "films have no episode to name");
+  assert.equal(problemContext({ ...bare, positionMs: 3_725_000 }), "Şov Dünyası · S1 · E1 — Pilot · at 1:02:05");
+  assert.equal(problemContext({ ...bare, itemTitle: null, itemKind: null, missing: true }), "show (no longer in the catalog)");
+  assert.equal(problemContext({ ...bare, itemId: null, itemTitle: null, itemKind: null, episodeId: "gone.e1", missing: true }), "gone.e1 (no longer in the catalog)");
+  assert.equal(problemContext({ ...bare, itemId: null, itemTitle: null, itemKind: null, episodeId: null }), "", "nothing known: no context line");
 });
 
 test("the admin UI is served from an allow-list with a strict CSP and no inline code", async (t) => {
