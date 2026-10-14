@@ -4,6 +4,7 @@ import { main as validateMain } from "@izle/contract/cli";
 import { BundleValidationError, formatIssue, loadBundle } from "@izle/contract";
 import { loadAdminToken } from "./auth.ts";
 import { BackupError, backupDatabase } from "./backup.ts";
+import { reloadOnSignal } from "./catalog-admin.ts";
 import { ConfigError, loadConfig, SAMPLE_CATALOG_DIR, type ServerConfig } from "./config.ts";
 import { createLogger } from "./log.ts";
 import { healthcheckAll, loadResolver, ResolverLoadError } from "./resolver.ts";
@@ -233,11 +234,7 @@ export async function main(argv: string[]): Promise<number> {
     };
     process.once("SIGINT", () => shutdown("SIGINT"));
     process.once("SIGTERM", () => shutdown("SIGTERM"));
-    process.on("SIGHUP", () => {
-      void server.ctx.catalog.reload().then((r) => {
-        if (r.ok) for (const { id, stateVersion } of server.ctx.store.bumpAllStateVersions()) server.ctx.tv.notify(id, stateVersion);
-      });
-    });
+    process.on("SIGHUP", () => void reloadOnSignal(server.ctx, "SIGHUP"));
     return -1; // keep running
   } catch (err) {
     if (err instanceof ConfigError) {

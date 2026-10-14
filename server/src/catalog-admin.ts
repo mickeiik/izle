@@ -2,9 +2,11 @@
 // item with its episodes and sources. Upstream URLs, headers and adapter refs are never part of it.
 
 import type { CatalogItem } from "@izle/contract";
-import type { CatalogService } from "./catalog.ts";
+import type { CatalogService, ReloadResult } from "./catalog.ts";
+import type { Logger } from "./log.ts";
+import type { Notifier } from "./notifier.ts";
 import { episodeDetails, iso, itemCard, itemDetails } from "./presenters.ts";
-import type { LoadedResolver } from "./resolver.ts";
+import { errorName, type LoadedResolver } from "./resolver.ts";
 import type { CatalogBuild, Store } from "./store.ts";
 import { VERSION } from "./version.ts";
 
@@ -49,6 +51,33 @@ export function catalogInfo({ catalog, store, resolverModule }: CatalogInfoDeps)
     builds: builds.map(buildJson),
     changes: latest ? (store.getCatalogBuild(latest.catalogId, latest.buildId)?.changes ?? null) : null,
   };
+}
+
+export interface ReloadDeps {
+  catalog: CatalogService;
+  notifier: Notifier;
+}
+
+/**
+ * Re-reads the catalog bundle (the admin route and SIGHUP). After a good load every TV's state version is bumped,
+ * so the TVs re-read their home screens; after a refused one the previous catalog stays and nothing is bumped.
+ */
+export async function reloadCatalog({ catalog, notifier }: ReloadDeps): Promise<ReloadResult> {
+  const r = await catalog.reload();
+  if (r.ok) notifier.bumpAll();
+  return r;
+}
+
+/**
+ * The reload for a signal handler: it never rejects. A reload that throws (the store is already closed during
+ * shutdown) is logged with the error's class name, never its message, instead of ending the process.
+ */
+export async function reloadOnSignal(deps: ReloadDeps & { log: Logger }, signal: string): Promise<void> {
+  try {
+    await reloadCatalog(deps);
+  } catch (err) {
+    deps.log.warn("catalog reload failed", { signal, error: errorName(err) });
+  }
 }
 
 /** A search hit: the item's card with its episode counts. */

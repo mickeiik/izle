@@ -2,7 +2,7 @@
 // episode" diagnostics, and the reload.
 
 import type { Hono } from "hono";
-import { buildJson, catalogInfo, catalogItemJson, searchHitJson } from "../../catalog-admin.ts";
+import { buildJson, catalogInfo, catalogItemJson, reloadCatalog, searchHitJson } from "../../catalog-admin.ts";
 import type { AppContext } from "../../context.ts";
 import { diagnoseEpisode } from "../../diagnostics.ts";
 import { HttpError } from "../../errors.ts";
@@ -10,7 +10,7 @@ import { diagnosticsBody, isId, parseBody } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
 
 export function registerAdminCatalog(app: Hono<Env>, ctx: AppContext): void {
-  const { store, catalog, tv } = ctx;
+  const { store, catalog } = ctx;
 
   app.get("/api/v1/admin/catalog", (c) => c.json(catalogInfo(ctx)));
 
@@ -39,11 +39,10 @@ export function registerAdminCatalog(app: Hono<Env>, ctx: AppContext): void {
   });
 
   app.post("/api/v1/admin/catalog/reload", async (c) => {
-    const r = await catalog.reload();
+    const r = await reloadCatalog(ctx);
     if (!r.ok) {
       return c.json({ error: "invalid_catalog", issues: r.issues.map((i) => ({ severity: i.severity, file: i.file, path: i.path, message: i.message })) }, 422);
     }
-    for (const { id, stateVersion } of store.bumpAllStateVersions()) tv.notify(id, stateVersion);
     return c.json({ catalog: catalogInfo(ctx) });
   });
 }

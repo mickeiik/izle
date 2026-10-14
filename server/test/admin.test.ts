@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CATALOG_BUILDS_LISTED } from "../src/app.ts";
+import { reloadOnSignal } from "../src/catalog-admin.ts";
 import { HOME_MAX_ITEMS } from "../src/tv.ts";
-import { fixtureItems, startTestServer, type Json } from "./helpers.ts";
+import { fixtureItems, openEvents, startTestServer, type Json } from "./helpers.ts";
 
 async function setup(t: { after(fn: () => unknown): void }) {
   const s = await startTestServer();
@@ -275,6 +276,26 @@ test("catalog reload: new build applies, invalid build is refused and the old on
   assert.equal(bad.json.error, "invalid_catalog");
   assert.ok(bad.json.issues.some((i: { path: string }) => i.path === "/formatVersion"));
   assert.equal((await s.admin("GET", "/catalog")).json.buildId, "fixture-2");
+});
+
+test("catalog reload on SIGHUP: bumps every TV like the route; a reload that throws is logged, never rejected", async (t) => {
+  const { s, tv } = await setup(t);
+  const es = await openEvents(s.base, tv.token);
+  t.after(() => es.close());
+  const v0 = JSON.parse((await es.next()).data!).version;
+  await rewriteBundle(s.bundleDir, "fixture-2", (items) => items);
+  await reloadOnSignal(s.srv.ctx, "SIGHUP");
+  assert.deepEqual(JSON.parse((await es.next()).data!), { version: v0 + 1 }, "the TV hears the new version");
+  assert.equal((await s.admin("GET", "/catalog")).json.buildId, "fixture-2");
+  es.close();
+
+  // During shutdown the store is closed: the reload throws, and the handler must not turn that into an
+  // unhandled rejection (which ends the process).
+  await s.close();
+  await reloadOnSignal(s.srv.ctx, "SIGHUP");
+  const failed = s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === "catalog reload failed");
+  assert.deepEqual(failed.map(({ level, signal, error }) => ({ level, signal, error })), [{ level: "warn", signal: "SIGHUP", error: "Error" }]);
+  assert.ok(!JSON.stringify(failed).includes("not open"), "the class name only, never the message");
 });
 
 test("catalog builds: the baseline, then each reload's changes newest first; one build by id; unknown build", async (t) => {

@@ -37,7 +37,7 @@ export class CommandService {
   /** Stores a command for the device and publishes it to the device's open event streams. */
   send(deviceId: string, body: CommandBody): Command {
     const cmd = this.s.store.insertCommand(deviceId, body.type, this.payload(body), this.s.now());
-    this.s.events.publish(deviceId, { type: "command", data: { id: cmd.id, type: cmd.type, payload: cmd.payload } });
+    this.s.notifier.command(cmd);
     // Type and ids only: never a message's text.
     this.s.log.info("command queued", { deviceId, type: cmd.type, commandId: cmd.id });
     return cmd;

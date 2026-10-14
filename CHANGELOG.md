@@ -62,6 +62,9 @@ contract share one version number. How to update (back up, update the server, th
   menu language (an English menu on a French TV showed "2:54 PM").
 - **Channel keys no longer leave izle.** Outside the player, CH+/CH− are consumed, so a press cannot throw the viewer
   into the TV's Live TV app.
+- **A catalog reload that runs into an error no longer ends the server.** When `systemctl reload izle` (SIGHUP)
+  failed after reading the catalog, for example while the server was shutting down, the process ended with an
+  unhandled error. It now logs a warning (`catalog reload failed`) instead.
 
 ### Compatibility
 

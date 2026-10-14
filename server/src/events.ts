@@ -1,3 +1,5 @@
+import type { Command } from "./store.ts";
+
 export type ServerEvent =
   | { type: "state"; data: { version: number } }
   | { type: "command"; data: { id: number; type: string; payload: Record<string, unknown> } };
@@ -5,6 +7,16 @@ export type ServerEvent =
 interface Subscriber {
   send(event: ServerEvent): void;
   close(): void;
+}
+
+/** The event a stored command reaches the TV as, live or replayed on connect. */
+export function commandEvent(cmd: Pick<Command, "id" | "type" | "payload">): ServerEvent {
+  return { type: "command", data: { id: cmd.id, type: cmd.type, payload: cmd.payload } };
+}
+
+/** The SSE `id` of an event: `s<version>` for state, `c<commandId>` for commands. */
+export function eventId(ev: ServerEvent): string {
+  return ev.type === "state" ? `s${ev.data.version}` : `c${ev.data.id}`;
 }
 
 /** Fan-out of live events to the SSE connections of each device. */

@@ -116,7 +116,7 @@ export class DeviceService {
   /** Applies a patch of the name (trimmed) or settings, and tells the TV. */
   update(d: Device, patch: DevicePatch): Device {
     const updated = this.s.store.updateDevice(d.id, { ...patch, ...(patch.name !== undefined ? { name: patch.name.trim() } : {}) })!;
-    this.s.tv.notify(d.id, updated.stateVersion);
+    this.s.notifier.state(d.id, updated.stateVersion);
     return updated;
   }
 

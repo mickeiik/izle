@@ -4,6 +4,7 @@ import type { ServerConfig } from "./config.ts";
 import { HttpError } from "./errors.ts";
 import type { EventHub } from "./events.ts";
 import type { Logger } from "./log.ts";
+import type { Notifier } from "./notifier.ts";
 import { autoNextIndex, cursorAfterFinished, cursorIndex, isPlayable, nextAllowedIndex, type ProgressLike } from "./playback.ts";
 import { episodeDetails, episodeSummary, iso, itemCard, itemDetails } from "./presenters.ts";
 import { noPlayableDetail, triedDetail, type ProblemService } from "./problems.ts";
@@ -42,6 +43,7 @@ export interface Services {
   store: Store;
   catalog: CatalogService;
   events: EventHub;
+  notifier: Notifier;
   resolver: ResolveService;
   problems: ProblemService;
   log: Logger;
@@ -98,17 +100,6 @@ export class TvService {
       subtitlesLanguage: device.subtitlesLanguage,
       autoplayOnStart: device.autoplayOnStart,
     };
-  }
-
-  /** Bumps the device's state version and tells its open SSE connections. */
-  bump(deviceId: string): number {
-    const version = this.s.store.bumpStateVersion(deviceId);
-    this.notify(deviceId, version);
-    return version;
-  }
-
-  notify(deviceId: string, version: number): void {
-    this.s.events.publish(deviceId, { type: "state", data: { version } });
   }
 
   private progressMap(deviceId: string, itemId: string): Map<string, Progress> {
@@ -305,7 +296,7 @@ export class TvService {
     });
     this.wakeNow(device.id);
 
-    return { version: changed ? this.bump(device.id) : (this.s.store.getDevice(device.id)?.stateVersion ?? device.stateVersion) };
+    return { version: changed ? this.s.notifier.bump(device.id) : (this.s.store.getDevice(device.id)?.stateVersion ?? device.stateVersion) };
   }
 
   /**
@@ -323,7 +314,7 @@ export class TvService {
       this.s.store.setCursor(deviceId, { catalogId, itemId, episodeId, updatedAt: this.s.now() });
       this.s.store.deleteProgress(deviceId, catalogId, episodeId);
     });
-    return this.bump(deviceId);
+    return this.s.notifier.bump(deviceId);
   }
 
   /** Validates and stores a device's home list. */
@@ -340,6 +331,6 @@ export class TvService {
       if (!isPlayable(item)) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed", { itemId: id });
     }
     this.s.store.setHome(deviceId, this.s.catalog.catalogId, itemIds, this.s.now());
-    return this.bump(deviceId);
+    return this.s.notifier.bump(deviceId);
   }
 }

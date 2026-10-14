@@ -19,6 +19,7 @@ import { PairingService, type PairingOptions } from "./pairing.ts";
 import { ProblemService } from "./problems.ts";
 import { ProxyService } from "./proxy.ts";
 import { ResolveService } from "./resolve.ts";
+import { Notifier } from "./notifier.ts";
 import { loadResolver, type LoadedResolver } from "./resolver.ts";
 import { Store } from "./store.ts";
 import { TvService } from "./tv.ts";
@@ -87,7 +88,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     deadlineMs: config.resolver?.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,
     budgetMs: config.resolver?.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
   });
-  const services = { config, store, catalog, events, resolver, problems, log, now };
+  const services = { config, store, catalog, events, notifier: new Notifier(store, events), resolver, problems, log, now };
   const tv = new TvService(services);
   const ctx: AppContext = {
     ...services,
