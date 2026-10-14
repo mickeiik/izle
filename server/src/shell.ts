@@ -1,18 +1,14 @@
 import { networkInterfaces } from "node:os";
 import { renderUnicodeCompact } from "uqr";
-import type { ServerConfig } from "./config.ts";
+import { localServerUrl, type ServerConfig } from "./config.ts";
 
 /**
  * Helpers for the owner's shell commands (`izle-server pair …`, `izle-server admin-token --link`): where the running
  * server answers on this host, calls to its admin API, and the admin page's sign-in link with its QR code.
  */
 
-/** Where this host's own server answers: the listen address, with a wildcard host turned into loopback. */
-export function localServerUrl(config: ServerConfig): string {
-  const host = config.listen.host;
-  const h = host === "" || host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host.includes(":") ? `[${host}]` : host;
-  return `http://${h}:${config.listen.port}`;
-}
+// Where this host's own server answers; it lives with the config because the server's own URL is built the same way.
+export { localServerUrl };
 
 export interface LinkBase {
   url: string;

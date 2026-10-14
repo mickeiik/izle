@@ -134,6 +134,16 @@ export interface LoadConfigOptions {
   cwd?: string;
 }
 
+/**
+ * Where this host's own server answers: the listen address, with a wildcard host turned into loopback. `port`
+ * defaults to the configured one; the running server passes the port it bound.
+ */
+export function localServerUrl(config: Pick<ServerConfig, "listen">, port = config.listen.port): string {
+  const host = config.listen.host;
+  const h = host === "" || host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host.includes(":") ? `[${host}]` : host;
+  return `http://${h}:${port}`;
+}
+
 export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
   const env = opts.env ?? process.env;
   const cwd = opts.cwd ?? process.cwd();

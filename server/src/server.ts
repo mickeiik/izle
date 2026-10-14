@@ -9,7 +9,7 @@ import { loadAdminToken } from "./auth.ts";
 import { CatalogService } from "./catalog.ts";
 import { CommandService } from "./commands.ts";
 import { CompanionService } from "./companion.ts";
-import { DEFAULT_RESOLVE_BUDGET_MS, DEFAULT_RESOLVE_DEADLINE_MS, type ServerConfig } from "./config.ts";
+import { DEFAULT_RESOLVE_BUDGET_MS, DEFAULT_RESOLVE_DEADLINE_MS, localServerUrl, type ServerConfig } from "./config.ts";
 import type { AppContext } from "./context.ts";
 import { DeviceService } from "./devices.ts";
 import { EventHub } from "./events.ts";
@@ -124,8 +124,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     throw err;
   }
   const port = (server.address() as AddressInfo).port;
-  const host = config.listen.host === "0.0.0.0" || config.listen.host === "::" ? "127.0.0.1" : config.listen.host;
-  const url = `http://${host.includes(":") ? `[${host}]` : host}:${port}`;
+  const url = localServerUrl(config, port);
   log.info("listening", { version: VERSION, host: config.listen.host, port, adminAuth: source, catalogDir: catalog.dir, dataDir: config.dataDir });
 
   const housekeeping = setInterval(() => {

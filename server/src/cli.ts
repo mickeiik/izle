@@ -35,16 +35,18 @@ const USAGE = `usage:
 Relative --config paths resolve against the directory npm or the shell was started in; relative paths inside the
 config file resolve against the file's directory. IZLE_ADMIN_TOKEN overrides the admin token file.`;
 
+const out = (line: string) => void process.stdout.write(`${line}\n`);
+/** For the commands' own log lines (redacted, like the server's), so stdout stays what the command prints. */
+const stderrLog = createLogger({ write: (l) => void process.stderr.write(`${l}\n`) });
+
 /** Loads the resolver module like the server does, then runs the healthchecks. Exit status 1 on any problem. */
 async function checkResolver(config: ServerConfig): Promise<number> {
-  const out = (line: string) => void process.stdout.write(`${line}\n`);
   if (!config.resolver) {
     process.stderr.write("izle-server: no resolver module is configured (resolver.module in the config file)\n");
     return 1;
   }
   // The module's own log lines (redacted) go to stderr so stdout stays a readable report.
-  const log = createLogger({ level: "info", write: (l) => void process.stderr.write(`${l}\n`) });
-  const resolver = await loadResolver({ module: config.resolver.module, config: config.resolver.config, dataDir: config.dataDir, log });
+  const resolver = await loadResolver({ module: config.resolver.module, config: config.resolver.config, dataDir: config.dataDir, log: stderrLog });
   out(`resolver module ${resolver.file}`);
   out(`sha256 ${resolver.sha256}`);
   out(`adapters: ${[...resolver.adapters.keys()].join(", ") || "(none)"}`);
@@ -74,7 +76,6 @@ async function checkResolver(config: ServerConfig): Promise<number> {
 
 /** `pair pending` / `pair approve <code> [name…]` against the running server's admin API. Exit status 1 on any problem. */
 async function pair(config: ServerConfig, args: string[], serverUrl: string | undefined): Promise<number> {
-  const out = (line: string) => void process.stdout.write(`${line}\n`);
   const fail = (line: string) => {
     process.stderr.write(`izle-server: ${line}\n`);
     return 1;
@@ -85,7 +86,7 @@ async function pair(config: ServerConfig, args: string[], serverUrl: string | un
     return 2;
   }
   const server = serverUrl ?? localServerUrl(config);
-  const { token } = loadAdminToken(config, createLogger({ write: (l) => void process.stderr.write(`${l}\n`) }), { create: false });
+  const { token } = loadAdminToken(config, stderrLog, { create: false });
   try {
     if (sub === "pending") {
       if (rest.length > 0) return fail(`pair pending takes no arguments`);
@@ -208,9 +209,7 @@ export async function main(argv: string[]): Promise<number> {
     if (command === "backup") return backup(config, positionals[0]!, values.force ?? false);
 
     if (command === "admin-token") {
-      const { token, source } = loadAdminToken(config, createLogger({ write: (l) => void process.stderr.write(`${l}\n`) }), {
-        rotate: values.rotate ?? false,
-      });
+      const { token, source } = loadAdminToken(config, stderrLog, { rotate: values.rotate ?? false });
       if (source === "env" && !values.rotate) process.stderr.write("note: IZLE_ADMIN_TOKEN is set and overrides the token file\n");
       if (!values.link) {
         process.stdout.write(`${token}\n`);
@@ -241,11 +240,7 @@ export async function main(argv: string[]): Promise<number> {
     process.on("SIGHUP", () => void reloadOnSignal(server.ctx, "SIGHUP"));
     return -1; // keep running
   } catch (err) {
-    if (err instanceof ConfigError) {
-      process.stderr.write(`izle-server: ${err.message}\n`);
-      return 1;
-    }
-    if (err instanceof ResolverLoadError || err instanceof BackupError) {
+    if (err instanceof ConfigError || err instanceof ResolverLoadError || err instanceof BackupError) {
       process.stderr.write(`izle-server: ${err.message}\n`);
       return 1;
     }
