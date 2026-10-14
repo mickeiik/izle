@@ -19,6 +19,9 @@ contract share one version number. How to update (back up, update the server, th
   on the TV.
 - **`izle-server backup <file>`** writes a consistent copy of the database while the service runs. The
   self-hosting guide's backup section uses it.
+- **Catalog build history:** the server records every catalog build it loads, with the shows and episodes it added
+  and removed, and when each episode first appeared. The first load of a catalog is the starting point: nothing in it
+  counts as new.
 - **Pairing from the server's shell:** `izle-server pair pending` lists the codes waiting for approval and
   `izle-server pair approve <code> [name]` approves one.
 - **Sign-in link for a phone:** `izle-server admin-token --link` prints a sign-in link for the admin page and the
@@ -49,9 +52,9 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Compatibility
 
-- **Database migration 3.** The new server migrates the database on its first start, and an older server refuses a
-  migrated database. To go back, install the older package and restore the backup taken before the update
-  ([updates and backups](docs/deploy/self-hosting.md#10-updates-and-backups)).
+- **Database migrations 3 and 4.** The new server migrates the database on its first start, and an older server
+  refuses a migrated database. To go back, install the older package and restore the backup taken before the
+  update ([updates and backups](docs/deploy/self-hosting.md#10-updates-and-backups)).
 - Update the server before the TVs. The new remote commands and autoplay need the new TV app; a 0.2.0 app ignores
   commands it does not know.
 

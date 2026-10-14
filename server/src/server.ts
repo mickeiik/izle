@@ -10,6 +10,7 @@ import { CatalogService } from "./catalog.ts";
 import { CompanionService } from "./companion.ts";
 import { DEFAULT_RESOLVE_BUDGET_MS, DEFAULT_RESOLVE_DEADLINE_MS, type ServerConfig } from "./config.ts";
 import { EventHub } from "./events.ts";
+import { CatalogHistory } from "./history.ts";
 import { createLogger, type Logger } from "./log.ts";
 import { PairingService, type PairingOptions } from "./pairing.ts";
 import { ProblemService } from "./problems.ts";
@@ -51,9 +52,18 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const resolverModule: LoadedResolver | null = config.resolver
     ? await loadResolver({ module: config.resolver.module, config: config.resolver.config, dataDir: config.dataDir, log })
     : null;
-  const catalog = new CatalogService(config.catalog.dir, log, now, resolverModule ? new Set(resolverModule.adapters.keys()) : null);
-  await catalog.load();
+  // The store comes first so that the catalog history records the first load too (it is the baseline).
   const store = new Store(path.join(config.dataDir, "izle.db"));
+  const history = new CatalogHistory(store, log);
+  const catalog = new CatalogService(config.catalog.dir, log, now, resolverModule ? new Set(resolverModule.adapters.keys()) : null, {
+    onLoaded: (next, previous) => void history.record(next, previous),
+  });
+  try {
+    await catalog.load();
+  } catch (err) {
+    store.close();
+    throw err;
+  }
   const events = new EventHub();
   // Problem reports name the episode and source of a TV's playback session (the resolver is created below).
   const problems = new ProblemService({ store, catalog, log, now, session: (id) => resolver.session(id) });

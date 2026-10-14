@@ -31,6 +31,13 @@ export interface LoadedCatalog {
 
 export type ReloadResult = { ok: true; catalog: LoadedCatalog } | { ok: false; issues: ValidationIssue[] };
 
+/** Called after every successful load with the catalog now active and the one it replaced (null at start). */
+export type CatalogLoadedHook = (next: LoadedCatalog, previous: LoadedCatalog | null) => void;
+
+export interface CatalogServiceOptions {
+  onLoaded?: CatalogLoadedHook;
+}
+
 const POSTER_FILE = /^[0-9a-f]{64}\.(jpg|png|webp)$/;
 
 /** Case-, accent- and Turkish-dotless-i-insensitive form used for catalog search. */
@@ -53,12 +60,20 @@ export class CatalogService {
    * an adapter the module does not provide is refused (at start and on reload).
    */
   private readonly adapters: ReadonlySet<string> | null;
+  private readonly onLoaded: CatalogLoadedHook | undefined;
 
-  constructor(dir: string, log: Logger, now: () => number = Date.now, adapters: ReadonlySet<string> | null = null) {
+  constructor(
+    dir: string,
+    log: Logger,
+    now: () => number = Date.now,
+    adapters: ReadonlySet<string> | null = null,
+    options: CatalogServiceOptions = {},
+  ) {
     this.dir = dir;
     this.log = log;
     this.now = now;
     this.adapters = adapters;
+    this.onLoaded = options.onLoaded;
   }
 
   private async read(): Promise<LoadedCatalog> {
@@ -89,26 +104,39 @@ export class CatalogService {
     }
   }
 
+  /** Makes `c` the active catalog and tells the hook. */
+  private activate(c: LoadedCatalog, msg: string): void {
+    const previous = this.loaded;
+    this.loaded = c;
+    this.report(c, msg);
+    if (!this.onLoaded) return;
+    // The catalog is active either way: a failing hook (the history) must not turn a good load into a failed one.
+    try {
+      this.onLoaded(c, previous);
+    } catch (err) {
+      this.log.error("catalog load hook failed", { catalogId: c.manifest.catalogId, buildId: c.manifest.buildId, error: err });
+    }
+  }
+
   /** Initial load; throws BundleValidationError when the bundle is invalid. */
   async load(): Promise<LoadedCatalog> {
     const c = await this.read();
-    this.loaded = c;
-    this.report(c, "catalog loaded");
+    this.activate(c, "catalog loaded");
     return c;
   }
 
   /** Reloads from disk. On failure the previous catalog stays active. */
   async reload(): Promise<ReloadResult> {
+    let c: LoadedCatalog;
     try {
-      const c = await this.read();
-      this.loaded = c;
-      this.report(c, "catalog reloaded");
-      return { ok: true, catalog: c };
+      c = await this.read();
     } catch (err) {
       const issues = err instanceof BundleValidationError ? err.issues : [{ severity: "error" as const, file: ".", path: "", message: "cannot load bundle" }];
       this.log.error("catalog reload failed; keeping the previous catalog", { errors: issues.filter((i) => i.severity === "error").length });
       return { ok: false, issues };
     }
+    this.activate(c, "catalog reloaded");
+    return { ok: true, catalog: c };
   }
 
   get current(): LoadedCatalog {

@@ -112,6 +112,26 @@ export const MIGRATIONS: string[] = [
   CREATE INDEX problems_by_device ON problems (device_id, at);
   ALTER TABLE devices ADD COLUMN autoplay_on_start INTEGER NOT NULL DEFAULT 0;
   `,
+  // 4 — catalog history: which build first carried each episode, a record per loaded build, when an item went on a
+  // home list, and whether a cursor was placed by the wrap after the last episode (new episodes then play first).
+  `
+  ALTER TABLE home_entries ADD COLUMN added_at INTEGER;            -- when the item first went on this TV's list (epoch ms)
+  UPDATE home_entries SET added_at = CAST(strftime('%s','now') AS INTEGER) * 1000;
+  ALTER TABLE item_cursor ADD COLUMN wrapped INTEGER NOT NULL DEFAULT 0;   -- 1: placed by the wrap after the last episode
+  CREATE TABLE catalog_builds (
+    catalog_id TEXT NOT NULL, build_id TEXT NOT NULL, built_at TEXT NOT NULL, loaded_at INTEGER NOT NULL,
+    baseline INTEGER NOT NULL DEFAULT 0, items INTEGER NOT NULL, episodes INTEGER NOT NULL,
+    items_added INTEGER NOT NULL, items_removed INTEGER NOT NULL, episodes_added INTEGER NOT NULL, episodes_removed INTEGER NOT NULL,
+    changes_json TEXT NOT NULL,                                     -- lists capped at 500 each; counts exact
+    PRIMARY KEY (catalog_id, build_id));
+  CREATE INDEX catalog_builds_by_time ON catalog_builds (catalog_id, loaded_at);
+  CREATE TABLE catalog_seen (
+    catalog_id TEXT NOT NULL, episode_id TEXT NOT NULL, item_id TEXT NOT NULL,
+    first_seen_at INTEGER NOT NULL,                                 -- 0 for episodes present at the first load ever
+    build_id TEXT NOT NULL, removed_at INTEGER,                     -- set while absent from the loaded catalog
+    PRIMARY KEY (catalog_id, episode_id));
+  CREATE INDEX catalog_seen_by_item ON catalog_seen (catalog_id, item_id, first_seen_at);
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
@@ -157,6 +177,63 @@ export interface Cursor {
   itemId: string;
   episodeId: string;
   updatedAt: number;
+  /** Placed by the wrap to the first episode after the last one was finished: the item was watched to the end. */
+  wrapped: boolean;
+}
+
+/** An item on a device's home list and when it was put there (epoch ms; null only for rows written outside the store). */
+export interface HomeEntry {
+  itemId: string;
+  addedAt: number | null;
+}
+
+/** An episode of a catalog as the history knows it: when it first appeared and whether it is gone now. */
+export interface SeenEpisode {
+  episodeId: string;
+  itemId: string;
+  /** When the first build carrying it was loaded (epoch ms); 0 for episodes present at the first load ever. */
+  firstSeenAt: number;
+  /** The build that first carried it. */
+  buildId: string;
+  /** Set while the loaded catalog does not carry it. */
+  removedAt: number | null;
+}
+
+/** What a build changed against the catalog loaded before it. Each list holds at most 500 entries; the build's counts are exact. */
+export interface CatalogChanges {
+  items: {
+    added: Array<{ id: string; title: string; kind: string }>;
+    /** Title from the catalog loaded before; null when that catalog was not in memory (a restart). */
+    removed: Array<{ id: string; title: string | null }>;
+  };
+  episodes: {
+    added: Array<{
+      id: string;
+      itemId: string;
+      itemTitle: string;
+      season: number | null;
+      number: number | null;
+      label: string | null;
+      playbackAllowed: boolean;
+    }>;
+    removed: Array<{ id: string; itemId: string; itemTitle: string | null }>;
+  };
+}
+
+/** One loaded build of a catalog. Counts are exact; the lists in its changes are capped. */
+export interface CatalogBuild {
+  catalogId: string;
+  buildId: string;
+  builtAt: string;
+  loadedAt: number;
+  /** The first load of this catalog id: everything in it was already there, nothing counts as new. */
+  baseline: boolean;
+  items: number;
+  episodes: number;
+  itemsAdded: number;
+  itemsRemoved: number;
+  episodesAdded: number;
+  episodesRemoved: number;
 }
 
 export interface Command {
@@ -278,6 +355,42 @@ function toCompanionLink(r: Row): CompanionLink {
     offsetMs: num(r.offset_ms),
     rate: num(r.rate),
     updatedAt: num(r.updated_at),
+  };
+}
+
+function toCursor(r: Row): Cursor {
+  return {
+    catalogId: str(r.catalog_id),
+    itemId: str(r.item_id),
+    episodeId: str(r.episode_id),
+    updatedAt: num(r.updated_at),
+    wrapped: num(r.wrapped) === 1,
+  };
+}
+
+function toSeenEpisode(r: Row): SeenEpisode {
+  return {
+    episodeId: str(r.episode_id),
+    itemId: str(r.item_id),
+    firstSeenAt: num(r.first_seen_at),
+    buildId: str(r.build_id),
+    removedAt: numOrNull(r.removed_at),
+  };
+}
+
+function toCatalogBuild(r: Row): CatalogBuild {
+  return {
+    catalogId: str(r.catalog_id),
+    buildId: str(r.build_id),
+    builtAt: str(r.built_at),
+    loadedAt: num(r.loaded_at),
+    baseline: num(r.baseline) === 1,
+    items: num(r.items),
+    episodes: num(r.episodes),
+    itemsAdded: num(r.items_added),
+    itemsRemoved: num(r.items_removed),
+    episodesAdded: num(r.episodes_added),
+    episodesRemoved: num(r.episodes_removed),
   };
 }
 
@@ -493,16 +606,25 @@ export class Store {
   // --- home ----------------------------------------------------------------------------------------------------
 
   getHome(deviceId: string, catalogId: string): string[] {
-    return this.all("SELECT item_id FROM home_entries WHERE device_id = ? AND catalog_id = ? ORDER BY position", deviceId, catalogId).map(
-      (r) => str(r.item_id),
+    return this.getHomeEntries(deviceId, catalogId).map((e) => e.itemId);
+  }
+
+  getHomeEntries(deviceId: string, catalogId: string): HomeEntry[] {
+    return this.all("SELECT item_id, added_at FROM home_entries WHERE device_id = ? AND catalog_id = ? ORDER BY position", deviceId, catalogId).map(
+      (r) => ({ itemId: str(r.item_id), addedAt: numOrNull(r.added_at) }),
     );
   }
 
-  setHome(deviceId: string, catalogId: string, itemIds: string[]): void {
+  /**
+   * Replaces the device's home list. Items already on it keep the date they were put there (a reorder changes
+   * nothing); new ones get `now`. Episodes added to the catalog before an item went on the list are not new to it.
+   */
+  setHome(deviceId: string, catalogId: string, itemIds: string[], now: number): void {
     this.transaction(() => {
+      const addedAt = new Map(this.getHomeEntries(deviceId, catalogId).map((e) => [e.itemId, e.addedAt]));
       this.run("DELETE FROM home_entries WHERE device_id = ?", deviceId);
-      const insert = this.db.prepare("INSERT INTO home_entries (device_id, position, catalog_id, item_id) VALUES (?, ?, ?, ?)");
-      itemIds.forEach((itemId, i) => insert.run(deviceId, i, catalogId, itemId));
+      const insert = this.db.prepare("INSERT INTO home_entries (device_id, position, catalog_id, item_id, added_at) VALUES (?, ?, ?, ?, ?)");
+      itemIds.forEach((itemId, i) => insert.run(deviceId, i, catalogId, itemId, addedAt.get(itemId) ?? now));
     });
   }
 
@@ -546,29 +668,33 @@ export class Store {
     this.run("DELETE FROM progress WHERE device_id = ? AND catalog_id = ? AND episode_id = ?", deviceId, catalogId, episodeId);
   }
 
+  /** When the device last reported progress on any episode of the item (epoch ms), or null. */
+  lastProgressAt(deviceId: string, catalogId: string, itemId: string): number | null {
+    const r = this.get("SELECT MAX(updated_at) AS at FROM progress WHERE device_id = ? AND catalog_id = ? AND item_id = ?", deviceId, catalogId, itemId);
+    return numOrNull(r?.at);
+  }
+
   getCursor(deviceId: string, catalogId: string, itemId: string): Cursor | null {
     const r = this.get("SELECT * FROM item_cursor WHERE device_id = ? AND catalog_id = ? AND item_id = ?", deviceId, catalogId, itemId);
-    return r ? { catalogId: str(r.catalog_id), itemId: str(r.item_id), episodeId: str(r.episode_id), updatedAt: num(r.updated_at) } : null;
+    return r ? toCursor(r) : null;
   }
 
   listCursors(deviceId: string, catalogId: string): Cursor[] {
-    return this.all("SELECT * FROM item_cursor WHERE device_id = ? AND catalog_id = ? ORDER BY updated_at DESC", deviceId, catalogId).map((r) => ({
-      catalogId: str(r.catalog_id),
-      itemId: str(r.item_id),
-      episodeId: str(r.episode_id),
-      updatedAt: num(r.updated_at),
-    }));
+    return this.all("SELECT * FROM item_cursor WHERE device_id = ? AND catalog_id = ? ORDER BY updated_at DESC", deviceId, catalogId).map(toCursor);
   }
 
-  setCursor(deviceId: string, c: Cursor): void {
+  /** Upserts the item's cursor. `wrapped` defaults to false: only the wrap after the last episode sets it. */
+  setCursor(deviceId: string, c: Omit<Cursor, "wrapped"> & { wrapped?: boolean }): void {
     this.run(
-      `INSERT INTO item_cursor (device_id, catalog_id, item_id, episode_id, updated_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT (device_id, catalog_id, item_id) DO UPDATE SET episode_id = excluded.episode_id, updated_at = excluded.updated_at`,
+      `INSERT INTO item_cursor (device_id, catalog_id, item_id, episode_id, updated_at, wrapped) VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT (device_id, catalog_id, item_id) DO UPDATE SET episode_id = excluded.episode_id, updated_at = excluded.updated_at,
+         wrapped = excluded.wrapped`,
       deviceId,
       c.catalogId,
       c.itemId,
       c.episodeId,
       c.updatedAt,
+      c.wrapped ? 1 : 0,
     );
   }
 
@@ -695,6 +821,89 @@ export class Store {
           seq: num(r.seq),
         }
       : null;
+  }
+
+  // --- catalog history -----------------------------------------------------------------------------------------
+
+  /** Every episode the catalog has ever carried, present or removed, ordered by item then episode id. */
+  catalogSeen(catalogId: string): SeenEpisode[] {
+    return this.all("SELECT * FROM catalog_seen WHERE catalog_id = ? ORDER BY item_id, episode_id", catalogId).map(toSeenEpisode);
+  }
+
+  insertSeen(catalogId: string, buildId: string, firstSeenAt: number, episodes: ReadonlyArray<{ episodeId: string; itemId: string }>): void {
+    const insert = this.db.prepare(
+      "INSERT INTO catalog_seen (catalog_id, episode_id, item_id, first_seen_at, build_id) VALUES (?, ?, ?, ?, ?)",
+    );
+    for (const e of episodes) insert.run(catalogId, e.episodeId, e.itemId, firstSeenAt, buildId);
+  }
+
+  /** Marks episodes absent from the loaded catalog; an episode already marked keeps its first removal time. */
+  markSeenRemoved(catalogId: string, episodeIds: readonly string[], at: number): void {
+    const update = this.db.prepare("UPDATE catalog_seen SET removed_at = ? WHERE catalog_id = ? AND episode_id = ? AND removed_at IS NULL");
+    for (const id of episodeIds) update.run(at, catalogId, id);
+  }
+
+  /** Episodes back in the loaded catalog: present again, with their first-seen date unchanged. */
+  clearSeenRemoved(catalogId: string, episodeIds: readonly string[]): void {
+    const update = this.db.prepare("UPDATE catalog_seen SET removed_at = NULL WHERE catalog_id = ? AND episode_id = ?");
+    for (const id of episodeIds) update.run(catalogId, id);
+  }
+
+  /** Episodes the loaded catalog files under another item than before (their first-seen date is unchanged). */
+  moveSeen(catalogId: string, episodes: ReadonlyArray<{ episodeId: string; itemId: string }>): void {
+    const update = this.db.prepare("UPDATE catalog_seen SET item_id = ? WHERE catalog_id = ? AND episode_id = ?");
+    for (const e of episodes) update.run(e.itemId, catalogId, e.episodeId);
+  }
+
+  /** The item's present episodes that first appeared after `sinceMs`, oldest first. Baseline episodes (0) never do. */
+  episodesSeenAfter(catalogId: string, itemId: string, sinceMs: number): string[] {
+    return this.all(
+      `SELECT episode_id FROM catalog_seen WHERE catalog_id = ? AND item_id = ? AND removed_at IS NULL AND first_seen_at > ?
+       ORDER BY first_seen_at, episode_id`,
+      catalogId,
+      itemId,
+      sinceMs,
+    ).map((r) => str(r.episode_id));
+  }
+
+  /** Stores a loaded build. A build id loaded again later (a rollback) replaces its row with the new load. */
+  recordCatalogBuild(b: CatalogBuild, changes: CatalogChanges): void {
+    this.run(
+      `INSERT INTO catalog_builds (catalog_id, build_id, built_at, loaded_at, baseline, items, episodes,
+         items_added, items_removed, episodes_added, episodes_removed, changes_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (catalog_id, build_id) DO UPDATE SET built_at = excluded.built_at, loaded_at = excluded.loaded_at,
+         baseline = excluded.baseline, items = excluded.items, episodes = excluded.episodes,
+         items_added = excluded.items_added, items_removed = excluded.items_removed,
+         episodes_added = excluded.episodes_added, episodes_removed = excluded.episodes_removed, changes_json = excluded.changes_json`,
+      b.catalogId,
+      b.buildId,
+      b.builtAt,
+      b.loadedAt,
+      b.baseline ? 1 : 0,
+      b.items,
+      b.episodes,
+      b.itemsAdded,
+      b.itemsRemoved,
+      b.episodesAdded,
+      b.episodesRemoved,
+      JSON.stringify(changes),
+    );
+  }
+
+  /** The catalog's builds, most recently loaded first (without their change lists). */
+  listCatalogBuilds(catalogId: string, limit: number): CatalogBuild[] {
+    return this.all(
+      `SELECT catalog_id, build_id, built_at, loaded_at, baseline, items, episodes, items_added, items_removed, episodes_added, episodes_removed
+       FROM catalog_builds WHERE catalog_id = ? ORDER BY loaded_at DESC, rowid DESC LIMIT ?`,
+      catalogId,
+      limit,
+    ).map(toCatalogBuild);
+  }
+
+  getCatalogBuild(catalogId: string, buildId: string): { build: CatalogBuild; changes: CatalogChanges } | null {
+    const r = this.get("SELECT * FROM catalog_builds WHERE catalog_id = ? AND build_id = ?", catalogId, buildId);
+    return r ? { build: toCatalogBuild(r), changes: JSON.parse(str(r.changes_json)) as CatalogChanges } : null;
   }
 
   // --- companion links -----------------------------------------------------------------------------------------

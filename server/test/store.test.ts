@@ -28,12 +28,12 @@ test("refuses a database written by a newer server", async () => {
 test("deleting a device cascades to its rows; transactions roll back on error", async () => {
   const s = new Store(path.join(await tempDir(), "izle.db"));
   s.createDevice({ id: "d1", name: "TV", tokenHash: "h1", now: 1 });
-  s.setHome("d1", "c", ["a", "b"]);
+  s.setHome("d1", "c", ["a", "b"], 1);
   s.upsertProgress("d1", { catalogId: "c", itemId: "a", episodeId: "a.1", positionMs: 5, durationMs: 10, status: "watching", updatedAt: 2 });
   s.insertCommand("d1", "stop", {}, 3);
   assert.throws(() =>
     s.transaction(() => {
-      s.setHome("d1", "c", ["x"]);
+      s.setHome("d1", "c", ["x"], 2);
       throw new Error("boom");
     }),
   );
@@ -127,5 +127,108 @@ test("migration 3: devices gain autoplay (off), problems are kept per device, ne
   assert.throws(() => s.insertProblem({ ...base, deviceId: "ghost", at: 1, code: "x" }, 4), /FOREIGN KEY/);
   s.deleteDevice("d2");
   assert.deepEqual(s.listProblems("d2", 10), [], "deleting a device deletes its problems");
+  s.close();
+});
+
+test("migration 4: home entries keep the date they were added, cursors carry the wrap flag", async () => {
+  const file = path.join(await tempDir(), "izle.db");
+  const raw = new DatabaseSync(file);
+  for (const m of MIGRATIONS.slice(0, 3)) raw.exec(m);
+  raw.exec("PRAGMA user_version = 3");
+  raw.exec("INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'TV', 'h', 1)");
+  raw.exec("INSERT INTO home_entries (device_id, position, catalog_id, item_id) VALUES ('d1', 0, 'c', 'a'), ('d1', 1, 'c', 'b')");
+  raw.exec("INSERT INTO item_cursor (device_id, catalog_id, item_id, episode_id, updated_at) VALUES ('d1', 'c', 'a', 'a.2', 5)");
+  raw.close();
+
+  const before = Date.now();
+  const s = new Store(file);
+  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  const backfilled = s.getHomeEntries("d1", "c");
+  const at = backfilled[0]!.addedAt!;
+  assert.ok(at >= Math.floor(before / 1000) * 1000 && at <= Date.now(), "existing rows are backfilled to the migration time");
+  assert.deepEqual(backfilled, [
+    { itemId: "a", addedAt: at },
+    { itemId: "b", addedAt: at },
+  ]);
+  assert.deepEqual(s.getCursor("d1", "c", "a"), { catalogId: "c", itemId: "a", episodeId: "a.2", updatedAt: 5, wrapped: false });
+
+  s.setHome("d1", "c", ["b", "a"], at + 1000);
+  assert.deepEqual(s.getHomeEntries("d1", "c"), [
+    { itemId: "b", addedAt: at },
+    { itemId: "a", addedAt: at },
+  ], "a reorder changes no date");
+  s.setHome("d1", "c", ["b", "x", "a"], at + 2000);
+  assert.deepEqual(s.getHomeEntries("d1", "c").map((e) => [e.itemId, e.addedAt]), [["b", at], ["x", at + 2000], ["a", at]]);
+  s.setHome("d1", "c", ["x"], at + 3000);
+  s.setHome("d1", "c", ["x", "a"], at + 4000);
+  assert.deepEqual(s.getHomeEntries("d1", "c").map((e) => [e.itemId, e.addedAt]), [["x", at + 2000], ["a", at + 4000]], "taken off and put back: a new date");
+  assert.deepEqual(s.getHome("d1", "c"), ["x", "a"]);
+
+  s.setCursor("d1", { catalogId: "c", itemId: "a", episodeId: "a.1", updatedAt: 6, wrapped: true });
+  assert.equal(s.getCursor("d1", "c", "a")?.wrapped, true);
+  assert.deepEqual(s.listCursors("d1", "c").map((c) => [c.itemId, c.wrapped]), [["a", true]]);
+  s.setCursor("d1", { catalogId: "c", itemId: "a", episodeId: "a.1", updatedAt: 7 });
+  assert.equal(s.getCursor("d1", "c", "a")?.wrapped, false, "a write without the flag is an ordinary cursor");
+
+  assert.equal(s.lastProgressAt("d1", "c", "a"), null);
+  const p = { catalogId: "c", itemId: "a", positionMs: 1, durationMs: 10, status: "watching" as const };
+  s.upsertProgress("d1", { ...p, episodeId: "a.1", updatedAt: 9 });
+  s.upsertProgress("d1", { ...p, episodeId: "a.2", updatedAt: 4 });
+  assert.equal(s.lastProgressAt("d1", "c", "a"), 9);
+  assert.equal(s.lastProgressAt("d1", "c", "b"), null);
+  s.close();
+});
+
+test("catalog history rows: episodes seen after a date, removal and return, builds newest first", async () => {
+  const s = new Store(path.join(await tempDir(), "izle.db"));
+  s.insertSeen("c", "b1", 0, [
+    { episodeId: "a.1", itemId: "a" },
+    { episodeId: "a.2", itemId: "a" },
+  ]);
+  s.insertSeen("c", "b2", 100, [{ episodeId: "a.3", itemId: "a" }]);
+  s.insertSeen("other", "o1", 100, [{ episodeId: "a.4", itemId: "a" }]);
+  assert.deepEqual(s.episodesSeenAfter("c", "a", 0), ["a.3"], "baseline episodes (0) never count");
+  assert.deepEqual(s.episodesSeenAfter("c", "a", 50), ["a.3"]);
+  assert.deepEqual(s.episodesSeenAfter("c", "a", 100), []);
+  assert.deepEqual(s.episodesSeenAfter("c", "b", 0), []);
+
+  s.markSeenRemoved("c", ["a.3"], 200);
+  s.markSeenRemoved("c", ["a.3"], 300);
+  assert.deepEqual(s.episodesSeenAfter("c", "a", 0), [], "removed episodes do not count");
+  assert.equal(s.catalogSeen("c").find((e) => e.episodeId === "a.3")?.removedAt, 200, "the first removal time stays");
+  s.clearSeenRemoved("c", ["a.3"]);
+  assert.deepEqual(s.episodesSeenAfter("c", "a", 0), ["a.3"]);
+  s.moveSeen("c", [{ episodeId: "a.3", itemId: "b" }]);
+  assert.deepEqual(s.episodesSeenAfter("c", "b", 0), ["a.3"]);
+  assert.deepEqual(s.catalogSeen("c").map((e) => [e.episodeId, e.itemId, e.firstSeenAt, e.buildId, e.removedAt]), [
+    ["a.1", "a", 0, "b1", null],
+    ["a.2", "a", 0, "b1", null],
+    ["a.3", "b", 100, "b2", null],
+  ]);
+
+  const build = (buildId: string, loadedAt: number) => ({
+    catalogId: "c",
+    buildId,
+    builtAt: "2026-10-14T00:00:00Z",
+    loadedAt,
+    baseline: false,
+    items: 2,
+    episodes: 3,
+    itemsAdded: 0,
+    itemsRemoved: 0,
+    episodesAdded: 1,
+    episodesRemoved: 0,
+  });
+  const changes = { items: { added: [], removed: [] }, episodes: { added: [], removed: [{ id: "a.9", itemId: "a", itemTitle: null }] } };
+  s.recordCatalogBuild({ ...build("b1", 10), baseline: true, episodesAdded: 0 }, { items: { added: [], removed: [] }, episodes: { added: [], removed: [] } });
+  s.recordCatalogBuild(build("b2", 20), changes);
+  s.recordCatalogBuild(build("b3", 30), changes);
+  assert.deepEqual(s.listCatalogBuilds("c", 10).map((b) => [b.buildId, b.baseline]), [["b3", false], ["b2", false], ["b1", true]]);
+  assert.deepEqual(s.listCatalogBuilds("c", 1).map((b) => b.buildId), ["b3"]);
+  assert.deepEqual(s.listCatalogBuilds("other", 10), []);
+  assert.deepEqual(s.getCatalogBuild("c", "b2"), { build: build("b2", 20), changes });
+  assert.equal(s.getCatalogBuild("c", "ghost"), null);
+  s.recordCatalogBuild(build("b2", 40), changes);
+  assert.deepEqual(s.listCatalogBuilds("c", 10).map((b) => b.buildId), ["b2", "b3", "b1"], "a build loaded again moves to its new load time");
   s.close();
 });

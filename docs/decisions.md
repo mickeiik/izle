@@ -848,3 +848,39 @@ the resolve answer's `expiresAt`, which the TV used to drop). Routine decisions:
   server (sample catalog): the tiles appeared, an owner's message showed as the banner over Home, and with autoplay
   switched on a relaunch showed the countdown for the show played last and then started it (the server reported the
   TV playing). The feature-level evidence is in `docs/verification/tv-controls/`.
+
+## Catalog history (2026-10-14)
+
+- **Database migration 4** adds `home_entries.added_at` (existing rows backfilled to the migration time),
+  `item_cursor.wrapped` (default 0) and the tables `catalog_builds` (one row per loaded build: counts, what it added
+  and removed) and `catalog_seen` (one row per episode a catalog has ever carried: when it first appeared, which
+  build brought it, and whether it is gone now).
+- **A build is recorded only when its build id differs from the latest one recorded for that catalog id.** A restart
+  or a reload of the same bundle changes nothing. A build id that comes back later (a rollback) is recorded again
+  under its id: the table is keyed by catalog and build id, so its row moves to the new load time and lists the
+  changes against the build it replaced.
+- **The first load of a catalog id is its baseline:** every episode is stored with `first_seen_at` 0 and the build
+  has `baseline = 1` and no changes, so nothing present at that first load ever counts as new. A reinstalled server
+  (a fresh `izle.db`) starts a new baseline; two catalog ids keep separate histories.
+- **Later loads:** new episodes are stored with the load time, absent ones get `removed_at` (an episode already
+  absent keeps its first removal time), and returning ones get it cleared, keeping their first-seen date and build;
+  they are not listed as added. An item counts as present while any of its episodes is, so a show whose episodes all
+  come back is listed as added again, while its episodes are not. An episode the bundle files under another item
+  follows it (`Store.moveSeen`, a helper beyond the plan's list), so the old item is not reported removed twice.
+- **Change lists** (`changes_json`) are capped at 500 entries each; the counts on the build row are exact. Added
+  items and episodes are in catalog order (play order within a show); removed ones by item id, then episode id.
+  Titles of removed items come from the catalog loaded before when it has the same catalog id; after a restart onto
+  a changed bundle that catalog is not in memory and the title is null (the history keeps ids, not titles).
+- **The store is created before the catalog** so the first load at start is recorded (it is the baseline). If that
+  load fails, the store is closed again before the error propagates, as before nothing stays open.
+- **`CatalogService` takes an `onLoaded(next, previous)` hook** (an options object after the existing positional
+  arguments), called after `load()` and after a successful `reload()`. A failing hook is logged ("catalog load hook
+  failed") and never undoes the load; the history records each build in one transaction, so a failure leaves no
+  partial record. SIGHUP and the admin reload route are unchanged.
+- **`setHome` keeps the date of items already on the list**: a reorder changes nothing, new items get the current
+  time, and an item taken off and put back gets a new date. `getHomeEntries` returns `addedAt` as nullable because
+  the column is (rows written outside the store).
+- **`Cursor.wrapped`** is stored but not yet used: `setCursor` writes 0 unless told otherwise, so every existing
+  cursor write stays an ordinary cursor. The appended-episodes rule that reads it comes with the TV state change.
+- `listCatalogBuilds` returns the build rows without their change lists (newest load first); `getCatalogBuild`
+  returns one build with its changes.

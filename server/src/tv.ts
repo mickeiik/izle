@@ -331,7 +331,7 @@ export class TvService {
       if (!item) throw new HttpError(400, "unknown_item", "no such item in the catalog", { itemId: id });
       if (!isPlayable(item)) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed", { itemId: id });
     }
-    this.s.store.setHome(deviceId, this.s.catalog.catalogId, itemIds);
+    this.s.store.setHome(deviceId, this.s.catalog.catalogId, itemIds, this.s.now());
     return this.bump(deviceId);
   }
 }
