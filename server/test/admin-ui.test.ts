@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
+  SEARCH_MAX,
   buildSummary,
   canControlPlayback,
   candidateOptions,
@@ -9,8 +10,10 @@ import {
   companionTarget,
   continueText,
   episodeName,
+  episodeStateLabel,
   episodeStates,
   errorMessage,
+  errorText,
   formatClock,
   formatCode,
   formatCountdown,
@@ -19,15 +22,23 @@ import {
   formatRelative,
   groupEpisodeChanges,
   isActive,
+  issueLine,
   languageLabel,
   moveItem,
   originLabel,
   parseCandidate,
   percent,
+  playbackState,
   plural,
+  primarySubtag,
   problemContext,
   pushSample,
+  sameLanguage,
+  searchSummary,
   serverAddress,
+  shortId,
+  showMeta,
+  sourceReport,
   syncDecision,
   tokenFromHash,
   triedText,
@@ -205,6 +216,98 @@ test("admin helpers: build summaries and episode changes grouped by show", () =>
   );
   assert.deepEqual(groupEpisodeChanges([]), []);
   assert.equal(errorMessage("unknown_build"), "That build is not in the catalog's history.");
+});
+
+test("admin helpers: what the views say (now playing, episode chips, show lines, searches, ids, issues, errors)", () => {
+  const n = { state: "playing", updatedAt: ago(20_000), itemTitle: "X", episodeTitle: null, positionMs: 1, durationMs: 2 };
+  assert.deepEqual(playbackState(n, true, NOW), { label: "Playing", tone: "ok", active: true });
+  assert.deepEqual(playbackState({ ...n, state: "paused" }, true, NOW), { label: "Paused", tone: "", active: true });
+  assert.deepEqual(playbackState({ ...n, state: "starting" }, true, NOW), { label: "Starting", tone: "", active: true });
+  assert.deepEqual(playbackState({ ...n, state: "stopped" }, true, NOW), { label: "Last played", tone: "", active: false });
+  assert.equal(playbackState(n, false, NOW).label, "Last played", "an offline TV is not playing");
+  assert.equal(playbackState({ ...n, updatedAt: ago(5 * 60_000) }, true, NOW).label, "Last played", "stale reports");
+
+  const s = (o: { playbackAllowed?: boolean; current?: boolean; watched?: boolean; percent?: number | null }) => ({
+    episode: { playbackAllowed: o.playbackAllowed ?? true },
+    current: o.current ?? false,
+    watched: o.watched ?? false,
+    percent: o.percent ?? null,
+  });
+  assert.equal(episodeStateLabel(s({ playbackAllowed: false, current: true })), "not allowed");
+  assert.equal(episodeStateLabel(s({ current: true, percent: 40 })), "next");
+  assert.equal(episodeStateLabel(s({ watched: true })), "watched");
+  assert.equal(episodeStateLabel(s({ percent: 0 })), "0%");
+  assert.equal(episodeStateLabel(s({ percent: 63 })), "63%");
+  assert.equal(episodeStateLabel(s({})), "new");
+
+  assert.equal(showMeta({ kind: "movie", year: 2026 }), "Film · 2026");
+  assert.equal(showMeta({ kind: "series", year: 2026, episodeCount: 4, playableCount: 3 }), "Series · 4 episodes · 2026");
+  assert.equal(showMeta({ kind: "series", year: null, episodeCount: 1 }), "Series · 1 episode");
+  assert.equal(showMeta({ kind: "series" }), "Series");
+  assert.equal(showMeta({ kind: "series", year: 2026, episodeCount: 4, playableCount: 3 }, { playable: true }), "Series · 4 episodes · 2026 · 3 of 4 playable");
+  assert.equal(showMeta({ kind: "movie", year: 2026, episodeCount: 1, playableCount: 0 }, { playable: true }), "Film · 2026 · not playable");
+  assert.equal(showMeta({ kind: "movie", episodeCount: 1, playableCount: 1 }, { playable: true }), "Film", "all playable: nothing to say");
+
+  assert.equal(searchSummary(3, " pro "), "3 shows match “pro”.");
+  assert.equal(searchSummary(1, "pro"), "1 show matches “pro”.");
+  assert.equal(searchSummary(0, "xyz"), "No show matches “xyz”.");
+  assert.equal(searchSummary(7, ""), "All 7 shows.");
+  assert.equal(searchSummary(1, ""), "The catalog's only show.");
+  assert.equal(searchSummary(0, ""), "The catalog has no shows.");
+  assert.equal(searchSummary(SEARCH_MAX, ""), "The first 200 shows; type a title to narrow the list.", "the server's cap");
+  assert.equal(searchSummary(SEARCH_MAX, "a"), "The first 200 shows that match “a”; type more to narrow the list.");
+
+  assert.equal(shortId("20261014-6b05c8e7"), "20261014-6b05c8e7");
+  assert.equal(shortId("20261014-6b05c8e71a2b3c4d5e6f"), "20261014-6b05c8e71a2…");
+  assert.equal(issueLine({ file: "items.json", path: "/items/3/poster", message: "file not found" }), "items.json /items/3/poster: file not found");
+  assert.equal(issueLine({ file: "bundle.json", path: null, message: "unknown format" }), "bundle.json: unknown format");
+
+  assert.equal(errorText({ code: "network" }), "The server cannot be reached.", "an ApiError's code");
+  assert.equal(errorText({ code: "hls_unsupported" }), "This browser cannot play HLS.", "the companion player's");
+  assert.equal(errorText({ code: "weird" }), "The server answered: weird.");
+  assert.equal(errorText(new TypeError("x is undefined")), "Something went wrong.", "a bug is not shown as it is");
+  assert.equal(errorText({ code: 20, name: "AbortError" }), "Something went wrong.", "a DOMException's numeric code is not one of ours");
+  assert.equal(errorText(null), "Something went wrong.");
+
+  assert.equal(primarySubtag("pt-BR"), "pt");
+  assert.equal(primarySubtag("EN"), "en");
+  assert.equal(sameLanguage("en", "en-GB"), true);
+  assert.equal(sameLanguage("TR", "tr"), true);
+  assert.equal(sameLanguage("en", "tr"), false);
+  assert.equal(sameLanguage(null, "en"), false);
+  assert.equal(sameLanguage("en", undefined), false);
+});
+
+test("admin helpers: a diagnostics source, line by line", () => {
+  const at = (iso: string) => `at ${iso}`;
+  assert.deepEqual(sourceReport({ sourceId: "missing", type: "adapter", adapterId: "example", ok: false, code: "empty", ms: 1 }, at), {
+    ok: false,
+    sourceId: "missing",
+    how: "adapter example · 1 ms",
+    lines: ["the adapter found nothing to play"],
+  });
+  const stream = { kind: "hls", inline: false, host: "127.0.0.1:8788", headerNames: ["Referer"], delivery: "proxy", languages: { audio: ["en", "tr"], subtitles: ["en"] }, expiresAt: "2026-10-14T12:00:00Z" };
+  const probe = { ok: true, status: 200, ms: 3, playlist: { master: true, variants: 1, renditions: 3, segments: 0 } };
+  assert.deepEqual(sourceReport({ sourceId: "signed-hls", type: "adapter", adapterId: "example", ok: true, ms: 2, stream, probe }, at), {
+    ok: true,
+    sourceId: "signed-hls",
+    how: "adapter example · 2 ms",
+    lines: [
+      "HLS from 127.0.0.1:8788 · through the proxy",
+      "upstream headers: Referer",
+      "audio en, tr · subtitles en",
+      "expires at 2026-10-14T12:00:00Z",
+      "probe ok (HTTP 200, 1 variant, 3 renditions, 3 ms)",
+    ],
+  });
+  const direct = { kind: "mp4", inline: true, host: null, headerNames: [], delivery: "direct", languages: { audio: null, subtitles: [] }, expiresAt: null };
+  const r = sourceReport({ sourceId: "d", type: "direct", ok: true, ms: 0, stream: direct, probe: { ok: false, status: 403, ms: 5, error: null, name: null } }, at);
+  assert.equal(r.ok, false, "a failed probe fails the source");
+  assert.equal(r.how, "direct · 0 ms");
+  assert.deepEqual(r.lines, ["MP4 (inline playlist) from ? · direct to the TV", "audio unknown · subtitles unknown", "probe failed: HTTP 403"]);
+  const media = sourceReport({ sourceId: "m", type: "direct", ok: true, ms: 0, stream: { ...direct, delivery: "unsupported" }, probe: { ok: true, ms: 4, playlist: { master: false, segments: 1 } } }, at);
+  assert.deepEqual(media.lines.slice(-1), ["probe ok (1 segment, 4 ms)"]);
+  assert.match(media.lines[0]!, /cannot be served$/);
 });
 
 test("the admin UI is served from an allow-list with a strict CSP and no inline code", async (t) => {

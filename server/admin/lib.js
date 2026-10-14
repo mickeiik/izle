@@ -1,11 +1,15 @@
 // @ts-check
-// Pure helpers of the admin UI (no DOM): formatting and small list operations. Unit-tested from node.
+// Pure helpers of the admin UI (no DOM): formatting, the texts views show, and small list operations. Unit-tested
+// from node (server/test/admin-ui.test.ts).
 
 /** Shows the server's home list cap; the server enforces it. */
 export const HOME_MAX = 12;
 
 /** The TV resumes a saved position only from 30 s on (PlaybackPlan); earlier positions start over. */
 export const RESUME_MIN_MS = 30_000;
+
+/** The most results the catalog search returns (the server's cap). */
+export const SEARCH_MAX = 200;
 
 /**
  * `1:02:03` or `12:34` for a duration in milliseconds; `–` when unknown.
@@ -154,6 +158,44 @@ export function moveItem(list, index, delta) {
 }
 
 /**
+ * @typedef {object} ShowLike
+ * @property {string} kind
+ * @property {number | null} [year]
+ * @property {number} [episodeCount]
+ * @property {number} [playableCount]
+ */
+
+/**
+ * The muted line under a show's title: Film or Series (with its episode count), the year, and with `playable` how
+ * many of its episodes may be played when that is not all of them.
+ * @param {ShowLike} item
+ * @param {{ playable?: boolean }} [o]
+ */
+export function showMeta(item, o = {}) {
+  const parts = [item.kind === "series" ? (item.episodeCount !== undefined ? `Series · ${plural(item.episodeCount, "episode")}` : "Series") : "Film"];
+  if (item.year) parts.push(String(item.year));
+  if (o.playable && item.playableCount !== undefined && item.episodeCount !== undefined && item.playableCount < item.episodeCount) {
+    parts.push(item.playableCount === 0 ? "not playable" : `${item.playableCount} of ${item.episodeCount} playable`);
+  }
+  return parts.join(" · ");
+}
+
+/**
+ * What a catalog search found, for the line above the results (screen readers hear it too): `3 shows match
+ * “pro”.`, `All 7 shows.`; at the server's cap, a hint to type more.
+ * @param {number} count
+ * @param {string} query
+ * @param {number} [cap]
+ */
+export function searchSummary(count, query, cap = SEARCH_MAX) {
+  const q = query.trim();
+  if (count === 0) return q ? `No show matches “${q}”.` : "The catalog has no shows.";
+  if (count >= cap) return q ? `The first ${count} shows that match “${q}”; type more to narrow the list.` : `The first ${count} shows; type a title to narrow the list.`;
+  if (!q) return count === 1 ? "The catalog's only show." : `All ${count} shows.`;
+  return `${plural(count, "show")} ${count === 1 ? "matches" : "match"} “${q}”.`;
+}
+
+/**
  * @typedef {object} NowPlaying
  * @property {string} state
  * @property {string} updatedAt
@@ -183,6 +225,21 @@ export function isActive(n, online, now = Date.now()) {
  */
 export function canControlPlayback(n) {
   return Boolean(n) && (n?.state === "playing" || n?.state === "paused");
+}
+
+/**
+ * The now-playing chip: Playing, Paused or Starting while the TV's reports are recent (`isActive`), else Last
+ * played. `tone` is the chip's colour: `ok` only while the picture runs.
+ * @param {NowPlaying} n
+ * @param {boolean} online
+ * @param {number} [now]
+ * @returns {{ label: string, tone: "ok" | "", active: boolean }}
+ */
+export function playbackState(n, online, now = Date.now()) {
+  if (!isActive(n, online, now)) return { label: "Last played", tone: "", active: false };
+  if (n.state === "paused") return { label: "Paused", tone: "", active: true };
+  if (n.state === "starting") return { label: "Starting", tone: "", active: true };
+  return { label: "Playing", tone: "ok", active: true };
 }
 
 /**
@@ -283,6 +340,22 @@ export function groupEpisodeChanges(list) {
   return [...groups.values()];
 }
 
+/**
+ * A build id short enough for a list row: `20261014-1a2b3c4d5e6f…`.
+ * @param {string} id
+ */
+export function shortId(id) {
+  return id.length > 24 ? `${id.slice(0, 20)}…` : id;
+}
+
+/**
+ * One line of a catalog validation issue or warning: `items.json /items/3/poster: file not found`.
+ * @param {{ file: string, path?: string | null, message: string }} issue
+ */
+export function issueLine(issue) {
+  return `${issue.file}${issue.path ? ` ${issue.path}` : ""}: ${issue.message}`;
+}
+
 /** Owner-facing text for API error codes. */
 const ERRORS = /** @type {Record<string, string>} */ ({
   unauthorized: "The admin token is not valid.",
@@ -306,6 +379,8 @@ const ERRORS = /** @type {Record<string, string>} */ ({
   unsupported_media: "That source is DASH, which a phone cannot play through the server.",
   no_playable_source: "The source could not be resolved right now.",
   no_link: "Save the timing for this episode first.",
+  hls_unsupported: "This browser cannot play HLS.",
+  hls_unavailable: "The HLS player did not load. Reload the page and try again.",
 });
 
 /**
@@ -313,6 +388,16 @@ const ERRORS = /** @type {Record<string, string>} */ ({
  */
 export function errorMessage(code) {
   return ERRORS[code] ?? `The server answered: ${code}.`;
+}
+
+/**
+ * Owner-facing text for anything that went wrong: an error that carries a code (the API's, or the companion
+ * player's) is looked up in the table above; anything else is a generic sentence.
+ * @param {unknown} err
+ */
+export function errorText(err) {
+  const code = /** @type {{ code?: unknown } | null | undefined} */ (err)?.code;
+  return typeof code === "string" ? errorMessage(code) : "Something went wrong.";
 }
 
 /**
@@ -343,6 +428,43 @@ export function triedText(code, name) {
   return name && code !== "timeout" ? `${text} (${name})` : text;
 }
 
+/**
+ * One source of a diagnostics run (`POST /admin/diagnostics/resolve`) for the item page: whether it worked
+ * (resolved, and its probe passed when there was one), how it was tried, and what came back, a line each.
+ * @param {any} s an entry of the answer's `sources`
+ * @param {(iso: string) => string} [formatTime] how an expiry time is shown
+ * @returns {{ ok: boolean, sourceId: string, how: string, lines: string[] }}
+ */
+export function sourceReport(s, formatTime = (iso) => new Date(iso).toLocaleString()) {
+  const st = s.stream;
+  const p = s.probe;
+  /** @type {string[]} */
+  const lines = [];
+  if (!s.ok) lines.push(triedText(s.code, s.name));
+  if (st) {
+    const delivery = st.delivery === "proxy" ? "through the proxy" : st.delivery === "direct" ? "direct to the TV" : "cannot be served";
+    lines.push(`${st.kind.toUpperCase()}${st.inline ? " (inline playlist)" : ""} from ${st.host ?? "?"} · ${delivery}`);
+    if (st.headerNames?.length) lines.push(`upstream headers: ${st.headerNames.join(", ")}`);
+    if (st.languages) lines.push(`audio ${st.languages.audio?.join(", ") || "unknown"} · subtitles ${st.languages.subtitles?.join(", ") || "unknown"}`);
+    if (st.expiresAt) lines.push(`expires ${formatTime(st.expiresAt)}`);
+  }
+  if (p) {
+    const pl = p.playlist;
+    const found = pl ? (pl.master ? `${plural(pl.variants, "variant")}, ${plural(pl.renditions, "rendition")}` : plural(pl.segments, "segment")) : null;
+    lines.push(
+      p.ok
+        ? `probe ok (${[p.status ? `HTTP ${p.status}` : null, found, `${p.ms} ms`].filter(Boolean).join(", ")})`
+        : `probe failed: ${p.error ?? `HTTP ${p.status}`}${p.name ? ` (${p.name})` : ""}`,
+    );
+  }
+  return {
+    ok: Boolean(s.ok && (!p || p.ok)),
+    sourceId: s.sourceId,
+    how: `${s.type === "adapter" ? `adapter ${s.adapterId}` : "direct"} · ${s.ms} ms`,
+    lines,
+  };
+}
+
 /** Languages offered in the settings selects; any other BCP 47 tag the API accepts is shown as it is. */
 export const LANGUAGES = /** @type {const} */ ([
   ["en", "English"],
@@ -365,9 +487,26 @@ export const LANGUAGES = /** @type {const} */ ([
  */
 export function languageLabel(tag, none = "–") {
   if (!tag) return none;
-  const primary = tag.split("-")[0]?.toLowerCase();
+  const primary = primarySubtag(tag);
   const known = LANGUAGES.find(([t]) => t === primary);
   return known ? `${known[1]} (${tag})` : tag;
+}
+
+/**
+ * The language of a BCP 47 tag without region or script, lower case: `pt` for `pt-BR`.
+ * @param {string} tag
+ */
+export function primarySubtag(tag) {
+  return (tag.split("-")[0] ?? "").toLowerCase();
+}
+
+/**
+ * Whether a stream's track language is the one wanted (`en` matches `en-GB`); never for an unknown side.
+ * @param {string | null | undefined} wanted
+ * @param {string | null | undefined} actual
+ */
+export function sameLanguage(wanted, actual) {
+  return Boolean(wanted && actual && primarySubtag(wanted) === primarySubtag(actual));
 }
 
 /**
@@ -388,6 +527,18 @@ export function episodeStates(episodes, cursorEpisodeId, progress) {
       percent: p && p.status !== "finished" ? percent(p.positionMs, p.durationMs) : null,
     };
   });
+}
+
+/**
+ * The chip of an episode in the "continue from" picker: not allowed (by the catalog), next (where OK continues),
+ * watched, how far it got, else new.
+ * @param {{ episode: { playbackAllowed?: boolean }, current: boolean, watched: boolean, percent: number | null }} s
+ */
+export function episodeStateLabel(s) {
+  if (!s.episode.playbackAllowed) return "not allowed";
+  if (s.current) return "next";
+  if (s.watched) return "watched";
+  return s.percent !== null ? `${s.percent}%` : "new";
 }
 
 // --- Listen along (companion audio on the owner's phone) ----------------------------------------------------------
