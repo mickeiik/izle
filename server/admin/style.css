@@ -1,6 +1,7 @@
-/* izle admin page. Tokens first (colours for light and dark, then the spacing, type and radius scales); the rules
-   below use only them. Served under `style-src 'self'`: there are no inline styles, progress widths are set
-   through CSSOM. */
+/* izle admin page. Tokens first (colours for light and dark, then the spacing, type and radius scales and the layout
+   constants); the rules below take their colours, spacing, type sizes and radii from them, and spell out only
+   one-off sizes: border and outline widths, a few widths and heights, em offsets and the breakpoints. Served under
+   `style-src 'self'`: there are no inline styles, progress widths are set through CSSOM. */
 
 :root {
   /* Colours. Text pairs reach WCAG AA (4.5:1); --line-strong (control borders) and --focus reach 3:1 against
@@ -16,13 +17,13 @@
   --accent-hover: #163d6c;
   --accent-text: #ffffff;
   --accent-soft: #e2eaf5;
-  --focus: #1d4e89;
+  --focus: var(--accent);
   --ok: #146639;
   --ok-bg: #e0f3e8;
   --warn: #7a4f00;
   --warn-bg: #fdf0d5;
   --info: #1d4e89;
-  --info-bg: #e2eaf5;
+  --info-bg: var(--accent-soft);
   --danger: #b3261e;
   --danger-bg: #fbe4e2;
   --on-danger: #ffffff;
@@ -81,13 +82,11 @@
     --accent-hover: #9cc4f4;
     --accent-text: #0b1f3a;
     --accent-soft: #1d3150;
-    --focus: #79b0ef;
     --ok: #74d6a0;
     --ok-bg: #173325;
     --warn: #f2c46b;
     --warn-bg: #3a2c10;
     --info: #9cc4f2;
-    --info-bg: #1d3150;
     --danger: #f3a39c;
     --danger-bg: #3d1a18;
     --on-danger: #2a0b09;
@@ -207,10 +206,9 @@ button.danger { color: var(--danger); border-color: var(--danger); }
 button.danger:hover { background: var(--danger-bg); }
 button.icon { min-width: var(--control-h); padding-inline: var(--space-2); }
 
-/* Unavailable: `disabled`, or `aria-disabled` (busy, or ▲ on the first row), which keeps the button focusable. */
-button:disabled, button[aria-disabled="true"],
-button.primary:disabled, button.primary[aria-disabled="true"],
-button.danger:disabled, button.danger[aria-disabled="true"] {
+/* Unavailable: `aria-disabled` (busy, or ▲ on the first row), which keeps the button focusable; buttons are never
+   `disabled`. */
+button[aria-disabled="true"], button.primary[aria-disabled="true"], button.danger[aria-disabled="true"] {
   cursor: not-allowed; background: var(--bg); border: 1px dashed var(--line-strong); color: var(--muted); font-weight: inherit;
 }
 /* Busy: the label gives way to a spinner (screen readers still read it, with aria-busy). */
@@ -231,7 +229,7 @@ input, select {
 input:disabled, select:disabled { background: var(--bg); color: var(--muted); border-color: var(--line); }
 label { display: block; font-weight: 600; margin: var(--space-4) 0 var(--space-1); }
 .form { max-width: var(--measure); }
-.form > label:first-child { margin-top: 0; }
+.form > label:first-child, .companion > label:first-child { margin-top: 0; }
 .actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-4); }
 .buttons { display: flex; gap: var(--space-1); flex-wrap: wrap; justify-content: flex-end; }
 
@@ -252,7 +250,7 @@ input[type="checkbox"] { width: 1.25rem; height: 1.25rem; min-height: 0; padding
 .grow > strong { display: block; font-weight: 600; overflow-wrap: anywhere; }
 
 /* Clickable rows: the whole row is the link, with a chevron. */
-.list > .row.link, .list > .row.link:first-child { padding: var(--space-3) var(--space-2); }
+.list > .row.link { padding: var(--space-3) var(--space-2); }
 .row.link { color: inherit; text-decoration: none; }
 .row.link:hover { background: var(--hover); color: inherit; }
 .row.link::after {
@@ -270,9 +268,10 @@ input[type="checkbox"] { width: 1.25rem; height: 1.25rem; min-height: 0; padding
   display: inline-block; font-size: var(--text-xs); line-height: var(--leading-tight); padding: var(--space-0) var(--space-2);
   border-radius: var(--radius-full); background: var(--bg); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; vertical-align: 0.05em;
 }
-.chip.ok { background: var(--ok-bg); color: var(--ok); border-color: transparent; font-weight: 600; }
-.chip.warn { background: var(--warn-bg); color: var(--warn); border-color: transparent; font-weight: 600; }
-.chip.info { background: var(--info-bg); color: var(--info); border-color: transparent; font-weight: 600; }
+.chip:is(.ok, .warn, .info) { border-color: transparent; font-weight: 600; }
+.chip.ok { background: var(--ok-bg); color: var(--ok); }
+.chip.warn { background: var(--warn-bg); color: var(--warn); }
+.chip.info { background: var(--info-bg); color: var(--info); }
 .chip.server { background: transparent; color: var(--accent); border-color: var(--accent); }
 
 .bar { height: 6px; border-radius: var(--radius-full); background: var(--line); overflow: hidden; margin-top: var(--space-2); max-width: 22rem; }
@@ -296,8 +295,8 @@ input[type="checkbox"] { width: 1.25rem; height: 1.25rem; min-height: 0; padding
 .picker { margin: var(--space-2) 0 0 calc(var(--poster-w) + var(--space-3)); padding: var(--space-2) var(--space-3); background: var(--bg); border-radius: var(--radius-md); }
 .picker > p { font-size: var(--text-sm); margin: 0 0 var(--space-2); }
 .episodes { list-style: none; padding: 0; margin: 0; }
-.episodes li { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) 0; border-top: 1px solid var(--line); flex-wrap: wrap; }
-.episodes li:first-child { border-top: none; }
+.episodes li { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) 0; flex-wrap: wrap; }
+.episodes li + li { border-top: 1px solid var(--line); }
 .episodes li.current .grow { font-weight: 600; }
 
 .search-hint { display: flex; align-items: center; gap: var(--space-2) var(--space-3); flex-wrap: wrap; margin-top: var(--space-3); }
@@ -316,12 +315,10 @@ th { font-size: var(--text-sm); font-weight: 600; color: var(--muted); border-to
 .problems .detail { font-size: var(--text-sm); overflow-wrap: anywhere; }
 
 .companion .timing { display: grid; grid-template-columns: 1fr 1fr; gap: 0 var(--space-4); max-width: var(--measure); }
-.companion > label:first-child { margin-top: 0; }
 .companion .nudge { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); flex-wrap: wrap; }
 .companion .nudge span { min-width: 7rem; font-variant-numeric: tabular-nums; }
 .companion .status { margin: var(--space-3) 0 0; font-variant-numeric: tabular-nums; }
 .companion .status.synced { color: var(--ok); }
-.companion audio { display: none; }
 
 /* --- catalog --------------------------------------------------------------------------------------------------- */
 
@@ -339,8 +336,8 @@ summary { cursor: pointer; }
 .show-head .grow > p:first-child { margin-bottom: var(--space-2); }
 .sources { list-style: none; padding: 0; margin: var(--space-1) 0 0; font-size: var(--text-sm); color: var(--muted); }
 .diag { list-style: none; padding: var(--space-2) var(--space-3); margin: var(--space-2) 0 0; background: var(--bg); border-radius: var(--radius-md); font-size: var(--text-sm); }
-.diag li { padding: var(--space-2) 0; border-top: 1px solid var(--line); }
-.diag li:first-child { border-top: none; }
+.diag li { padding: var(--space-2) 0; }
+.diag li + li { border-top: 1px solid var(--line); }
 .diag li.ok > strong { color: var(--ok); }
 .diag li.bad > strong { color: var(--danger); }
 .summary + .diag { margin-top: 0; }
