@@ -1,5 +1,6 @@
 // The owner's view of the loaded catalog (admin API): what is loaded and from which builds, search results, and an
-// item with its episodes and sources. Upstream URLs, headers and adapter refs are never part of it.
+// item with its episodes and sources. Upstream URLs, headers and adapter refs are never part of it. Also the reload
+// that the admin route and SIGHUP share.
 
 import type { CatalogItem } from "@izle/contract";
 import type { CatalogService, ReloadResult } from "./catalog.ts";
