@@ -4,140 +4,25 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import type { CommandType } from "./commands.ts";
 import type { ProgressReportStatus } from "./playback.ts";
 import type { ProblemKind } from "./problems.ts";
+import { MIGRATIONS } from "./store/migrations.ts";
+import {
+  num,
+  numOrNull,
+  str,
+  toCatalogBuild,
+  toCommand,
+  toCompanionLink,
+  toCursor,
+  toDevice,
+  toNowPlaying,
+  toPairCode,
+  toProblem,
+  toProgress,
+  toSeenEpisode,
+  type Row,
+} from "./store/rows.ts";
 
-// Schema migrations, applied in order; PRAGMA user_version records how many ran. Never edit a shipped migration,
-// append a new one.
-export const MIGRATIONS: string[] = [
-  `
-  CREATE TABLE devices (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    token_hash TEXT UNIQUE,                 -- sha256 of the device token; NULL while pairing is not completed
-    created_at INTEGER NOT NULL,
-    last_seen_at INTEGER,
-    ui_language TEXT,                       -- NULL = server/catalog default
-    preferred_audio_language TEXT,
-    subtitles_language TEXT,                -- NULL = subtitles off
-    state_version INTEGER NOT NULL DEFAULT 1
-  );
-  CREATE TABLE pair_codes (
-    code TEXT PRIMARY KEY,
-    pair_token_hash TEXT NOT NULL,
-    device_id TEXT REFERENCES devices(id) ON DELETE CASCADE,
-    created_at INTEGER NOT NULL,
-    expires_at INTEGER NOT NULL,
-    approved_at INTEGER,
-    delivered_at INTEGER
-  );
-  CREATE TABLE home_entries (
-    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
-    position INTEGER NOT NULL,
-    catalog_id TEXT NOT NULL,
-    item_id TEXT NOT NULL,
-    PRIMARY KEY (device_id, position)
-  );
-  CREATE TABLE progress (
-    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
-    catalog_id TEXT NOT NULL,
-    episode_id TEXT NOT NULL,
-    item_id TEXT NOT NULL,
-    position_ms INTEGER NOT NULL,
-    duration_ms INTEGER,
-    status TEXT NOT NULL CHECK (status IN ('watching', 'finished')),
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (device_id, catalog_id, episode_id)
-  );
-  CREATE TABLE item_cursor (
-    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
-    catalog_id TEXT NOT NULL,
-    item_id TEXT NOT NULL,
-    episode_id TEXT NOT NULL,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (device_id, catalog_id, item_id)
-  );
-  CREATE TABLE commands (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
-    type TEXT NOT NULL,
-    payload_json TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    acked_at INTEGER
-  );
-  CREATE INDEX commands_by_device ON commands (device_id, acked_at);
-  CREATE TABLE now_playing (
-    device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
-    catalog_id TEXT NOT NULL,
-    item_id TEXT NOT NULL,
-    episode_id TEXT NOT NULL,
-    source_id TEXT,
-    position_ms INTEGER NOT NULL DEFAULT 0,
-    duration_ms INTEGER,
-    state TEXT NOT NULL,
-    updated_at INTEGER NOT NULL
-  );
-  `,
-  // 2 — "Listen along": a precise playback anchor on now_playing and the owner's companion links.
-  `
-  ALTER TABLE now_playing ADD COLUMN playing INTEGER NOT NULL DEFAULT 0;   -- the player was actually advancing
-  ALTER TABLE now_playing ADD COLUMN anchor_at INTEGER;                    -- when position_ms was sampled (epoch ms)
-  ALTER TABLE now_playing ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;       -- bumped on every write (admin long-polls)
-  CREATE TABLE companion_links (
-    catalog_id TEXT NOT NULL,
-    item_id TEXT NOT NULL,
-    episode_id TEXT NOT NULL,
-    source_id TEXT NOT NULL,
-    language TEXT,                          -- NULL = the player's default audio track
-    offset_ms INTEGER NOT NULL DEFAULT 0,   -- companion position when the TV is at 0
-    rate REAL NOT NULL DEFAULT 1.0,         -- companion seconds per TV second
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (catalog_id, episode_id, source_id)
-  );
-  CREATE INDEX companion_links_by_item ON companion_links (catalog_id, item_id);
-  `,
-  // 3 — problem reports (what went wrong on a TV, for the remote owner) and the per-TV "autoplay on start" setting.
-  `
-  CREATE TABLE problems (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
-    at INTEGER NOT NULL,                    -- when it happened (epoch ms)
-    origin TEXT NOT NULL CHECK (origin IN ('tv', 'server')),
-    kind TEXT NOT NULL,                     -- playback | resolve | proxy | network | other
-    code TEXT NOT NULL,
-    catalog_id TEXT,                        -- with item_id: set when the episode was in the catalog
-    item_id TEXT,
-    episode_id TEXT,
-    source_id TEXT,
-    position_ms INTEGER,
-    http_status INTEGER,
-    detail TEXT,                            -- redacted before it is stored; never logged
-    app_version TEXT
-  );
-  CREATE INDEX problems_by_device ON problems (device_id, at);
-  ALTER TABLE devices ADD COLUMN autoplay_on_start INTEGER NOT NULL DEFAULT 0;
-  `,
-  // 4 — catalog history: which build first carried each episode, a record per loaded build, when an item went on a
-  // home list, and whether a cursor was placed by the wrap after the last episode (new episodes then play first).
-  `
-  ALTER TABLE home_entries ADD COLUMN added_at INTEGER;            -- when the item first went on this TV's list (epoch ms)
-  UPDATE home_entries SET added_at = CAST(strftime('%s','now') AS INTEGER) * 1000;
-  ALTER TABLE item_cursor ADD COLUMN wrapped INTEGER NOT NULL DEFAULT 0;   -- 1: placed by the wrap after the last episode
-  CREATE TABLE catalog_builds (
-    catalog_id TEXT NOT NULL, build_id TEXT NOT NULL, built_at TEXT NOT NULL, loaded_at INTEGER NOT NULL,
-    baseline INTEGER NOT NULL DEFAULT 0, items INTEGER NOT NULL, episodes INTEGER NOT NULL,
-    items_added INTEGER NOT NULL, items_removed INTEGER NOT NULL, episodes_added INTEGER NOT NULL, episodes_removed INTEGER NOT NULL,
-    changes_json TEXT NOT NULL,                                     -- lists capped at 500 each; counts exact
-    PRIMARY KEY (catalog_id, build_id));
-  CREATE INDEX catalog_builds_by_time ON catalog_builds (catalog_id, loaded_at);
-  CREATE TABLE catalog_seen (
-    catalog_id TEXT NOT NULL, episode_id TEXT NOT NULL, item_id TEXT NOT NULL,
-    first_seen_at INTEGER NOT NULL,                                 -- 0 for episodes present at the first load ever
-    build_id TEXT NOT NULL, removed_at INTEGER,                     -- set while absent from the loaded catalog
-    PRIMARY KEY (catalog_id, episode_id));
-  CREATE INDEX catalog_seen_by_item ON catalog_seen (catalog_id, item_id, first_seen_at);
-  `,
-];
-
-export const SCHEMA_VERSION = MIGRATIONS.length;
+export { MIGRATIONS, SCHEMA_VERSION } from "./store/migrations.ts";
 
 export interface Device {
   id: string;
@@ -303,130 +188,6 @@ export interface CompanionLink {
   /** Companion seconds per TV second (1.0427 for a PAL transfer against a film-rate source). */
   rate: number;
   updatedAt: number;
-}
-
-type Row = Record<string, unknown>;
-const str = (v: unknown) => v as string;
-const strOrNull = (v: unknown) => (v === null || v === undefined ? null : String(v));
-const num = (v: unknown) => Number(v);
-const numOrNull = (v: unknown) => (v === null || v === undefined ? null : Number(v));
-
-function toDevice(r: Row): Device {
-  return {
-    id: str(r.id),
-    name: str(r.name),
-    tokenHash: strOrNull(r.token_hash),
-    createdAt: num(r.created_at),
-    lastSeenAt: numOrNull(r.last_seen_at),
-    uiLanguage: strOrNull(r.ui_language),
-    preferredAudioLanguage: strOrNull(r.preferred_audio_language),
-    subtitlesLanguage: strOrNull(r.subtitles_language),
-    stateVersion: num(r.state_version),
-    autoplayOnStart: num(r.autoplay_on_start) === 1,
-  };
-}
-
-function toPairCode(r: Row): PairCode {
-  return {
-    code: str(r.code),
-    pairTokenHash: str(r.pair_token_hash),
-    deviceId: strOrNull(r.device_id),
-    createdAt: num(r.created_at),
-    expiresAt: num(r.expires_at),
-    approvedAt: numOrNull(r.approved_at),
-    deliveredAt: numOrNull(r.delivered_at),
-  };
-}
-
-function toProgress(r: Row): Progress {
-  return {
-    catalogId: str(r.catalog_id),
-    itemId: str(r.item_id),
-    episodeId: str(r.episode_id),
-    positionMs: num(r.position_ms),
-    durationMs: numOrNull(r.duration_ms),
-    status: str(r.status) as ProgressStatus,
-    updatedAt: num(r.updated_at),
-  };
-}
-
-function toCompanionLink(r: Row): CompanionLink {
-  return {
-    catalogId: str(r.catalog_id),
-    itemId: str(r.item_id),
-    episodeId: str(r.episode_id),
-    sourceId: str(r.source_id),
-    language: strOrNull(r.language),
-    offsetMs: num(r.offset_ms),
-    rate: num(r.rate),
-    updatedAt: num(r.updated_at),
-  };
-}
-
-function toCursor(r: Row): Cursor {
-  return {
-    catalogId: str(r.catalog_id),
-    itemId: str(r.item_id),
-    episodeId: str(r.episode_id),
-    updatedAt: num(r.updated_at),
-    wrapped: num(r.wrapped) === 1,
-  };
-}
-
-function toSeenEpisode(r: Row): SeenEpisode {
-  return {
-    episodeId: str(r.episode_id),
-    itemId: str(r.item_id),
-    firstSeenAt: num(r.first_seen_at),
-    buildId: str(r.build_id),
-    removedAt: numOrNull(r.removed_at),
-  };
-}
-
-function toCatalogBuild(r: Row): CatalogBuild {
-  return {
-    catalogId: str(r.catalog_id),
-    buildId: str(r.build_id),
-    builtAt: str(r.built_at),
-    loadedAt: num(r.loaded_at),
-    baseline: num(r.baseline) === 1,
-    items: num(r.items),
-    episodes: num(r.episodes),
-    itemsAdded: num(r.items_added),
-    itemsRemoved: num(r.items_removed),
-    episodesAdded: num(r.episodes_added),
-    episodesRemoved: num(r.episodes_removed),
-  };
-}
-
-function toCommand(r: Row): Command {
-  return {
-    id: num(r.id),
-    deviceId: str(r.device_id),
-    type: str(r.type) as CommandType,
-    payload: JSON.parse(str(r.payload_json)) as Record<string, unknown>,
-    createdAt: num(r.created_at),
-    ackedAt: numOrNull(r.acked_at),
-  };
-}
-
-function toProblem(r: Row): Problem {
-  return {
-    id: num(r.id),
-    deviceId: str(r.device_id),
-    at: num(r.at),
-    origin: str(r.origin) as ProblemOrigin,
-    kind: str(r.kind) as ProblemKind,
-    code: str(r.code),
-    catalogId: strOrNull(r.catalog_id),
-    itemId: strOrNull(r.item_id),
-    episodeId: strOrNull(r.episode_id),
-    sourceId: strOrNull(r.source_id),
-    positionMs: numOrNull(r.position_ms),
-    httpStatus: numOrNull(r.http_status),
-    detail: strOrNull(r.detail),
-    appVersion: strOrNull(r.app_version),
-  };
 }
 
 export type DevicePatch = Partial<Pick<Device, "name" | "uiLanguage" | "preferredAudioLanguage" | "subtitlesLanguage" | "autoplayOnStart">>;
@@ -811,21 +572,7 @@ export class Store {
 
   getNowPlaying(deviceId: string): NowPlaying | null {
     const r = this.get("SELECT * FROM now_playing WHERE device_id = ?", deviceId);
-    return r
-      ? {
-          catalogId: str(r.catalog_id),
-          itemId: str(r.item_id),
-          episodeId: str(r.episode_id),
-          sourceId: strOrNull(r.source_id),
-          positionMs: num(r.position_ms),
-          durationMs: numOrNull(r.duration_ms),
-          state: str(r.state) as NowPlayingState,
-          updatedAt: num(r.updated_at),
-          playing: num(r.playing) === 1,
-          anchorAt: numOrNull(r.anchor_at),
-          seq: num(r.seq),
-        }
-      : null;
+    return r ? toNowPlaying(r) : null;
   }
 
   // --- catalog history -----------------------------------------------------------------------------------------
