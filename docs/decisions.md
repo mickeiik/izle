@@ -943,3 +943,32 @@ the resolve answer's `expiresAt`, which the TV used to drop). Routine decisions:
 - **CHANGELOG:** the four entries added with the server and admin changes were folded into three (new episodes on
   the TV's tiles with the admin and API mentions, OK resuming at the first new episode, build history on the admin
   page and API), plus one for the guide's catalog-publishing additions.
+
+## Design pass: preparation (2026-10-14)
+
+- **The admin page's file allow-list moved to `server/src/admin-files.ts`** (`ADMIN_FILES`, `ADMIN_VENDOR_FILES`),
+  unchanged, so the admin page's modules and the server's routes can be reorganised separately. The CSP stays with
+  the route.
+- **The error screen's time left is part of the player state:** `PlayerPhase.Failed` carries `secondsLeft`, counted
+  down once a second from `FAILED_AUTO_HOME_MS` like Up next's countdown, so the screen can show it. Home still
+  comes after 30 s.
+
+## Design pass: server code structure (2026-10-14)
+
+_(server branch)_
+
+## Design pass: admin page (2026-10-14)
+
+_(admin branch)_
+
+## Design pass: TV app logic (2026-10-14)
+
+_(TV logic branch)_
+
+## Design pass: TV look and small UX fixes (2026-10-14)
+
+_(TV look branch)_
+
+## Integration of the design pass (2026-10-14)
+
+_(main session)_
