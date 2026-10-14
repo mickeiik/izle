@@ -5,21 +5,15 @@ export type LinkKind = "p" | "r";
 
 /** Tags whose `URI="…"` attribute names another playlist; every other tag's URI is a raw resource. */
 const PLAYLIST_URI_TAGS = new Set(["#EXT-X-MEDIA", "#EXT-X-I-FRAME-STREAM-INF", "#EXT-X-RENDITION-REPORT"]);
-
 const URI_ATTRIBUTE = /(^|,|:)(\s*URI\s*=\s*)"([^"]*)"/g;
-
 /** Line endings a playlist may use: `\n`, `\r\n` or a lone `\r`. */
 const LINE_BREAK = /\r?\n|\r/;
 
-const withoutBom = (text: string): string => text.replace(/^\uFEFF/, "");
+const withoutBom = (text: string): string => text.replace(/^﻿/, "");
+const tagName = (line: string): string => line.split(":", 1)[0]!.trim().toUpperCase();
 
 export function isPlaylistText(text: string): boolean {
   return withoutBom(text).trimStart().startsWith("#EXTM3U");
-}
-
-function tagName(line: string): string {
-  const colon = line.indexOf(":");
-  return (colon < 0 ? line : line.slice(0, colon)).trim().toUpperCase();
 }
 
 /**
@@ -42,8 +36,7 @@ export function rewritePlaylist(text: string, baseUrl: string, link: (url: strin
   };
 
   let nextIsPlaylist = false;
-  const lines = withoutBom(text).split(LINE_BREAK);
-  const out = lines.map((line) => {
+  const lines = withoutBom(text).split(LINE_BREAK).map((line) => {
     const trimmed = line.trim();
     if (trimmed === "") return line;
     if (trimmed.startsWith("#")) {
@@ -58,7 +51,7 @@ export function rewritePlaylist(text: string, baseUrl: string, link: (url: strin
     nextIsPlaylist = false;
     return rewrite(trimmed, kind);
   });
-  return out.join("\n");
+  return lines.join("\n");
 }
 
 export interface PlaylistSummary {
@@ -73,23 +66,18 @@ export interface PlaylistSummary {
 export function summarizePlaylist(text: string): PlaylistSummary {
   const s: PlaylistSummary = { master: false, variants: 0, renditions: 0, segments: 0, endList: false };
   let nextIsPlaylist = false;
-  for (const raw of text.split(LINE_BREAK)) {
-    const line = raw.trim();
-    if (line === "") continue;
-    if (line.startsWith("#")) {
-      const tag = tagName(line);
-      if (tag === "#EXT-X-STREAM-INF") {
-        s.master = true;
-        nextIsPlaylist = true;
-      } else if (tag === "#EXT-X-MEDIA") {
-        s.master = true;
-        s.renditions++;
-      } else if (tag === "#EXT-X-ENDLIST") s.endList = true;
-      continue;
+  for (const line of text.split(LINE_BREAK).map((l) => l.trim())) {
+    const tag = line.startsWith("#") ? tagName(line) : null;
+    if (tag === "#EXT-X-STREAM-INF") s.master = nextIsPlaylist = true;
+    else if (tag === "#EXT-X-MEDIA") {
+      s.master = true;
+      s.renditions++;
+    } else if (tag === "#EXT-X-ENDLIST") s.endList = true;
+    else if (tag === null && line !== "") {
+      if (nextIsPlaylist) s.variants++;
+      else s.segments++;
+      nextIsPlaylist = false;
     }
-    if (nextIsPlaylist) s.variants++;
-    else s.segments++;
-    nextIsPlaylist = false;
   }
   return s;
 }
@@ -107,7 +95,7 @@ export const TS_ALIGN_LOOKAHEAD = TS_ALIGN_WINDOW + TS_PACKET * TS_SYNC_PACKETS;
  * o+188·4. 0 when the data already starts aligned or no such offset exists (then nothing is trimmed).
  */
 export function tsSyncOffset(head: Uint8Array): number {
-  if (head.length > 0 && head[0] === 0x47) return 0;
+  if (head[0] === 0x47) return 0;
   const last = Math.min(TS_ALIGN_WINDOW, head.length - TS_PACKET * (TS_SYNC_PACKETS - 1));
   for (let o = 1; o < last; o++) {
     let k = 0;

@@ -9,36 +9,39 @@ import { isPlaylistText, rewritePlaylist, tsSyncOffset, TS_ALIGN_LOOKAHEAD, type
 import { errorName } from "./errors.ts";
 import type { Logger } from "./log.ts";
 
-export const MAX_SESSIONS_PER_DEVICE = 2;
+const MAX_SESSIONS_PER_DEVICE = 2;
 /** Absolute session lifetime, whatever the sliding TTL. */
-export const SESSION_MAX_AGE_MS = 12 * 60 * 60_000;
+const SESSION_MAX_AGE_MS = 12 * 60 * 60_000;
 /** Largest upstream playlist the proxy reads into memory. */
 export const MAX_PLAYLIST_BYTES = 4 * 1024 * 1024;
 /** Time allowed for an upstream to answer with headers; the body then streams for as long as the TV reads. */
-export const UPSTREAM_HEADERS_TIMEOUT_MS = 20_000;
+const UPSTREAM_HEADERS_TIMEOUT_MS = 20_000;
 
 /** Session tokens are 32 random bytes, base64url. */
 export const PROXY_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
 const PLAYLIST_TYPE = "application/vnd.apple.mpegurl";
-const SUBTITLE_TYPES: Record<string, string> = { vtt: "text/vtt; charset=utf-8", srt: "application/x-subrip; charset=utf-8", ttml: "application/ttml+xml" };
+const SUBTITLE_TYPES: Record<string, string> = {
+  vtt: "text/vtt; charset=utf-8",
+  srt: "application/x-subrip; charset=utf-8",
+  ttml: "application/ttml+xml",
+};
 /** Response headers passed from the upstream to the TV; everything else (cookies, redirects, CORS) is dropped. */
 const PASSED_HEADERS = ["content-type", "content-length", "content-range", "accept-ranges", "last-modified", "etag"];
 /** Formats the TS aligner never touches (by URL extension). */
 const NOT_TS_EXTENSIONS = new Set(["m4s", "mp4", "m4a", "m4v", "cmfv", "cmfa", "aac", "mp3", "ac3", "ec3", "vtt", "webvtt", "key"]);
 
-export type ProxyMain =
-  | { kind: "hls" | "mp4"; url: string; playlist?: undefined }
-  | { kind: "hls"; playlist: string; baseUrl: string; url?: undefined };
-
-export interface ProxySessionInit {
+interface ProxySessionInit {
   /** Owner key of the session-limit bucket: the TV's device id, or `companion:<deviceId>` for the phone. */
   deviceId: string;
   /** What the session plays, for problem reports. */
   episodeId?: string | null;
   sourceId?: string | null;
   /** Null when only subtitle tracks need the proxy. */
-  main: ProxyMain | null;
+  main:
+    | { kind: "hls" | "mp4"; url: string; playlist?: undefined }
+    | { kind: "hls"; playlist: string; baseUrl: string }
+    | null;
   /** Upstream headers for the main media and everything its playlists reference. */
   headers: Record<string, string>;
   /** One entry per subtitle track the TV gets; null = that track is not proxied. */
@@ -61,9 +64,7 @@ export type ProxyTarget = { type: "index" } | { type: "video" } | { type: "u"; r
  * `upstream_unreachable` (network error or no answer in time), `not_a_playlist`, `playlist_too_large`.
  */
 export type ProxyProblemCode =
-  | "upstream_401"
-  | "upstream_403"
-  | "upstream_410"
+  | `upstream_${401 | 403 | 410}`
   | "upstream_error"
   | "upstream_unreachable"
   | "not_a_playlist"
@@ -81,7 +82,7 @@ export interface ProxyProblem {
   detail: string;
 }
 
-export interface ProxyOptions {
+interface ProxyOptions {
   log: Logger;
   now?: () => number;
   /** Sliding session lifetime. */
@@ -92,18 +93,15 @@ export interface ProxyOptions {
   onProblem?: (problem: ProxyProblem) => void;
 }
 
-export function entryPath(token: string, kind: "hls" | "mp4"): string {
-  return `/p/${token}/${kind === "hls" ? "index.m3u8" : "video.mp4"}`;
-}
+export const entryPath = (token: string, kind: "hls" | "mp4"): string =>
+  `/p/${token}/${kind === "hls" ? "index.m3u8" : "video.mp4"}`;
 
-export function subtitlePath(token: string, index: number, format: string): string {
-  return `/p/${token}/sub/${index}.${format}`;
-}
+export const subtitlePath = (token: string, index: number, format: string): string =>
+  `/p/${token}/sub/${index}.${format}`;
 
 function extensionOf(url: string): string | null {
   try {
-    const m = /\.([A-Za-z0-9]{1,5})$/.exec(new URL(url).pathname);
-    return m ? m[1]!.toLowerCase() : null;
+    return /\.([A-Za-z0-9]{1,5})$/.exec(new URL(url).pathname)?.[1]?.toLowerCase() ?? null;
   } catch {
     return null;
   }
@@ -117,9 +115,8 @@ function json(status: number, error: string, extra: Record<string, unknown> = {}
 }
 
 /** A stream error that @hono/node-server treats as a closed connection rather than a crash to print. */
-function prematureClose(): Error {
-  return Object.assign(new Error("upstream closed early"), { code: "ERR_STREAM_PREMATURE_CLOSE" });
-}
+const prematureClose = (): Error =>
+  Object.assign(new Error("upstream closed early"), { code: "ERR_STREAM_PREMATURE_CLOSE" });
 
 /** Why a fetch failed, without its message: the network error code (`ECONNREFUSED`, `ENOTFOUND`) or the class name. */
 function networkReason(err: unknown): string {
@@ -133,15 +130,13 @@ export async function readText(res: Response, limit: number): Promise<string | n
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
+  for (let r = await reader.read(); !r.done; r = await reader.read()) {
+    size += r.value.byteLength;
     if (size > limit) {
       await reader.cancel().catch(() => {});
       return null;
     }
-    chunks.push(value);
+    chunks.push(r.value);
   }
   return Buffer.concat(chunks).toString("utf8");
 }
@@ -158,35 +153,24 @@ function passedHeaders(upstream: Response, contentType: string | undefined): Hea
   return out;
 }
 
-/** How a streamed body begins: bytes already read (`head`), and whether the upstream ended or broke while reading them. */
-interface StreamStart {
-  head: Uint8Array | null;
-  ended: boolean;
-  broken: boolean;
-}
-
 export class ProxyService {
   private readonly sessions = new Map<string, Session>();
+  private readonly o: ProxyOptions;
   private readonly log: Logger;
   private readonly now: () => number;
-  private readonly ttlMs: number;
-  private readonly alignTs: boolean;
   private readonly fetch: typeof fetch;
-  private readonly onProblem: ((problem: ProxyProblem) => void) | undefined;
 
   constructor(opts: ProxyOptions) {
+    this.o = opts;
     this.log = opts.log.child({ component: "proxy" });
     this.now = opts.now ?? Date.now;
-    this.ttlMs = opts.ttlMs;
-    this.alignTs = opts.alignTsSegments ?? false;
     this.fetch = opts.fetch ?? globalThis.fetch;
-    this.onProblem = opts.onProblem;
   }
 
   private problem(s: Session, code: ProxyProblemCode, httpStatus: number | null, detail: string): void {
-    if (!this.onProblem) return;
     try {
-      this.onProblem({ owner: s.deviceId, episodeId: s.episodeId ?? null, sourceId: s.sourceId ?? null, code, httpStatus, detail });
+      const { deviceId: owner, episodeId = null, sourceId = null } = s;
+      this.o.onProblem?.({ owner, episodeId, sourceId, code, httpStatus, detail });
     } catch (err) {
       this.log.warn("problem hook failed", { error: err });
     }
@@ -195,7 +179,7 @@ export class ProxyService {
   /** Creates a session and returns its token. An owner keeps at most two; older ones end (410). */
   create(init: ProxySessionInit): string {
     const t = this.now();
-    this.prune(t);
+    for (const s of this.sessions.values()) if (this.expired(s, t)) this.sessions.delete(s.token);
     const mine = [...this.sessions.values()].filter((s) => s.deviceId === init.deviceId).sort((a, b) => a.createdAt - b.createdAt);
     while (mine.length >= MAX_SESSIONS_PER_DEVICE) this.sessions.delete(mine.shift()!.token);
     const token = newToken();
@@ -208,12 +192,8 @@ export class ProxyService {
     for (const s of this.sessions.values()) if (s.deviceId === deviceId) this.sessions.delete(s.token);
   }
 
-  private prune(t: number): void {
-    for (const s of this.sessions.values()) if (this.expired(s, t)) this.sessions.delete(s.token);
-  }
-
   private expired(s: Session, t: number): boolean {
-    return t - s.lastUsedAt > this.ttlMs || t - s.createdAt > SESSION_MAX_AGE_MS;
+    return t - s.lastUsedAt > this.o.ttlMs || t - s.createdAt > SESSION_MAX_AGE_MS;
   }
 
   /** The signature of a rewritten link: the first 16 bytes of the session key's HMAC of `<kind>.<base64url URL>`. */
@@ -223,9 +203,8 @@ export class ProxyService {
 
   private sign(s: Session, url: string, kind: LinkKind): string {
     const b64 = Buffer.from(url, "utf8").toString("base64url");
-    const mac = this.mac(s, kind, b64).toString("base64url");
     const ext = extensionOf(url);
-    return `${kind}.${b64}.${mac}${ext ? `.${ext}` : ""}`;
+    return `${kind}.${b64}.${this.mac(s, kind, b64).toString("base64url")}${ext ? `.${ext}` : ""}`;
   }
 
   private verify(s: Session, ref: string): { url: string; kind: LinkKind } | null {
@@ -250,25 +229,25 @@ export class ProxyService {
     s.lastUsedAt = t;
 
     switch (target.type) {
-      case "index": {
+      case "index":
         if (s.main?.kind !== "hls") return json(404, "not_found");
         if (s.main.playlist !== undefined) return this.playlistResponse(s, s.main.playlist, s.main.baseUrl, "u/");
         return this.forward(req, s, s.main.url, s.headers, { kind: "p", prefix: "u/", what: "playlist" });
-      }
-      case "video": {
-        if (s.main?.kind !== "mp4" || s.main.url === undefined) return json(404, "not_found");
+      case "video":
+        if (s.main?.kind !== "mp4") return json(404, "not_found");
         return this.forward(req, s, s.main.url, s.headers, { kind: "r", prefix: null, what: "video" });
-      }
       case "u": {
         const link = this.verify(s, target.ref);
         if (!link) return json(404, "not_found");
-        return this.forward(req, s, link.url, s.headers, { kind: link.kind, prefix: "", what: link.kind === "p" ? "playlist" : "segment" });
+        const what = link.kind === "p" ? "playlist" : "segment";
+        return this.forward(req, s, link.url, s.headers, { kind: link.kind, prefix: "", what });
       }
       case "sub": {
         const m = /^(\d{1,2})\.(vtt|srt|ttml)$/.exec(target.file);
         const sub = m ? s.subtitles[Number(m[1])] : undefined;
         if (!m || !sub) return json(404, "not_found");
-        return this.forward(req, s, sub.url, sub.headers, { kind: "r", prefix: null, contentType: SUBTITLE_TYPES[m[2]!], what: "subtitles" });
+        const opts = { kind: "r", prefix: null, contentType: SUBTITLE_TYPES[m[2]!], what: "subtitles" } as const;
+        return this.forward(req, s, sub.url, sub.headers, opts);
       }
     }
   }
@@ -333,10 +312,10 @@ export class ProxyService {
 
     const out = passedHeaders(upstream, opts.contentType);
     if (!upstream.body) return new Response(null, { status, headers: out });
-
     const align =
-      this.alignTs && s.main?.kind === "hls" && opts.prefix === "" && status === 200 && range === null && !NOT_TS_EXTENSIONS.has(extensionOf(url) ?? "");
-    return new Response(await this.stream(upstream.body, align, out), { status, headers: out });
+      !!this.o.alignTsSegments && s.main?.kind === "hls" && opts.prefix === "" && status === 200 && range === null;
+    const body = await this.stream(upstream.body, align && !NOT_TS_EXTENSIONS.has(extensionOf(url) ?? ""), out);
+    return new Response(body, { status, headers: out });
   }
 
   /**
@@ -368,67 +347,48 @@ export class ProxyService {
   }
 
   /**
-   * Reads up to TS_ALIGN_LOOKAHEAD bytes and cuts off any junk before the first MPEG-TS packet; when there was some,
-   * `headers` get the shorter length and the MPEG-TS content type.
-   */
-  private async alignedStart(reader: ReadableStreamDefaultReader<Uint8Array>, headers: Headers): Promise<StreamStart> {
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    let ended = false;
-    let broken = false;
-    try {
-      while (size < TS_ALIGN_LOOKAHEAD) {
-        const { done, value } = await reader.read();
-        if (done) {
-          ended = true;
-          break;
-        }
-        chunks.push(value);
-        size += value.byteLength;
-      }
-    } catch {
-      broken = true;
-    }
-    const buffered = Buffer.concat(chunks);
-    const offset = tsSyncOffset(buffered);
-    if (offset > 0) {
-      const length = Number(headers.get("content-length"));
-      if (Number.isFinite(length) && length > offset) headers.set("content-length", String(length - offset));
-      else headers.delete("content-length");
-      headers.set("content-type", "video/mp2t");
-      this.log.debug("aligned TS segment", { trimmedBytes: offset });
-    }
-    return { head: buffered.subarray(offset), ended, broken };
-  }
-
-  /**
-   * Wraps the upstream body so it streams chunk by chunk, a broken upstream ends the response like a dropped
-   * connection, and (when `align` is set) junk before the first MPEG-TS packet is cut off.
+   * Wraps the upstream body so it streams chunk by chunk and a broken upstream ends the response like a dropped
+   * connection. With `align`, up to TS_ALIGN_LOOKAHEAD bytes are read first and any junk before the first MPEG-TS
+   * packet is cut off; `headers` then get the shorter length and the MPEG-TS content type.
    */
   private async stream(body: ReadableStream<Uint8Array>, align: boolean, headers: Headers): Promise<ReadableStream<Uint8Array>> {
     const reader = body.getReader();
-    const start: StreamStart = align ? await this.alignedStart(reader, headers) : { head: null, ended: false, broken: false };
-    let head = start.head;
-    const { ended, broken } = start;
+    let head: Uint8Array | null = null;
+    let end: "done" | "broken" | null = null;
+    if (align) {
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        while (size < TS_ALIGN_LOOKAHEAD && !end) {
+          const { done, value } = await reader.read();
+          if (done) end = "done";
+          else {
+            chunks.push(value);
+            size += value.byteLength;
+          }
+        }
+      } catch {
+        end = "broken";
+      }
+      const buffered = Buffer.concat(chunks);
+      const offset = tsSyncOffset(buffered);
+      if (offset > 0) {
+        const length = Number(headers.get("content-length"));
+        if (Number.isFinite(length) && length > offset) headers.set("content-length", String(length - offset));
+        else headers.delete("content-length");
+        headers.set("content-type", "video/mp2t");
+        this.log.debug("aligned TS segment", { trimmedBytes: offset });
+      }
+      head = buffered.subarray(offset);
+    }
     const log = this.log;
     return new ReadableStream<Uint8Array>({
       async pull(controller) {
-        if (head) {
-          const chunk = head;
-          head = null;
-          if (chunk.byteLength > 0) {
-            controller.enqueue(chunk);
-            return;
-          }
-        }
-        if (broken) {
-          controller.error(prematureClose());
-          return;
-        }
-        if (ended) {
-          controller.close();
-          return;
-        }
+        const chunk = head;
+        head = null;
+        if (chunk?.byteLength) return controller.enqueue(chunk);
+        if (end === "broken") return controller.error(prematureClose());
+        if (end === "done") return controller.close();
         try {
           const { done, value } = await reader.read();
           if (done) controller.close();
@@ -438,9 +398,7 @@ export class ProxyService {
           controller.error(prematureClose());
         }
       },
-      cancel(reason) {
-        return reader.cancel(reason).catch(() => {});
-      },
+      cancel: (reason) => reader.cancel(reason).catch(() => {}),
     });
   }
 }
