@@ -37,6 +37,7 @@ import io.github.mickeiik.izle.domain.PlaybackPlan
 import io.github.mickeiik.izle.domain.Problems
 import io.github.mickeiik.izle.domain.RemoteCommand
 import io.github.mickeiik.izle.domain.SeekAccumulator
+import io.github.mickeiik.izle.domain.SourceAttempts
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -118,11 +119,9 @@ class PlaybackController(
 
     private var session: Session? = null
     private var episodeId: String? = null
-    private val tried = mutableSetOf<String>()
 
-    /** The server's fallback order from the last unpinned resolve (a pinned re-resolve returns none). */
-    private var alternatives: List<String> = emptyList()
-    private var retriedSameSource = false
+    /** The sources this episode went through, for the fallback after errors. */
+    private val attempts = SourceAttempts()
     private var readyAt: Long? = null
     private var reported = false
 
@@ -166,9 +165,7 @@ class PlaybackController(
         cancelOverlays()
         _player.value?.stop()
         this.episodeId = episodeId
-        tried.clear()
-        alternatives = emptyList()
-        retriedSameSource = false
+        attempts.reset()
         lastRefreshAt = null
         lastPositionMs = startAtMs
         val keep = _ui.value
@@ -374,14 +371,13 @@ class PlaybackController(
         // A stopped/finished report still on its way would make `resume` and the cursor stale.
         reporter.awaitDelivered()
         val resolved = try {
-            api.resolve(ResolveRequest(episodeId, sourceId, exclude = if (sourceId == null) tried.toList().ifEmpty { null } else null))
+            api.resolve(ResolveRequest(episodeId, sourceId, exclude = attempts.excludeFor(sourceId)))
         } catch (e: Exception) {
             if (e !is ApiException && e !is IOException) throw e
             currentCoroutineContext().ensureActive() // the viewer left meanwhile: nothing to report
             problems.send(Problems.resolveFailure(e, episodeId, sourceId, appVersion), api = api)
             if (e is ApiException && e.status == 401) repository.refreshSoon()
-            if (sourceId != null && alternatives.any { it != sourceId && it !in tried }) {
-                tried += sourceId
+            if (attempts.continueAfterFailedResolve(sourceId)) {
                 resolveAndStart(api, episodeId, sourceId = null, startAtMs, playWhenReady)
             } else {
                 showFailed(reason = "then resolve failed: " + Problems.code(if (e is ApiException) e.code else "network"))
@@ -389,7 +385,7 @@ class PlaybackController(
             return
         }
         val receivedAt = SystemClock.elapsedRealtime()
-        if (sourceId == null) alternatives = resolved.alternatives
+        attempts.onResolved(sourceId, resolved.alternatives)
         val item = mediaItemFor(api, resolved)
         if (item == null) {
             showFailed(reason = "then the media address was unusable")
@@ -533,8 +529,7 @@ class PlaybackController(
                         readyAt = SystemClock.elapsedRealtime()
                         session?.resolved?.item?.let(onPlaybackStarted)
                     }
-                    // The re-resolved source plays again: a later expiry may be retried the same way.
-                    retriedSameSource = false
+                    attempts.onPlaying()
                     if (_ui.value.phase == PlayerPhase.Loading) _ui.update { it.copy(phase = PlayerPhase.Playing) }
                 }
                 Player.STATE_ENDED -> onEnded(p)
@@ -605,20 +600,11 @@ class PlaybackController(
         lastPositionMs = position
         val played = readyAt?.let { SystemClock.elapsedRealtime() - it } ?: 0
         val sourceId = s.resolved.sourceId
-        val alternativesLeft = alternatives.any { it != sourceId && it !in tried }
         val episodeId = this.episodeId ?: return showFailed()
-        when (PlaybackPlan.recovery(error.httpStatus(), played, retriedSameSource, alternativesLeft)) {
-            PlaybackPlan.Recovery.RetrySameSource -> {
-                retriedSameSource = true
-                relaunch(s.api, episodeId, sourceId = sourceId, position)
-            }
-            PlaybackPlan.Recovery.NextSource -> {
-                tried += sourceId
-                retriedSameSource = false
-                relaunch(s.api, episodeId, sourceId = null, position)
-            }
+        when (attempts.afterPlaybackError(sourceId, error.httpStatus(), played)) {
+            PlaybackPlan.Recovery.RetrySameSource -> relaunch(s.api, episodeId, sourceId = sourceId, position)
+            PlaybackPlan.Recovery.NextSource -> relaunch(s.api, episodeId, sourceId = null, position)
             PlaybackPlan.Recovery.GiveUp -> {
-                tried += sourceId
                 if (readyAt != null) report(s, ProgressStatus.Stopped, position, p?.let { durationOf(it) }, playing = false)
                 reported = true
                 showFailed()
@@ -663,7 +649,7 @@ class PlaybackController(
         expiryJob?.cancel()
         _player.value?.stop()
         episodeId?.let { id ->
-            problems.send(Problems.gaveUp(id, session?.resolved?.sourceId ?: tried.lastOrNull(), lastPositionMs, tried.size, appVersion, reason))
+            problems.send(Problems.gaveUp(id, session?.resolved?.sourceId ?: attempts.lastTried, lastPositionMs, attempts.triedCount, appVersion, reason))
         }
         val seconds = (PlaybackPlan.FAILED_AUTO_HOME_MS / 1_000).toInt()
         _ui.update { it.copy(phase = PlayerPhase.Failed(seconds), showInfo = false, buffering = false, cues = null) }
