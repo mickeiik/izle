@@ -80,13 +80,11 @@ object PlaybackPlan {
 object AutoplayPlan {
     const val COUNTDOWN_SEC = 10
 
-    /** The tile to offer: the show played last on this TV if it is still on Home, else the first tile. */
-    fun target(home: List<HomeEntry>, lastPlayedItemId: String?): HomeEntry? =
-        home.firstOrNull { it.item.id == lastPlayedItemId } ?: home.firstOrNull()
-
-    /** What to offer for a state freshly fetched from the server, or null when the owner has autoplay off. */
-    fun offer(state: TvState, lastPlayedItemId: String?): HomeEntry? =
-        if (state.device.autoplayOnStart) target(state.home, lastPlayedItemId) else null
+    /** The show played last on this TV if it is still on Home, else the first tile; null when the owner has it off. */
+    fun offer(state: TvState, lastPlayedItemId: String?): HomeEntry? {
+        if (!state.device.autoplayOnStart) return null
+        return state.home.firstOrNull { it.item.id == lastPlayedItemId } ?: state.home.firstOrNull()
+    }
 }
 
 /**

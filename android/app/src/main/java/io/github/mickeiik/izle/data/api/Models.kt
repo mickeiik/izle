@@ -40,11 +40,7 @@ data class CatalogInfo(val id: String, val buildId: String, val name: String)
  * from servers that do not send it). It only labels the tile; what OK plays is [playNext].
  */
 @Serializable
-data class HomeEntry(
-    val item: ItemCard,
-    @SerialName("continue") val playNext: ContinueInfo,
-    val newEpisodes: Int = 0,
-)
+data class HomeEntry(val item: ItemCard, @SerialName("continue") val playNext: ContinueInfo, val newEpisodes: Int = 0)
 
 @Serializable
 data class ItemCard(val id: String, val kind: String, val title: String, val posterUrl: String? = null)
@@ -57,7 +53,6 @@ data class ContinueInfo(
     val number: Int? = null,
     val label: String? = null,
     val index: Int = 0,
-    val count: Int = 1,
     val positionMs: Long = 0,
     val durationMs: Long? = null,
     val status: String = "new",
@@ -86,16 +81,8 @@ data class EpisodeDetails(
 @Serializable
 data class EpisodeProgress(val positionMs: Long, val status: String)
 
-/** BCP 47 tags; null = unknown, empty = known none. */
 @Serializable
-data class LanguageFacts(val audio: List<String>? = null, val subtitles: List<String>? = null)
-
-@Serializable
-data class ResolveRequest(
-    val episodeId: String,
-    val sourceId: String? = null,
-    val exclude: List<String>? = null,
-)
+data class ResolveRequest(val episodeId: String, val sourceId: String? = null, val exclude: List<String>? = null)
 
 /**
  * What to play. `expiresAt` (ISO 8601) is the stream's validity hint, or null; the TV resolves the same source again
@@ -108,7 +95,6 @@ data class ResolveResponse(
     val sourceId: String,
     val media: Media,
     val subtitleTracks: List<SubtitleTrack> = emptyList(),
-    val languages: LanguageFacts = LanguageFacts(),
     val alternatives: List<String> = emptyList(),
     val next: NextEpisode? = null,
     val item: ItemCard,
@@ -170,14 +156,10 @@ data class ProgressReport(
 enum class ProgressStatus {
     @SerialName("playing")
     Playing,
-
     @SerialName("paused")
     Paused,
-
-    /** The viewer left the player before the end. */
-    @SerialName("stopped")
+    @SerialName("stopped") // the viewer left the player before the end
     Stopped,
-
     @SerialName("finished")
     Finished,
     ;

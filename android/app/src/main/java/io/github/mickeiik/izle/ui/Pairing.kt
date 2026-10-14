@@ -55,7 +55,7 @@ object PairingLoop {
                 api.start()
             } catch (e: ApiException) {
                 ui.update { it.copy(code = null, problem = PairingProblem.RateLimited) }
-                delay(retryAfterMs(e.retryAfterSec))
+                delay((e.retryAfterSec ?: RETRY_AFTER_DEFAULT_SEC).coerceIn(RETRY_AFTER_RANGE_SEC) * 1_000)
                 continue
             } catch (e: IOException) {
                 ui.update { it.copy(code = null, problem = PairingProblem.Unreachable) }
@@ -82,7 +82,4 @@ object PairingLoop {
             }
         }
     }
-
-    /** How long a refused start waits: the server's `Retry-After`, kept within 5 s and 10 min. */
-    fun retryAfterMs(retryAfterSec: Long?): Long = (retryAfterSec ?: RETRY_AFTER_DEFAULT_SEC).coerceIn(RETRY_AFTER_RANGE_SEC) * 1_000
 }

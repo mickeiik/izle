@@ -12,7 +12,6 @@ import kotlinx.coroutines.flow.map
 /** What the TV remembers between runs. */
 data class DeviceSettings(
     val serverUrl: String? = null,
-    val deviceId: String? = null,
     val deviceToken: String? = null,
     /** `tr`/`en` set from the hidden menu, or null to follow the server. */
     val uiLanguageOverride: String? = null,
@@ -30,7 +29,6 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
     val settings: Flow<DeviceSettings> = dataStore.data.map { p ->
         DeviceSettings(
             serverUrl = p[SERVER_URL],
-            deviceId = p[DEVICE_ID],
             deviceToken = p[DEVICE_TOKEN],
             uiLanguageOverride = p[UI_LANGUAGE],
             lastPlayedItemId = p[LAST_PLAYED_ITEM],
