@@ -8,12 +8,12 @@
 import { ApiError, api, attempt, devicePath } from "./api.js";
 import { companionCard } from "./companion.js";
 import { homeCard } from "./device-home.js";
-import { actionButton, busy, card, h, isInert, keepFocus, progressBar, setOff, setProgress, setTitle, slot, statusChip, toast } from "./dom.js";
+import { actionButton, card, chip, h, keepFocus, onSubmit, page, progressBar, setChip, setOff, setProgress, setTitle, slot, statusChip, toast } from "./dom.js";
 import {
   LANGUAGES,
   canControlPlayback,
   episodeName,
-  errorMessage,
+  errorText,
   formatClock,
   formatRelative,
   languageLabel,
@@ -28,9 +28,17 @@ import {
  * @typedef {object} DeviceContext
  * @property {string} path `/devices/<id>`
  * @property {import("./router.js").Scope} scope
- * @property {(path: string) => Promise<any>} read a GET below /api/v1/admin, cancelled when the page ends
  * @property {(body: any, what: string) => Promise<boolean>} send sends a command; whether the server took it
  * @property {() => Promise<void>} reload re-reads the TV and its home screen and shows them
+ */
+
+/**
+ * A section of a TV's page that the page polls: `refresh` re-reads and shows its data, `fail` shows a first load
+ * that failed (with Retry).
+ * @typedef {object} Section
+ * @property {HTMLElement} element
+ * @property {() => Promise<void>} refresh
+ * @property {import("./router.js").OnError} fail
  */
 
 /**
@@ -49,7 +57,6 @@ export function deviceView(scope, id) {
   const ctx = {
     path,
     scope,
-    read: (p) => api("GET", p, undefined, { signal: scope.signal }),
     async send(body, what) {
       const r = await attempt(() => api("POST", `${path}/commands`, body));
       if (r.ok) toast(r.value.online ? `${what} sent to the TV.` : `${what} queued: the TV is offline and gets it if it connects within 2 minutes.`, r.value.online ? "ok" : "info");
@@ -83,10 +90,10 @@ export function deviceView(scope, id) {
   const loadDevice = async () => {
     let d;
     try {
-      d = await ctx.read(path);
+      d = await scope.read(path);
     } catch (err) {
       if (err instanceof ApiError && err.code === "unknown_device" && scope.alive()) {
-        toast(errorMessage("unknown_device"), "info");
+        toast(errorText(err), "info");
         scope.go("#/devices");
       }
       throw err;
@@ -101,7 +108,7 @@ export function deviceView(scope, id) {
 
   // The TV first; once it is there, the sections and their polls.
   let started = false;
-  const first = scope.load(
+  scope.load(
     async () => {
       await loadDevice();
       if (started) return;
@@ -110,23 +117,16 @@ export function deviceView(scope, id) {
       body.show(...sections.map(([, el]) => el), removeCard(ctx, () => device));
       top.hidden = false;
       nav.update();
-      const nowJob = scope.poll(now.refresh, 5000, (err) => now.fail(err, nowJob.now));
-      const alongJob = scope.poll(listenAlong.refresh, 5000, (err) => listenAlong.fail(err, alongJob.now));
+      scope.poll(now.refresh, 5000, now.fail);
+      scope.poll(listenAlong.refresh, 5000, listenAlong.fail);
       scope.poll(loadDevice, 15000);
-      const historyJob = scope.poll(history.refresh, 15000, (err) => history.fail(err, historyJob.now));
-      const problemsJob = scope.poll(problems.refresh, 15000, (err) => problems.fail(err, problemsJob.now));
+      scope.poll(history.refresh, 15000, history.fail);
+      scope.poll(problems.refresh, 15000, problems.fail);
     },
-    (err) => body.fail(err, first.now, "Could not load this TV."),
+    (err, retry) => body.fail(err, retry, "Could not load this TV."),
   );
 
-  return h(
-    "div",
-    { class: "page" },
-    h("p", { class: "back" }, h("a", { href: "#/devices" }, "← TVs")),
-    h("div", { class: "title" }, title, chipBox, seen),
-    top,
-    body.element,
-  );
+  return page({ back: ["#/devices", "← TVs"], title, aside: [chipBox, seen] }, top, body.element);
 }
 
 // --- section nav ---------------------------------------------------------------------------------------------
@@ -193,23 +193,28 @@ function sectionNav(scope, sections) {
 
 // --- now playing -----------------------------------------------------------------------------------------------
 
-/** @type {Array<[string, string, string, any]>} label, accessible name, what the toast calls it, the command */
+/**
+ * The remote control's buttons: the label, the accessible name and what the toast calls it where they are not the
+ * label, and the command.
+ * @type {Array<{ label: string, name?: string, what?: string, command: any }>}
+ */
 const REMOTE = [
-  ["Pause", "Pause", "Pause", { type: "pause" }],
-  ["Resume", "Resume", "Resume", { type: "resume" }],
-  ["−30 s", "Back 30 seconds", "Back 30 s", { type: "seek", deltaMs: -30_000 }],
-  ["+30 s", "Forward 30 seconds", "Forward 30 s", { type: "seek", deltaMs: 30_000 }],
-  ["Previous episode", "Previous episode", "Previous episode", { type: "previous" }],
-  ["Next episode", "Next episode", "Next episode", { type: "next" }],
+  { label: "Pause", command: { type: "pause" } },
+  { label: "Resume", command: { type: "resume" } },
+  { label: "−30 s", name: "Back 30 seconds", what: "Back 30 s", command: { type: "seek", deltaMs: -30_000 } },
+  { label: "+30 s", name: "Forward 30 seconds", what: "Forward 30 s", command: { type: "seek", deltaMs: 30_000 } },
+  { label: "Previous episode", command: { type: "previous" } },
+  { label: "Next episode", command: { type: "next" } },
 ];
 
 /**
  * What the TV plays, the remote control (Stop with it) and the message box. Built once: the poll only fills in
  * text and enables or disables the buttons, so a half-typed message and the focus survive it.
  * @param {DeviceContext} ctx
+ * @returns {Section & { setDevice(device: any): void }}
  */
 function nowPlayingCard(ctx) {
-  const state = h("span", { class: "chip" });
+  const state = chip("");
   const when = h("span", { class: "muted" });
   const title = h("strong");
   const episode = h("div");
@@ -223,7 +228,7 @@ function nowPlayingCard(ctx) {
   const command = async (/** @type {any} */ body, /** @type {string} */ what) => {
     if (await ctx.send(body, what)) ctx.scope.later(() => void refresh().catch(() => {}), 1500);
   };
-  const remote = REMOTE.map(([label, name, what, body]) => actionButton(label, { "aria-label": name }, () => command(body, what)));
+  const remote = REMOTE.map((r) => actionButton(r.label, r.name ? { "aria-label": r.name } : null, () => command(r.command, r.what ?? r.label)));
   const stop = actionButton("Stop", { class: "danger" }, () => command({ type: "stop" }, "Stop"));
   const controls = h("div", { class: "buttons remote", role: "group", "aria-label": "Remote control", hidden: true }, remote, stop);
   for (const b of [...remote, stop]) setOff(b, true);
@@ -233,31 +238,26 @@ function nowPlayingCard(ctx) {
   setOff(messageSend, true);
   const messageForm = h(
     "form",
-    {
-      class: "message",
-      onsubmit: (/** @type {SubmitEvent} */ e) => {
-        e.preventDefault();
-        if (isInert(messageSend)) return;
-        const text = messageText.value.trim();
-        if (!text) return toast("Type a message first.", "info");
-        void busy(messageSend, async () => {
-          if (await ctx.send({ type: "message", text }, "Message")) messageText.value = "";
-        });
-      },
-    },
+    { class: "message" },
     h("label", { for: "m-text" }, "Message to the TV"),
     h("div", { class: "row" }, messageText, messageSend),
     h("p", { class: "hint", id: "m-hint" }, "Shown in large letters for 15 seconds, on the home screen or over the picture."),
   );
+  onSubmit(messageForm, messageSend, () => {
+    const text = messageText.value.trim();
+    if (!text) return toast("Type a message first.", "info");
+    return async () => {
+      if (await ctx.send({ type: "message", text }, "Message")) messageText.value = "";
+    };
+  });
 
   const refresh = async () => {
-    const r = await ctx.read(`${ctx.path}/now`);
+    const r = await ctx.scope.read(`${ctx.path}/now`);
     const n = r.nowPlaying;
     controls.hidden = !n;
     if (!n) return shown.show(nothing);
     const s = playbackState(n, r.online);
-    state.className = s.tone ? `chip ${s.tone}` : "chip";
-    state.textContent = s.label;
+    setChip(state, s.label, s.tone);
     when.textContent = s.active ? "" : formatRelative(n.updatedAt);
     title.textContent = n.itemTitle ?? n.itemId;
     episode.textContent = n.episodeTitle ?? "";
@@ -274,9 +274,7 @@ function nowPlayingCard(ctx) {
   return {
     element: card("Now playing", shown.element, controls, messageForm),
     refresh,
-    /** @param {unknown} err @param {() => Promise<void>} retry */
     fail: (err, retry) => shown.fail(err, retry, "Could not load what the TV plays."),
-    /** @param {any} device */
     setDevice: (device) => setOff(messageSend, device.status !== "active"),
   };
 }
@@ -318,8 +316,8 @@ function settingsCard(ctx) {
     autoplay.checked = Boolean(s.autoplayOnStart);
   };
 
-  autoplay.addEventListener("change", () => {
-    // A second click while the first is saving is undone: one request at a time.
+  /** Autoplay is saved at once. A second click while the first is saving is undone: one request at a time. */
+  const saveAutoplay = () => {
     if (autoplay.getAttribute("aria-busy") === "true") {
       autoplay.checked = !autoplay.checked;
       return;
@@ -334,33 +332,33 @@ function settingsCard(ctx) {
       if (r.ok) device = r.value.device;
       else autoplay.checked = !on;
     });
-  });
+  };
+  autoplay.addEventListener("change", saveAutoplay);
+
+  /** "Save settings": what differs from the TV's settings is saved in one request. */
+  const submit = () => {
+    if (!device) return;
+    const s = device.settings;
+    /** @type {Record<string, string | null>} */
+    const patch = {};
+    const typed = name.value.trim();
+    if (typed && typed !== device.name) patch.name = typed;
+    for (const [key, select] of /** @type {const} */ ([["uiLanguage", ui], ["preferredAudioLanguage", audio], ["subtitlesLanguage", subs]])) {
+      const value = select.value || null;
+      if (value !== s[key]) patch[key] = value;
+    }
+    if (Object.keys(patch).length === 0) return toast("Nothing changed.", "info");
+    return async () => {
+      const r = await attempt(() => api("PATCH", ctx.path, patch), "Settings saved. The TV applies them right away.");
+      if (!r.ok) return;
+      update(r.value.device);
+      await ctx.reload().catch(() => {});
+    };
+  };
 
   const form = h(
     "form",
-    {
-      class: "form",
-      onsubmit: (/** @type {SubmitEvent} */ e) => {
-        e.preventDefault();
-        if (isInert(save) || !device) return;
-        const s = device.settings;
-        /** @type {Record<string, string | null>} */
-        const patch = {};
-        const v = (/** @type {HTMLSelectElement} */ el) => el.value || null;
-        const typed = name.value.trim();
-        if (typed && typed !== device.name) patch.name = typed;
-        if (v(ui) !== s.uiLanguage) patch.uiLanguage = v(ui);
-        if (v(audio) !== s.preferredAudioLanguage) patch.preferredAudioLanguage = v(audio);
-        if (v(subs) !== s.subtitlesLanguage) patch.subtitlesLanguage = v(subs);
-        if (Object.keys(patch).length === 0) return toast("Nothing changed.", "info");
-        void busy(save, async () => {
-          const r = await attempt(() => api("PATCH", ctx.path, patch), "Settings saved. The TV applies them right away.");
-          if (!r.ok) return;
-          update(r.value.device);
-          await ctx.reload().catch(() => {});
-        });
-      },
-    },
+    { class: "form" },
     h("label", { for: "s-name" }, "Name"),
     name,
     h("label", { for: "s-ui" }, "Menu language"),
@@ -372,6 +370,7 @@ function settingsCard(ctx) {
     subs,
     h("div", { class: "actions" }, save),
   );
+  onSubmit(form, save, submit);
   const toggle = h(
     "div",
     { class: "toggle" },
@@ -383,110 +382,98 @@ function settingsCard(ctx) {
 
 // --- history ---------------------------------------------------------------------------------------------------
 
-/** @param {DeviceContext} ctx */
+/**
+ * @param {DeviceContext} ctx
+ * @returns {Section}
+ */
 function historyCard(ctx) {
   const shown = slot();
-  let key = "";
-  /** @type {HTMLElement | null} */
-  let content = null;
-  /** The "5 min ago" cells: unchanged rows are kept, only these texts move on. */
-  const times = relativeTimes();
+  const list = rebuiltOnChange();
   const refresh = async () => {
-    const p = await ctx.read(`${ctx.path}/progress`);
+    const p = await ctx.scope.read(`${ctx.path}/progress`);
     const rows = p.progress.slice(0, 30);
-    const k = JSON.stringify(rows);
-    if (content && k === key) {
-      times.update();
-      return shown.show(content);
-    }
-    key = k;
-    times.clear();
-    content =
-      rows.length === 0
-        ? h("p", { class: "muted" }, "Nothing watched yet.")
-        : h(
-            "div",
-            { class: "table-wrap", tabindex: "0", role: "region", "aria-label": "History" },
-            h(
-              "table",
-              null,
-              h("caption", null, "The last 30 episodes this TV played, the latest first."),
-              h("thead", null, h("tr", null, h("th", { scope: "col" }, "Show"), h("th", { scope: "col" }, "Episode"), h("th", { scope: "col" }, "Where"), h("th", { scope: "col" }, "When"))),
+    shown.show(
+      list.content(rows, (time) =>
+        rows.length === 0
+          ? h("p", { class: "muted" }, "Nothing watched yet.")
+          : h(
+              "div",
+              { class: "table-wrap", tabindex: "0", role: "region", "aria-label": "History" },
               h(
-                "tbody",
+                "table",
                 null,
-                rows.map((/** @type {any} */ r) =>
-                  h(
-                    "tr",
-                    null,
-                    h("td", null, r.itemTitle ?? r.itemId),
-                    h("td", null, r.missing ? "(no longer in the catalog)" : episodeName({ season: r.season, number: r.number, title: r.episodeTitle }, r.kind)),
-                    h("td", null, r.status === "finished" ? "watched" : `${formatClock(r.positionMs)} / ${formatClock(r.durationMs)}`),
-                    times.add(h("td", { class: "muted" }), () => formatRelative(r.updatedAt)),
+                h("caption", null, "The last 30 episodes this TV played, the latest first."),
+                h("thead", null, h("tr", null, h("th", { scope: "col" }, "Show"), h("th", { scope: "col" }, "Episode"), h("th", { scope: "col" }, "Where"), h("th", { scope: "col" }, "When"))),
+                h(
+                  "tbody",
+                  null,
+                  rows.map((/** @type {any} */ r) =>
+                    h(
+                      "tr",
+                      null,
+                      h("td", null, r.itemTitle ?? r.itemId),
+                      h("td", null, r.missing ? "(no longer in the catalog)" : episodeName({ season: r.season, number: r.number, title: r.episodeTitle }, r.kind)),
+                      h("td", null, r.status === "finished" ? "watched" : `${formatClock(r.positionMs)} / ${formatClock(r.durationMs)}`),
+                      time(h("td", { class: "muted" }), () => formatRelative(r.updatedAt)),
+                    ),
                   ),
                 ),
               ),
             ),
-          );
-    shown.show(content);
+      ),
+    );
   };
   return {
     element: card("History", shown.element),
     refresh,
-    /** @param {unknown} err @param {() => Promise<void>} retry */
     fail: (err, retry) => shown.fail(err, retry, "Could not load the history."),
   };
 }
 
 // --- problems --------------------------------------------------------------------------------------------------
 
-/** @param {DeviceContext} ctx */
+/**
+ * @param {DeviceContext} ctx
+ * @returns {Section}
+ */
 function problemsCard(ctx) {
   const shown = slot();
-  let key = "";
-  /** @type {HTMLElement | null} */
-  let content = null;
+  const list = rebuiltOnChange();
   const clear = actionButton("Clear", { class: "danger", hidden: true, "aria-label": "Clear the problems" }, async () => {
     const r = await attempt(() => api("DELETE", `${ctx.path}/problems`), "Problems cleared.");
     // The button goes with the list: the focus moves to the card's heading.
     if (r.ok) await keepFocus(() => refresh().catch(() => {}), element.querySelector("h2"));
   });
-  const times = relativeTimes();
   const refresh = async () => {
-    const r = await ctx.read(`${ctx.path}/problems?limit=50`);
+    const r = await ctx.scope.read(`${ctx.path}/problems?limit=50`);
     clear.hidden = r.problems.length === 0;
-    const k = JSON.stringify(r.problems);
-    if (content && k === key) {
-      times.update();
-      return shown.show(content);
-    }
-    key = k;
-    times.clear();
-    content =
-      r.problems.length === 0
-        ? h("p", { class: "muted" }, "No problems recorded.")
-        : h(
-            "ul",
-            { class: "list problems" },
-            r.problems.map((/** @type {any} */ p) => {
-              const context = problemContext(p);
-              const at = new Date(p.at);
-              return h(
-                "li",
-                null,
-                h(
-                  "div",
-                  { class: "row" },
-                  h("span", { class: `chip${p.origin === "server" ? " server" : ""}` }, originLabel(p.origin)),
-                  h("strong", { class: "grow" }, `${p.kind} · ${p.code}`),
-                  times.add(h("time", { class: "muted", datetime: p.at }), () => `${formatRelative(p.at)} · ${at.toLocaleString([], { dateStyle: "short", timeStyle: "short" })}`),
-                ),
-                context ? h("div", null, context) : null,
-                p.detail ? h("div", { class: "muted detail" }, p.detail) : null,
-              );
-            }),
-          );
-    shown.show(content);
+    shown.show(
+      list.content(r.problems, (time) =>
+        r.problems.length === 0
+          ? h("p", { class: "muted" }, "No problems recorded.")
+          : h(
+              "ul",
+              { class: "list problems" },
+              r.problems.map((/** @type {any} */ p) => {
+                const context = problemContext(p);
+                const at = new Date(p.at);
+                return h(
+                  "li",
+                  null,
+                  h(
+                    "div",
+                    { class: "row" },
+                    chip(originLabel(p.origin), p.origin === "server" ? "server" : ""),
+                    h("strong", { class: "grow" }, `${p.kind} · ${p.code}`),
+                    time(h("time", { class: "muted", datetime: p.at }), () => `${formatRelative(p.at)} · ${at.toLocaleString([], { dateStyle: "short", timeStyle: "short" })}`),
+                  ),
+                  context ? h("div", null, context) : null,
+                  p.detail ? h("div", { class: "muted detail" }, p.detail) : null,
+                );
+              }),
+            ),
+      ),
+    );
   };
   const element = card(
     { title: "Problems", aside: clear, intro: "What went wrong on this TV: its own reports, and what the server ran into while finding or relaying its streams." },
@@ -495,33 +482,42 @@ function problemsCard(ctx) {
   return {
     element,
     refresh,
-    /** @param {unknown} err @param {() => Promise<void>} retry */
     fail: (err, retry) => shown.fail(err, retry, "Could not load the problems."),
   };
 }
 
 /**
- * Elements that show a relative time ("5 min ago"). A list that did not change is kept as it is (nothing in it
- * loses the focus); `update()` moves only these texts on.
+ * A list rebuilt only when its data changed. `content(data, build)` returns the content built for equal data again,
+ * as it is (nothing in it loses the focus), with only its relative times ("5 min ago") moved on; otherwise `build`
+ * makes it anew, registering each element that shows a relative time with `time(el, text)`.
  */
-function relativeTimes() {
+function rebuiltOnChange() {
+  let key = "";
+  /** @type {HTMLElement | null} */
+  let content = null;
   /** @type {Array<[HTMLElement, () => string]>} */
-  let shown = [];
+  let times = [];
+  /** @template {HTMLElement} E @param {E} el @param {() => string} text @returns {E} */
+  const time = (el, text) => {
+    el.textContent = text();
+    times.push([el, text]);
+    return el;
+  };
   return {
-    /** @template {HTMLElement} E @param {E} el @param {() => string} text @returns {E} */
-    add(el, text) {
-      el.textContent = text();
-      shown.push([el, text]);
-      return el;
-    },
-    update() {
-      for (const [el, text] of shown) {
-        const t = text();
-        if (el.textContent !== t) el.textContent = t;
+    /** @param {unknown} data @param {(t: typeof time) => HTMLElement} build */
+    content(data, build) {
+      const k = JSON.stringify(data);
+      if (content && k === key) {
+        for (const [el, text] of times) {
+          const t = text();
+          if (el.textContent !== t) el.textContent = t;
+        }
+        return content;
       }
-    },
-    clear() {
-      shown = [];
+      key = k;
+      times = [];
+      content = build(time);
+      return content;
     },
   };
 }

@@ -4,8 +4,8 @@
 // names only).
 
 import { ApiError, api, attempt } from "./api.js";
-import { actionButton, card, h, poster, setTitle, slot, srOnly } from "./dom.js";
-import { episodeName, errorMessage, formatClock, plural, showMeta, sourceReport } from "./lib.js";
+import { actionButton, card, h, page, poster, setTitle, slot, srOnly } from "./dom.js";
+import { episodeName, errorText, formatClock, plural, showMeta, sourceReport } from "./lib.js";
 
 /** @param {any} report the answer of POST /admin/diagnostics/resolve */
 function reportView(report) {
@@ -88,9 +88,9 @@ export function itemView(scope, itemId) {
   const title = h("h1", null, "Show");
   const body = slot();
 
-  const load = scope.load(
+  scope.load(
     async () => {
-      const { item } = await api("GET", `/catalog/items/${encodeURIComponent(itemId)}`, undefined, { signal: scope.signal });
+      const { item } = await scope.read(`/catalog/items/${encodeURIComponent(itemId)}`);
       setTitle(title, item.title);
       const head = h(
         "section",
@@ -120,11 +120,11 @@ export function itemView(scope, itemId) {
           : card({ title: "Episodes", intro: "In play order, with their sources in the order the TV tries them." }, h("ol", { class: "list" }, item.episodes.map((/** @type {any} */ e) => episodeEntry(e, item))));
       body.show(head, entries);
     },
-    (err) => {
-      if (err instanceof ApiError && err.code === "unknown_item") body.show(h("p", { class: "error" }, errorMessage("unknown_item")));
-      else body.fail(err, load.now, "Could not load this show.");
+    (err, retry) => {
+      if (err instanceof ApiError && err.code === "unknown_item") body.show(h("p", { class: "error" }, errorText(err)));
+      else body.fail(err, retry, "Could not load this show.");
     },
   );
 
-  return h("div", { class: "page" }, h("p", { class: "back" }, h("a", { href: "#/catalog" }, "← Catalog")), h("div", { class: "title" }, title), scope.note, body.element);
+  return page({ back: ["#/catalog", "← Catalog"], title }, scope.note, body.element);
 }

@@ -27,6 +27,9 @@ export class ApiError extends Error {
 /** Whether a request was cancelled because the view that made it ended (nothing to report). @param {unknown} err */
 export const isAborted = (err) => err instanceof ApiError && err.code === "aborted";
 
+/** Whether the server refused the token (401). @param {unknown} err */
+export const isUnauthorized = (err) => err instanceof ApiError && err.status === 401;
+
 export function getToken() {
   return readStored(TOKEN_KEY) ?? memoryToken;
 }
@@ -38,6 +41,18 @@ export function getToken() {
 export function setToken(token) {
   memoryToken = token;
   return writeStored(TOKEN_KEY, token);
+}
+
+/**
+ * Signs in with `token`: checks it against the server (rejects with its `ApiError` when refused), then keeps it.
+ * Resolves with whether the browser remembers it beyond this tab; when it does not, the owner is told.
+ * @param {string} token
+ */
+export async function signIn(token) {
+  await api("GET", "/catalog", undefined, { token });
+  const remembered = setToken(token);
+  if (!remembered) toast("Signed in for this tab only: this browser does not let the page remember the token.", "info");
+  return remembered;
 }
 
 export function clearToken() {
@@ -108,7 +123,7 @@ export async function attempt(fn, success) {
     if (success) toast(success);
     return { ok: true, value };
   } catch (error) {
-    const quiet = isAborted(error) || (error instanceof ApiError && error.status === 401);
+    const quiet = isAborted(error) || isUnauthorized(error);
     if (!quiet) toast(errorText(error), "error");
     return { ok: false, error };
   }

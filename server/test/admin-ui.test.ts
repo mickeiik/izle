@@ -6,6 +6,7 @@ import {
   buildSummary,
   canControlPlayback,
   candidateOptions,
+  catalogSearchPath,
   clockOffset,
   companionTarget,
   continueText,
@@ -33,6 +34,7 @@ import {
   primarySubtag,
   problemContext,
   pushSample,
+  resumes,
   sameLanguage,
   searchSummary,
   serverAddress,
@@ -96,6 +98,10 @@ test("admin helpers: episode names and what OK does", () => {
   assert.equal(continueText({ ...c, status: "watching", positionMs: 17_000 }, "movie"), "starts from the beginning", "the TV resumes from 30 s on");
   assert.equal(continueText({ ...c, status: "finished", positionMs: 0 }, "movie"), "watched — starts over");
   assert.equal(continueText(null, "movie"), "Nothing playable");
+  assert.equal(resumes({ ...c, status: "watching", positionMs: 30_000 }), true);
+  assert.equal(resumes({ ...c, status: "watching", positionMs: 29_999 }), false, "the TV resumes from 30 s on");
+  assert.equal(resumes({ ...c, status: "finished", positionMs: 90_000 }), false);
+  assert.equal(resumes(null), false);
   assert.equal(percent(30, 120), 25);
   assert.equal(percent(30, null), null);
   assert.equal(percent(500, 100), 100);
@@ -261,6 +267,9 @@ test("admin helpers: what the views say (now playing, episode chips, show lines,
   assert.equal(searchSummary(0, ""), "The catalog has no shows.");
   assert.equal(searchSummary(SEARCH_MAX, ""), "The first 200 shows; type a title to narrow the list.", "the server's cap");
   assert.equal(searchSummary(SEARCH_MAX, "a"), "The first 200 shows that match “a”; type more to narrow the list.");
+  assert.equal(catalogSearchPath(" pro "), "/catalog/search?limit=200&q=pro");
+  assert.equal(catalogSearchPath("a&b c"), "/catalog/search?limit=200&q=a%26b%20c");
+  assert.equal(catalogSearchPath(""), "/catalog/search?limit=200&q=", "an empty box lists the catalog");
 
   assert.equal(shortId("20261014-6b05c8e7"), "20261014-6b05c8e7");
   assert.equal(shortId("20261014-6b05c8e71a2b3c4d5e6f"), "20261014-6b05c8e71a2…");

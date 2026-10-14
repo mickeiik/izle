@@ -38,10 +38,29 @@ export const uid = (prefix) => `${prefix}-${++lastId}`;
 /** Text for screen readers only (a row's context that the eye gets from the layout). @param {string} text */
 export const srOnly = (text) => h("span", { class: "visually-hidden" }, text);
 
+/** The tab title of a view whose heading says `text`. @param {string} text */
+export const pageTitle = (text) => `${text} · izle admin`;
+
 /** Sets the view's heading and the tab title together. @param {HTMLElement} heading @param {string} text */
 export function setTitle(heading, text) {
   heading.textContent = text;
-  document.title = `${text} · izle admin`;
+  document.title = pageTitle(text);
+}
+
+/**
+ * A view: an optional back link, the title line (the `h1`, and `aside` next to it) and the content.
+ * @param {{ back?: [href: string, text: string], title: string | HTMLElement, aside?: Child[] }} head a `title`
+ *   text becomes the `h1`
+ * @param {...(Child | Child[])} content
+ */
+export function page({ back, title, aside = [] }, ...content) {
+  return h(
+    "div",
+    { class: "page" },
+    back ? h("p", { class: "back" }, h("a", { href: back[0] }, back[1])) : null,
+    h("div", { class: "title" }, typeof title === "string" ? h("h1", null, title) : title, aside),
+    ...content,
+  );
 }
 
 /**
@@ -70,8 +89,20 @@ export function card(opts, ...children) {
 /** @param {string | null} url @param {string} [alt] */
 export const poster = (url, alt = "") => (url ? h("img", { class: "poster", src: url, alt, loading: "lazy" }) : h("div", { class: "poster empty", "aria-hidden": "true" }));
 
-/** @param {string} text @param {"ok" | "warn" | "info" | "server" | ""} [tone] */
-export const chip = (text, tone = "") => h("span", { class: tone ? `chip ${tone}` : "chip" }, text);
+/** A chip's colour: none, a state, or (`server`) a problem the server ran into. @typedef {"ok" | "warn" | "info" | "server" | ""} Tone */
+
+/** @param {string} text @param {Tone} [tone] */
+export function chip(text, tone = "") {
+  const el = h("span");
+  setChip(el, text, tone);
+  return el;
+}
+
+/** Sets a chip's text and colour (a chip that a poll updates). @param {HTMLElement} el @param {string} text @param {Tone} [tone] */
+export function setChip(el, text, tone = "") {
+  el.className = tone ? `chip ${tone}` : "chip";
+  el.textContent = text;
+}
 
 /** @param {{ status: string, online: boolean }} device */
 export function statusChip(device) {
@@ -265,6 +296,23 @@ export async function busy(button, fn) {
 export function setOff(button, off) {
   button.dataset.off = String(off);
   syncInert(button);
+}
+
+/**
+ * Handles the submission of `form` (the browser's own is prevented). Nothing happens while `button`, its submit
+ * button, is inert; else `prepare()` checks what was typed (a toast says what is wrong) and returns the work to run
+ * with the button busy, or nothing.
+ * @param {HTMLFormElement} form
+ * @param {HTMLElement} button
+ * @param {() => (() => Promise<unknown>) | null | void} prepare
+ */
+export function onSubmit(form, button, prepare) {
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (isInert(button)) return;
+    const work = prepare();
+    if (work) void busy(button, work);
+  });
 }
 
 /**

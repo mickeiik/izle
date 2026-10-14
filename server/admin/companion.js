@@ -3,10 +3,11 @@
 // (docs/spec/server-api-v1.md, "Listen along"). The maths live in lib.js and the audio element's stream in
 // companion-player.js; this module owns the card, the long-poll that follows the TV and the 250 ms correction loop.
 
-import { api, attempt, devicePath } from "./api.js";
+import { api, attempt, devicePath, isUnauthorized } from "./api.js";
 import { attach, nativeHlsBroken } from "./companion-player.js";
-import { busy, card, h, slot, toast } from "./dom.js";
+import { actionButton, card, h, slot, toast } from "./dom.js";
 import {
+  SYNC,
   candidateOptions,
   clockOffset,
   companionTarget,
@@ -35,10 +36,16 @@ const SEEK_LEAD_MS = 150;
 const RE_RESOLVE_BEFORE_EXPIRY_MS = 60_000;
 const MAX_RECOVERIES = 3;
 
+const sleep = (/** @type {number} */ ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Where the timing of a source for an episode is kept. @param {string} episodeId @param {string} sourceId */
+const linkPath = (episodeId, sourceId) => `/companion/links/${encodeURIComponent(episodeId)}/${encodeURIComponent(sourceId)}`;
+
 /**
  * The "Listen along" card of a TV's page. `refresh` re-reads what the TV plays (the page polls it), `fail` shows a
  * first load that failed, `stop` ends listening (the page calls it when the owner leaves).
  * @param {{ deviceId: string, signal: AbortSignal }} o `signal`: the page's, it cancels the card's reads
+ * @returns {import("./view-device.js").Section & { stop(): void }}
  */
 export function companionCard({ deviceId, signal }) {
   const base = devicePath(deviceId);
@@ -83,8 +90,8 @@ export function companionCard({ deviceId, signal }) {
   const select = h("select", { id: "cp-source" });
   const offsetInput = h("input", { type: "number", id: "cp-offset", step: "0.001", inputmode: "decimal" });
   const rateInput = h("input", { type: "number", id: "cp-rate", step: "0.0001", min: "0.5", max: "2", inputmode: "decimal" });
-  const save = h("button", { type: "button" }, "Save timing");
-  const applyAll = h("button", { type: "button" }, "Apply to all episodes");
+  const save = actionButton("Save timing", null, () => saveTiming());
+  const applyAll = actionButton("Apply to all episodes", null, () => applyToAll());
   const listen = h("button", { type: "button", class: "primary" }, "Listen");
   const startAudio = h("button", { type: "button", class: "primary", hidden: true }, "Start audio");
   const nudgeText = h("span");
@@ -164,8 +171,12 @@ export function companionCard({ deviceId, signal }) {
     body.show(form);
   };
 
-  /** Re-reads the candidates of what the TV plays; called by the page's poll and after the TV changes episode. */
-  const refresh = async () => {
+  /**
+   * Re-reads the candidates of what the TV plays and shows them when they changed (`force`: in any case); called
+   * by the page's poll, after a save and after the TV changes episode.
+   */
+  const refresh = async (force = false) => {
+    if (force) candidatesKey = "";
     const r = await api("GET", `${base}/companion`, undefined, { signal });
     const key = JSON.stringify([r.nowPlaying?.episodeId, r.nowPlaying?.sourceId, r.candidates.map((/** @type {any} */ c) => [c.sourceId, c.link])]);
     if (key === candidatesKey) return;
@@ -192,30 +203,22 @@ export function companionCard({ deviceId, signal }) {
     });
   }
 
-  save.addEventListener("click", () =>
-    busy(save, async () => {
-      const n = candidates?.nowPlaying;
-      const t = timingFromInputs();
-      if (!n || !t) return toast("Offset or speed is not a valid number (speed 0.5–2).", "error");
-      const { sourceId, language } = chosen();
-      const r = await attempt(
-        () => api("PUT", `/companion/links/${encodeURIComponent(n.episodeId)}/${encodeURIComponent(sourceId)}`, { ...t, language }),
-        "Timing saved for this episode.",
-      );
-      if (!r.ok) return;
-      candidatesKey = "";
-      await refresh().catch(() => {});
-    }),
-  );
-  applyAll.addEventListener("click", () =>
-    busy(applyAll, async () => {
-      const n = candidates?.nowPlaying;
-      if (!n) return;
-      const { sourceId } = chosen();
-      const r = await attempt(() => api("POST", `/companion/links/${encodeURIComponent(n.episodeId)}/${encodeURIComponent(sourceId)}/copy-to-item`));
-      if (r.ok) toast(r.value.updated === 0 ? "No other episode has that source." : `Timing copied to ${plural(r.value.updated, "other episode")}.`);
-    }),
-  );
+  const saveTiming = async () => {
+    const n = candidates?.nowPlaying;
+    const t = timingFromInputs();
+    if (!n || !t) return toast("Offset or speed is not a valid number (speed 0.5–2).", "error");
+    const { sourceId, language } = chosen();
+    const r = await attempt(() => api("PUT", linkPath(n.episodeId, sourceId), { ...t, language }), "Timing saved for this episode.");
+    if (!r.ok) return;
+    await refresh(true).catch(() => {});
+  };
+  const applyToAll = async () => {
+    const n = candidates?.nowPlaying;
+    if (!n) return;
+    const { sourceId } = chosen();
+    const r = await attempt(() => api("POST", `${linkPath(n.episodeId, sourceId)}/copy-to-item`));
+    if (r.ok) toast(r.value.updated === 0 ? "No other episode has that source." : `Timing copied to ${plural(r.value.updated, "other episode")}.`);
+  };
 
   // --- following the TV ----------------------------------------------------------------------------------------
   const serverNow = () => Date.now() + (offset ?? 0);
@@ -227,7 +230,7 @@ export function companionCard({ deviceId, signal }) {
     const r = await api("GET", `${base}/now${query}`, undefined, { signal });
     const receivedAt = Date.now();
     const rtt = receivedAt - sentAt;
-    if (!wait || rtt <= 1000) {
+    if (!wait || rtt <= SYNC.sampleMaxRttMs) {
       samples = pushSample(samples, { sentAt, receivedAt, serverNowMs: r.serverNowMs });
       offset = clockOffset(samples);
       bestRtt = Math.min(bestRtt, rtt);
@@ -250,14 +253,11 @@ export function companionCard({ deviceId, signal }) {
       try {
         const r = await readNow(true, controller.signal);
         if (playing && r.nowPlaying && r.nowPlaying.episodeId !== playing.episodeId) await follow(r.nowPlaying.episodeId);
-        else if (Date.now() - lastActiveAt > IDLE_STOP_MS) {
-          stop();
-          toast("The TV stopped; listening ended.", "info");
-        }
+        else if (Date.now() - lastActiveAt > IDLE_STOP_MS) end("The TV stopped; listening ended.", "info");
       } catch (err) {
         if (controller.signal.aborted) return;
-        if (/** @type {any} */ (err)?.status === 401) return stop();
-        await new Promise((resolve) => setTimeout(resolve, 3000));
+        if (isUnauthorized(err)) return stop();
+        await sleep(3000);
       }
     }
   };
@@ -325,12 +325,8 @@ export function companionCard({ deviceId, signal }) {
 
   const recover = async () => {
     if (phase !== "listening" || !playing) return;
-    if (++recoveries > MAX_RECOVERIES) {
-      stop();
-      toast("The companion stream keeps failing; listening ended.", "error");
-      return;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    if (++recoveries > MAX_RECOVERIES) return end("The companion stream keeps failing; listening ended.", "error");
+    await sleep(2000);
     if (phase !== "listening" || !playing) return;
     try {
       if (await load(playing.episodeId)) {
@@ -354,22 +350,16 @@ export function companionCard({ deviceId, signal }) {
     const wanted = playing;
     if (!wanted) return;
     try {
-      candidatesKey = "";
-      await refresh();
+      await refresh(true);
       if (phase !== "listening") return;
       const option = candidateOptions(candidates?.candidates ?? []).find((o) => o.sourceId === wanted.sourceId && o.language === wanted.language && !o.disabled);
-      if (!option) {
-        stop();
-        toast("The next episode has no such source; listening ended.", "error");
-        return;
-      }
+      if (!option) return end("The next episode has no such source; listening ended.", "error");
       select.value = option.value;
       fillTiming(); // the new episode's own stored timing
       playing = null; // `load` then takes the timing from the inputs
       if (await load(episodeId)) recoveries = 0;
     } catch (err) {
-      stop();
-      toast(errorText(err), "error");
+      end(errorText(err), "error");
     }
   };
 
@@ -470,6 +460,12 @@ export function companionCard({ deviceId, signal }) {
     status.classList.remove("synced");
   }
 
+  /** Stops listening and says why. @param {string} text @param {"error" | "info"} kind */
+  function end(text, kind) {
+    stop();
+    toast(text, kind);
+  }
+
   listen.addEventListener("click", () => {
     if (phase === "idle") void start();
     else stop();
@@ -479,7 +475,6 @@ export function companionCard({ deviceId, signal }) {
     element,
     refresh,
     stop,
-    /** @param {unknown} err @param {() => Promise<void>} retry */
     fail: (err, retry) => body.fail(err, retry, "Could not load what the TV plays."),
   };
 }

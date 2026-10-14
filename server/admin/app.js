@@ -11,7 +11,7 @@
 //   view-*.js        one module per view; device-home.js is the TV page's home screen card
 //   companion.js     "Listen along" (its stream: companion-player.js)
 
-import { ApiError, api, clearToken, getToken, onUnauthorized, setToken } from "./api.js";
+import { clearToken, getToken, isUnauthorized, onUnauthorized, signIn } from "./api.js";
 import { toast } from "./dom.js";
 import { errorText, tokenFromHash } from "./lib.js";
 import { startRouter } from "./router.js";
@@ -36,17 +36,14 @@ async function signInFromLink() {
   const linked = tokenFromHash(location.hash);
   if (!linked) return;
   history.replaceState(null, "", `${location.pathname}${location.search}#/devices`);
+  let remembered;
   try {
-    await api("GET", "/catalog", undefined, { token: linked });
+    remembered = await signIn(linked);
   } catch (err) {
-    toast(
-      err instanceof ApiError && err.status === 401 ? "This sign-in link is not valid any more. Print a new one with izle-server admin-token --link." : errorText(err),
-      "error",
-    );
+    toast(isUnauthorized(err) ? "This sign-in link is not valid any more. Print a new one with izle-server admin-token --link." : errorText(err), "error");
     return;
   }
-  if (setToken(linked)) toast("Signed in.");
-  else toast("Signed in for this tab only: this browser does not let the page remember the token.", "info");
+  if (remembered) toast("Signed in.");
 }
 
 startRouter({

@@ -6,7 +6,7 @@
 export const HOME_MAX = 12;
 
 /** The TV resumes a saved position only from 30 s on (PlaybackPlan); earlier positions start over. */
-export const RESUME_MIN_MS = 30_000;
+const RESUME_MIN_MS = 30_000;
 
 /** The most results the catalog search returns (the server's cap). */
 export const SEARCH_MAX = 200;
@@ -115,6 +115,14 @@ export function episodeName(e, kind) {
  */
 
 /**
+ * Whether OK on the TV continues this entry where it was (rather than from the beginning).
+ * @param {ContinueInfo | null | undefined} c
+ */
+export function resumes(c) {
+  return c?.status === "watching" && c.positionMs >= RESUME_MIN_MS;
+}
+
+/**
  * What OK does on the TV for a home entry, in a few words.
  * @param {ContinueInfo | null | undefined} c
  * @param {string | null} kind
@@ -122,7 +130,7 @@ export function episodeName(e, kind) {
 export function continueText(c, kind) {
   if (!c) return "Nothing playable";
   const which = kind === "series" ? `${episodeName(c, kind)} · ` : "";
-  if (c.status === "watching" && c.positionMs >= RESUME_MIN_MS) {
+  if (resumes(c)) {
     return `${which}continues at ${formatClock(c.positionMs)}${c.durationMs ? ` of ${formatClock(c.durationMs)}` : ""}`;
   }
   if (c.status === "watching") return `${which}starts from the beginning`;
@@ -192,6 +200,14 @@ export function searchSummary(count, query) {
   if (count >= SEARCH_MAX) return q ? `The first ${count} shows that match “${q}”; type more to narrow the list.` : `The first ${count} shows; type a title to narrow the list.`;
   if (!q) return count === 1 ? "The catalog's only show." : `All ${count} shows.`;
   return `${plural(count, "show")} ${count === 1 ? "matches" : "match"} “${q}”.`;
+}
+
+/**
+ * The catalog search for `query` (trimmed), up to the server's cap.
+ * @param {string} query
+ */
+export function catalogSearchPath(query) {
+  return `/catalog/search?limit=${SEARCH_MAX}&q=${encodeURIComponent(query.trim())}`;
 }
 
 /**

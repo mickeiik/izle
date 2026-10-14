@@ -3,8 +3,8 @@
 // a view starts (polls, timers, listeners, the requests it reads with) belongs to the scope of the route it was
 // rendered for, and ends with it: work that finishes after the owner left the page changes nothing.
 
-import { h } from "./dom.js";
-import { isAborted } from "./api.js";
+import { h, pageTitle } from "./dom.js";
+import { api, isAborted } from "./api.js";
 import { errorText } from "./lib.js";
 
 /**
@@ -14,13 +14,18 @@ import { errorText } from "./lib.js";
  */
 
 /**
+ * What a job does when it fails: `retry` runs it again at once (a Retry button).
+ * @typedef {(err: unknown, retry: () => Promise<void>) => void} OnError
+ */
+
+/**
  * @typedef {object} Scope
  * @property {AbortSignal} signal aborted when the view ends: give it to the view's reads
+ * @property {(path: string) => Promise<any>} read a GET below /api/v1/admin that ends with the view
  * @property {() => boolean} alive whether the view is still the one shown
- * @property {(fn: () => Promise<void>, ms: number, onError?: (err: unknown) => void) => Job} poll calls `fn` now and
- *   every `ms` while the page is visible
- * @property {(fn: () => Promise<void>, onError?: (err: unknown) => void) => Job} load calls `fn` once (`now()`
- *   again for Retry)
+ * @property {(fn: () => Promise<void>, ms: number, onError?: OnError) => Job} poll calls `fn` now and every `ms`
+ *   while the page is visible
+ * @property {(fn: () => Promise<void>, onError?: OnError) => Job} load calls `fn` once (`now()` again for Retry)
  * @property {(fn: () => void, ms: number) => void} later a timeout that ends with the view
  * @property {(fn: () => void) => void} onCleanup runs `fn` when the view ends (at once if it already has)
  * @property {(hash: string) => void} go navigates, unless the view already ended
@@ -56,7 +61,7 @@ function createScope() {
     if (note.textContent !== text) note.textContent = text;
   };
 
-  /** @param {() => Promise<void>} fn @param {number} ms 0: once @param {(err: unknown) => void} [onError] */
+  /** @param {() => Promise<void>} fn @param {number} ms 0: once @param {OnError} [onError] */
   const job = (fn, ms, onError) => {
     const state = { lastOk: 0, error: /** @type {unknown} */ (null) };
     /** @type {Job} */
@@ -77,7 +82,7 @@ function createScope() {
       } catch (err) {
         if (ended || isAborted(err)) return;
         state.error = err ?? new Error("failed");
-        onError?.(err);
+        onError?.(err, handle.now);
       }
       updateNote();
     };
@@ -117,6 +122,7 @@ function createScope() {
   /** @type {Scope & { end(): void }} */
   const scope = {
     signal: controller.signal,
+    read: (path) => api("GET", path, undefined, { signal: controller.signal }),
     alive: () => !ended,
     poll: job,
     load: (fn, onError) => job(fn, 0, onError),
@@ -192,7 +198,7 @@ export function startRouter({ app, nav, before, pick }) {
     window.scrollTo(0, 0);
     const heading = view.querySelector("h1");
     if (heading) {
-      document.title = `${heading.textContent} · izle admin`;
+      document.title = pageTitle(heading.textContent);
       heading.tabIndex = -1;
       if (!first) heading.focus({ preventScroll: true });
     }

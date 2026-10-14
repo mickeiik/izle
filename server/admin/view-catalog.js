@@ -2,16 +2,15 @@
 // Catalog: the loaded bundle (with "Reload from disk"), its build history with what each build changed, and every
 // show, searched as the owner types.
 
-import { ApiError, api } from "./api.js";
-import { actionButton, card, h, keyedRows, liveSearch, loadError, loading, showRow, slot, toast } from "./dom.js";
-import { SEARCH_MAX, buildSummary, errorText, formatRelative, groupEpisodeChanges, issueLine, plural, searchSummary, shortId, showMeta } from "./lib.js";
+import { ApiError, api, isUnauthorized } from "./api.js";
+import { actionButton, card, h, keyedRows, liveSearch, loadError, loading, page, showRow, slot, toast } from "./dom.js";
+import { buildSummary, catalogSearchPath, errorText, formatRelative, groupEpisodeChanges, issueLine, plural, searchSummary, shortId, showMeta } from "./lib.js";
 
 /** Builds listed before the rest fold away. */
 const BUILDS_SHOWN = 5;
 
 /** @param {import("./router.js").Scope} scope */
 export function catalogView(scope) {
-  const read = (/** @type {string} */ path) => api("GET", path, undefined, { signal: scope.signal });
   const infoSlot = slot();
   const buildsSlot = slot();
   const facts = h("dl", { class: "facts" });
@@ -27,7 +26,7 @@ export function catalogView(scope) {
       renderInfo(r.catalog);
       await shows.run();
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) return; // signed out
+      if (isUnauthorized(err)) return; // signed out
       if (!(err instanceof ApiError && err.code === "invalid_catalog")) return toast(errorText(err), "error");
       const issues = /** @type {any[]} */ (err.body?.issues ?? []).filter((i) => i.severity === "error");
       problem.replaceChildren(
@@ -126,7 +125,7 @@ export function catalogView(scope) {
     if (!changes && !build.baseline) {
       detail.replaceChildren(loading());
       try {
-        changes = (await read(`/catalog/builds/${encodeURIComponent(buildId)}`)).changes;
+        changes = (await scope.read(`/catalog/builds/${encodeURIComponent(buildId)}`)).changes;
       } catch (err) {
         if (mine === detailSeq && scope.alive()) detail.replaceChildren(loadError(err, () => selectBuild(buildId), "Could not load what this build changed."));
         return;
@@ -173,10 +172,10 @@ export function catalogView(scope) {
     void selectBuild((latest ?? buildList[0]).buildId);
   };
 
-  const first = scope.load(
-    async () => renderInfo(await read("/catalog")),
-    (err) => {
-      infoSlot.fail(err, first.now, "Could not load the catalog.");
+  scope.load(
+    async () => renderInfo(await scope.read("/catalog")),
+    (err, retry) => {
+      infoSlot.fail(err, retry, "Could not load the catalog.");
       buildsSlot.fail(err, null, "Could not load the catalog.");
     },
   );
@@ -193,7 +192,7 @@ export function catalogView(scope) {
   const shows = liveSearch(
     scope,
     search,
-    async (query) => (await read(`/catalog/search?limit=${SEARCH_MAX}&q=${encodeURIComponent(query.trim())}`)).items,
+    async (query) => (await scope.read(catalogSearchPath(query))).items,
     (items, query) => {
       summary.textContent = searchSummary(items.length, query);
       rows.set(items);
@@ -203,10 +202,8 @@ export function catalogView(scope) {
   );
   void shows.run();
 
-  return h(
-    "div",
-    { class: "page" },
-    h("div", { class: "title" }, h("h1", null, "Catalog")),
+  return page(
+    { title: "Catalog" },
     scope.note,
     card("Bundle", infoSlot.element),
     card({ title: "Builds", intro: "Each build this server loaded, newest first, with what it added and removed compared with the build before it." }, buildsSlot.element),

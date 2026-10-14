@@ -7,8 +7,7 @@ import { api, attempt } from "./api.js";
 import { actionButton, card, chip, h, keepFocus, keyedRows, liveSearch, loadError, loading, poster, progressBar, setOff, showRow, uid } from "./dom.js";
 import {
   HOME_MAX,
-  RESUME_MIN_MS,
-  SEARCH_MAX,
+  catalogSearchPath,
   continueText,
   episodeName,
   episodeStateLabel,
@@ -17,6 +16,7 @@ import {
   moveItem,
   percent,
   plural,
+  resumes,
   searchSummary,
   showMeta,
 } from "./lib.js";
@@ -66,14 +66,12 @@ export function homeCard(ctx) {
     const title = h("strong");
     const line = h("div", { class: "muted" });
     const barBox = h("div");
-    const up = actionButton("▲", { class: "icon", "data-control": "up" }, () => {
+    const move = (/** @type {number} */ delta) => {
       const all = ids();
-      return save(moveItem(all, all.indexOf(itemId), -1), "Order saved.");
-    });
-    const down = actionButton("▼", { class: "icon", "data-control": "down" }, () => {
-      const all = ids();
-      return save(moveItem(all, all.indexOf(itemId), 1), "Order saved.");
-    });
+      return save(moveItem(all, all.indexOf(itemId), delta), "Order saved.");
+    };
+    const up = actionButton("▲", { class: "icon", "data-control": "up" }, () => move(-1));
+    const down = actionButton("▼", { class: "icon", "data-control": "down" }, () => move(1));
     const play = actionButton("Play", { "data-control": "play" }, () => (entry.continue ? ctx.send({ type: "play", episodeId: entry.continue.episodeId }, "Play") : Promise.resolve()));
     const picker = h("div", { class: "picker", id: uid("episodes"), hidden: true });
     const toggle = h("button", { type: "button", "data-control": "episodes", "aria-controls": picker.id, "aria-expanded": "false" }, "Episodes…");
@@ -97,7 +95,7 @@ export function homeCard(ctx) {
       let states;
       let kind;
       try {
-        const [item, prog] = await Promise.all([ctx.read(`/catalog/items/${encodeURIComponent(itemId)}`), ctx.read(`${ctx.path}/progress`)]);
+        const [item, prog] = await Promise.all([ctx.scope.read(`/catalog/items/${encodeURIComponent(itemId)}`), ctx.scope.read(`${ctx.path}/progress`)]);
         kind = item.item.kind;
         const episodes = /** @type {Array<{ id: string, playbackAllowed: boolean }>} */ (item.item.episodes);
         states = episodeStates(episodes, entry.continue?.episodeId ?? null, prog.progress.filter((/** @type {any} */ p) => p.itemId === itemId));
@@ -171,8 +169,7 @@ export function homeCard(ctx) {
             ? [chip("Missing from the catalog — hidden on the TV", "warn")]
             : [continueText(c, e.kind), e.newEpisodes > 0 ? " " : "", e.newEpisodes > 0 ? chip(plural(e.newEpisodes, "new episode"), "info") : ""]),
         );
-        const watching = c && c.status === "watching" && c.positionMs >= RESUME_MIN_MS;
-        const bar = watching ? progressBar(percent(c.positionMs, c.durationMs), `${n}: how far`, `${formatClock(c.positionMs)} of ${formatClock(c.durationMs)}`) : null;
+        const bar = resumes(c) ? progressBar(percent(c.positionMs, c.durationMs), `${n}: how far`, `${formatClock(c.positionMs)} of ${formatClock(c.durationMs)}`) : null;
         barBox.replaceChildren(...(bar ? [bar] : []));
         up.setAttribute("aria-label", `Move ${n} up`);
         down.setAttribute("aria-label", `Move ${n} down`);
@@ -229,12 +226,7 @@ export function homeCard(ctx) {
   const finder = liveSearch(
     ctx.scope,
     search,
-    async (query) => {
-      if (!query.trim()) {
-        if (!showAll) return null;
-      } else showAll = false;
-      return (await ctx.read(`/catalog/search?limit=${SEARCH_MAX}&q=${encodeURIComponent(query.trim())}`)).items;
-    },
+    async (query) => (query.trim() || showAll ? (await ctx.scope.read(catalogSearchPath(query))).items : null),
     (items, query) => {
       results = items;
       hint.hidden = items !== null;
@@ -252,9 +244,8 @@ export function homeCard(ctx) {
       resultsArea.replaceChildren(loadError(err, finder.run, "Could not search the catalog."));
     },
   );
-  search.addEventListener("input", () => {
-    if (!search.value.trim()) showAll = false;
-  });
+  // "Show all" lasts until the box changes.
+  search.addEventListener("input", () => (showAll = false));
   showAllButton.addEventListener("click", () => {
     showAll = true;
     void keepFocus(() => finder.run(), search);

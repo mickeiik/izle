@@ -3,12 +3,11 @@
 // per TV, so a half-typed name and the keyboard focus survive the refresh.
 
 import { api, attempt } from "./api.js";
-import { busy, card, h, isInert, keyedRows, problemsChip, setOff, slot, srOnly, statusChip, toast } from "./dom.js";
+import { card, h, keyedRows, onSubmit, page, problemsChip, setOff, slot, srOnly, statusChip, toast } from "./dom.js";
 import { formatCode, formatCountdown, formatRelative, plural, serverAddress } from "./lib.js";
 
 /** @param {import("./router.js").Scope} scope */
 export function devicesView(scope) {
-  const read = (/** @type {string} */ path) => api("GET", path, undefined, { signal: scope.signal });
   const pendingSlot = slot();
   const devicesSlot = slot();
   const pendingList = h("div", { class: "list" });
@@ -28,26 +27,16 @@ export function devicesView(scope) {
     const name = h("input", { type: "text", maxlength: 60, placeholder: "Name (optional), e.g. Living room", "aria-label": `Name for the TV showing ${code}` });
     const countdown = h("span", { class: "muted" });
     const approve = h("button", { class: "primary", type: "submit", "data-control": "approve", "aria-label": `Approve ${code}` }, "Approve");
-    const element = h(
-      "form",
-      {
-        class: "row pair",
-        onsubmit: (/** @type {SubmitEvent} */ e) => {
-          e.preventDefault();
-          if (isInert(approve)) return;
-          const n = name.value.trim();
-          void busy(approve, async () => {
-            const r = await attempt(() => api("POST", "/pair/approve", { code: c.code, ...(n ? { name: n } : {}) }));
-            if (!r.ok) return;
-            toast(`Approved as “${r.value.name}”. The TV will show its home screen in a moment.`);
-            await job.now();
-          });
-        },
-      },
-      h("div", { class: "code" }, srOnly("Code "), code),
-      h("div", { class: "grow" }, name, countdown),
-      approve,
-    );
+    const element = h("form", { class: "row pair" }, h("div", { class: "code" }, srOnly("Code "), code), h("div", { class: "grow" }, name, countdown), approve);
+    onSubmit(element, approve, () => {
+      const n = name.value.trim();
+      return async () => {
+        const r = await attempt(() => api("POST", "/pair/approve", { code: c.code, ...(n ? { name: n } : {}) }));
+        if (!r.ok) return;
+        toast(`Approved as “${r.value.name}”. The TV will show its home screen in a moment.`);
+        await job.now();
+      };
+    });
     return {
       element,
       /** @param {any} next */
@@ -80,7 +69,7 @@ export function devicesView(scope) {
   const deviceRows = keyedRows(devicesList, (/** @type {any} */ d) => d.id, deviceRow);
 
   const refresh = async () => {
-    const [codes, list] = await Promise.all([read("/pair/pending"), read("/devices")]);
+    const [codes, list] = await Promise.all([scope.read("/pair/pending"), scope.read("/devices")]);
     pendingRows.set(codes.codes);
     pendingEmpty.hidden = codes.codes.length > 0;
     pendingSlot.show(pendingEmpty, pendingList);
@@ -93,10 +82,8 @@ export function devicesView(scope) {
     devicesSlot.fail(err, null, "Could not load the TVs.");
   });
 
-  return h(
-    "div",
-    { class: "page" },
-    h("div", { class: "title" }, h("h1", null, "TVs")),
+  return page(
+    { title: "TVs" },
     scope.note,
     card({ title: "Pair a TV", intro: "Approve only the code that your TV shows." }, pendingSlot.element),
     card("Paired TVs", devicesSlot.element),
