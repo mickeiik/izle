@@ -1400,3 +1400,70 @@ change. No CHANGELOG entry: nothing is user-visible.
   loopback only. The 1122 lines were identical every time.
 - **Tests:** contract 31 (unchanged), server 142 (was 141): `PlaybackSessions.owned`. `npm run typecheck`,
   `npm run version:check`, `npm run pack:server` and `npm run smoke:server` pass.
+
+## Simplification pass: admin page (2026-10-14)
+
+A follow-up to the design pass that changes no behaviour: each thing is done once, dead code and rules that never
+applied are gone, comments say what the code does. Same texts, look, focus handling, accessible names, requests,
+polling and Listen along sync.
+
+- **Dead code:** an unused import (`view-item.js`), the TV page context's `id`, the card option `id`, `devicePath`'s
+  `rest`, `searchSummary`'s `cap` (it reads `SEARCH_MAX`), `slot`'s props (only the TV page passed one, an unused
+  `sections` class), `h`'s `checked` branch, `?? null` before children that `h` skips anyway, `originLabel`'s no-op
+  branch, `canControlPlayback`'s `Boolean(n) &&`, the `poll` wrapper, and the `"danger"` chip tone (no chip had it;
+  `"server"` took its place). `loadError` requires its `what` (every caller gave one). `createScope`, `PlayerError`,
+  `busy`, `isInert`, `setToken` and `RESUME_MIN_MS` are no longer exported: only their own module uses them.
+- **The scope does more of each view's plumbing.** A job's `onError(err, retry)` receives its Retry, so the views no
+  longer keep a job in a variable only to hand its `now` back to it (the TV list still keeps one: Approve refreshes
+  it). `scope.read(path)` is the GET that ends with the view (written out four times before; the TV page's
+  `ctx.read`). The TV page's polled sections share one `Section` typedef and are polled with their own `fail`.
+- **One helper each:** `isUnauthorized`; `signIn(token)` (the sign-in form and the sign-in link each checked the
+  token, kept it and told about a tab-only sign-in; the link still says "Signed in."); `pageTitle`; `page({ back,
+  title, aside }, …)` for the four views' back link and title line; `setChip` (the now-playing state and the
+  problems' server chip set chip classes by hand); `onSubmit(form, button, prepare)` for the four forms: `prepare`
+  runs outside the busy state as the old handlers did, so "Type a message first." and "Nothing changed." still never
+  mark the button busy; `catalogSearchPath` and `resumes` in lib.js, with tests; `rebuiltOnChange()` for History and
+  Problems (build again when the data changed, else keep the list and move its relative times on). Listen along:
+  `end(text, kind)` for its four "stop and say why", `linkPath`, `sleep`, `refresh(true)` (it clears the key first,
+  as the two callers did), `SYNC.sampleMaxRttMs` for its second 1000; Save timing and Apply to all are
+  `actionButton`s. Home screen: ▲ and ▼ share `move(delta)`; "Show all" is reset by any edit of the box, in one
+  listener instead of two places (a non-empty query ignores it, and every way back to an empty box is an input
+  event, so what is listed is the same, typing then deleting within the 200 ms included). The remote's table names a
+  button and its toast only where they differ from the label.
+- **Style sheet:** rules that never applied are gone (`button:disabled`: buttons are never disabled, only inputs;
+  `.companion audio`: an audio element without `controls` is not rendered; `.list > .row.link:first-child`:
+  `.list > .row.link` already beats `.list > :first-child`); `--focus` and `--info-bg` are `var(--accent)` and
+  `var(--accent-soft)`, which they equalled in both themes; the filled chip tones share one `:is()` rule of the same
+  specificity; the episode picker's and the diagnostics' dividers are `li + li`; the two "first label at the top"
+  rules are one; the header comment no longer claims that the rules use only tokens. `.list` keeps its
+  `:first-child` rule, which also clears the first row's top padding: `+` would not remove a rule there.
+- **Smaller functions:** `buildDetail` (the catalog's "what changed") is module-level; the episode picker is its own
+  builder (`episodePicker` → `{ element, sync(entry, open) }`), so a home row is 78 lines instead of 131, with the
+  same focus fallbacks; the section nav marks the current section in one pass over the sections, with the same
+  result in every case (at the bottom of the page the last section in view if any, else the last one under the bar,
+  which matters on a viewport shorter than the bar); the settings form's submit and autoplay handlers have names.
+- **Comments and types:** edits during a home save are ignored, not queued; only `stop()` bumps Listen along's
+  generation (`load()` has its own counter); `languageLabel`'s `none`; `ContinueInfo` has the `episodeId` that is
+  read and not the `index`/`count` that were not; the Add button's focus also falls back to the shows above it;
+  `keyedRows` prefers the same `data-control` on whichever row takes the focus; the companion's stream, anchor and
+  link timing use the existing `Attached`, `Anchor` and `LinkTiming`; the picker's episodes are typed, not cast to
+  `any`.
+- **What a tool can tell apart:** Pause, Resume, Previous episode and Next episode lost an `aria-label` equal to
+  their text (the accessible names are the same), and the TV page's sections slot lost its unused class.
+- **Skipped, as planned:** splitting Listen along's closure, the direct `refresh()` after an action, the catalog
+  reload's error flow, and the KEEP list (`--space-6`, `--text-xl`, `page`, `results`, `loading`, `empty`). The
+  modules are about 70 lines longer in all: the new helpers' doc comments outweigh the removed copies.
+- **Checked** before each commit with `npm run typecheck`, `npm test -w server` (141 tests, as before: the new lib.js
+  assertions went into existing tests), `npm run pack:server` and `npm run smoke:server`; and with a headless
+  Chromium driven over CDP from a node script (outside the repo) against a scratch server and a fake TV, run on the
+  starting commit and after each group. 57 steps: sign-in (a wrong token, the form, a link, a bad link, a stale
+  token, no site data), the TV list, a TV's page (section bar, episode picker and "Continue from here", ▲ ▼ ✕ and
+  where the focus lands, search, typing then deleting, Show all, message, remote, settings, autoplay, Save timing,
+  Apply to all, Clear), a TV waiting for its token, an unknown TV, the catalog (search, "Reload from disk" into a
+  second build, what each build changed), a series, a film, an unknown show, and the server stopped and restarted
+  (the stale note, Retry on each view). Compared: the DOM with values and the focused element, toasts, every admin
+  API request with its body and answer, every element's computed style and box (light, dark and 390 px wide), and
+  the console (no exception, no CSP violation). All identical but for the two differences above and one race that
+  depends on timing only (whether the second 401 of a stale token is answered or cancelled by the sign-out).
+- **Not checked:** Listen along playback (the sample sources are remote, so the script only saves timings), the
+  diagnostics list (Test sources probes remote URLs), hover and active states.
