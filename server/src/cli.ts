@@ -54,7 +54,6 @@ function usage(message: string): number {
 /** Loads the resolver module like the server does, then runs the healthchecks. Exit status 1 on any problem. */
 async function checkResolver(config: ServerConfig): Promise<number> {
   if (!config.resolver) return fail("no resolver module is configured (resolver.module in the config file)");
-  // The module's own log lines (redacted) go to stderr so stdout stays a readable report.
   const resolver = await loadResolver({ module: config.resolver.module, config: config.resolver.config, dataDir: config.dataDir, log: stderrLog });
   out(`resolver module ${resolver.file}`);
   out(`sha256 ${resolver.sha256}`);
@@ -204,12 +203,8 @@ export async function main(argv: string[]): Promise<number> {
       return 2;
     }
   }
-  if (values.help) {
-    out(USAGE);
-    return 0;
-  }
-  if (values.version) {
-    out(VERSION);
+  if (values.help || values.version) {
+    out(values.help ? USAGE : VERSION);
     return 0;
   }
   if (command === "backup" && positionals.length === 0) return usage("backup needs the file to write the copy to");
@@ -220,7 +215,6 @@ export async function main(argv: string[]): Promise<number> {
 
     if (command === "check-resolver") return await checkResolver(config);
     if (command === "backup") return backup(config, positionals[0]!, values.force ?? false);
-
     if (command === "admin-token") return adminToken(config, { rotate: values.rotate ?? false, link: values.link ?? false, base: values.base });
     if (command === "pair") return await pair(config, positionals, values.server);
     if (command !== undefined) return usage(`unknown command "${command}"`);

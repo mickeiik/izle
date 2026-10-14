@@ -49,13 +49,7 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
     await next();
     // Route templates only: raw paths can carry tokens.
     const route = c.res.status === 404 && routePath(c, -1) === "*" ? "<unmatched>" : routePath(c, -1);
-    const fields = {
-      method: c.req.method,
-      route,
-      status: c.res.status,
-      ms: ms(),
-      deviceId: c.get("device")?.id,
-    };
+    const fields = { method: c.req.method, route, status: c.res.status, ms: ms(), deviceId: c.get("device")?.id };
     // Health checks and the proxy's steady stream of segment requests only show up at debug level.
     if (route === "/healthz" || (route.startsWith("/p/") && c.res.status < 400)) log.debug("request", fields);
     else log.info("request", fields);
@@ -65,10 +59,7 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
     await next();
     if (!c.res.headers.has("Cache-Control")) c.header("Cache-Control", "no-store");
   });
-  app.use(
-    "/api/*",
-    bodyLimit({ maxSize: API_BODY_LIMIT, onError: (c) => c.json({ error: "body_too_large" }, 413) }),
-  );
+  app.use("/api/*", bodyLimit({ maxSize: API_BODY_LIMIT, onError: (c) => c.json({ error: "body_too_large" }, 413) }));
 
   app.onError((err, c) => {
     if (err instanceof HttpError) {

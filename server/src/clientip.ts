@@ -42,10 +42,7 @@ function isTrusted(list: BlockList, address: string): boolean {
 export function clientAddress(remote: string | undefined, forwardedFor: string | undefined, trusted: BlockList | null): string {
   let address = remote ? normalizeIp(remote) : "unknown";
   if (!trusted || !forwardedFor) return address;
-  const hops = forwardedFor
-    .split(",")
-    .map((h) => h.trim())
-    .filter((h) => h !== "");
+  const hops = forwardedFor.split(",").map((h) => h.trim()).filter((h) => h !== "");
   while (hops.length > 0 && isTrusted(trusted, address)) address = normalizeIp(hops.pop()!);
   return address;
 }
