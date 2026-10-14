@@ -3,8 +3,8 @@ import { renderUnicodeCompact } from "uqr";
 import { isWildcardHost, localServerUrl, type ServerConfig } from "./config.ts";
 
 /**
- * Helpers for the owner's shell commands (`izle-server pair …`, `izle-server admin-token --link`): where the running
- * server answers on this host, calls to its admin API, and the admin page's sign-in link with its QR code.
+ * Helpers for the owner's shell commands (`izle-server pair …`, `izle-server admin-token --link`): calls to the
+ * running server's admin API, and the admin page's sign-in link (its base address) with its QR code.
  */
 
 export interface LinkBase {

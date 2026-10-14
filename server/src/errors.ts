@@ -1,6 +1,9 @@
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 
-/** An error that maps to a JSON response `{error: code, ...extra}`. Messages are for humans and must not hold secrets. */
+/**
+ * An error that maps to a JSON response `{error: code, ...extra}`, with `message` when it differs from the code.
+ * Messages are for humans and must not hold secrets.
+ */
 export class HttpError extends Error {
   override name = "HttpError";
   readonly status: ContentfulStatusCode;

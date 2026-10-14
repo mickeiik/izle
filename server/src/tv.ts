@@ -34,7 +34,10 @@ export interface EffectiveSettings {
   autoplayOnStart: boolean;
 }
 
-/** What the TV sees: home state, item details, resolve and progress. Also used by the admin API. */
+/**
+ * What the TV sees and reports: home state, item details, resolve and progress. Also the owner's side of the same
+ * state (the admin API): the home list, the "continue from" override, and the now-playing long-poll.
+ */
 export class TvService {
   private readonly s: Services;
   /** Admin long-polls waiting for a device's next now-playing write. */

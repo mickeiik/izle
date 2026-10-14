@@ -9,7 +9,7 @@ export interface ServerConfig {
   /** Absolute path of the config file, or null when running on defaults. */
   configPath: string | null;
   listen: { host: string; port: number };
-  /** Public base URL behind a reverse proxy (informational in v1). */
+  /** Public base URL behind a reverse proxy: the base of the admin sign-in link `admin-token --link` prints. */
   publicUrl: string | null;
   /** Addresses or CIDR ranges of reverse proxies whose `X-Forwarded-For` names the client. */
   trustedProxies: string[];

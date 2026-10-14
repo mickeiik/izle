@@ -59,7 +59,7 @@ The example ([`izle.example.json`](izle.example.json)) is set up for HTTPS behin
 | Key | Example | |
 |---|---|---|
 | `listen` | `127.0.0.1:8787` | use `"host": "0.0.0.0"` for the LAN-only setup |
-| `publicUrl` | `https://izle.example.org` | informational for now; set it to the address TVs use |
+| `publicUrl` | `https://izle.example.org` | the address izle is reached at; `izle-server admin-token --link` builds the admin sign-in link on it |
 | `trustedProxies` | `127.0.0.1`, `::1` | reverse proxies whose `X-Forwarded-For` names the real client (addresses or CIDR ranges), so the pairing rate limit and the admin sign-in throttle count each client separately. Leave it empty (`[]`) when nothing sits in front of the server |
 | `dataDir` | `/var/lib/izle` | database, admin token, the resolver module's directory |
 | `catalog.dir` | (absent) | absent = the sample catalog in the package; see below for your own |
