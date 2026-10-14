@@ -8,7 +8,7 @@
 //
 // Usage: node scripts/smoke-server.mjs [<izle-server-x.y.z.tgz>] [--keep]
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -100,7 +100,13 @@ try {
   check((await call("GET", "/healthz")).json?.ok === true, "GET /healthz");
   const page = await call("GET", "/admin/");
   check(page.res.status === 200 && page.text.includes("app.js") && /script-src 'self'/.test(page.res.headers.get("content-security-policy") ?? ""), "the admin page is served with its CSP");
-  check((await call("GET", "/admin/app.js")).res.status === 200, "the admin page's script is served");
+  // Every module of the page (the packaging script copies the directory's top-level files): one that is missing
+  // from the package or the allow-list would only show as a blank page.
+  const adminFiles = (await readdir(path.join(ROOT, "server", "admin"))).filter((n) => /\.(js|css|svg)$/.test(n)).sort();
+  /** @type {string[]} */
+  const unserved = [];
+  for (const name of adminFiles) if ((await call("GET", `/admin/${name}`)).res.status !== 200) unserved.push(name);
+  check(adminFiles.includes("app.js") && unserved.length === 0, `the admin page's ${adminFiles.length} files are served${unserved.length ? ` (not served: ${unserved.join(", ")})` : ""}`);
   check((await call("GET", "/admin/vendor/hls.min.js")).res.status === 200, "the vendored hls.js is packaged and served");
   check(/media-src 'self'/.test(page.res.headers.get("content-security-policy") ?? ""), "the admin CSP allows same-origin media (Listen along)");
 

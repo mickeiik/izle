@@ -1,6 +1,6 @@
 # Vendored files
 
-Pinned third-party builds served from `/admin/vendor/` (an allow-list in `server/src/app.ts`). They are the only
+Pinned third-party builds served from `/admin/vendor/` (an allow-list in `server/src/admin-files.ts`). They are the only
 exception to the admin page's "no dependencies" rule. Update by replacing the file, this table and the license.
 
 | File | Package | Version | Source | SHA-256 |
