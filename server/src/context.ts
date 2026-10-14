@@ -40,6 +40,8 @@ export interface AppContext extends Services {
   adminToken: string;
   /** SSE keep-alive comment interval. */
   pingMs: number;
+  /** How the server reaches upstreams outside the resolver module (the proxy, the diagnostics probe). */
+  fetch: typeof fetch;
   /** Directory of the static admin UI. */
   adminUiDir: string;
 }

@@ -35,6 +35,8 @@ export interface StartOptions {
   /** SSE ping interval (default 20 s). */
   pingMs?: number;
   pairing?: PairingOptions;
+  /** Upstream fetch of the media proxy and the diagnostics probe (default: the global fetch). */
+  fetch?: typeof fetch;
 }
 
 export interface RunningServer {
@@ -50,6 +52,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const { config } = opts;
   const log = opts.log ?? createLogger({ level: config.log.level });
   const now = opts.now ?? Date.now;
+  const fetchUpstream = opts.fetch ?? globalThis.fetch;
 
   const { token: adminToken, source } = loadAdminToken(config, log);
   // The resolver module comes from a local path in the config; nothing is ever downloaded.
@@ -77,6 +80,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     now,
     ttlMs: config.proxy.sessionTtlSec * 1000,
     alignTsSegments: config.proxy.alignTsSegments,
+    fetch: fetchUpstream,
     onProblem: (p) => problems.recordProxy(p),
   });
   const resolver = new ResolveService({
@@ -103,6 +107,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     resolverModule,
     adminToken,
     pingMs: opts.pingMs ?? 20_000,
+    fetch: fetchUpstream,
     adminUiDir: ADMIN_UI_DIR,
   };
   const app = createApp(ctx);

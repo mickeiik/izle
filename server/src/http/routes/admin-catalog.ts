@@ -35,7 +35,7 @@ export function registerAdminCatalog(app: Hono<Env>, ctx: AppContext): void {
 
   app.post("/api/v1/admin/diagnostics/resolve", async (c) => {
     const body = await parseBody(c, diagnosticsBody);
-    return c.json(await diagnoseEpisode({ catalog, resolver: ctx.resolver }, body, c.req.raw.signal));
+    return c.json(await diagnoseEpisode({ catalog, resolver: ctx.resolver, fetch: ctx.fetch }, body, c.req.raw.signal));
   });
 
   app.post("/api/v1/admin/catalog/reload", async (c) => {

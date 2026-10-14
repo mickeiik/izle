@@ -54,9 +54,14 @@ function urlPlaceholder(match: string): string {
   }
 }
 
-export function redactString(value: string): string {
-  const out = value.replace(URL_RE, urlPlaceholder).replace(TOKEN_RE, "<token>");
+/** URLs become `<url host>`, token-like runs whatever `token` makes of them, and the result is capped. */
+function scrub(value: string, token: (run: string) => string): string {
+  const out = value.replace(URL_RE, urlPlaceholder).replace(TOKEN_RE, token);
   return out.length > MAX_STRING ? `${out.slice(0, MAX_STRING)}…` : out;
+}
+
+export function redactString(value: string): string {
+  return scrub(value, () => "<token>");
 }
 
 /**
@@ -72,8 +77,7 @@ const IDENTIFIER_RE = /^(?:[A-Z]+(?:[_-](?:[A-Z]+|[0-9]{1,4}))+|[a-z]+(?:[_-](?:
  * `<url host>` and token-like runs `<token>`, except runs that read as identifiers, so error names survive.
  */
 export function redactReportText(value: string): string {
-  const out = value.replace(URL_RE, urlPlaceholder).replace(TOKEN_RE, (run) => (IDENTIFIER_RE.test(run) ? run : "<token>"));
-  return out.length > MAX_STRING ? `${out.slice(0, MAX_STRING)}…` : out;
+  return scrub(value, (run) => (IDENTIFIER_RE.test(run) ? run : "<token>"));
 }
 
 /** Returns a log-safe deep copy of `value`. */

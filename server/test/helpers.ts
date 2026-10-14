@@ -181,6 +181,7 @@ export async function startTestServer(opts: TestServerOptions = {}): Promise<Tes
     now: opts.now ?? clock.now,
     pingMs: opts.pingMs ?? 20_000,
     ...(opts.pairing ? { pairing: opts.pairing } : {}),
+    ...(opts.fetch ? { fetch: opts.fetch } : {}),
   });
   const base = srv.url;
 

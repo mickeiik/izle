@@ -376,7 +376,8 @@ export class ResolveService {
         if (source.type === "adapter" && a.tried.code !== "adapter_unavailable") {
           // A phone's failure must not reorder the TV's fallback.
           if (!companion) this.markFailed(episode.id, source.id);
-          this.o.log.warn("adapter failed", { deviceId, episodeId: episode.id, ...a.tried, ms: a.ms, ...(companion ? { companion: true } : {}) });
+          const { sourceId, code, adapterId, name } = a.tried;
+          this.o.log.warn("adapter failed", { deviceId, episodeId: episode.id, sourceId, code, adapterId, name, ms: a.ms, ...(companion ? { companion: true } : {}) });
         }
         continue;
       }

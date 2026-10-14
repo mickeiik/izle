@@ -78,7 +78,7 @@ function summarize(r: Summarized, proxyAlways: boolean): StreamSummary {
   };
 }
 
-async function probe(stream: UpstreamStream, signal: AbortSignal | undefined): Promise<ProbeReport> {
+async function probe(stream: UpstreamStream, signal: AbortSignal | undefined, fetchUpstream: typeof fetch): Promise<ProbeReport> {
   const started = performance.now();
   const ms = () => Math.round(performance.now() - started);
   if ("playlist" in stream.media) {
@@ -87,7 +87,7 @@ async function probe(stream: UpstreamStream, signal: AbortSignal | undefined): P
   const hls = stream.media.kind === "hls";
   const timeout = AbortSignal.timeout(PROBE_TIMEOUT_MS);
   try {
-    const res = await fetch(stream.media.url, {
+    const res = await fetchUpstream(stream.media.url, {
       headers: { ...stream.headers, ...(hls ? {} : { Range: "bytes=0-1023" }) },
       redirect: "follow",
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
@@ -107,8 +107,15 @@ async function probe(stream: UpstreamStream, signal: AbortSignal | undefined): P
   }
 }
 
+export interface DiagnosticsDeps {
+  catalog: CatalogService;
+  resolver: ResolveService;
+  /** How the probe reaches upstreams; the global fetch by default. */
+  fetch?: typeof fetch;
+}
+
 export async function diagnoseEpisode(
-  deps: { catalog: CatalogService; resolver: ResolveService },
+  deps: DiagnosticsDeps,
   input: { episodeId: string; sourceId?: string | undefined; preferredAudioLanguage?: string | null | undefined; probe?: boolean | undefined },
   signal?: AbortSignal,
 ) {
@@ -131,7 +138,7 @@ export async function diagnoseEpisode(
       if (a.tried.name) report.name = a.tried.name;
     } else {
       report.stream = summarize(a.stream, proxyAlways);
-      if (input.probe !== false) report.probe = await probe(a.stream, signal);
+      if (input.probe !== false) report.probe = await probe(a.stream, signal, deps.fetch ?? globalThis.fetch);
     }
     reports.push(report);
   }

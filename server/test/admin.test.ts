@@ -254,6 +254,27 @@ test("catalog: info, accent-insensitive search, item detail without upstream URL
   assert.equal((await s.admin("GET", "/catalog/items/ghost")).status, 404);
 });
 
+test("diagnostics: the probe reaches upstreams through the server's fetch", async (t) => {
+  const asked: Array<[string, Json]> = [];
+  const upstream: typeof fetch = async (input, init) => {
+    asked.push([String(input), init?.headers]);
+    return new Response("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n", { status: 200, headers: { "Content-Type": "application/vnd.apple.mpegurl" } });
+  };
+  const s = await startTestServer({ fetch: upstream });
+  t.after(() => s.close());
+  const d = await s.admin("POST", "/diagnostics/resolve", { episodeId: "show.e1", sourceId: "tr-dub" });
+  assert.equal(d.status, 200);
+  const { ms, ...probe } = d.json.sources[0].probe;
+  assert.equal(typeof ms, "number");
+  assert.deepEqual(probe, {
+    ok: true,
+    status: 200,
+    contentType: "application/vnd.apple.mpegurl",
+    playlist: { master: true, variants: 1, renditions: 0, segments: 0, endList: false },
+  });
+  assert.deepEqual(asked, [["https://media.example.test/tr-dub/master.m3u8", {}]], "no Range for a playlist, no upstream headers");
+});
+
 test("catalog reload: new build applies, invalid build is refused and the old one stays", async (t) => {
   const { s, tv } = await setup(t);
   await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["film", "show"] });
