@@ -3,7 +3,7 @@
 // per TV, so a half-typed name and the keyboard focus survive the refresh.
 
 import { api, attempt } from "./api.js";
-import { card, h, keyedRows, onSubmit, page, problemsChip, setOff, slot, srOnly, statusChip, toast } from "./dom.js";
+import { card, chip, h, keyedRows, onSubmit, page, setOff, slot, srOnly, statusChip, toast } from "./dom.js";
 import { formatCode, formatCountdown, formatRelative, plural, serverAddress } from "./lib.js";
 
 /** @param {import("./router.js").Scope} scope */
@@ -60,7 +60,9 @@ export function devicesView(scope) {
       update(next) {
         name.textContent = next.name;
         meta.textContent = `${plural(next.homeCount, "show")} on Home · seen ${formatRelative(next.lastSeenAt)}`;
-        chips.replaceChildren(...[problemsChip(next), statusChip(next)].filter((c) => c !== null));
+        const n = next.problems?.recent ?? 0;
+        const problems = n > 0 ? chip(`${plural(n, "problem")} in 24 h`, "warn") : null;
+        chips.replaceChildren(...[problems, statusChip(next)].filter((c) => c !== null));
       },
     };
   };

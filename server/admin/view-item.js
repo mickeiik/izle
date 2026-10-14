@@ -12,30 +12,21 @@ function reportView(report) {
   /** @type {Array<ReturnType<typeof sourceReport>>} */
   const sources = report.sources.map((/** @type {any} */ s) => sourceReport(s));
   const working = sources.filter((r) => r.ok).length;
-  return h(
-    "div",
-    null,
-    h("p", { class: "summary" }, `Working: ${working} of ${plural(sources.length, "source")}.`),
+  const item = (/** @type {ReturnType<typeof sourceReport>} */ r) =>
     h(
-      "ul",
-      { class: "diag" },
-      sources.map((r) =>
-        h(
-          "li",
-          { class: r.ok ? "ok" : "bad" },
-          h("strong", null, h("span", { "aria-hidden": "true" }, r.ok ? "✔ " : "✖ "), srOnly(r.ok ? "Works: " : "Fails: "), r.sourceId),
-          h("span", { class: "muted" }, ` ${r.how}`),
-          h("div", null, r.lines.map((l) => h("div", null, l))),
-        ),
-      ),
-    ),
-  );
+      "li",
+      { class: r.ok ? "ok" : "bad" },
+      h("strong", null, h("span", { "aria-hidden": "true" }, r.ok ? "✔ " : "✖ "), srOnly(r.ok ? "Works: " : "Fails: "), r.sourceId),
+      h("span", { class: "muted" }, ` ${r.how}`),
+      h("div", null, r.lines.map((l) => h("div", null, l))),
+    );
+  const summary = h("p", { class: "summary" }, `Working: ${working} of ${plural(sources.length, "source")}.`);
+  return h("div", null, summary, h("ul", { class: "diag" }, sources.map(item)));
 }
 
 /**
  * One episode (or a film's only entry): what it is, its sources, and "Test sources".
- * @param {any} e
- * @param {any} item
+ * @param {any} e @param {any} item
  */
 function episodeEntry(e, item) {
   const film = item.kind === "movie";
@@ -51,40 +42,24 @@ function episodeEntry(e, item) {
     e.playbackAllowed ? null : "playback not allowed",
     e.autoAdvance === false ? "no auto-advance after this one" : null,
   ].filter(Boolean);
-  return h(
-    film ? "div" : "li",
-    null,
+  const source = (/** @type {any} */ s) =>
     h(
-      "div",
-      { class: "row top-align" },
-      h(
-        "div",
-        { class: "grow" },
-        film ? null : h("strong", null, label),
-        facts.length ? h("div", { class: "muted" }, film ? `Duration ${facts.join(" · ")}` : facts.join(" · ")) : null,
-        h(
-          "ul",
-          { class: "sources" },
-          e.sources.map((/** @type {any} */ s) =>
-            h(
-              "li",
-              null,
-              h("code", null, s.id),
-              ` ${s.type === "adapter" ? `adapter ${s.adapter}` : s.kind.toUpperCase()}${s.needsProxy ? " · proxied" : ""}${s.label ? ` · ${s.label}` : ""} · audio ${s.languages.audio === null ? "unknown" : s.languages.audio.join(", ") || "none"}`,
-            ),
-          ),
-        ),
-      ),
-      e.sources.length ? test : null,
-    ),
-    out,
+      "li",
+      null,
+      h("code", null, s.id),
+      ` ${s.type === "adapter" ? `adapter ${s.adapter}` : s.kind.toUpperCase()}${s.needsProxy ? " · proxied" : ""}${s.label ? ` · ${s.label}` : ""} · audio ${s.languages.audio === null ? "unknown" : s.languages.audio.join(", ") || "none"}`,
+    );
+  const what = h(
+    "div",
+    { class: "grow" },
+    film ? null : h("strong", null, label),
+    facts.length ? h("div", { class: "muted" }, film ? `Duration ${facts.join(" · ")}` : facts.join(" · ")) : null,
+    h("ul", { class: "sources" }, e.sources.map(source)),
   );
+  return h(film ? "div" : "li", null, h("div", { class: "row top-align" }, what, e.sources.length ? test : null), out);
 }
 
-/**
- * @param {import("./router.js").Scope} scope
- * @param {string} itemId
- */
+/** @param {import("./router.js").Scope} scope @param {string} itemId */
 export function itemView(scope, itemId) {
   const title = h("h1", null, "Show");
   const body = slot();
@@ -93,28 +68,21 @@ export function itemView(scope, itemId) {
     async () => {
       const { item } = await scope.read(`/catalog/items/${encodeURIComponent(itemId)}`);
       setTitle(title, item.title);
-      const head = h(
-        "section",
-        { class: "card show-head" },
-        h(
-          "div",
-          { class: "row top-align" },
-          poster(item.posterUrl, item.title),
-          h(
-            "div",
-            { class: "grow" },
-            h(
-              "p",
-              { class: "muted" },
-              [showMeta({ kind: item.kind, year: item.year, episodeCount: item.kind === "series" ? item.episodes.length : undefined }), item.originalTitle && item.originalTitle !== item.title ? item.originalTitle : null, item.genres.join(", ")]
-                .filter(Boolean)
-                .join(" · "),
-            ),
-            item.synopsis ? h("p", null, item.synopsis) : null,
-            item.kind === "series" ? h("p", { class: "muted" }, item.autoAdvance ? "Episodes advance on their own." : "Episodes do not advance on their own.") : null,
-          ),
-        ),
+      const episodeCount = item.kind === "series" ? item.episodes.length : undefined;
+      const meta = [
+        showMeta({ kind: item.kind, year: item.year, episodeCount }),
+        item.originalTitle && item.originalTitle !== item.title ? item.originalTitle : null,
+        item.genres.join(", "),
+      ];
+      const about = h(
+        "div",
+        { class: "grow" },
+        h("p", { class: "muted" }, meta.filter(Boolean).join(" · ")),
+        item.synopsis ? h("p", null, item.synopsis) : null,
+        item.kind === "series" ? h("p", { class: "muted" }, item.autoAdvance ? "Episodes advance on their own." : "Episodes do not advance on their own.") : null,
       );
+      const row = h("div", { class: "row top-align" }, poster(item.posterUrl, item.title), about);
+      const head = h("section", { class: "card show-head" }, row);
       const entries =
         item.kind === "movie" && item.episodes.length === 1
           ? card({ title: "Sources", intro: "Where the film is played from, in the order the TV tries them." }, episodeEntry(item.episodes[0], item))

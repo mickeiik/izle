@@ -1,9 +1,9 @@
 // @ts-check
-// "Listen along": this phone plays another source of the episode the TV is playing, in sync with the picture
-// (docs/spec/server-api-v1.md, "Listen along"). The maths live in lib.js and the audio element's stream in
-// companion-player.js; this module owns the card, the long-poll that follows the TV and the 250 ms correction loop.
+// "Listen along": this phone plays another source of the episode the TV is playing, in sync with the picture. The
+// maths live in lib.js and the stream in companion-player.js; this module owns the card, the long-poll that follows
+// the TV and the 250 ms correction loop.
 
-import { api, attempt, devicePath, isUnauthorized } from "./api.js";
+import { api, attempt, devicePath, isUnauthorized, readStored, writeStored } from "./api.js";
 import { attach, nativeHlsBroken } from "./companion-player.js";
 import { actionButton, card, h, slot, toast } from "./dom.js";
 import {
@@ -21,7 +21,6 @@ import {
   syncDecision,
   tvPositionAt,
 } from "./lib.js";
-import { readStored, writeStored } from "./storage.js";
 
 const NUDGE_KEY = "izle.companion.nudgeMs";
 const TICK_MS = 250;
@@ -42,8 +41,7 @@ const sleep = (/** @type {number} */ ms) => new Promise((resolve) => setTimeout(
 const linkPath = (episodeId, sourceId) => `/companion/links/${encodeURIComponent(episodeId)}/${encodeURIComponent(sourceId)}`;
 
 /**
- * The "Listen along" card of a TV's page. `refresh` re-reads what the TV plays (the page polls it), `fail` shows a
- * first load that failed, `stop` ends listening (the page calls it when the owner leaves).
+ * The "Listen along" card of a TV's page. `stop` ends listening (the page calls it when the owner leaves).
  * @param {{ deviceId: string, signal: AbortSignal }} o `signal`: the page's, it cancels the card's reads
  * @returns {import("./view-device.js").Section & { stop(): void }}
  */
@@ -158,10 +156,7 @@ export function companionCard({ deviceId, signal }) {
 
   const renderCandidates = () => {
     const n = candidates?.nowPlaying;
-    if (!n) {
-      body.show(nothing);
-      return;
-    }
+    if (!n) return body.show(nothing);
     const options = candidateOptions(candidates.candidates);
     const remembered = readStored(choiceKey(n.itemId));
     const current = select.value || remembered || options.find((o) => !o.disabled && o.sourceId !== n.sourceId)?.value || options[0]?.value || "";
@@ -210,8 +205,7 @@ export function companionCard({ deviceId, signal }) {
     if (!n || !t) return toast("Offset or speed is not a valid number (speed 0.5–2).", "error");
     const { sourceId, language } = chosen();
     const r = await attempt(() => api("PUT", linkPath(n.episodeId, sourceId), { ...t, language }), "Timing saved for this episode.");
-    if (!r.ok) return;
-    await refresh(true).catch(() => {});
+    if (r.ok) await refresh(true).catch(() => {});
   };
   const applyToAll = async () => {
     const n = candidates?.nowPlaying;
@@ -248,8 +242,7 @@ export function companionCard({ deviceId, signal }) {
   };
 
   const followLoop = async () => {
-    const controller = new AbortController();
-    poll = controller;
+    const controller = (poll = new AbortController());
     while (!controller.signal.aborted) {
       try {
         const r = await readNow(true, controller.signal);
@@ -467,15 +460,7 @@ export function companionCard({ deviceId, signal }) {
     toast(text, kind);
   }
 
-  listen.addEventListener("click", () => {
-    if (phase === "idle") void start();
-    else stop();
-  });
+  listen.addEventListener("click", () => (phase === "idle" ? void start() : stop()));
 
-  return {
-    element,
-    refresh,
-    stop,
-    fail: (err, retry) => body.fail(err, retry, "Could not load what the TV plays."),
-  };
+  return { element, refresh, stop, fail: (err, retry) => body.fail(err, retry, "Could not load what the TV plays.") };
 }

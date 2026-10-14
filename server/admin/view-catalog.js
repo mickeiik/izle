@@ -38,11 +38,9 @@ function buildDetail(b, changes) {
     ["Removed episodes", groupEpisodeChanges(changes.episodes.removed).filter((g) => !goneShows.has(g.itemId)).map(groupLine)],
   ];
   const shown = sections.filter(([, lines]) => lines.length > 0);
-  const cut =
-    changes.items.added.length < b.added.items ||
-    changes.items.removed.length < b.removed.items ||
-    changes.episodes.added.length < b.added.episodes ||
-    changes.episodes.removed.length < b.removed.episodes;
+  const cut = ["added", "removed"].some(
+    (k) => changes.items[k].length < b[k].items || changes.episodes[k].length < b[k].episodes,
+  );
   return h(
     "div",
     null,
@@ -74,14 +72,9 @@ export function catalogView(scope) {
       if (isUnauthorized(err)) return; // signed out
       if (!(err instanceof ApiError && err.code === "invalid_catalog")) return toast(errorText(err), "error");
       const issues = /** @type {any[]} */ (err.body?.issues ?? []).filter((i) => i.severity === "error");
-      problem.replaceChildren(
-        h(
-          "div",
-          { class: "callout error", role: "alert" },
-          h("strong", null, "The catalog on disk is invalid; the previous build stays active."),
-          h("ul", null, issues.slice(0, 20).map((i) => h("li", null, issueLine(i)))),
-        ),
-      );
+      const why = h("strong", null, "The catalog on disk is invalid; the previous build stays active.");
+      const list = h("ul", null, issues.slice(0, 20).map((i) => h("li", null, issueLine(i))));
+      problem.replaceChildren(h("div", { class: "callout error", role: "alert" }, why, list));
     }
   });
 
@@ -149,21 +142,10 @@ export function catalogView(scope) {
     if (buildList.length === 0) return buildsSlot.show(h("p", { class: "muted" }, "No build recorded yet."));
     const row = (/** @type {any} */ b) => {
       const button = h("button", { type: "button", "aria-pressed": "false", "aria-label": `What changed in build ${shortId(b.buildId)}`, onclick: () => void selectBuild(b.buildId) }, "What changed");
-      const li = h(
-        "li",
-        null,
-        h(
-          "div",
-          { class: "row" },
-          h(
-            "div",
-            { class: "grow" },
-            h("strong", null, buildSummary(b)),
-            h("div", { class: "muted" }, h("code", null, shortId(b.buildId)), ` · built ${formatRelative(b.builtAt)} · loaded ${formatRelative(b.loadedAt)}`),
-          ),
-          button,
-        ),
-      );
+      const when = ` · built ${formatRelative(b.builtAt)} · loaded ${formatRelative(b.loadedAt)}`;
+      const meta = h("div", { class: "muted" }, h("code", null, shortId(b.buildId)), when);
+      const grow = h("div", { class: "grow" }, h("strong", null, buildSummary(b)), meta);
+      const li = h("li", null, h("div", { class: "row" }, grow, button));
       buildRows.set(b.buildId, { li, button });
       return li;
     };

@@ -6,27 +6,14 @@
 
 import { sameLanguage } from "./lib.js";
 
-/** An error the owner sees as it is: its `code` is looked up in lib.js's error texts. */
-class PlayerError extends Error {
-  /** @param {"hls_unsupported" | "hls_unavailable"} code */
-  constructor(code) {
-    super(code);
-    this.code = code;
-  }
-}
+/** An error whose `code` lib.js's error texts explain. @param {"hls_unsupported" | "hls_unavailable"} code */
+const playerError = (code) => Object.assign(new Error(code), { code });
 
 /**
- * The part of hls.js this page uses (vendor/hls.min.js, 1.7.3).
- * @typedef {object} HlsInstance
- * @property {number} autoLevelCapping
- * @property {Array<{ lang?: string }>} audioTracks
- * @property {number} audioTrack
- * @property {(event: string, fn: (event: string, data: any) => void) => void} on
- * @property {(event: string, fn: () => void) => void} once
- * @property {(url: string) => void} loadSource
- * @property {(media: HTMLMediaElement) => void} attachMedia
- * @property {() => void} destroy
- *
+ * The part of hls.js (vendor/hls.min.js, 1.7.3) this page uses.
+ * @typedef {{ autoLevelCapping: number, audioTracks: Array<{ lang?: string }>, audioTrack: number,
+ *   on(event: string, fn: (event: string, data: any) => void): void, once(event: string, fn: () => void): void,
+ *   loadSource(url: string): void, attachMedia(media: HTMLMediaElement): void, destroy(): void }} HlsInstance
  * @typedef {{ new (config: Record<string, unknown>): HlsInstance, isSupported(): boolean, Events: Record<string, string> }} HlsClass
  */
 
@@ -40,10 +27,10 @@ function loadHls() {
   hlsLoading ??= new Promise((resolve, reject) => {
     const script = document.createElement("script");
     script.src = "vendor/hls.min.js";
-    script.onload = () => (w.Hls ? resolve(w.Hls) : reject(new PlayerError("hls_unavailable")));
+    script.onload = () => (w.Hls ? resolve(w.Hls) : reject(playerError("hls_unavailable")));
     script.onerror = () => {
       hlsLoading = null; // a later attempt may try again
-      reject(new PlayerError("hls_unavailable"));
+      reject(playerError("hls_unavailable"));
     };
     document.head.append(script);
   });
@@ -52,21 +39,14 @@ function loadHls() {
 
 /** Browsers that claim native HLS ("maybe") but then fail switch to hls.js for the rest of the page's life. */
 let nativeHlsFailed = false;
-
-/** The native player failed on HLS: from now on hls.js plays it. */
 export function nativeHlsBroken() {
   nativeHlsFailed = true;
 }
 
-/**
- * @typedef {object} Attached
- * @property {"direct" | "native HLS" | "hls.js"} transport
- * @property {() => void} destroy
- */
+/** @typedef {{ transport: "direct" | "native HLS" | "hls.js", destroy(): void }} Attached */
 
 /**
- * Loads a stream into the audio element: natively (MP4 everywhere, HLS where the browser plays it) or through
- * hls.js.
+ * Loads a stream into the audio element, natively or through hls.js.
  * @param {HTMLAudioElement} audio
  * @param {{ kind: string, url: string }} media
  * @param {string | null} language audio language to pick inside the stream
@@ -87,15 +67,11 @@ export async function attach(audio, media, language, onFatal) {
     audio.addEventListener("loadedmetadata", onMeta);
     audio.src = url;
     audio.load();
-    return {
-      transport: media.kind === "hls" ? "native HLS" : "direct",
-      destroy() {
-        audio.removeEventListener("loadedmetadata", onMeta);
-      },
-    };
+    const destroy = () => audio.removeEventListener("loadedmetadata", onMeta);
+    return { transport: media.kind === "hls" ? "native HLS" : "direct", destroy };
   }
   const Hls = await loadHls();
-  if (!Hls.isSupported()) throw new PlayerError("hls_unsupported");
+  if (!Hls.isSupported()) throw playerError("hls_unsupported");
   // No worker: the page's CSP has no worker-src. Level 0 only: the video is decoded and thrown away.
   const hls = new Hls({ enableWorker: false, startLevel: 0, maxBufferLength: 30, backBufferLength: 10 });
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -114,10 +90,5 @@ export async function attach(audio, media, language, onFatal) {
   hls.loadSource(url);
   hls.attachMedia(audio);
   await attached;
-  return {
-    transport: "hls.js",
-    destroy() {
-      hls.destroy();
-    },
-  };
+  return { transport: "hls.js", destroy: () => hls.destroy() };
 }

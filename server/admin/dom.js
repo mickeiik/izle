@@ -1,17 +1,14 @@
 // @ts-check
-// DOM building blocks of the admin page. The page runs under a strict Content-Security-Policy: elements are built
-// with `h` (no HTML parsing), text from the server only ever goes in as text, and widths are set through CSSOM.
+// DOM building blocks of the admin page. It runs under a strict Content-Security-Policy: elements are built with `h`
+// (no HTML parsing), text from the server only ever goes in as text, and widths are set through CSSOM.
 
 import { errorText, plural } from "./lib.js";
 
-/**
- * @typedef {Node | string | number | null | undefined | false} Child
- */
+/** @typedef {Node | string | number | null | undefined | false} Child */
 
 /**
  * Creates an element. `on*` props become listeners, `class` the class name, `value`/`disabled`/`selected` are set
- * as properties, everything else as attributes (`true` as an empty attribute; null, undefined and false
- * leave it out).
+ * as properties, everything else as attributes (`true` as an empty attribute; null, undefined and false leave it out).
  * @template {keyof HTMLElementTagNameMap} K
  * @param {K} tag
  * @param {Record<string, any> | null} [props]
@@ -32,13 +29,13 @@ export function h(tag, props, ...children) {
 }
 
 let lastId = 0;
-/** A page-unique element id (for `for`, `aria-controls`, `aria-labelledby`). @param {string} prefix */
+/** A page-unique element id. @param {string} prefix */
 export const uid = (prefix) => `${prefix}-${++lastId}`;
 
-/** Text for screen readers only (a row's context that the eye gets from the layout). @param {string} text */
+/** Text for screen readers only. @param {string} text */
 export const srOnly = (text) => h("span", { class: "visually-hidden" }, text);
 
-/** The tab title of a view whose heading says `text`. @param {string} text */
+/** @param {string} text */
 export const pageTitle = (text) => `${text} · izle admin`;
 
 /** Sets the view's heading and the tab title together. @param {HTMLElement} heading @param {string} text */
@@ -49,41 +46,25 @@ export function setTitle(heading, text) {
 
 /**
  * A view: an optional back link, the title line (the `h1`, and `aside` next to it) and the content.
- * @param {{ back?: [href: string, text: string], title: string | HTMLElement, aside?: Child[] }} head a `title`
- *   text becomes the `h1`
+ * @param {{ back?: [href: string, text: string], title: string | HTMLElement, aside?: Child[] }} head
  * @param {...(Child | Child[])} content
  */
 export function page({ back, title, aside = [] }, ...content) {
-  return h(
-    "div",
-    { class: "page" },
-    back ? h("p", { class: "back" }, h("a", { href: back[0] }, back[1])) : null,
-    h("div", { class: "title" }, typeof title === "string" ? h("h1", null, title) : title, aside),
-    ...content,
-  );
+  const backLink = back ? h("p", { class: "back" }, h("a", { href: back[0] }, back[1])) : null;
+  const heading = h("div", { class: "title" }, typeof title === "string" ? h("h1", null, title) : title, aside);
+  return h("div", { class: "page" }, backLink, heading, ...content);
 }
 
 /**
- * @typedef {object} CardOptions
- * @property {string} title
- * @property {Child | Child[]} [aside] next to the title: a count, a button
- * @property {Child | Child[]} [intro] a muted paragraph under the title
- */
-
-/**
  * A card: a section with its heading (focusable from script, for the section nav), an optional intro and content.
- * @param {string | CardOptions} opts
+ * `aside` goes next to the title (a count, a button), `intro` is a muted paragraph under it.
+ * @param {string | { title: string, aside?: Child | Child[], intro?: Child | Child[] }} opts
  * @param {...(Child | Child[])} children
  */
 export function card(opts, ...children) {
   const o = typeof opts === "string" ? { title: opts } : opts;
-  return h(
-    "section",
-    { class: "card" },
-    h("div", { class: "card-head" }, h("h2", { tabindex: "-1" }, o.title), o.aside),
-    o.intro ? h("p", { class: "intro muted" }, o.intro) : null,
-    ...children,
-  );
+  const head = h("div", { class: "card-head" }, h("h2", { tabindex: "-1" }, o.title), o.aside);
+  return h("section", { class: "card" }, head, o.intro ? h("p", { class: "intro muted" }, o.intro) : null, ...children);
 }
 
 /** @param {string | null} url @param {string} [alt] */
@@ -98,7 +79,7 @@ export function chip(text, tone = "") {
   return el;
 }
 
-/** Sets a chip's text and colour (a chip that a poll updates). @param {HTMLElement} el @param {string} text @param {Tone} [tone] */
+/** @param {HTMLElement} el @param {string} text @param {Tone} [tone] */
 export function setChip(el, text, tone = "") {
   el.className = tone ? `chip ${tone}` : "chip";
   el.textContent = text;
@@ -110,18 +91,9 @@ export function statusChip(device) {
   return device.online ? chip("Online", "ok") : chip("Offline");
 }
 
-/** "3 problems in 24 h" when the TV had problems in the last 24 hours. @param {{ problems?: { recent?: number } }} device */
-export function problemsChip(device) {
-  const n = device.problems?.recent ?? 0;
-  return n > 0 ? chip(`${plural(n, "problem")} in 24 h`, "warn") : null;
-}
-
 /**
- * A progress bar (`role="progressbar"`, 0–100): `label` names it for screen readers, `text` says the value in words
- * ("1:30 of 10:00"). Null without a value.
- * @param {number | null} value
- * @param {string} label
- * @param {string} [text]
+ * A progress bar (0–100): `label` names it for screen readers, `text` says the value in words. Null without a value.
+ * @param {number | null} value @param {string} label @param {string} [text]
  */
 export function progressBar(value, label, text) {
   if (value === null) return null;
@@ -144,9 +116,7 @@ export const loading = () => h("p", { class: "muted loading" }, "Loading…");
 
 /**
  * What stands in for content that could not be loaded: the reason and, given `retry`, a Retry button.
- * @param {unknown} err
- * @param {(() => Promise<unknown>) | null | undefined} retry
- * @param {string} what
+ * @param {unknown} err @param {(() => Promise<unknown>) | null | undefined} retry @param {string} what
  */
 export function loadError(err, retry, what) {
   const button = retry ? actionButton("Retry", null, () => retry()) : null;
@@ -154,18 +124,9 @@ export function loadError(err, retry, what) {
 }
 
 /**
- * @typedef {object} Slot
- * @property {HTMLElement} element
- * @property {(...content: Node[]) => void} show replaces what is shown, unless it is already exactly that
- * @property {(err: unknown, retry: (() => Promise<unknown>) | null | undefined, what: string) => void} fail
- *   before anything was shown: the error (and Retry); later failures keep the content, the page's "Not updated
- *   since" note covers them
- */
-
-/**
- * A region that a load fills: "Loading…" first, then its content, or the error and Retry when the first load
- * failed.
- * @returns {Slot}
+ * A region that a load fills: "Loading…" first, then its content (`show`, which keeps content that is already
+ * exactly that). `fail` shows the error and Retry only before anything was shown; later failures keep the content,
+ * the page's "Not updated since" note covers them.
  */
 export function slot() {
   const element = h("div", null, loading());
@@ -174,6 +135,7 @@ export function slot() {
   let failure = null;
   return {
     element,
+    /** @param {...Node} content */
     show(...content) {
       const hadFocus = Boolean(failure?.contains(document.activeElement));
       shown = true;
@@ -186,6 +148,7 @@ export function slot() {
         if (heading instanceof HTMLElement) heading.focus({ preventScroll: true });
       }
     },
+    /** @param {unknown} err @param {(() => Promise<unknown>) | null | undefined} retry @param {string} what */
     fail(err, retry, what) {
       if (shown || failure) return;
       failure = loadError(err, retry, what);
@@ -197,11 +160,10 @@ export function slot() {
 // --- toasts -------------------------------------------------------------------------------------------------------
 
 const TOAST_MS = { ok: 4000, info: 6000, error: 8000 };
-const TOASTS_SHOWN = 4;
 
 /**
  * A short message at the bottom of the page: `role="status"` (errors: `role="alert"`), with a Dismiss button
- * (and Escape). It waits while the pointer is over it or the focus in it.
+ * (and Escape). At most four are shown. It waits while the pointer is over it or the focus in it.
  * @param {string} text
  * @param {"ok" | "error" | "info"} [kind]
  */
@@ -254,13 +216,15 @@ export function toast(text, kind = "ok") {
   if (kind === "error") message.textContent = text;
   box.append(t);
   if (kind !== "error") setTimeout(() => (message.textContent = text), 50);
-  while (box.childElementCount > TOASTS_SHOWN) box.firstElementChild?.remove();
+  while (box.childElementCount > 4) box.firstElementChild?.remove();
   run();
 }
 
 // --- buttons ------------------------------------------------------------------------------------------------------
+// Buttons are never `disabled`, which would drop the keyboard focus: an unavailable or busy one is `aria-disabled`
+// and its action does nothing.
 
-/** Whether a button is unavailable or busy (`aria-disabled`): its action does nothing. @param {Element} button */
+/** @param {Element} button */
 const isInert = (button) => button.getAttribute("aria-disabled") === "true";
 
 /** @param {HTMLElement} b */
@@ -270,10 +234,9 @@ function syncInert(b) {
 }
 
 /**
- * Runs `fn` with `button` busy (`aria-busy`, `aria-disabled`, the busy look). While it runs, further calls return
- * at once, so a double click sends one request. The button keeps the keyboard focus: a disabled one would drop it.
- * @param {HTMLElement} button
- * @param {() => Promise<unknown>} fn
+ * Runs `fn` with `button` busy (`aria-busy`). While it runs, further calls return at once, so a double click sends
+ * one request.
+ * @param {HTMLElement} button @param {() => Promise<unknown>} fn
  */
 async function busy(button, fn) {
   if (button.getAttribute("aria-busy") === "true") return;
@@ -287,23 +250,16 @@ async function busy(button, fn) {
   }
 }
 
-/**
- * Marks a button unavailable (or available again) without taking it out of the tab order: ▲ on the first row and
- * the remote control after Stop stay where the keyboard is.
- * @param {HTMLElement} button
- * @param {boolean} off
- */
+/** Marks a button unavailable (or available again). @param {HTMLElement} button @param {boolean} off */
 export function setOff(button, off) {
   button.dataset.off = String(off);
   syncInert(button);
 }
 
 /**
- * Handles the submission of `form` (the browser's own is prevented). Nothing happens while `button`, its submit
- * button, is inert; else `prepare()` checks what was typed (a toast says what is wrong) and returns the work to run
- * with the button busy, or nothing.
- * @param {HTMLFormElement} form
- * @param {HTMLElement} button
+ * Handles the submission of `form`. Nothing happens while its submit `button` is inert; else `prepare()` checks
+ * what was typed (a toast says what is wrong) and returns the work to run with the button busy, or nothing.
+ * @param {HTMLFormElement} form @param {HTMLElement} button
  * @param {() => (() => Promise<unknown>) | null | void} prepare
  */
 export function onSubmit(form, button, prepare) {
@@ -317,8 +273,7 @@ export function onSubmit(form, button, prepare) {
 
 /**
  * A button whose action calls the server: busy while `action` runs, and inert while unavailable or busy.
- * @param {string} label the visible text
- * @param {Record<string, any> | null} props class, aria-label (name the row: "Remove Proxy series"), …
+ * @param {string} label @param {Record<string, any> | null} props
  * @param {(button: HTMLButtonElement) => Promise<unknown>} action
  */
 export function actionButton(label, props, action) {
@@ -331,11 +286,7 @@ export function actionButton(label, props, action) {
 
 // --- focus --------------------------------------------------------------------------------------------------------
 
-/**
- * Whether `el` can take the keyboard focus now: in the page, shown, not disabled.
- * @param {Element | null | undefined} el
- * @returns {boolean}
- */
+/** Whether `el` can take the focus now: in the page, shown, not disabled. @param {Element | null | undefined} el */
 function canFocus(el) {
   return el instanceof HTMLElement && el.isConnected && !(/** @type {any} */ (el).disabled) && el.getClientRects().length > 0;
 }
@@ -343,10 +294,9 @@ function canFocus(el) {
 const FOCUSABLE = "button, a[href], input, select, textarea, [tabindex]";
 
 /**
- * Focuses `root` or the first control in it; with `control`, preferably the one with that `data-control` (the
- * same kind of button the owner was on: "remove" on the row below the one just removed). Whether it found one.
- * @param {HTMLElement} root
- * @param {string} [control]
+ * Focuses `root` or the first control in it, preferably the one with `data-control` = `control` (the same kind of
+ * button the owner was on). Whether it found one.
+ * @param {HTMLElement} root @param {string} [control]
  */
 function focusFirst(root, control) {
   const all = [root, ...root.querySelectorAll(FOCUSABLE)].filter((el) => el.matches(FOCUSABLE) && canFocus(el));
@@ -358,9 +308,9 @@ function focusFirst(root, control) {
 
 /**
  * Runs `update`, which may rebuild, move or remove part of the page, and puts the keyboard focus back where the
- * owner was: on the same element if it is still in the page, else on its rebuilt twin (the same `data-focus` key,
- * such as `continue:<episodeId>`), else on the first of `fallbacks` that can take it (elements or keys). Nothing
- * moves when no element had the focus, or when the owner moved it elsewhere meanwhile.
+ * owner was: on the same element if it is still in the page, else on its rebuilt twin (the same `data-focus` key),
+ * else on the first of `fallbacks` that can take it (elements or keys). Nothing moves when no element had the
+ * focus, or when the owner moved it elsewhere meanwhile.
  * @param {() => unknown} update
  * @param {...(HTMLElement | string | null | undefined)} fallbacks
  */
@@ -378,18 +328,12 @@ export async function keepFocus(update, ...fallbacks) {
 }
 
 /**
- * @template T
- * @typedef {{ element: HTMLElement, update(item: T, index: number, all: T[]): void }} Row
- */
-
-/**
  * Keeps `parent`'s children as one row per item, in order, keyed by `keyOf`: a row is created once and kept while
- * its key is there, so a refresh never rebuilds a row that holds the focus or a half-typed value. Rows are moved
- * only when the order changed, and the focus stays on the element that had it. When its row went away, the focus
- * moves to the row that took its place (else the last row), onto its control of the same `data-control` kind (else
- * its first control); with no row left, to `fallback`.
+ * its key is there, so a refresh never rebuilds a row that holds the focus or a half-typed value. When the focused
+ * row went away, the focus moves to the row that took its place (else the last row), onto its control of the same
+ * `data-control` kind (else its first control); with no row left, to `fallback`.
  * @template T
- * @template {Row<T>} R
+ * @template {{ element: HTMLElement, update(item: T, index: number, all: T[]): void }} R
  * @param {HTMLElement} parent only the rows live there
  * @param {(item: T) => string} keyOf
  * @param {(item: T) => R} create
@@ -404,10 +348,9 @@ export function keyedRows(parent, keyOf, create, fallback) {
     set(items) {
       const active = document.activeElement;
       const holder = active ? [...parent.children].findIndex((c) => c.contains(active)) : -1;
-      const keep = new Set();
+      const keep = new Set(items.map(keyOf));
       items.forEach((item, i) => {
         const key = keyOf(item);
-        keep.add(key);
         let row = rows.get(key);
         if (!row) rows.set(key, (row = create(item)));
         row.update(item, i, items);
@@ -435,8 +378,7 @@ export function keyedRows(parent, keyOf, create, fallback) {
 // --- shows --------------------------------------------------------------------------------------------------------
 
 /**
- * A show in a list: its poster, title and a muted line, and `end` at the right. With `href` the whole row is a link
- * (with a chevron).
+ * A show in a list: its poster, title and a muted line, and `end` at the right. With `href` the whole row is a link.
  * @param {{ title: string, posterUrl: string | null }} item
  * @param {{ meta?: Child | Child[], href?: string, end?: Child | Child[] }} [o]
  */
@@ -448,9 +390,9 @@ export function showRow(item, o = {}) {
 
 /**
  * Searches as the owner types: `search(query)` runs 200 ms after the last keystroke, and its answer is shown only
- * when no newer search started meanwhile (an older answer that arrives late is dropped). `run()` searches at once.
+ * when no newer search started meanwhile. `run()` searches at once.
  * @template T
- * @param {import("./router.js").Scope} scope the view: its end cancels a pending search
+ * @param {import("./router.js").Scope} scope its end cancels a pending search
  * @param {HTMLInputElement} input
  * @param {(query: string) => Promise<T>} search
  * @param {(result: T, query: string) => void} show

@@ -1,28 +1,18 @@
 // @ts-check
-// izle admin UI: a small single-page app over the admin API (docs/spec/server-api-v1.md). No dependencies, no
-// build step, no inline scripts (the page is served with a strict Content-Security-Policy). All text from the
-// server is inserted with textContent, never as HTML.
-//
-// This is the entry module (index.html loads it); it only boots the page. The parts, all flat in this directory
-// (the server serves the files listed in server/src/admin-files.ts and nothing else):
-//   router.js        hash routes and the view scope (polls, timers and requests that end with the view)
-//   api.js           the admin API, the token, `attempt`        storage.js   guarded localStorage
-//   dom.js           elements, cards, rows, buttons, toasts, focus  lib.js     pure helpers (unit-tested)
-//   view-*.js        one module per view; device-home.js is the TV page's home screen card
-//   companion.js     "Listen along" (its stream: companion-player.js)
+// izle admin UI: a small single-page app over the admin API, without dependencies or a build step. The page is
+// served with a strict Content-Security-Policy: no inline scripts or styles, and text from the server is only ever
+// inserted as text. This entry module boots the page and holds the sign-in view.
 
 import { clearToken, getToken, isUnauthorized, onUnauthorized, signIn } from "./api.js";
-import { toast } from "./dom.js";
+import { h, onSubmit, toast } from "./dom.js";
 import { errorText, tokenFromHash } from "./lib.js";
 import { startRouter } from "./router.js";
 import { catalogView } from "./view-catalog.js";
 import { deviceView } from "./view-device.js";
 import { devicesView } from "./view-devices.js";
 import { itemView } from "./view-item.js";
-import { loginView } from "./view-login.js";
 
 const app = /** @type {HTMLElement} */ (document.getElementById("app"));
-const nav = /** @type {HTMLElement} */ (document.getElementById("nav"));
 
 function signOut(/** @type {string} */ message = "") {
   clearToken();
@@ -46,26 +36,55 @@ async function signInFromLink() {
   if (remembered) toast("Signed in.");
 }
 
+/** @param {import("./router.js").Scope} scope */
+function loginView(scope) {
+  const input = h("input", { type: "password", id: "token", autocomplete: "current-password", required: true, spellcheck: "false", "aria-describedby": "token-error" });
+  const error = h("p", { class: "error", id: "token-error", role: "alert", hidden: true });
+  const button = h("button", { type: "submit", class: "primary" }, "Sign in");
+  const form = h(
+    "form",
+    { class: "card narrow" },
+    h("h1", null, "Sign in"),
+    h("p", null, "Paste the admin token of this izle server. Print it on the server with ", h("code", null, "izle-server admin-token"), "."),
+    h("label", { for: "token" }, "Admin token"),
+    input,
+    error,
+    h("div", { class: "actions" }, button),
+  );
+  onSubmit(form, button, () => {
+    const value = input.value.trim();
+    return async () => {
+      try {
+        await signIn(value);
+      } catch (err) {
+        error.hidden = false;
+        error.textContent = isUnauthorized(err) ? "That token is not valid." : errorText(err);
+        input.focus();
+        return;
+      }
+      scope.go("#/devices");
+    };
+  });
+  queueMicrotask(() => input.focus());
+  return h("div", { class: "page" }, form);
+}
+
 startRouter({
   app,
-  nav,
+  nav: /** @type {HTMLElement} */ (document.getElementById("nav")),
   before: signInFromLink,
-  pick(parts) {
-    if (!getToken() || parts[0] === "login") return { view: loginView };
-    if (parts[0] === "devices" && parts[1]) {
-      const id = parts[1];
-      return { view: (scope) => deviceView(scope, id), nav: "#/devices" };
+  pick([section, id, itemId]) {
+    if (!getToken() || section === "login") return { view: loginView };
+    if (section === "devices" && id) return { view: (scope) => deviceView(scope, id), nav: "#/devices" };
+    if (section === "catalog" && id === "items" && itemId) {
+      return { view: (scope) => itemView(scope, itemId), nav: "#/catalog" };
     }
-    if (parts[0] === "catalog" && parts[1] === "items" && parts[2]) {
-      const id = parts[2];
-      return { view: (scope) => itemView(scope, id), nav: "#/catalog" };
-    }
-    if (parts[0] === "catalog") return { view: catalogView, nav: "#/catalog" };
+    if (section === "catalog") return { view: catalogView, nav: "#/catalog" };
     return { view: devicesView, nav: "#/devices" };
   },
 });
 
-/** @type {HTMLButtonElement} */ (document.getElementById("signout")).addEventListener("click", () => signOut());
+/** @type {HTMLElement} */ (document.getElementById("signout")).addEventListener("click", () => signOut());
 
 // The skip link moves the focus to the view's heading; following its `#app` would re-run the router.
 document.querySelector(".skip")?.addEventListener("click", (e) => {
