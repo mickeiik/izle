@@ -1031,7 +1031,60 @@ _(admin branch)_
 
 ## Design pass: TV app logic (2026-10-14)
 
-_(TV logic branch)_
+- **No behaviour change.** `AppViewModel.kt` (723 → 611 lines) and `PlaybackController.kt` (862 → 759) lost the parts
+  below, each with JVM tests. What the UI builds against is unchanged: every view model member `IzleRoot` and
+  `MainActivity` use, `vm.player`, and the UI types with their names, packages and fields. Declarations only moved to
+  other files of the same package (`PairingUi`/`PairingProblem` to `ui/Pairing.kt`; `RootEntry`, `SettingsEntry`,
+  `MenuPage`, `MenuUi` to `ui/Menu.kt`). The controller's public companion helpers became internal top-level functions.
+- **`ProgressReporter`** (`player/`): the delivery policy, moved verbatim. One ordered queue in the application scope;
+  `stopped`/`finished` get 4 attempts 2, 4 and 6 s apart and then refresh Home; a 400 resends once without `playing`
+  and `ageMs` and leaves them out from then on; other 4xx drop the report; heartbeats get one attempt; `ageMs` is
+  stamped at send time; a new resolve waits up to 3 s for queued reports. It sends through a
+  `suspend (ApiClient, ProgressReport) -> Unit` and reads a clock it is given, so its tests run on virtual time.
+- **`SourceAttempts`** (`domain/`): the sources tried, the fallback order of the last unpinned resolve (kept across a
+  pinned re-resolve, which returns none) and whether the playing source was already re-resolved. One `alternativesLeft`
+  check replaces the two copies. `afterPlaybackError` asks `PlaybackPlan.recovery` as before and records the outcome;
+  `continueAfterFailedResolve` is the "pinned source failed again" rule.
+- **`ProgressStatus`** (in `Models.kt`): an enum with `@SerialName` `playing`/`paused`/`stopped`/`finished` instead of
+  strings, `isFinal` for the last two. `PlaybackPlan.liveStatus`/`stopStatus` return it. `ModelsTest` pins the four wire
+  names. The statuses the TV reads (`EpisodeProgress.status`, `ContinueInfo.status`, used by the UI) stay strings.
+- **`CommandPlan`** (`ui/`): a pure function from (command, screen, player phase, menu open) to the ordered actions the
+  view model runs. The decision-log rules are its tests. "Close the menu" is planned only when one is open, which is
+  what `closeMenu` amounted to anyway; `pause` still always clears the resume-after-menu flag. Dedup by id and the ack
+  stay in `ServerRepository`.
+- **`PairingLoop`** (`ui/Pairing.kt`) behind `PairingApi` (start, wait), adapted from the client by
+  `ApiClient.pairingApi()`. The rules and their numbers are unchanged and tested on virtual time; the approval
+  callback (save the token, use it, go Home) still runs under `NonCancellable`.
+- **Small helpers.** `countDown` (`domain/Countdown.kt`) is the one loop behind Up next, the error screen's 30 s and
+  autoplay on start: a tick at once, one a second, the action a second after the last. It is inline so the autoplay
+  tick can stop it with a `return`. `TimedValue` (`ui/`) holds Home's "No connection" and the owner's banner.
+  `MenuPlan.rootEntries` (pure) and `MenuUi.push`/`pop`/`replaceTop`/`focusingRoot` handle the menu. The view model
+  has `homeEntry(id)` and `pairAgain()`. `languagePreference`, `mediaMimeType`, `subtitleMimeType` and
+  `PlaybackException.httpStatus` are in `player/MediaTypes.kt`. `uiLanguageOverride` maps the settings alone instead of
+  combining them with the state for nothing.
+- **One harmless difference:** a 401 now goes through the same `pairAgain()` as the menu's "Pair again". It closes the
+  menu with `closeMenu(resume = false)` (which also clears the resume-after-menu flag) before stopping the player,
+  where it used to stop first and drop the menu directly. Nothing reads that flag before the next `openMenu` from the
+  player sets it again.
+- **Not extracted.** A `StreamRefresher`: the refresh depends on the session identity checks and the media swap inside
+  the controller, and its scheduling rules are already `ExpiryPlan` (tested). A `HiddenMenuController` and an
+  `AutoplayCoordinator`: arming autoplay depends on foreground, keys, screen, menu and player at once. Moving these
+  risked more than it gained. Track selection and the ExoPlayer setup stay in the controller too.
+- **How behaviour was kept.** Before any move, 20 Robolectric characterization tests (`ui/AppViewModelTest`) were
+  committed, with JVM tests of the media helpers. They drive the real view model and app graph against an in-process
+  server with a live event stream, on the paused main-looper clock: pairing (approval; `Retry-After` 5, 30 and 600 s;
+  the 10 s and 5 s retries; a new code after 404, 410, `expired` or an approval without a token; Back), a 401 and
+  "Pair again", "No connection" for 5 s, the banner's duration and replacement, commands on Home, on the error screen
+  and on the address screen, the 30 s error screen and 10 s autoplay countdowns, the root menu's entries, the page
+  stack and the language cycle. They passed on a9826f1 and after every step. Progress delivery and the source fallback
+  cannot be reached without ExoPlayer reaching READY, so they were moved verbatim and then tested on their own; so was
+  the video-showing half of the command rules. Four deliberate mutations (the countdown step, `resume` without video,
+  the 5 s long-poll retry, the report backoff) each failed the new unit tests and, where the flow is reachable, the
+  characterization tests.
+- **Tests:** 98 → 167. `AppViewModelTest` 20, `ProgressReporterTest` 10, `PairingLoopTest` 8, `SourceAttemptsTest` 7,
+  `CommandPlanTest` 5, `MenuTest` 5, `CountdownTest` 4, `MediaTypesTest` 4, `TimedValueTest` 3,
+  `PlayerErrorStatusTest` 2 (Robolectric: Media3's `DataSpec` needs a real `Uri`), and one more in `ModelsTest`.
+  `SeniorInvariantsTest` is unchanged and green. The view model tests add about 7 s to a run.
 
 ## Design pass: TV look and small UX fixes (2026-10-14)
 
