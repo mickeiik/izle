@@ -2,13 +2,12 @@
 // problems the server records for a TV (failed resolves, failed sources, proxy sessions whose upstream fails).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { DEFAULT_API_KEY, startUpstream } from "../examples/resolver-example/upstream.js";
 import { noPlayableDetail, triedDetail } from "../src/problems.ts";
-import { fixtureItems, fixtureManifest, startTestServer, tempDir, TEST_RESOLVER, writeBundle, type Json, type TestServer } from "./helpers.ts";
+import { fixtureItems, fixtureManifest, publishBuild, startTestServer, tempDir, TEST_RESOLVER, writeBundle, type Json, type TestServer } from "./helpers.ts";
 
 /** A made-up token-like run (40 base64url characters), never a real secret. */
 const RUN = "Zq3v9Kx2LmN8pQ4rT6uW1yA5bC7dE0fGhIjKlMnO"; // gitleaks:allow (made-up hostile fixture)
@@ -217,10 +216,7 @@ test("problems of an episode that left the catalog are listed as missing", async
   const { s, report, list } = await setup(t);
   await report({ kind: "playback", code: "a", episodeId: "film.main" });
   assert.equal((await list()).json.problems[0].itemTitle, "Film");
-  const itemsFile = path.join(s.bundleDir, "items.json");
-  const items = JSON.parse(await readFile(itemsFile, "utf8"));
-  items.items = items.items.filter((i: { id: string }) => i.id !== "film");
-  await writeFile(itemsFile, JSON.stringify(items));
+  await publishBuild(s.bundleDir, "fixture-2", (items) => items.filter((i) => i.id !== "film"));
   assert.equal((await s.admin("POST", "/catalog/reload")).status, 200);
   const [p] = (await list()).json.problems;
   assert.deepEqual([p.itemId, p.itemTitle, p.itemKind, p.episodeId, p.episodeTitle, p.missing], ["film", null, null, "film.main", null, true]);

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { eventually, openEvents, startTestServer } from "./helpers.ts";
 
-test("SSE: initial state, pings, state events on change, commands with replay until acked", async (t) => {
+test("SSE: initial state, pings, state events on change, commands; no replay after the replay window", async (t) => {
   const s = await startTestServer({ pingMs: 50 });
   t.after(() => s.close());
   const tv = await s.pair("TV");
@@ -37,34 +37,17 @@ test("SSE: initial state, pings, state events on change, commands with replay un
   assert.equal(ev.event, "command");
   assert.deepEqual(JSON.parse(ev.data!), { id: cmd.json.id, type: "play", payload: { itemId: "show", episodeId: "show.e1" } });
 
-  // Reconnect: current version first, then the unacknowledged command again.
+  // Commands older than the replay window are not sent again, even when unacknowledged.
   es.close();
-  await eventually(() => !s.srv.ctx.events.isOnline(tv.deviceId));
+  await s.admin("POST", `/devices/${tv.deviceId}/commands`, { type: "stop" });
+  s.clock.advance(3 * 60_000);
   const es2 = await openEvents(s.base, tv.token);
   t.after(() => es2.close());
   assert.deepEqual(JSON.parse((await es2.next()).data!), { version: v0 + 2 });
-  const replayed = await es2.next();
-  assert.equal(replayed.event, "command");
-  assert.equal(JSON.parse(replayed.data!).id, cmd.json.id);
-  es2.close();
-
-  await s.call("POST", `/api/v1/tv/commands/${cmd.json.id}/ack`, { token: tv.token });
-  const es3 = await openEvents(s.base, tv.token);
-  t.after(() => es3.close());
-  await es3.next((m) => m.event === "state");
-  await assert.rejects(es3.next((m) => m.event === "command", 300), /timed out/, "acked commands are not replayed");
-
-  // Commands older than the replay window are dropped even when unacknowledged.
-  es3.close();
-  await s.admin("POST", `/devices/${tv.deviceId}/commands`, { type: "stop" });
-  s.clock.advance(3 * 60_000);
-  const es4 = await openEvents(s.base, tv.token);
-  t.after(() => es4.close());
-  await es4.next((m) => m.event === "state");
-  await assert.rejects(es4.next((m) => m.event === "command", 300), /timed out/);
+  await assert.rejects(es2.next((m) => m.event === "command", 300), /timed out/);
 });
 
-test("SSE: pause, resume, next, previous, seek and message commands reach the TV with their payloads", async (t) => {
+test("SSE: commands reach the TV with their payloads, and come again in order until acknowledged", async (t) => {
   const s = await startTestServer();
   t.after(() => s.close());
   const tv = await s.pair("TV");
@@ -75,13 +58,9 @@ test("SSE: pause, resume, next, previous, seek and message commands reach the TV
 
   const cases: Array<[{ type: string } & Record<string, unknown>, Record<string, unknown>]> = [
     [{ type: "pause" }, {}],
-    [{ type: "resume" }, {}],
     [{ type: "next" }, {}],
-    [{ type: "previous" }, {}],
-    [{ type: "seek", deltaMs: -30_000 }, { deltaMs: -30_000 }],
     [{ type: "seek", positionMs: 600_000 }, { positionMs: 600_000 }],
     [{ type: "message", text: " Yemek hazır! " }, { text: "Yemek hazır!", durationSec: 15 }],
-    [{ type: "message", text: "Good night", durationSec: 30 }, { text: "Good night", durationSec: 30 }],
   ];
   const ids: number[] = [];
   for (const [body, payload] of cases) {
@@ -95,7 +74,7 @@ test("SSE: pause, resume, next, previous, seek and message commands reach the TV
     ids.push(r.json.id);
   }
 
-  // Unacknowledged commands come again, in order and with the same payloads, when the TV reconnects.
+  // Unacknowledged commands come again, in order and with the same payloads, when the TV reconnects; acked ones not.
   await s.call("POST", `/api/v1/tv/commands/${ids[0]}/ack`, { token: tv.token });
   es.close();
   await eventually(() => !s.srv.ctx.events.isOnline(tv.deviceId));

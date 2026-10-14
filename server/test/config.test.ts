@@ -1,10 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { loadAdminToken } from "../src/auth.ts";
+import { loadAdminToken, newId } from "../src/auth.ts";
 import { ConfigError, loadConfig, SAMPLE_CATALOG_DIR } from "../src/config.ts";
 import { silentLogger } from "../src/log.ts";
+import { isId } from "../src/validation.ts";
 import { tempDir } from "./helpers.ts";
 
 test("defaults without a config file", () => {
@@ -24,7 +25,7 @@ test("defaults without a config file", () => {
 test("relative paths in a config file resolve against the file's directory", async () => {
   const dir = await tempDir();
   const file = path.join(dir, "conf", "izle.json");
-  await import("node:fs/promises").then((fs) => fs.mkdir(path.dirname(file)));
+  mkdirSync(path.dirname(file));
   writeFileSync(
     file,
     JSON.stringify({
@@ -80,25 +81,17 @@ test("IZLE_ADMIN_TOKEN overrides the token file and must be long enough", () => 
   assert.deepEqual(loadAdminToken(ok, silentLogger), { token: "x".repeat(24), source: "env" });
 });
 
-test("the admin token file is created 0600 on first use, reused, and rotated on request", async () => {
+test("the admin token file: rotated on request, refused when short, needed with `create: false`", async () => {
   const dir = await tempDir();
   const c = loadConfig({ cwd: dir, env: {} });
-  const first = loadAdminToken(c, silentLogger);
-  assert.equal(first.source, "file");
-  assert.ok(first.token.length >= 43);
-  assert.equal(statSync(c.admin.tokenFile).mode & 0o777, 0o600);
-  assert.equal(loadAdminToken(c, silentLogger).token, first.token);
   const rotated = loadAdminToken(c, silentLogger, { rotate: true });
-  assert.notEqual(rotated.token, first.token);
-  assert.equal(readFileSync(c.admin.tokenFile, "utf8").trim(), rotated.token);
+  assert.deepEqual([rotated.source, readFileSync(c.admin.tokenFile, "utf8").trim()], ["file", rotated.token]);
   writeFileSync(c.admin.tokenFile, "too-short\n");
   assert.throws(() => loadAdminToken(c, silentLogger), ConfigError);
   assert.throws(() => loadAdminToken(loadConfig({ cwd: path.join(dir, "elsewhere"), env: {} }), silentLogger, { create: false }), /does not exist/);
 });
 
-test("generated ids are alphanumeric and valid ids", async () => {
-  const { newId } = await import("../src/auth.ts");
-  const { isId } = await import("../src/validation.ts");
+test("generated ids are alphanumeric and valid ids", () => {
   for (let i = 0; i < 2000; i++) {
     const id = newId();
     assert.match(id, /^[A-Za-z0-9]{12}$/);

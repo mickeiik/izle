@@ -132,6 +132,11 @@ export async function writeBundle(dir: string, manifest: Json = fixtureManifest(
   return dir;
 }
 
+/** Rewrites the fixture bundle in `dir` as build `buildId`, with its items passed through `edit`. */
+export function publishBuild(dir: string, buildId: string, edit = (items: Json[]) => items, manifest: Json = {}) {
+  return writeBundle(dir, { ...fixtureManifest(), buildId, ...manifest }, { items: edit(fixtureItems().items) });
+}
+
 export async function tempDir(prefix = "izle-test-"): Promise<string> {
   return mkdtemp(path.join(tmpdir(), prefix));
 }
@@ -139,8 +144,10 @@ export async function tempDir(prefix = "izle-test-"): Promise<string> {
 /** A controllable clock. */
 export function fakeClock(start = Date.parse("2026-10-10T12:00:00Z")) {
   let t = start;
-  return { now: () => t, advance: (ms: number) => void (t += ms), set: (ms: number) => void (t = ms) };
+  return { now: () => t, advance: (ms: number) => void (t += ms) };
 }
+
+type Answer = { status: number; json: Json; headers: Headers };
 
 export interface TestServer {
   srv: RunningServer;
@@ -149,12 +156,8 @@ export interface TestServer {
   bundleDir: string;
   logs: string[];
   clock: ReturnType<typeof fakeClock>;
-  call(method: string, route: string, opts?: { token?: string | null; body?: unknown; raw?: string; headers?: Record<string, string> }): Promise<{
-    status: number;
-    json: Json;
-    headers: Headers;
-  }>;
-  admin(method: string, route: string, body?: unknown): Promise<{ status: number; json: Json; headers: Headers }>;
+  call(method: string, route: string, opts?: { token?: string | null; body?: unknown; raw?: string; headers?: Record<string, string> }): Promise<Answer>;
+  admin(method: string, route: string, body?: unknown): Promise<Answer>;
   pair(name?: string): Promise<{ deviceId: string; token: string }>;
   close(): Promise<void>;
 }
@@ -180,19 +183,17 @@ export async function startTestServer(opts: TestServerOptions = {}): Promise<Tes
     log: opts.log ?? createLogger({ level: "debug", write: (l) => void logs.push(l), now: clock.now }),
     now: opts.now ?? clock.now,
     pingMs: opts.pingMs ?? 20_000,
-    ...(opts.pairing ? { pairing: opts.pairing } : {}),
-    ...(opts.fetch ? { fetch: opts.fetch } : {}),
+    pairing: opts.pairing,
+    fetch: opts.fetch,
   });
   const base = srv.url;
 
   const call: TestServer["call"] = async (method, route, o = {}) => {
+    const body = o.raw ?? (o.body === undefined ? undefined : JSON.stringify(o.body));
     const headers: Record<string, string> = { ...o.headers };
     if (o.token) headers.Authorization = `Bearer ${o.token}`;
-    let body: string | undefined;
-    if (o.raw !== undefined) body = o.raw;
-    else if (o.body !== undefined) body = JSON.stringify(o.body);
     if (body !== undefined) headers["Content-Type"] = "application/json";
-    const res = await fetch(`${base}${route}`, { method, headers, ...(body !== undefined ? { body } : {}) });
+    const res = await fetch(`${base}${route}`, { method, headers, body });
     const text = await res.text();
     let json: Json = null;
     try {
@@ -246,16 +247,11 @@ export async function openEvents(base: string, token: string) {
           const block = buffer.slice(0, idx);
           buffer = buffer.slice(idx + 2);
           const msg: SseMessage = {};
+          // The server's events are one line each per field (its data is one line of JSON).
           for (const line of block.split("\n")) {
-            if (line.startsWith(":")) msg.comment = line.slice(1).trim();
-            else {
-              const sep = line.indexOf(":");
-              const key = sep < 0 ? line : line.slice(0, sep);
-              const val = sep < 0 ? "" : line.slice(sep + 1).replace(/^ /, "");
-              if (key === "event") msg.event = val;
-              else if (key === "data") msg.data = msg.data === undefined ? val : `${msg.data}\n${val}`;
-              else if (key === "id") msg.id = val;
-            }
+            const [, key, val] = /^([^:]*):? ?(.*)$/.exec(line)!;
+            if (key === "") msg.comment = val!.trim();
+            else if (key === "event" || key === "data" || key === "id") msg[key] = val;
           }
           queue.push(msg);
           waiting?.();

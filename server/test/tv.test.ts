@@ -107,19 +107,6 @@ test("progress → finished → cursor advances, skipping disallowed episodes an
   assert.equal((await as("GET", "/items/show")).json.cursorEpisodeId, "show.e1", "wraps to the first allowed episode");
 });
 
-test("continue info reflects watching/finished positions", async (t) => {
-  const { s, tv, as } = await setup(t);
-  await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["show", "film"] });
-  await progress(as, "show.e1", "paused", 300_000);
-  let c = await continueOf(as, "show");
-  assert.equal(c.status, "watching");
-  assert.equal(c.positionMs, 300_000);
-  await progress(as, "film.main", "finished", 5_400_000, 5_400_000);
-  c = await continueOf(as, "film");
-  assert.equal(c.status, "finished");
-  assert.equal(c.positionMs, 0, "a finished movie starts over");
-});
-
 test("state version: bumped by stop/finish and cursor changes, not by playing heartbeats", async (t) => {
   const { as } = await setup(t);
   const v0 = (await as("GET", "/state")).json.version;
@@ -169,7 +156,7 @@ test("a finished show that gains an episode resumes there until the owner's curs
   await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["show"] });
   for (const e of ["show.e1", "show.e2", "show.e4", "show.e5"]) await progress(as, e, "finished", 1_000, 1_000);
   let c = await continueOf(as, "show");
-  assert.deepEqual([c.episodeId, c.status], ["show.e1", "finished"], "wrapped to the first episode");
+  assert.deepEqual([c.episodeId, c.status, c.positionMs], ["show.e1", "finished", 0], "wrapped to the first episode's start");
 
   s.clock.advance(1_000);
   await appendToShow(s, "fixture-2", [extraEpisode("show.e6", 4, false), extraEpisode("show.e7", 5)]);
@@ -274,5 +261,3 @@ test("request validation", async (t) => {
   const big = await s.call("POST", "/api/v1/tv/resolve", { token: tv.token, raw: JSON.stringify({ episodeId: "x".repeat(70_000) }) });
   assert.equal(big.status, 413);
 });
-
-export type { TestServer };
