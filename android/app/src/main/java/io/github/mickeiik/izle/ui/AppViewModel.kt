@@ -16,6 +16,7 @@ import io.github.mickeiik.izle.data.api.TvState
 import io.github.mickeiik.izle.domain.AutoplayPlan
 import io.github.mickeiik.izle.domain.Problems
 import io.github.mickeiik.izle.domain.RemoteCommand
+import io.github.mickeiik.izle.domain.countDown
 import io.github.mickeiik.izle.player.PlaybackController
 import io.github.mickeiik.izle.player.PlayerPhase
 import io.github.mickeiik.izle.player.TrackOption
@@ -461,7 +462,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         homeFocusItemId = itemId
         autoplayJob?.cancel()
         autoplayJob = viewModelScope.launch {
-            for (left in AutoplayPlan.COUNTDOWN_SEC downTo 1) {
+            countDown(AutoplayPlan.COUNTDOWN_SEC) { left ->
                 // The latest state's entry: a live update may have moved its `continue` or removed the show.
                 val entry = state.value?.home?.firstOrNull { it.item.id == itemId }
                 if (entry == null) {
@@ -469,7 +470,6 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
                     return@launch
                 }
                 _autoplay.value = AutoplayUi(entry, left)
-                delay(1_000)
             }
             onAutoplayPlayNow()
         }

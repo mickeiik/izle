@@ -36,6 +36,7 @@ import io.github.mickeiik.izle.domain.Problems
 import io.github.mickeiik.izle.domain.RemoteCommand
 import io.github.mickeiik.izle.domain.SeekAccumulator
 import io.github.mickeiik.izle.domain.SourceAttempts
+import io.github.mickeiik.izle.domain.countDown
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
@@ -624,9 +625,8 @@ class PlaybackController(
     private fun startUpNext(next: NextEpisode) {
         overlayJob?.cancel()
         overlayJob = scope.launch {
-            for (left in PlaybackPlan.AUTO_NEXT_COUNTDOWN_SEC downTo 1) {
+            countDown(PlaybackPlan.AUTO_NEXT_COUNTDOWN_SEC) { left ->
                 _ui.update { it.copy(phase = PlayerPhase.UpNext(next, left), showInfo = false, cues = null) }
-                delay(1_000)
             }
             play(next.episodeId)
         }
@@ -653,10 +653,7 @@ class PlaybackController(
         _ui.update { it.copy(phase = PlayerPhase.Failed(seconds), showInfo = false, buffering = false, cues = null) }
         overlayJob?.cancel()
         overlayJob = scope.launch {
-            for (left in seconds downTo 1) {
-                _ui.update { it.copy(phase = PlayerPhase.Failed(left)) }
-                delay(1_000)
-            }
+            countDown(seconds) { left -> _ui.update { it.copy(phase = PlayerPhase.Failed(left)) } }
             exit()
         }
     }
