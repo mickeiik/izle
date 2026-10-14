@@ -133,7 +133,7 @@ class ApiClientTest {
     fun progressAndAck() = runBlocking {
         server.enqueue(json("""{"ok":true,"version":9}"""))
         server.enqueue(json("""{"ok":true}"""))
-        assertEquals(9L, client().progress(ProgressReport("s", "e", 1_000, 2_000, "playing")).version)
+        assertEquals(9L, client().progress(ProgressReport("s", "e", 1_000, 2_000, ProgressStatus.Playing)).version)
         assertEquals(
             """{"sessionId":"s","episodeId":"e","positionMs":1000,"durationMs":2000,"status":"playing"}""",
             server.takeRequest().body?.utf8(),

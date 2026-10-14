@@ -29,6 +29,7 @@ import io.github.mickeiik.izle.data.api.EpisodeRef
 import io.github.mickeiik.izle.data.api.ItemCard
 import io.github.mickeiik.izle.data.api.NextEpisode
 import io.github.mickeiik.izle.data.api.ProgressReport
+import io.github.mickeiik.izle.data.api.ProgressStatus
 import io.github.mickeiik.izle.data.api.ResolveRequest
 import io.github.mickeiik.izle.data.api.ResolveResponse
 import io.github.mickeiik.izle.domain.EpisodeSteps
@@ -173,7 +174,7 @@ class PlaybackController(
      * word on an episode, so they are retried a few times and then refresh Home, whose tile depends on them.
      */
     private suspend fun deliver(q: QueuedReport) {
-        val terminal = q.report.status == "stopped" || q.report.status == "finished"
+        val terminal = q.report.status.isFinal
         val attempts = if (terminal) TERMINAL_REPORT_ATTEMPTS else 1
         var attempt = 0
         var retriedWithoutAnchor = false
@@ -275,7 +276,7 @@ class PlaybackController(
         val p = _player.value ?: return
         if (!p.playWhenReady) return
         p.pause()
-        reportCurrent("paused")
+        reportCurrent(ProgressStatus.Paused)
         showInfo()
     }
 
@@ -283,7 +284,7 @@ class PlaybackController(
         val p = _player.value ?: return
         if (p.playWhenReady) return
         p.play()
-        reportCurrent("playing")
+        reportCurrent(ProgressStatus.Playing)
         showInfo()
     }
 
@@ -292,7 +293,7 @@ class PlaybackController(
         seek.cancel()
         p.seekTo(0)
         p.play()
-        reportCurrent("playing")
+        reportCurrent(ProgressStatus.Playing)
         showInfo()
     }
 
@@ -633,7 +634,7 @@ class PlaybackController(
         if (reported) return
         reported = true
         val duration = durationOf(p) ?: s.resolved.episode.durationMs
-        report(s, "finished", duration ?: p.currentPosition, duration, playing = false)
+        report(s, ProgressStatus.Finished, duration ?: p.currentPosition, duration, playing = false)
         heartbeatJob?.cancel()
         expiryJob?.cancel()
         lastPositionMs = 0
@@ -670,7 +671,7 @@ class PlaybackController(
             }
             PlaybackPlan.Recovery.GiveUp -> {
                 tried += sourceId
-                if (readyAt != null) report(s, "stopped", position, p?.let { durationOf(it) }, playing = false)
+                if (readyAt != null) report(s, ProgressStatus.Stopped, position, p?.let { durationOf(it) }, playing = false)
                 reported = true
                 showFailed()
             }
@@ -751,12 +752,12 @@ class PlaybackController(
             while (isActive) {
                 delay(PlaybackPlan.HEARTBEAT_INTERVAL_MS)
                 val p = _player.value ?: continue
-                if (p.isPlaying) reportCurrent("playing")
+                if (p.isPlaying) reportCurrent(ProgressStatus.Playing)
             }
         }
     }
 
-    private fun reportCurrent(status: String) {
+    private fun reportCurrent(status: ProgressStatus) {
         val s = session ?: return
         val p = _player.value ?: return
         if (reported || readyAt == null) return
@@ -780,7 +781,7 @@ class PlaybackController(
         seek.cancel()
     }
 
-    private fun report(s: Session, status: String, positionMs: Long, durationMs: Long?, playing: Boolean) {
+    private fun report(s: Session, status: ProgressStatus, positionMs: Long, durationMs: Long?, playing: Boolean) {
         pendingReports.update { it + 1 }
         val report = ProgressReport(s.resolved.sessionId, s.resolved.episode.id, positionMs.coerceAtLeast(0), durationMs, status, playing = playing)
         reports.trySend(QueuedReport(s.api, report))

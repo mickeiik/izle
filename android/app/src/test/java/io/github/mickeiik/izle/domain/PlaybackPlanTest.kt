@@ -1,5 +1,6 @@
 package io.github.mickeiik.izle.domain
 
+import io.github.mickeiik.izle.data.api.ProgressStatus
 import io.github.mickeiik.izle.domain.PlaybackPlan.Recovery
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -22,8 +23,8 @@ class PlaybackPlanTest {
 
     @Test
     fun liveStatusFollowsWhatTheViewerWants() {
-        assertEquals("playing", PlaybackPlan.liveStatus(playWhenReady = true))
-        assertEquals("paused", PlaybackPlan.liveStatus(playWhenReady = false))
+        assertEquals(ProgressStatus.Playing, PlaybackPlan.liveStatus(playWhenReady = true))
+        assertEquals(ProgressStatus.Paused, PlaybackPlan.liveStatus(playWhenReady = false))
     }
 
     @Test
@@ -60,9 +61,9 @@ class PlaybackPlanTest {
 
     @Test
     fun stopStatusReportsFinishedNearTheEnd() {
-        assertEquals("finished", PlaybackPlan.stopStatus(twoHours - 60_000, twoHours))
-        assertEquals("stopped", PlaybackPlan.stopStatus(60_000, twoHours))
-        assertEquals("stopped", PlaybackPlan.stopStatus(60_000, null))
+        assertEquals(ProgressStatus.Finished, PlaybackPlan.stopStatus(twoHours - 60_000, twoHours))
+        assertEquals(ProgressStatus.Stopped, PlaybackPlan.stopStatus(60_000, twoHours))
+        assertEquals(ProgressStatus.Stopped, PlaybackPlan.stopStatus(60_000, null))
     }
 
     @Test

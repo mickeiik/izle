@@ -180,9 +180,9 @@ data class EpisodeRef(
 data class Resume(val positionMs: Long, val durationMs: Long? = null)
 
 /**
- * `status`: `playing`, `paused`, `stopped` (left the player) or `finished`. `playing` says whether the player was
- * actually advancing when the position was sampled (false during a rebuffer stall) and `ageMs` how old the sample
- * is when the report is sent: the server anchors "Listen along" on them. Both are omitted when null.
+ * `playing` says whether the player was actually advancing when the position was sampled (false during a rebuffer
+ * stall) and `ageMs` how old the sample is when the report is sent: the server anchors "Listen along" on them. Both
+ * are omitted when null.
  */
 @Serializable
 data class ProgressReport(
@@ -190,10 +190,31 @@ data class ProgressReport(
     val episodeId: String,
     val positionMs: Long,
     val durationMs: Long?,
-    val status: String,
+    val status: ProgressStatus,
     val playing: Boolean? = null,
     val ageMs: Long? = null,
 )
+
+/** A progress report's `status`, spelled on the wire as the server expects. */
+@Serializable
+enum class ProgressStatus {
+    @SerialName("playing")
+    Playing,
+
+    @SerialName("paused")
+    Paused,
+
+    /** The viewer left the player before the end. */
+    @SerialName("stopped")
+    Stopped,
+
+    @SerialName("finished")
+    Finished,
+    ;
+
+    /** `stopped` and `finished` are the last word on an episode: Home's tile depends on them. */
+    val isFinal: Boolean get() = this == Stopped || this == Finished
+}
 
 @Serializable
 data class ProgressAck(val ok: Boolean = true, val version: Long = 0)

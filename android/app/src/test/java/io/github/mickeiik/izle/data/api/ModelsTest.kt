@@ -118,12 +118,33 @@ class ModelsTest {
         )
         assertEquals(
             """{"episodeId":"e","positionMs":1000,"status":"stopped"}""",
-            ApiJson.encodeToString(ProgressReport.serializer(), ProgressReport(null, "e", 1_000, null, "stopped")),
+            ApiJson.encodeToString(ProgressReport.serializer(), ProgressReport(null, "e", 1_000, null, ProgressStatus.Stopped)),
         )
         assertEquals(
             """{"sessionId":"s","episodeId":"e","positionMs":1000,"durationMs":2000,"status":"playing","playing":false,"ageMs":120}""",
-            ApiJson.encodeToString(ProgressReport.serializer(), ProgressReport("s", "e", 1_000, 2_000, "playing", playing = false, ageMs = 120)),
+            ApiJson.encodeToString(
+                ProgressReport.serializer(),
+                ProgressReport("s", "e", 1_000, 2_000, ProgressStatus.Playing, playing = false, ageMs = 120),
+            ),
         )
+    }
+
+    @Test
+    fun progressStatusesKeepTheirWireNames() {
+        val wire = ProgressStatus.entries.associateWith {
+            ApiJson.encodeToString(ProgressReport.serializer(), ProgressReport(null, "e", 0, null, it))
+                .substringAfter("\"status\":").substringBefore('}')
+        }
+        assertEquals(
+            mapOf(
+                ProgressStatus.Playing to "\"playing\"",
+                ProgressStatus.Paused to "\"paused\"",
+                ProgressStatus.Stopped to "\"stopped\"",
+                ProgressStatus.Finished to "\"finished\"",
+            ),
+            wire,
+        )
+        assertEquals(listOf(ProgressStatus.Stopped, ProgressStatus.Finished), ProgressStatus.entries.filter { it.isFinal })
     }
 
     @Test

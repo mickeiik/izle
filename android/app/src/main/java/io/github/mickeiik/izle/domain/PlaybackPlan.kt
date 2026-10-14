@@ -1,5 +1,6 @@
 package io.github.mickeiik.izle.domain
 
+import io.github.mickeiik.izle.data.api.ProgressStatus
 import kotlin.math.max
 import kotlin.math.min
 
@@ -39,7 +40,7 @@ object PlaybackPlan {
     fun reportAgeMs(sampledAtMs: Long, nowMs: Long): Long = (nowMs - sampledAtMs).coerceIn(0, MAX_REPORT_AGE_MS)
 
     /** The status of a live report: what the viewer wants, whatever the player is doing at that instant. */
-    fun liveStatus(playWhenReady: Boolean): String = if (playWhenReady) "playing" else "paused"
+    fun liveStatus(playWhenReady: Boolean): ProgressStatus = if (playWhenReady) ProgressStatus.Playing else ProgressStatus.Paused
 
     /** Remaining time at or below which an episode counts as finished. */
     fun endThresholdMs(durationMs: Long): Long {
@@ -61,8 +62,8 @@ object PlaybackPlan {
     }
 
     /** The status to report when the viewer leaves the player at this position. */
-    fun stopStatus(positionMs: Long, durationMs: Long?): String =
-        if (isFinished(positionMs, durationMs)) "finished" else "stopped"
+    fun stopStatus(positionMs: Long, durationMs: Long?): ProgressStatus =
+        if (isFinished(positionMs, durationMs)) ProgressStatus.Finished else ProgressStatus.Stopped
 
     enum class Recovery { RetrySameSource, NextSource, GiveUp }
 
