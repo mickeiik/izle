@@ -28,6 +28,7 @@ import io.github.mickeiik.izle.data.api.NextEpisode
 import io.github.mickeiik.izle.data.api.ProgressStatus
 import io.github.mickeiik.izle.data.api.ResolveRequest
 import io.github.mickeiik.izle.data.api.ResolveResponse
+import io.github.mickeiik.izle.data.api.orNullOnFailure
 import io.github.mickeiik.izle.domain.EpisodeSteps
 import io.github.mickeiik.izle.domain.ExpiryPlan
 import io.github.mickeiik.izle.domain.PlaybackPlan
@@ -286,13 +287,7 @@ class PlaybackController(
         if (!EpisodeSteps.mayHaveNeighbour(ref.index, ref.count, direction)) return showInfo()
         episodeLists[item.id]?.let { return stepTo(it, current, direction, item) }
         stepJob = scope.launch {
-            val episodes = try {
-                s.api.item(item.id).episodes
-            } catch (e: IOException) {
-                null
-            } catch (e: ApiException) {
-                null
-            }
+            val episodes = orNullOnFailure { s.api.item(item.id).episodes }
             if (episodes != null) episodeLists[item.id] = episodes
             // Auto-next, Back or a command may have changed things meanwhile.
             if (episodeId != current || _ui.value.phase != PlayerPhase.Playing) return@launch

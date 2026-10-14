@@ -1,12 +1,11 @@
 package io.github.mickeiik.izle.data
 
 import io.github.mickeiik.izle.data.api.ApiClient
-import io.github.mickeiik.izle.data.api.ApiException
 import io.github.mickeiik.izle.data.api.ProblemReport
+import io.github.mickeiik.izle.data.api.orNullOnFailure
 import io.github.mickeiik.izle.domain.Problems
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import java.io.IOException
 
 /**
  * Sends problem reports (`POST /tv/problems`) for the owner's admin page. Best effort by design: one attempt, in
@@ -25,13 +24,7 @@ class ProblemReporter(
     fun send(report: ProblemReport?, happenedAt: Long = clock(), api: ApiClient? = currentApi()) {
         if (report == null || api == null) return
         scope.launch {
-            try {
-                api.reportProblem(Problems.aged(report, clock() - happenedAt))
-            } catch (e: IOException) {
-                // best effort
-            } catch (e: ApiException) {
-                // best effort
-            }
+            orNullOnFailure { api.reportProblem(Problems.aged(report, clock() - happenedAt)) } // best effort
         }
     }
 }

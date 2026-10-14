@@ -19,6 +19,16 @@ import kotlin.coroutines.resumeWithException
 /** The server answered with an error status. `code` is the API error code (`not_allowed`, `expired`, …). */
 class ApiException(val status: Int, val code: String, val retryAfterSec: Long? = null) : Exception("HTTP $status $code")
 
+/** What [block] returns, or null when the server could not be reached or answered with an error. */
+inline fun <T> orNullOnFailure(block: () -> T): T? =
+    try {
+        block()
+    } catch (e: IOException) {
+        null
+    } catch (e: ApiException) {
+        null
+    }
+
 /**
  * The TV side of the server API. Network failures surface as [IOException], error answers as [ApiException].
  * The device token is attached per request (never through an interceptor) so it cannot leak to media hosts that
@@ -75,13 +85,12 @@ class ApiClient(
      * answer carries the server's clock (`Date` header) as [ResolveResponse.serverDateMs] for expiry scheduling.
      */
     suspend fun resolve(request: ResolveRequest): ResolveResponse {
-        val body = json.encodeToString(ResolveRequest.serializer(), request).toRequestBody(JSON)
-        val raw = exchange(authorize(Request.Builder().url(url("api/v1/tv/resolve")).post(body)).build(), longPollHttp)
+        val raw = exchange(jsonPost("api/v1/tv/resolve", ResolveRequest.serializer(), request), longPollHttp)
         return raw.decode(ResolveResponse.serializer()).copy(serverDateMs = raw.dateMs)
     }
 
     suspend fun progress(report: ProgressReport): ProgressAck =
-        post("api/v1/tv/progress", json.encodeToString(ProgressReport.serializer(), report), ProgressAck.serializer())
+        exchange(jsonPost("api/v1/tv/progress", ProgressReport.serializer(), report)).decode(ProgressAck.serializer())
 
     suspend fun ackCommand(id: Long) {
         exchange(authorize(Request.Builder().url(url("api/v1/tv/commands/$id/ack")).post(EMPTY_BODY)).build()).requireOk()
@@ -89,8 +98,7 @@ class ApiClient(
 
     /** `202 {"ok":true}`; a server too old for the route answers 4xx, which the caller ignores like any failure. */
     suspend fun reportProblem(report: ProblemReport) {
-        val body = json.encodeToString(ProblemReport.serializer(), report).toRequestBody(JSON)
-        exchange(authorize(Request.Builder().url(url("api/v1/tv/problems")).post(body)).build()).requireOk()
+        exchange(jsonPost("api/v1/tv/problems", ProblemReport.serializer(), report)).requireOk()
     }
 
     // --- plumbing ------------------------------------------------------------------------------------------------
@@ -98,8 +106,9 @@ class ApiClient(
     private suspend fun <T> get(path: String, serializer: KSerializer<T>): T =
         exchange(authorize(Request.Builder().url(url(path))).build()).decode(serializer)
 
-    private suspend fun <T> post(path: String, body: String, serializer: KSerializer<T>, client: OkHttpClient = http): T =
-        exchange(authorize(Request.Builder().url(url(path)).post(body.toRequestBody(JSON))).build(), client).decode(serializer)
+    /** An authorized POST of [body] as JSON. */
+    private fun <T> jsonPost(path: String, serializer: KSerializer<T>, body: T): Request =
+        authorize(Request.Builder().url(url(path)).post(json.encodeToString(serializer, body).toRequestBody(JSON))).build()
 
     private fun <T> RawResponse.decode(serializer: KSerializer<T>): T {
         requireOk()

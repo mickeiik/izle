@@ -5,13 +5,13 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.mickeiik.izle.AppGraph
 import io.github.mickeiik.izle.BuildConfig
-import io.github.mickeiik.izle.data.api.ApiException
 import io.github.mickeiik.izle.data.api.EpisodeDetails
 import io.github.mickeiik.izle.data.api.HomeEntry
 import io.github.mickeiik.izle.data.api.ItemCard
 import io.github.mickeiik.izle.data.api.ServerEvent
 import io.github.mickeiik.izle.data.api.ServerUrls
 import io.github.mickeiik.izle.data.api.TvState
+import io.github.mickeiik.izle.data.api.orNullOnFailure
 import io.github.mickeiik.izle.domain.AutoplayPlan
 import io.github.mickeiik.izle.domain.Problems
 import io.github.mickeiik.izle.domain.RemoteCommand
@@ -31,7 +31,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import java.io.IOException
 import java.util.Locale
 
 /** The single screen stack: no navigation library, so Back and focus stay fully under control. */
@@ -270,14 +269,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         }
         _setup.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
-            val reachable = try {
-                graph.apiClient(url, null).healthz()
-                true
-            } catch (e: IOException) {
-                false
-            } catch (e: ApiException) {
-                false
-            }
+            val reachable = orNullOnFailure { graph.apiClient(url, null).healthz() } != null
             if (!reachable) {
                 _setup.update { it.copy(busy = false, error = SetupError.Unreachable) }
                 return@launch
@@ -533,13 +525,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     private fun loadEpisodes(itemId: String) {
         val api = repository.api
         viewModelScope.launch {
-            val page = try {
-                MenuPage.Episodes(api?.item(itemId), failed = api == null)
-            } catch (e: IOException) {
-                MenuPage.Episodes(null, failed = true)
-            } catch (e: ApiException) {
-                MenuPage.Episodes(null, failed = true)
-            }
+            val page = orNullOnFailure { MenuPage.Episodes(api?.item(itemId), failed = api == null) } ?: MenuPage.Episodes(null, failed = true)
             _menu.update { m ->
                 if (m == null || m.page !is MenuPage.Episodes) m else m.replaceTop(page)
             }

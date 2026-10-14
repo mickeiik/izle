@@ -6,6 +6,7 @@ import io.github.mickeiik.izle.data.api.ApiJson
 import io.github.mickeiik.izle.data.api.EventsClient
 import io.github.mickeiik.izle.data.api.ServerEvent
 import io.github.mickeiik.izle.data.api.TvState
+import io.github.mickeiik.izle.data.api.orNullOnFailure
 import io.github.mickeiik.izle.domain.Problems
 import io.github.mickeiik.izle.settings.DeviceStore
 import kotlinx.coroutines.CoroutineScope
@@ -204,14 +205,7 @@ class ServerRepository(
             while (handledCommands.size > 64) handledCommands.removeFirst()
             _commands.tryEmit(command)
         }
-        scope.launch {
-            try {
-                api.ackCommand(command.id)
-            } catch (e: IOException) {
-                // replayed on the next connection, then acknowledged again
-            } catch (e: ApiException) {
-                // unknown_command: nothing to do
-            }
-        }
+        // A failed ack is replayed on the next connection and acknowledged then; unknown_command needs nothing.
+        scope.launch { orNullOnFailure { api.ackCommand(command.id) } }
     }
 }

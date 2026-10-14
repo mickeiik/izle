@@ -1,6 +1,7 @@
 package io.github.mickeiik.izle.settings
 
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -41,12 +42,7 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
     /** A new server address forgets the pairing and the cached state when the address actually changes. */
     suspend fun setServer(url: String) {
         dataStore.edit { p ->
-            if (p[SERVER_URL] != url) {
-                p.remove(DEVICE_ID)
-                p.remove(DEVICE_TOKEN)
-                p.remove(CACHED_STATE)
-                p.remove(LAST_PLAYED_ITEM)
-            }
+            if (p[SERVER_URL] != url) p.forgetDevice()
             p[SERVER_URL] = url
         }
     }
@@ -60,12 +56,15 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
     }
 
     suspend fun forgetPairing() {
-        dataStore.edit { p ->
-            p.remove(DEVICE_ID)
-            p.remove(DEVICE_TOKEN)
-            p.remove(CACHED_STATE)
-            p.remove(LAST_PLAYED_ITEM)
-        }
+        dataStore.edit { p -> p.forgetDevice() }
+    }
+
+    /** The pairing and what belongs to that device: its cached state and the show played last on it. */
+    private fun MutablePreferences.forgetDevice() {
+        remove(DEVICE_ID)
+        remove(DEVICE_TOKEN)
+        remove(CACHED_STATE)
+        remove(LAST_PLAYED_ITEM)
     }
 
     suspend fun setLastPlayedItem(itemId: String) {
