@@ -287,8 +287,9 @@ export class Store {
   updateDevice(id: string, patch: DevicePatch): Device | null {
     const keys = PATCHABLE.filter((k) => patch[k] !== undefined);
     const sets = [...keys.map((k) => `${column(k)} = ?`), "state_version = state_version + 1"];
-    const changed = this.run(`UPDATE devices SET ${sets.join(", ")} WHERE id = ?`, ...keys.map((k) => sqlValue(patch[k])), id);
-    return changed === 0 ? null : this.getDevice(id);
+    const values = keys.map((k) => sqlValue(patch[k]));
+    if (this.run(`UPDATE devices SET ${sets.join(", ")} WHERE id = ?`, ...values, id) === 0) return null;
+    return this.getDevice(id);
   }
 
   deleteDevice(id: string): boolean {
@@ -348,7 +349,7 @@ export class Store {
 
   // --- home ----------------------------------------------------------------------------------------------------
 
-  /** The device's home list and when each item was put there (epoch ms; null only for rows written outside the store). */
+  /** The device's home list, with when each item was put there (epoch ms; null for rows not written by the store). */
   getHomeEntries(deviceId: string, catalogId: string): Array<{ itemId: string; addedAt: number | null }> {
     return this.many("SELECT item_id, added_at FROM home_entries WHERE device_id = ? AND catalog_id = ? ORDER BY position", [deviceId, catalogId]);
   }
@@ -369,12 +370,14 @@ export class Store {
   // --- progress & cursor ---------------------------------------------------------------------------------------
 
   getProgress(deviceId: string, catalogId: string, episodeId: string): Progress | null {
-    return this.one("SELECT * FROM progress WHERE device_id = ? AND catalog_id = ? AND episode_id = ?", [deviceId, catalogId, episodeId], "device_id");
+    const sql = "SELECT * FROM progress WHERE device_id = ? AND catalog_id = ? AND episode_id = ?";
+    return this.one(sql, [deviceId, catalogId, episodeId], "device_id");
   }
 
   listProgress(deviceId: string, catalogId: string, itemId: string | null = null): Progress[] {
     return this.many(
-      "SELECT * FROM progress WHERE device_id = ? AND catalog_id = ? AND (? IS NULL OR item_id = ?) ORDER BY updated_at DESC",
+      `SELECT * FROM progress WHERE device_id = ? AND catalog_id = ? AND (? IS NULL OR item_id = ?)
+       ORDER BY updated_at DESC`,
       [deviceId, catalogId, itemId, itemId],
       "device_id",
     );
@@ -397,7 +400,8 @@ export class Store {
   }
 
   getCursor(deviceId: string, catalogId: string, itemId: string): Cursor | null {
-    return this.one("SELECT * FROM item_cursor WHERE device_id = ? AND catalog_id = ? AND item_id = ?", [deviceId, catalogId, itemId], "device_id");
+    const sql = "SELECT * FROM item_cursor WHERE device_id = ? AND catalog_id = ? AND item_id = ?";
+    return this.one(sql, [deviceId, catalogId, itemId], "device_id");
   }
 
   listCursors(deviceId: string, catalogId: string): Cursor[] {
@@ -486,7 +490,9 @@ export class Store {
   }
 
   insertSeen(catalogId: string, buildId: string, firstSeenAt: number, episodes: ReadonlyArray<{ episodeId: string; itemId: string }>): void {
-    const insert = this.db.prepare("INSERT INTO catalog_seen (catalog_id, episode_id, item_id, first_seen_at, build_id) VALUES (?, ?, ?, ?, ?)");
+    const insert = this.db.prepare(
+      "INSERT INTO catalog_seen (catalog_id, episode_id, item_id, first_seen_at, build_id) VALUES (?, ?, ?, ?, ?)",
+    );
     for (const e of episodes) insert.run(catalogId, e.episodeId, e.itemId, firstSeenAt, buildId);
   }
 

@@ -8,15 +8,12 @@ import { companionScope } from "./resolve.ts";
 import type { Device, DevicePatch, NowPlaying } from "./store.ts";
 import type { TvService } from "./tv.ts";
 
-export interface DeviceServiceDeps extends Services {
-  tv: TvService;
-  proxy: ProxyService;
-}
+type DeviceDeps = Services & { tv: TvService; proxy: ProxyService };
 
 export class DeviceService {
-  private readonly s: DeviceServiceDeps;
+  private readonly s: DeviceDeps;
 
-  constructor(deps: DeviceServiceDeps) {
+  constructor(deps: DeviceDeps) {
     this.s = deps;
   }
 

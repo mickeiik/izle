@@ -4,23 +4,15 @@
 
 import type { CatalogItem } from "@izle/contract";
 import type { CatalogService, ReloadResult } from "./catalog.ts";
+import type { AppContext, Services } from "./context.ts";
 import { errorName } from "./errors.ts";
-import type { Logger } from "./log.ts";
-import type { Notifier } from "./events.ts";
 import { episodeDetails, iso, itemCard, itemDetails } from "./presenters.ts";
 import { hasHeaders } from "./resolve.ts";
-import type { LoadedResolver } from "./resolver.ts";
-import type { CatalogBuild, Store } from "./store.ts";
+import type { CatalogBuild } from "./store.ts";
 import { VERSION } from "./version.ts";
 
 /** Builds listed by `GET /admin/catalog`, newest first; older ones stay readable by id. */
 export const CATALOG_BUILDS_LISTED = 50;
-
-export interface CatalogInfoDeps {
-  catalog: CatalogService;
-  store: Store;
-  resolverModule: LoadedResolver | null;
-}
 
 export function buildJson(b: CatalogBuild) {
   return {
@@ -35,7 +27,8 @@ export function buildJson(b: CatalogBuild) {
 }
 
 /** The loaded catalog, the resolver module, the server version, the newest builds and what the latest update changed. */
-export function catalogInfo({ catalog, store, resolverModule }: CatalogInfoDeps) {
+export function catalogInfo(ctx: Pick<AppContext, "catalog" | "store" | "resolverModule">) {
+  const { catalog, store, resolverModule } = ctx;
   const cur = catalog.current;
   const builds = store.listCatalogBuilds(cur.manifest.catalogId, CATALOG_BUILDS_LISTED);
   // What the last real update brought: the baseline has no changes by definition.
@@ -56,10 +49,7 @@ export function catalogInfo({ catalog, store, resolverModule }: CatalogInfoDeps)
   };
 }
 
-export interface ReloadDeps {
-  catalog: CatalogService;
-  notifier: Notifier;
-}
+type ReloadDeps = Pick<Services, "catalog" | "notifier">;
 
 /**
  * Re-reads the catalog bundle (the admin route and SIGHUP). After a good load every TV's state version is bumped,
@@ -75,7 +65,7 @@ export async function reloadCatalog({ catalog, notifier }: ReloadDeps): Promise<
  * The reload for a signal handler: it never rejects. A reload that throws (the store is already closed during
  * shutdown) is logged with the error's class name, never its message, instead of ending the process.
  */
-export async function reloadOnSignal(deps: ReloadDeps & { log: Logger }, signal: string): Promise<void> {
+export async function reloadOnSignal(deps: ReloadDeps & Pick<Services, "log">, signal: string): Promise<void> {
   try {
     await reloadCatalog(deps);
   } catch (err) {

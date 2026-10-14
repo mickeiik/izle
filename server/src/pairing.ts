@@ -6,15 +6,15 @@ import { RateLimiter } from "./ratelimit.ts";
 import type { Store } from "./store.ts";
 import { Waiters } from "./waiters.ts";
 
-export const PAIR_CODE_TTL_MS = 10 * 60_000;
-export const MAX_OPEN_PAIR_CODES = 5;
+const PAIR_CODE_TTL_MS = 10 * 60_000;
+const MAX_OPEN_PAIR_CODES = 5;
 export const MAX_PAIR_WAIT_MS = 25_000;
 /** Expired and delivered pair codes (and the devices never collected) are deleted this long afterwards. */
-export const PAIR_CODE_PURGE_GRACE_MS = 60 * 60_000;
+const PAIR_CODE_PURGE_GRACE_MS = 60 * 60_000;
 /** The 6-digit code a TV shows while it waits to be paired. */
 export const PAIR_CODE = /^[0-9]{6}$/;
 
-export type PairWaitResult = { status: "pending" } | { status: "approved"; deviceId: string; deviceToken: string };
+type PairWaitResult = { status: "pending" } | { status: "approved"; deviceId: string; deviceToken: string };
 
 export interface PairingOptions {
   /** `pair/start` calls allowed per client address and window. */
@@ -115,7 +115,6 @@ export class PairingService {
     return this.check(code, pairToken);
   }
 
-  /** Deletes codes that expired or were delivered over PAIR_CODE_PURGE_GRACE_MS ago, and the devices never collected. */
   purge(t = this.now()): void {
     this.store.purgePairCodes(t, PAIR_CODE_PURGE_GRACE_MS);
   }

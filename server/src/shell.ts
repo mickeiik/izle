@@ -44,19 +44,15 @@ export function qrCode(text: string): string {
   return renderUnicodeCompact(text, { ecc: "M", border: 2 });
 }
 
-/** `T` is the shape the caller expects of the answer it checks for; the body is not validated against it. */
-export interface AdminCallResult<T = unknown> {
-  status: number;
-  /** The admin API's JSON, or null when the body was not JSON. */
-  json: T | null;
-}
-
 export class ServerUnreachableError extends Error {
   override name = "ServerUnreachableError";
 }
 
+/** The status and the JSON answer (null when it is not JSON), assumed to have the shape `T` the caller checks for. */
+type AdminAnswer<T> = { status: number; json: T | null };
+
 /** One call to the running server's admin API with the admin token. */
-export async function adminCall<T = unknown>(server: string, token: string, method: string, route: string, body?: unknown): Promise<AdminCallResult<T>> {
+export async function adminCall<T>(server: string, token: string, method: string, route: string, body?: unknown): Promise<AdminAnswer<T>> {
   const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   let res: Response;
@@ -66,11 +62,11 @@ export async function adminCall<T = unknown>(server: string, token: string, meth
     throw new ServerUnreachableError(`no izle server answers at ${server}`);
   }
   const text = await res.text();
-  let json: unknown = null;
+  let json: T | null = null;
   try {
     json = text ? JSON.parse(text) : null;
   } catch {
-    json = null;
+    // not JSON
   }
-  return { status: res.status, json: json as T | null };
+  return { status: res.status, json };
 }

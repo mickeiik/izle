@@ -49,19 +49,19 @@ export const objectSchema = (properties: object, required: string[] = []) => ({
 });
 
 const NULL = { type: "null" };
-const NON_EMPTY = { type: "string", minLength: 1 };
+const TEXT = { type: "string", minLength: 1 };
 const MS = { type: "integer", minimum: 100, maximum: 120_000 };
-const RESOLVER = objectSchema({ module: NON_EMPTY, config: { type: "object" }, deadlineMs: MS, budgetMs: MS }, ["module"]);
+const RESOLVER = objectSchema({ module: TEXT, config: { type: "object" }, deadlineMs: MS, budgetMs: MS }, ["module"]);
 
 const CONFIG_SCHEMA = objectSchema({
   $schema: { type: "string" },
-  listen: objectSchema({ host: NON_EMPTY, port: { type: "integer", minimum: 0, maximum: 65535 } }),
+  listen: objectSchema({ host: TEXT, port: { type: "integer", minimum: 0, maximum: 65535 } }),
   publicUrl: { anyOf: [{ type: "string", pattern: "^https?://[^\\s]+$" }, NULL] },
-  trustedProxies: { type: "array", items: NON_EMPTY, maxItems: 64 },
-  dataDir: NON_EMPTY,
-  catalog: objectSchema({ dir: NON_EMPTY }, ["dir"]),
+  trustedProxies: { type: "array", items: TEXT, maxItems: 64 },
+  dataDir: TEXT,
+  catalog: objectSchema({ dir: TEXT }, ["dir"]),
   resolver: { anyOf: [RESOLVER, NULL] },
-  admin: objectSchema({ tokenFile: NON_EMPTY }),
+  admin: objectSchema({ tokenFile: TEXT }),
   proxy: objectSchema({
     always: { type: "boolean" },
     sessionTtlSec: { type: "integer", minimum: 60, maximum: 86400 },

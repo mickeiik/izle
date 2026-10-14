@@ -34,19 +34,11 @@ export type ReloadResult = { ok: true; catalog: LoadedCatalog } | { ok: false; i
 /** Called after every successful load with the catalog now active and the one it replaced (null at start). */
 export type CatalogLoadedHook = (next: LoadedCatalog, previous: LoadedCatalog | null) => void;
 
-export interface CatalogServiceOptions {
-  onLoaded?: CatalogLoadedHook;
-}
-
 const POSTER_FILE = /^[0-9a-f]{64}\.(jpg|png|webp)$/;
 
 /** Case-, accent- and Turkish-dotless-i-insensitive form used for catalog search. */
 export function fold(text: string): string {
-  return text
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .replace(/ı/g, "i")
-    .toLowerCase();
+  return text.normalize("NFD").replace(/\p{M}/gu, "").replace(/ı/g, "i").toLowerCase();
 }
 
 /** Loads the catalog bundle from a local directory and keeps it in memory; reloads replace it atomically. */
@@ -67,7 +59,7 @@ export class CatalogService {
     log: Logger,
     now: () => number = Date.now,
     adapters: ReadonlySet<string> | null = null,
-    options: CatalogServiceOptions = {},
+    options: { onLoaded?: CatalogLoadedHook } = {},
   ) {
     this.dir = dir;
     this.log = log;
@@ -119,10 +111,8 @@ export class CatalogService {
   }
 
   /** Initial load; throws BundleValidationError when the bundle is invalid. */
-  async load(): Promise<LoadedCatalog> {
-    const c = await this.read();
-    this.activate(c, "catalog loaded");
-    return c;
+  async load(): Promise<void> {
+    this.activate(await this.read(), "catalog loaded");
   }
 
   /** Reloads from disk. On failure the previous catalog stays active. */
