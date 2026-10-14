@@ -2,11 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { RESOLVER_API_VERSION, validateResolveResultsSchema } from "../src/index.ts";
 
-test("resolver API version is 1", () => {
+test("resolver API v1 accepts URL media, inline playlists and optional fields", () => {
   assert.equal(RESOLVER_API_VERSION, 1);
-});
-
-test("accepts URL media, inline playlists and optional fields", () => {
   const ok = validateResolveResultsSchema([
     { media: { kind: "mp4", url: "https://cdn.example.test/v.mp4" } },
     {

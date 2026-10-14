@@ -18,10 +18,15 @@ async function run(args: string[]): Promise<{ code: number; stdout: string; stde
   }
 }
 
-test("izle-validate exits 0 with a summary for a valid bundle", async () => {
+test("izle-validate exits 0 with a summary for a valid bundle, or JSON with --json", async () => {
   const r = await run([SAMPLE]);
   assert.equal(r.code, 0, r.stdout + r.stderr);
   assert.match(r.stdout, /✔ .*valid izle-bundle v1/);
+  const json = await run([SAMPLE, "--json"]);
+  assert.equal(json.code, 0);
+  const out = JSON.parse(json.stdout);
+  assert.equal(out.ok, true);
+  assert.ok(out.stats.items >= 6);
 });
 
 test("izle-validate exits 1 and lists errors for an invalid bundle", async () => {
@@ -29,14 +34,6 @@ test("izle-validate exits 1 and lists errors for an invalid bundle", async () =>
   const r = await run([dir]);
   assert.equal(r.code, 1);
   assert.match(r.stdout, /✖ items.json \/items\/1\/id: duplicate item id "movie-a"/);
-});
-
-test("izle-validate --json prints machine-readable output", async () => {
-  const r = await run([SAMPLE, "--json"]);
-  assert.equal(r.code, 0);
-  const out = JSON.parse(r.stdout);
-  assert.equal(out.ok, true);
-  assert.equal(out.stats.items >= 6, true);
 });
 
 test("izle-validate exits 2 on usage errors", async () => {

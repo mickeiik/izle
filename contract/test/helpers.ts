@@ -31,15 +31,10 @@ export function baseItems(): Json {
   return {
     items: [
       {
-        id: "movie-a",
-        kind: "movie",
-        title: "Movie A",
-        year: 2001,
-        poster: `assets/${TINY_PNG_NAME}`,
+        id: "movie-a", kind: "movie", title: "Movie A", year: 2001, poster: `assets/${TINY_PNG_NAME}`,
         episodes: [
           {
-            id: "movie-a.film",
-            playbackAllowed: true,
+            id: "movie-a.film", playbackAllowed: true,
             sources: [
               {
                 id: "hls",
@@ -53,16 +48,10 @@ export function baseItems(): Json {
         ],
       },
       {
-        id: "series-b",
-        kind: "series",
-        title: "Series B",
-        poster: null,
+        id: "series-b", kind: "series", title: "Series B", poster: null,
         episodes: [
           {
-            id: "series-b.e1",
-            season: 1,
-            number: 1,
-            playbackAllowed: true,
+            id: "series-b.e1", season: 1, number: 1, playbackAllowed: true,
             sources: [{ id: "a1", type: "adapter", adapter: "example", ref: { any: ["json", 1] }, languages: { audio: null, subtitles: null } }],
           },
           { id: "series-b.e2", season: 1, number: 2, playbackAllowed: false, sources: [] },
@@ -91,8 +80,6 @@ export async function makeBundle(opts: FixtureOptions = {}): Promise<string> {
   await writeFile(path.join(dir, "bundle.json"), JSON.stringify(manifest, null, 2));
   await writeFile(path.join(dir, "items.json"), JSON.stringify(items, null, 2));
   if (!opts.noPoster) await writeFile(path.join(dir, "assets", TINY_PNG_NAME), TINY_PNG);
-  for (const [rel, content] of Object.entries(opts.files ?? {})) {
-    await writeFile(path.join(dir, rel), content);
-  }
+  for (const [rel, content] of Object.entries(opts.files ?? {})) await writeFile(path.join(dir, rel), content);
   return dir;
 }

@@ -2,12 +2,16 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { loadBundle, validateBundle, BundleValidationError, type ValidationIssue } from "../src/index.ts";
-import { makeBundle, TINY_PNG, TINY_PNG_NAME } from "./helpers.ts";
+import { makeBundle, TINY_PNG, TINY_PNG_NAME, type FixtureOptions, type Json } from "./helpers.ts";
 
 const SAMPLE = fileURLToPath(new URL("../../sample-catalog", import.meta.url));
+const JPG_NAME = TINY_PNG_NAME.replace(".png", ".jpg");
 
 const errors = (issues: ValidationIssue[]) => issues.filter((i) => i.severity === "error");
 const warnings = (issues: ValidationIssue[]) => issues.filter((i) => i.severity === "warning");
+const source0 = (i: Json) => i.items[0].episodes[0].sources[0];
+const SRC = "/items/0/episodes/0/sources/0";
+const unknown = (path: string) => ({ path, message: /unknown property/ });
 
 function assertError(issues: ValidationIssue[], match: { path?: string; file?: string; message: RegExp }): void {
   const found = errors(issues).find(
@@ -16,173 +20,114 @@ function assertError(issues: ValidationIssue[], match: { path?: string; file?: s
   assert.ok(found, `expected an error matching ${JSON.stringify({ ...match, message: String(match.message) })}, got:\n${JSON.stringify(issues, null, 2)}`);
 }
 
-test("the shipped sample catalog is valid and warning-free", async () => {
-  const result = await validateBundle(SAMPLE);
-  assert.deepEqual(result.issues, []);
-  assert.equal(result.ok, true);
-  assert.equal(result.bundle?.manifest.catalogId, "izle-sample");
-  assert.ok((result.stats?.items ?? 0) >= 6);
-  assert.equal(result.stats?.posters, result.stats?.items);
+test("the shipped sample catalog and the fixture bundle are valid and warning-free", async () => {
+  const sample = await validateBundle(SAMPLE);
+  assert.deepEqual(sample.issues, []);
+  assert.equal(sample.ok, true);
+  assert.equal(sample.bundle?.manifest.catalogId, "izle-sample");
+  assert.ok((sample.stats?.items ?? 0) >= 6);
+  assert.equal(sample.stats?.posters, sample.stats?.items);
+
+  const fixture = await validateBundle(await makeBundle());
+  assert.deepEqual(fixture.issues, []);
+  const stats = { items: 2, movies: 1, series: 1, episodes: 3, playableEpisodes: 2, sources: 2, posters: 1 };
+  assert.deepEqual(fixture.stats, stats);
 });
 
-test("a well-formed fixture bundle is valid", async () => {
-  const result = await validateBundle(await makeBundle());
-  assert.deepEqual(result.issues, []);
-  assert.equal(result.ok, true);
-  assert.deepEqual(result.stats, { items: 2, movies: 1, series: 1, episodes: 3, playableEpisodes: 2, sources: 2, posters: 1 });
-});
-
-test("rejects duplicate item ids", async () => {
-  const dir = await makeBundle({ items: (i) => (i.items[1].id = "movie-a") });
-  const { ok, issues } = await validateBundle(dir);
-  assert.equal(ok, false);
-  assertError(issues, { path: "/items/1/id", message: /duplicate item id "movie-a"/ });
-});
-
-test("rejects duplicate episode ids anywhere in the bundle", async () => {
-  const dir = await makeBundle({ items: (i) => (i.items[1].episodes[0].id = "movie-a.film") });
-  assertError((await validateBundle(dir)).issues, { path: "/items/1/episodes/0/id", message: /duplicate episode id/ });
-});
-
-test("rejects duplicate source ids within an episode", async () => {
-  const dir = await makeBundle({
-    items: (i) => i.items[0].episodes[0].sources.push({ ...i.items[0].episodes[0].sources[0] }),
-  });
-  assertError((await validateBundle(dir)).issues, { path: "/items/0/episodes/0/sources/1/id", message: /duplicate source id/ });
-});
-
-test("rejects a poster whose content does not match its sha256 name", async () => {
-  const dir = await makeBundle({ noPoster: true, files: { [`assets/${TINY_PNG_NAME}`]: Buffer.concat([TINY_PNG, Buffer.from([0])]) } });
-  assertError((await validateBundle(dir)).issues, { file: `assets/${TINY_PNG_NAME}`, message: /sha256 of the content/ });
-});
-
-test("rejects a missing poster file", async () => {
-  const dir = await makeBundle({ noPoster: true });
-  assertError((await validateBundle(dir)).issues, { path: "/items/0/poster", message: /is missing/ });
-});
-
-test("rejects a poster whose bytes are not of its extension's type", async () => {
-  const dir = await makeBundle({ items: (i) => (i.items[0].poster = `assets/${TINY_PNG_NAME.replace(".png", ".jpg")}`), files: { [`assets/${TINY_PNG_NAME.replace(".png", ".jpg")}`]: TINY_PNG } });
-  assertError((await validateBundle(dir)).issues, { message: /content is not a jpg image/ });
-});
-
-test("rejects a poster path outside assets/ or not content-addressed", async () => {
-  const dir = await makeBundle({ items: (i) => (i.items[0].poster = "../secret.png") });
-  assertError((await validateBundle(dir)).issues, { path: "/items/0/poster" , message: /pattern/ });
-});
-
-test("rejects an adapter source whose adapter is not declared", async () => {
-  const dir = await makeBundle({ manifest: (m) => (m.adapters = []) });
-  assertError((await validateBundle(dir)).issues, { path: "/items/1/episodes/0/sources/0/adapter", message: /not listed in bundle.json/ });
-});
-
-test("warns about declared adapters no source uses", async () => {
-  const dir = await makeBundle({ manifest: (m) => m.adapters.push("unused") });
-  const result = await validateBundle(dir);
-  assert.equal(result.ok, true);
-  assert.match(warnings(result.issues)[0]?.message ?? "", /adapter "unused" is not used/);
-});
-
-test("rejects a movie with two episodes", async () => {
-  const dir = await makeBundle({
-    items: (i) => i.items[0].episodes.push({ id: "movie-a.extra", playbackAllowed: false, sources: [] }),
-  });
-  assertError((await validateBundle(dir)).issues, { path: "/items/0/episodes", message: /exactly one episode \(found 2\)/ });
-});
-
-test("rejects unknown fields at every level", async () => {
-  const cases: Array<[string, (i: any) => void, string]> = [
-    ["item", (i) => (i.items[0].tagline = "x"), "/items/0"],
-    ["episode", (i) => (i.items[0].episodes[0].thumbnail = "x"), "/items/0/episodes/0"],
-    ["source", (i) => (i.items[0].episodes[0].sources[0].quality = "hd"), "/items/0/episodes/0/sources/0"],
-    ["media", (i) => (i.items[0].episodes[0].sources[0].media.drm = true), "/items/0/episodes/0/sources/0/media"],
-    ["languages", (i) => (i.items[0].episodes[0].sources[0].languages.dub = true), "/items/0/episodes/0/sources/0/languages"],
+test("semantic, schema and file errors are reported where they are", async () => {
+  const cases: Array<[FixtureOptions, { path?: string; file?: string; message: RegExp }]> = [
+    [{ items: (i) => (i.items[1].id = "movie-a") }, { path: "/items/1/id", message: /duplicate item id "movie-a"/ }],
+    [
+      { items: (i) => (i.items[1].episodes[0].id = "movie-a.film") },
+      { path: "/items/1/episodes/0/id", message: /duplicate episode id/ },
+    ],
+    [
+      { items: (i) => i.items[0].episodes[0].sources.push({ ...source0(i) }) },
+      { path: "/items/0/episodes/0/sources/1/id", message: /duplicate source id/ },
+    ],
+    [
+      { noPoster: true, files: { [`assets/${TINY_PNG_NAME}`]: Buffer.concat([TINY_PNG, Buffer.from([0])]) } },
+      { file: `assets/${TINY_PNG_NAME}`, message: /sha256 of the content/ },
+    ],
+    [{ noPoster: true }, { path: "/items/0/poster", message: /is missing/ }],
+    [
+      { items: (i) => (i.items[0].poster = `assets/${JPG_NAME}`), files: { [`assets/${JPG_NAME}`]: TINY_PNG } },
+      { message: /content is not a jpg image/ },
+    ],
+    [{ items: (i) => (i.items[0].poster = "../secret.png") }, { path: "/items/0/poster", message: /pattern/ }],
+    [
+      { manifest: (m) => (m.adapters = []) },
+      { path: "/items/1/episodes/0/sources/0/adapter", message: /not listed in bundle.json/ },
+    ],
+    [
+      { items: (i) => i.items[0].episodes.push({ id: "movie-a.extra", playbackAllowed: false, sources: [] }) },
+      { path: "/items/0/episodes", message: /exactly one episode \(found 2\)/ },
+    ],
+    [{ items: (i) => (i.items[0].tagline = "x") }, unknown("/items/0")],
+    [{ items: (i) => (i.items[0].episodes[0].thumbnail = "x") }, unknown("/items/0/episodes/0")],
+    [{ items: (i) => (source0(i).quality = "hd") }, unknown(SRC)],
+    [{ items: (i) => (source0(i).media.drm = true) }, unknown(`${SRC}/media`)],
+    [{ items: (i) => (source0(i).languages.dub = true) }, unknown(`${SRC}/languages`)],
+    [
+      { manifest: (m) => (m.homepage = "x") },
+      { file: "bundle.json", path: "/", message: /unknown property "homepage"/ },
+    ],
+    [
+      { items: (i) => delete i.items[0].episodes[0].playbackAllowed },
+      { path: "/items/0/episodes/0", message: /missing required property "playbackAllowed"/ },
+    ],
+    [
+      { items: (i) => (i.items[1].episodes[1].playbackAllowed = true) },
+      { path: "/items/1/episodes/1/playbackAllowed", message: /must be false when sources is empty/ },
+    ],
+    [{ manifest: (m) => (m.formatVersion = 2) }, { path: "/formatVersion", message: /must be 1/ }],
+    [{ manifest: (m) => (m.builtAt = "2026-02-31T00:00:00Z") }, { path: "/builtAt", message: /date-time/ }],
+    [{ items: (i) => delete source0(i).languages.subtitles }, { message: /missing required property "subtitles"/ }],
+    [{ files: { "items.json": "" } }, { file: "items.json", message: /invalid JSON/ }],
   ];
-  for (const [what, mutate, path] of cases) {
-    const result = await validateBundle(await makeBundle({ items: mutate }));
-    assert.equal(result.ok, false, what);
-    assertError(result.issues, { path, message: /unknown property/ });
+  for (const [opts, match] of cases) {
+    const result = await validateBundle(await makeBundle(opts));
+    assert.equal(result.ok, false, String(match.message));
+    assertError(result.issues, match);
   }
-  const manifest = await validateBundle(await makeBundle({ manifest: (m) => (m.homepage = "x") }));
-  assertError(manifest.issues, { file: "bundle.json", path: "/", message: /unknown property "homepage"/ });
+  assertError((await validateBundle("/nonexistent/izle/bundle")).issues, { message: /does not exist/ });
 });
 
-test("accepts x- extension properties", async () => {
-  const dir = await makeBundle({
+test("ids, languages, URLs and headers are checked", async () => {
+  const bad: FixtureOptions["items"][] = [
+    ...["a|b", "has space", "-leading", "x".repeat(121), ""].map((id) => (i: Json) => (i.items[0].id = id)),
+    (i) => (source0(i).languages.audio = ["english!"]),
+    (i) => (source0(i).media.headers = { Referer: "a\r\nX-Evil: 1" }),
+    (i) => (source0(i).media.url = "file:///etc/passwd"),
+  ];
+  for (const items of bad) assert.equal((await validateBundle(await makeBundle({ items }))).ok, false, String(items));
+  const referer = { Referer: "https://site.example.test/" };
+  const withHeaders = await makeBundle({ items: (i) => (source0(i).media.headers = referer) });
+  assert.equal((await validateBundle(withHeaders)).ok, true);
+});
+
+test("warnings: unused adapters and unreferenced assets; x- extensions are accepted", async () => {
+  const unused = await validateBundle(await makeBundle({ manifest: (m) => m.adapters.push("unused") }));
+  assert.equal(unused.ok, true);
+  assert.match(warnings(unused.issues)[0]?.message ?? "", /adapter "unused" is not used/);
+  const stale = await validateBundle(await makeBundle({ files: { "assets/stale.jpg": "x" } }));
+  assert.equal(stale.ok, true);
+  assert.equal(warnings(stale.issues)[0]?.file, "assets/stale.jpg");
+  const extended = await makeBundle({
     manifest: (m) => (m["x-exporter"] = { run: 7 }),
     items: (i) => {
       i["x-note"] = "top";
       i.items[0]["x-origin"] = "registry-42";
       i.items[0].episodes[0]["x-n"] = 1;
-      i.items[0].episodes[0].sources[0]["x-cdn"] = "a";
+      source0(i)["x-cdn"] = "a";
     },
   });
-  const result = await validateBundle(dir);
-  assert.deepEqual(errors(result.issues), []);
+  assert.deepEqual(errors((await validateBundle(extended)).issues), []);
 });
 
-test("requires playbackAllowed and forbids playable episodes without sources", async () => {
-  const missing = await validateBundle(await makeBundle({ items: (i) => delete i.items[0].episodes[0].playbackAllowed }));
-  assertError(missing.issues, { path: "/items/0/episodes/0", message: /missing required property "playbackAllowed"/ });
-
-  const empty = await validateBundle(await makeBundle({ items: (i) => (i.items[1].episodes[1].playbackAllowed = true) }));
-  assertError(empty.issues, { path: "/items/1/episodes/1/playbackAllowed", message: /must be false when sources is empty/ });
-});
-
-test("rejects ids that are not URL-path safe", async () => {
-  for (const bad of ["a|b", "has space", "-leading", "x".repeat(121), ""]) {
-    const result = await validateBundle(await makeBundle({ items: (i) => (i.items[0].id = bad) }));
-    assert.equal(result.ok, false, `id ${JSON.stringify(bad)}`);
-  }
-});
-
-test("rejects other format versions and bad dates", async () => {
-  assertError((await validateBundle(await makeBundle({ manifest: (m) => (m.formatVersion = 2) }))).issues, {
-    path: "/formatVersion",
-    message: /must be 1/,
-  });
-  assertError((await validateBundle(await makeBundle({ manifest: (m) => (m.builtAt = "2026-02-31T00:00:00Z") }))).issues, {
-    path: "/builtAt",
-    message: /date-time/,
-  });
-});
-
-test("validates language facts", async () => {
-  const bad = await validateBundle(await makeBundle({ items: (i) => (i.items[0].episodes[0].sources[0].languages.audio = ["english!"]) }));
-  assert.equal(bad.ok, false);
-  const missing = await validateBundle(await makeBundle({ items: (i) => delete i.items[0].episodes[0].sources[0].languages.subtitles }));
-  assertError(missing.issues, { message: /missing required property "subtitles"/ });
-});
-
-test("accepts direct media with upstream headers but rejects header injection", async () => {
-  const ok = await validateBundle(
-    await makeBundle({ items: (i) => (i.items[0].episodes[0].sources[0].media.headers = { Referer: "https://site.example.test/" }) }),
-  );
-  assert.equal(ok.ok, true);
-  const bad = await validateBundle(
-    await makeBundle({ items: (i) => (i.items[0].episodes[0].sources[0].media.headers = { Referer: "a\r\nX-Evil: 1" }) }),
-  );
-  assert.equal(bad.ok, false);
-});
-
-test("rejects non-http media URLs", async () => {
-  const result = await validateBundle(await makeBundle({ items: (i) => (i.items[0].episodes[0].sources[0].media.url = "file:///etc/passwd") }));
-  assert.equal(result.ok, false);
-});
-
-test("reports missing files and invalid JSON without echoing content", async () => {
-  const missing = await validateBundle(await makeBundle({ files: { "items.json": "" } }));
-  assertError(missing.issues, { file: "items.json", message: /invalid JSON/ });
+test("invalid JSON is reported without echoing its content", async () => {
   const garbage = await validateBundle(await makeBundle({ files: { "bundle.json": "{ secret-token-value" } }));
   assert.ok(!JSON.stringify(garbage.issues).includes("secret-token-value"));
-  const nodir = await validateBundle("/nonexistent/izle/bundle");
-  assertError(nodir.issues, { message: /does not exist/ });
-});
-
-test("warns about unreferenced assets", async () => {
-  const result = await validateBundle(await makeBundle({ files: { "assets/stale.jpg": "x" } }));
-  assert.equal(result.ok, true);
-  assert.equal(warnings(result.issues)[0]?.file, "assets/stale.jpg");
 });
 
 test("loadBundle returns the bundle or throws BundleValidationError", async () => {

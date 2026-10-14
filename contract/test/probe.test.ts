@@ -23,14 +23,10 @@ test("probe range-GETs direct media and subtitles, follows redirects, forwards h
     manifest: { format: "izle-bundle", formatVersion: 1, catalogId: "c", buildId: "b", builtAt: "2026-01-01T00:00:00Z", name: "n", adapters: ["a"], items: "items.json", assetsDir: "assets" },
     items: [
       {
-        id: "i",
-        kind: "movie",
-        title: "t",
-        poster: null,
+        id: "i", kind: "movie", title: "t", poster: null,
         episodes: [
           {
-            id: "e",
-            playbackAllowed: true,
+            id: "e", playbackAllowed: true,
             sources: [
               { id: "ok", type: "direct", languages, media: { kind: "hls", url: `${base}/ok.m3u8` }, subtitleTracks: [{ url: `${base}/gone.vtt`, language: "en", format: "vtt" }] },
               { id: "redirect", type: "direct", languages, media: { kind: "hls", url: `${base}/moved` } },
