@@ -535,41 +535,25 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         repository.refreshSoon()
     }
 
-    /**
-     * The owner's commands, acted on only on Home and in the player (the repository acknowledges every command,
-     * unknown types included). Playback commands need video showing (paused or not) and win over the hidden menu:
-     * resume, next and previous close it; pause makes sure closing it later does not resume.
-     */
+    /** The owner's commands, as [CommandPlan] routes them. */
     private fun onCommand(command: ServerEvent.Command) {
-        val screen = _screen.value
-        if (screen != Screen.Home && screen != Screen.Player) return
-        val video = screen == Screen.Player && player.ui.value.phase == PlayerPhase.Playing
-        when (val c = RemoteCommand.of(command)) {
-            is RemoteCommand.Play -> {
-                c.itemId?.let { homeFocusItemId = it }
-                val hint = state.value?.home?.firstOrNull { it.item.id == c.itemId }?.item
-                startPlayback(c.episodeId, startAtMs = null, hint = hint)
+        val actions = CommandPlan.actions(RemoteCommand.of(command), _screen.value, player.ui.value.phase, menuOpen = _menu.value != null)
+        for (action in actions) {
+            when (action) {
+                is CommandPlan.Action.Play -> {
+                    action.itemId?.let { homeFocusItemId = it }
+                    val hint = state.value?.home?.firstOrNull { it.item.id == action.itemId }?.item
+                    startPlayback(action.episodeId, startAtMs = null, hint = hint)
+                }
+                CommandPlan.Action.Exit -> player.exit()
+                CommandPlan.Action.Pause -> player.pause()
+                CommandPlan.Action.Resume -> player.resume()
+                is CommandPlan.Action.Seek -> player.seekRemote(action.command)
+                is CommandPlan.Action.Step -> player.stepEpisode(action.direction)
+                is CommandPlan.Action.CloseMenu -> closeMenu(action.resume)
+                CommandPlan.Action.StayPausedAfterMenu -> resumeAfterMenu = false
+                is CommandPlan.Action.ShowMessage -> showBanner(action.message)
             }
-            RemoteCommand.Stop -> if (screen == Screen.Player) player.exit()
-            RemoteCommand.Pause -> if (video) {
-                resumeAfterMenu = false
-                player.pause()
-            }
-            RemoteCommand.Resume -> if (video) {
-                closeMenu(resume = false)
-                player.resume()
-            }
-            is RemoteCommand.Seek -> if (video) player.seekRemote(c)
-            RemoteCommand.Next -> if (video) {
-                closeMenu(resume = true)
-                player.stepEpisode(1)
-            }
-            RemoteCommand.Previous -> if (video) {
-                closeMenu(resume = true)
-                player.stepEpisode(-1)
-            }
-            is RemoteCommand.Message -> showBanner(c)
-            is RemoteCommand.Ignored -> Unit // a newer server's command, or an unusable one: acknowledged, nothing else
         }
     }
 

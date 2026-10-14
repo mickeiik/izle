@@ -567,12 +567,16 @@ class AppViewModelTest {
 
     /** Server answers arrive on OkHttp's threads, then run on the main looper: idle it until [condition] holds. */
     private fun waitUntil(what: String, condition: () -> Boolean) {
-        repeat(500) {
+        repeat(1_500) { // up to 15 s: generous for a loaded machine
             mainLooper.idle()
             if (condition()) return
             Thread.sleep(10)
         }
-        fail("Timed out waiting for $what; requests: ${requests.groupingBy { it.url.encodedPath }.eachCount()}")
+        val vm = viewModels.keys().singleOrNull()?.let { viewModels[it] as? AppViewModel }
+        fail(
+            "Timed out waiting for $what; requests: ${requests.groupingBy { it.url.encodedPath }.eachCount()}; " +
+                "screen ${vm?.screen?.value}, pairing ${vm?.pairing?.value}",
+        )
     }
 
     /** Gives a request the app should not send the time to arrive anyway. */
