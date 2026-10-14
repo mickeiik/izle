@@ -388,6 +388,21 @@ class PlaybackController(
             resolved.resume?.positionMs,
             resolved.resume?.durationMs ?: resolved.episode.durationMs,
         )
+        startSession(api, resolved, item, start, playWhenReady, receivedAt)
+    }
+
+    /**
+     * Plays a resolve answer from [start]: it becomes the session progress goes to, the screen shows its show and
+     * episode, the player gets its media, and the heartbeat and the refresh before its URL expires start.
+     */
+    private fun startSession(
+        api: ApiClient,
+        resolved: ResolveResponse,
+        item: MediaItem,
+        start: Long,
+        playWhenReady: Boolean,
+        receivedAt: Long,
+    ) {
         session = Session(api, resolved)
         readyAt = null
         reported = false
