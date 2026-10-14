@@ -11,10 +11,7 @@ import kotlinx.coroutines.launch
 /** Something shown for a while (Home's "No connection", the owner's banner): a new one replaces it and starts its time again. */
 class TimedValue<T : Any>(private val scope: CoroutineScope) {
     private val _value = MutableStateFlow<T?>(null)
-
-    /** What is showing, or null. */
     val value: StateFlow<T?> = _value.asStateFlow()
-
     private var job: Job? = null
 
     fun show(value: T, forMs: Long) {

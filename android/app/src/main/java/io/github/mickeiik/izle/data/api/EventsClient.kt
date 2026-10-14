@@ -6,7 +6,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -46,10 +45,10 @@ sealed interface ServerEvent {
 
     companion object {
         /** Maps one SSE message to an event; unknown event types and malformed data are ignored (null). */
-        fun parse(type: String?, data: String, json: Json = ApiJson): ServerEvent? = try {
+        fun parse(type: String?, data: String): ServerEvent? = try {
             when (type) {
-                "state" -> State(json.decodeFromString(StateData.serializer(), data).version)
-                "command" -> json.decodeFromString(CommandData.serializer(), data).let {
+                "state" -> State(ApiJson.decodeFromString(StateData.serializer(), data).version)
+                "command" -> ApiJson.decodeFromString(CommandData.serializer(), data).let {
                     val payload = it.payload as? JsonObject ?: JsonObject(emptyMap())
                     Command(
                         id = it.id,
@@ -85,7 +84,7 @@ private fun JsonObject.number(key: String): JsonPrimitive? = (this[key] as? Json
  * [IOException] when the stream breaks; the caller reconnects with backoff. The client's read timeout is the
  * dead-connection watchdog: the server sends a `: ping` comment every 20 s, so 60 s of silence fails the read.
  */
-class EventsClient(sseHttp: OkHttpClient, private val json: Json = ApiJson) {
+class EventsClient(sseHttp: OkHttpClient) {
     private val factory: EventSource.Factory = EventSources.createFactory(sseHttp)
 
     fun events(api: ApiClient): Flow<ServerEvent> = callbackFlow {
@@ -96,7 +95,7 @@ class EventsClient(sseHttp: OkHttpClient, private val json: Json = ApiJson) {
             }
 
             override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
-                ServerEvent.parse(type, data, json)?.let { trySend(it) }
+                ServerEvent.parse(type, data)?.let { trySend(it) }
             }
 
             override fun onClosed(eventSource: EventSource) {

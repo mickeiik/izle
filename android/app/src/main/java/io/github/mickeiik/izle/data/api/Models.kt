@@ -5,10 +5,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import kotlinx.serialization.json.Json
 
-// DTOs mirroring docs/spec/server-api-v1.md. The server may add response fields within v1, so decoding ignores
-// unknown keys and every field the TV can live without has a default.
-
-/** The one Json configuration for the server API (requests omit null fields, responses tolerate new ones). */
+// DTOs of docs/spec/server-api-v1.md, with the fields the TV reads. The server may add response fields within v1:
+// decoding ignores unknown keys, requests omit null fields, and every field the TV can live without has a default.
 val ApiJson: Json = Json {
     ignoreUnknownKeys = true
     explicitNulls = false
@@ -49,13 +47,7 @@ data class HomeEntry(
 )
 
 @Serializable
-data class ItemCard(
-    val id: String,
-    val kind: String,
-    val title: String,
-    val year: Int? = null,
-    val posterUrl: String? = null,
-)
+data class ItemCard(val id: String, val kind: String, val title: String, val posterUrl: String? = null)
 
 /** What OK on a home tile plays. `status`: `new`, `watching` or `finished` (starts over). */
 @Serializable
@@ -63,7 +55,6 @@ data class ContinueInfo(
     val episodeId: String,
     val season: Int? = null,
     val number: Int? = null,
-    val title: String? = null,
     val label: String? = null,
     val index: Int = 0,
     val count: Int = 1,
@@ -74,21 +65,9 @@ data class ContinueInfo(
 
 @Serializable
 data class ItemDetailsResponse(
-    val item: ItemDetails,
+    val item: ItemCard,
     val cursorEpisodeId: String? = null,
     val episodes: List<EpisodeDetails> = emptyList(),
-)
-
-@Serializable
-data class ItemDetails(
-    val id: String,
-    val kind: String,
-    val title: String,
-    val year: Int? = null,
-    val posterUrl: String? = null,
-    val originalTitle: String? = null,
-    val synopsis: String? = null,
-    val genres: List<String> = emptyList(),
 )
 
 @Serializable
@@ -102,19 +81,10 @@ data class EpisodeDetails(
     val durationMs: Long? = null,
     val playbackAllowed: Boolean = false,
     val progress: EpisodeProgress? = null,
-    val sources: List<SourceInfo> = emptyList(),
 )
 
 @Serializable
-data class EpisodeProgress(
-    val positionMs: Long,
-    val durationMs: Long? = null,
-    val status: String,
-    val updatedAt: String? = null,
-)
-
-@Serializable
-data class SourceInfo(val id: String, val label: String? = null, val languages: LanguageFacts = LanguageFacts())
+data class EpisodeProgress(val positionMs: Long, val status: String)
 
 /** BCP 47 tags; null = unknown, empty = known none. */
 @Serializable
@@ -239,7 +209,7 @@ data class ProblemReport(
 )
 
 @Serializable
-data class PairStart(val code: String, val pairToken: String, val expiresAt: String? = null)
+data class PairStart(val code: String, val pairToken: String)
 
 /** `status`: `pending`, `approved` (with the device token, delivered exactly once) or `expired`. */
 @Serializable

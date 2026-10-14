@@ -2,7 +2,6 @@ package io.github.mickeiik.izle.data.api
 
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.KSerializer
-import kotlinx.serialization.json.Json
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
@@ -20,14 +19,11 @@ import kotlin.coroutines.resumeWithException
 class ApiException(val status: Int, val code: String, val retryAfterSec: Long? = null) : Exception("HTTP $status $code")
 
 /** What [block] returns, or null when the server could not be reached or answered with an error. */
-inline fun <T> orNullOnFailure(block: () -> T): T? =
-    try {
-        block()
-    } catch (e: IOException) {
-        null
-    } catch (e: ApiException) {
-        null
-    }
+inline fun <T> orNullOnFailure(block: () -> T): T? = try {
+    block()
+} catch (e: Exception) {
+    if (e is IOException || e is ApiException) null else throw e
+}
 
 /**
  * The TV side of the server API. Network failures surface as [IOException], error answers as [ApiException].
@@ -39,7 +35,6 @@ class ApiClient(
     private val deviceToken: String?,
     private val http: OkHttpClient,
     private val longPollHttp: OkHttpClient = http,
-    private val json: Json = ApiJson,
 ) {
     private fun url(path: String): HttpUrl = baseUrl.resolve(path) ?: error("bad path $path")
 
@@ -50,8 +45,6 @@ class ApiClient(
 
     fun authorize(builder: Request.Builder): Request.Builder =
         if (deviceToken != null) builder.header("Authorization", "Bearer $deviceToken") else builder
-
-    // --- unauthenticated -----------------------------------------------------------------------------------------
 
     suspend fun healthz() {
         exchange(Request.Builder().url(url("healthz")).build()).requireOk()
@@ -71,14 +64,10 @@ class ApiClient(
         return raw.decode(PairWait.serializer())
     }
 
-    // --- TV ------------------------------------------------------------------------------------------------------
+    suspend fun state(): TvState = get(url("api/v1/tv/state"), TvState.serializer())
 
-    suspend fun state(): TvState = get("api/v1/tv/state", TvState.serializer())
-
-    suspend fun item(itemId: String): ItemDetailsResponse {
-        val url = url("api/v1/tv/items/").newBuilder().addPathSegment(itemId).build()
-        return exchange(authorize(Request.Builder().url(url)).build()).decode(ItemDetailsResponse.serializer())
-    }
+    suspend fun item(itemId: String): ItemDetailsResponse =
+        get(url("api/v1/tv/items/").newBuilder().addPathSegment(itemId).build(), ItemDetailsResponse.serializer())
 
     /**
      * The server may spend up to 30 s in the owner's resolver module, longer than the default read timeout. The
@@ -101,19 +90,18 @@ class ApiClient(
         exchange(jsonPost("api/v1/tv/problems", ProblemReport.serializer(), report)).requireOk()
     }
 
-    // --- plumbing ------------------------------------------------------------------------------------------------
+    private suspend fun <T> get(url: HttpUrl, serializer: KSerializer<T>): T =
+        exchange(authorize(Request.Builder().url(url)).build()).decode(serializer)
 
-    private suspend fun <T> get(path: String, serializer: KSerializer<T>): T =
-        exchange(authorize(Request.Builder().url(url(path))).build()).decode(serializer)
-
-    /** An authorized POST of [body] as JSON. */
-    private fun <T> jsonPost(path: String, serializer: KSerializer<T>, body: T): Request =
-        authorize(Request.Builder().url(url(path)).post(json.encodeToString(serializer, body).toRequestBody(JSON))).build()
+    private fun <T> jsonPost(path: String, serializer: KSerializer<T>, body: T): Request {
+        val json = ApiJson.encodeToString(serializer, body).toRequestBody(JSON)
+        return authorize(Request.Builder().url(url(path)).post(json)).build()
+    }
 
     private fun <T> RawResponse.decode(serializer: KSerializer<T>): T {
         requireOk()
         return try {
-            json.decodeFromString(serializer, body)
+            ApiJson.decodeFromString(serializer, body)
         } catch (e: IllegalArgumentException) {
             throw ApiException(status, "bad_response")
         }
@@ -122,7 +110,7 @@ class ApiClient(
     private fun RawResponse.requireOk() {
         if (status in 200..299) return
         val code = try {
-            json.decodeFromString(ErrorBody.serializer(), body).error
+            ApiJson.decodeFromString(ErrorBody.serializer(), body).error
         } catch (e: IllegalArgumentException) {
             "http_$status"
         }

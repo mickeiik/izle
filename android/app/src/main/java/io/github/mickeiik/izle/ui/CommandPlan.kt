@@ -13,8 +13,6 @@ object CommandPlan {
     sealed interface Action {
         /** Plays [episodeId] under the normal resume rules, [itemId]'s tile (if on Home) as the hint and the focus. */
         data class Play(val itemId: String?, val episodeId: String) : Action
-
-        /** Leaves the player for Home, as Back does. */
         data object Exit : Action
         data object Pause : Action
         data object Resume : Action
@@ -28,8 +26,6 @@ object CommandPlan {
 
         /** Closing the hidden menu later (open now or not) does not resume playback. */
         data object StayPausedAfterMenu : Action
-
-        /** The owner's banner. */
         data class ShowMessage(val message: RemoteCommand.Message) : Action
     }
 

@@ -22,7 +22,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.serialization.json.Json
 import java.io.IOException
 
 /**
@@ -34,17 +33,14 @@ class ServerRepository(
     private val scope: CoroutineScope,
     private val store: DeviceStore,
     private val events: EventsClient,
-    private val json: Json = ApiJson,
     private val timing: Timing = Timing(),
 ) {
+    /** [clock]: monotonic, in milliseconds (outage lengths). */
     data class Timing(
         val pollMs: Long = 60_000,
         val offlinePollMs: Long = 10_000,
         val minBackoffMs: Long = 1_000,
         val maxBackoffMs: Long = 30_000,
-        /** An outage at least this long is announced on [outages] once the server answers again. */
-        val outageReportMs: Long = Problems.SERVER_UNREACHABLE_MIN_MS,
-        /** A monotonic clock in milliseconds (outage lengths). */
         val clock: () -> Long = { System.nanoTime() / 1_000_000 },
     )
 
@@ -62,8 +58,8 @@ class ServerRepository(
     val fetched: SharedFlow<TvState> = _fetched.asSharedFlow()
 
     /**
-     * The length of an outage of at least [Timing.outageReportMs] while started, announced once the server answers
-     * again. Time in the background does not count: the TV was not trying then.
+     * The length of an outage worth reporting (see [Problems.SERVER_UNREACHABLE_MIN_MS]) while started, announced once
+     * the server answers again. Time in the background does not count: the TV was not trying then.
      */
     private val _outages = MutableSharedFlow<Long>(extraBufferCapacity = 4)
     val outages: SharedFlow<Long> = _outages.asSharedFlow()
@@ -123,7 +119,7 @@ class ServerRepository(
             _state.value = state
             setOnline(true)
             _fetched.tryEmit(state)
-            store.saveCachedState(json.encodeToString(TvState.serializer(), state))
+            store.saveCachedState(ApiJson.encodeToString(TvState.serializer(), state))
             true
         } catch (e: ApiException) {
             if (this.api === api) {
@@ -147,13 +143,13 @@ class ServerRepository(
         }
         val since = offlineSince ?: return
         offlineSince = null
-        if (now - since >= timing.outageReportMs) _outages.tryEmit(now - since)
+        if (now - since >= Problems.SERVER_UNREACHABLE_MIN_MS) _outages.tryEmit(now - since)
     }
 
     private suspend fun loadCached() {
         val text = store.cachedState() ?: return
         _state.value = try {
-            json.decodeFromString(TvState.serializer(), text)
+            ApiJson.decodeFromString(TvState.serializer(), text)
         } catch (e: IllegalArgumentException) {
             null
         }

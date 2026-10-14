@@ -31,8 +31,7 @@ sealed interface RemoteCommand {
         const val MESSAGE_MAX_CHARS = 200
         const val MESSAGE_MIN_SEC = 3
         const val MESSAGE_MAX_SEC = 120
-        /** The server applies the same default; only an older or odd payload lacks it. */
-        const val MESSAGE_DEFAULT_SEC = 15
+        const val MESSAGE_DEFAULT_SEC = 15 // as on the server; only an older or odd payload lacks it
 
         fun of(command: ServerEvent.Command): RemoteCommand = when (command.type) {
             "play" -> command.episodeId?.let { Play(command.itemId, it) } ?: Ignored(command.type)
@@ -49,11 +48,8 @@ sealed interface RemoteCommand {
             }
             "message" -> {
                 val text = command.text?.trim()?.take(MESSAGE_MAX_CHARS)
-                if (text.isNullOrEmpty()) {
-                    Ignored(command.type)
-                } else {
-                    Message(text, (command.durationSec ?: MESSAGE_DEFAULT_SEC).coerceIn(MESSAGE_MIN_SEC, MESSAGE_MAX_SEC))
-                }
+                val seconds = (command.durationSec ?: MESSAGE_DEFAULT_SEC).coerceIn(MESSAGE_MIN_SEC, MESSAGE_MAX_SEC)
+                if (text.isNullOrEmpty()) Ignored(command.type) else Message(text, seconds)
             }
             else -> Ignored(command.type)
         }

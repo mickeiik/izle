@@ -20,19 +20,15 @@ object ExpiryPlan {
     const val RETRY_DELAY_MS = 30_000L
 
     /**
-     * How long the stream stays valid from the moment the answer arrived. [serverNowMs] is the server's clock at
-     * that moment (the answer's `Date` header), so a TV with a wrong clock still schedules correctly; without it
-     * the TV's own clock ([localNowMs]) is used. Null when there is no (readable) `expiresAt`.
+     * How long the stream stays valid from the moment the answer arrived. [serverNowMs] is the server's clock then (the
+     * `Date` header), so a TV with a wrong clock still schedules correctly; else the TV's own clock ([localNowMs]).
      */
-    fun validForMs(expiresAt: String?, serverNowMs: Long?, localNowMs: Long): Long? {
-        val expires = expiresAt?.let(IsoTime::parseEpochMs) ?: return null
-        return expires - (serverNowMs ?: localNowMs)
-    }
+    fun validForMs(expiresAt: String?, serverNowMs: Long?, localNowMs: Long): Long? =
+        expiresAt?.let(IsoTime::parseEpochMs)?.let { it - (serverNowMs ?: localNowMs) }
 
     /**
-     * The delay before the next refresh, or null when none should be scheduled. [remainingMs] is how long the
-     * current stream stays valid from now; [sinceLastRefreshMs] how long ago this playback last refreshed (null:
-     * never).
+     * The delay before the next refresh, or null for none. [remainingMs]: how long the current stream stays valid
+     * from now; [sinceLastRefreshMs]: how long ago this playback last refreshed (null: never).
      */
     fun refreshDelayMs(remainingMs: Long?, sinceLastRefreshMs: Long?): Long? {
         if (remainingMs == null || remainingMs < MIN_VALIDITY_MS) return null
@@ -43,10 +39,7 @@ object ExpiryPlan {
     /** Network failures (null) and server errors are worth one retry; a 4xx answer will not change in 30 s. */
     fun isRetryable(httpStatus: Int?): Boolean = httpStatus == null || httpStatus >= 500
 
-    /**
-     * After a failed refresh: the delay before the one retry, or null to leave the stream to the 403/410 path (not
-     * retryable, already retried, or the stream would have expired by then).
-     */
+    /** After a failed refresh: the delay before the one retry, or null to leave the stream to the 403/410 path. */
     fun retryDelayMs(retryable: Boolean, alreadyRetried: Boolean, remainingMs: Long): Long? =
         if (retryable && !alreadyRetried && remainingMs > RETRY_DELAY_MS) RETRY_DELAY_MS else null
 }

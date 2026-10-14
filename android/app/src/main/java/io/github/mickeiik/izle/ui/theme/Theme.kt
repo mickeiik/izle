@@ -152,21 +152,17 @@ private val ColorScheme = darkColorScheme(
 private fun style(size: Int, weight: FontWeight = FontWeight.Normal, lineHeight: Int = size + 8) =
     TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = weight, fontSize = size.sp, lineHeight = lineHeight.sp)
 
-/** Nothing on screen is smaller than 24 sp: the viewer sits far away and may not see well. */
+/** Nothing on screen is smaller than 24 sp: the viewer sits far away and may not see well. Only the roles in use. */
 private val IzleTypography = Typography(
     displayLarge = style(96, FontWeight.Bold, 104),
-    displayMedium = style(56, FontWeight.Bold),
     displaySmall = style(44, FontWeight.Bold),
-    headlineLarge = style(40, FontWeight.Bold),
     headlineMedium = style(34, FontWeight.Bold),
     headlineSmall = style(30, FontWeight.Bold),
     titleLarge = style(28, FontWeight.Bold),
     titleMedium = style(26, FontWeight.Bold),
     titleSmall = style(24, FontWeight.Bold),
     bodyLarge = style(28),
-    bodyMedium = style(26),
     bodySmall = style(24),
-    labelLarge = style(26, FontWeight.Bold),
     labelMedium = style(24, FontWeight.Bold),
     labelSmall = style(24),
 )
