@@ -3,7 +3,7 @@
 // (docs/spec/server-api-v1.md, "Listen along"). The maths live in lib.js and the audio element's stream in
 // companion-player.js; this module owns the card, the long-poll that follows the TV and the 250 ms correction loop.
 
-import { api, attempt, devicePath, isUnauthorized } from "./api.js";
+import { api, attempt, devicePath, isUnauthorized, readStored, writeStored } from "./api.js";
 import { attach, nativeHlsBroken } from "./companion-player.js";
 import { actionButton, card, h, slot, toast } from "./dom.js";
 import {
@@ -21,7 +21,6 @@ import {
   syncDecision,
   tvPositionAt,
 } from "./lib.js";
-import { readStored, writeStored } from "./storage.js";
 
 const NUDGE_KEY = "izle.companion.nudgeMs";
 const TICK_MS = 250;

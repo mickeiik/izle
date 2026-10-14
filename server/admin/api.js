@@ -1,17 +1,29 @@
 // @ts-check
-// The admin API (docs/spec/server-api-v1.md, "Admin API") and the admin token. The boot code decides what a
-// refused token means (`onUnauthorized`), so this module knows nothing about routes or views.
+// The admin API and the admin token. The boot code decides what a refused token means (`onUnauthorized`).
 
 import { toast } from "./dom.js";
 import { errorText } from "./lib.js";
-import { forgetStored, readStored, writeStored } from "./storage.js";
+
+/**
+ * localStorage access, which throws in a private window, with blocked site data or a full quota: then nothing is
+ * remembered (`fallback`) and the page still works.
+ * @template T @param {() => T} fn @param {T} fallback
+ */
+function stored(fn, fallback) {
+  try {
+    return fn();
+  } catch {
+    return fallback;
+  }
+}
+/** @param {string} key */
+export const readStored = (key) => stored(() => localStorage.getItem(key), null);
+/** Whether the browser kept it. @param {string} key @param {string} value */
+export const writeStored = (key, value) => stored(() => (localStorage.setItem(key, value), true), false);
 
 const TOKEN_KEY = "izle.adminToken";
-
 /** The token when the browser keeps no site data (a private window): signed in until the tab closes. */
 let memoryToken = /** @type {string | null} */ (null);
-
-/** @type {() => void} */
 let unauthorized = () => {};
 
 export class ApiError extends Error {
@@ -24,40 +36,29 @@ export class ApiError extends Error {
   }
 }
 
-/** Whether a request was cancelled because the view that made it ended (nothing to report). @param {unknown} err */
+/** Whether a request was cancelled because the view that made it ended. @param {unknown} err */
 export const isAborted = (err) => err instanceof ApiError && err.code === "aborted";
-
-/** Whether the server refused the token (401). @param {unknown} err */
+/** @param {unknown} err */
 export const isUnauthorized = (err) => err instanceof ApiError && err.status === 401;
 
-export function getToken() {
-  return readStored(TOKEN_KEY) ?? memoryToken;
-}
+export const getToken = () => readStored(TOKEN_KEY) ?? memoryToken;
 
 /**
- * Keeps the admin token; returns whether the browser remembers it beyond this tab.
- * @param {string} token
- */
-function setToken(token) {
-  memoryToken = token;
-  return writeStored(TOKEN_KEY, token);
-}
-
-/**
- * Signs in with `token`: checks it against the server (rejects with its `ApiError` when refused), then keeps it.
- * Resolves with whether the browser remembers it beyond this tab; when it does not, the owner is told.
+ * Checks `token` against the server (rejects with its `ApiError` when refused), then keeps it. Resolves with whether
+ * the browser remembers it beyond this tab; when it does not, the owner is told.
  * @param {string} token
  */
 export async function signIn(token) {
   await api("GET", "/catalog", undefined, { token });
-  const remembered = setToken(token);
+  memoryToken = token;
+  const remembered = writeStored(TOKEN_KEY, token);
   if (!remembered) toast("Signed in for this tab only: this browser does not let the page remember the token.", "info");
   return remembered;
 }
 
 export function clearToken() {
   memoryToken = null;
-  forgetStored(TOKEN_KEY);
+  stored(() => localStorage.removeItem(TOKEN_KEY), undefined);
 }
 
 /** What to do when the server refuses the stored token (401). @param {() => void} fn */
@@ -65,14 +66,8 @@ export function onUnauthorized(fn) {
   unauthorized = fn;
 }
 
-/** `/devices/<id>`, the id encoded. @param {string} id */
+/** @param {string} id */
 export const devicePath = (id) => `/devices/${encodeURIComponent(id)}`;
-
-/**
- * @typedef {object} CallOptions
- * @property {string | null} [token] a token other than the stored one (sign-in checks the candidate)
- * @property {AbortSignal} [signal] cancels the request; it then fails with the code `aborted`
- */
 
 /**
  * One admin API call. Resolves with the JSON answer (null for 204), rejects with an `ApiError`: the server's error
@@ -80,7 +75,7 @@ export const devicePath = (id) => `/devices/${encodeURIComponent(id)}`;
  * @param {string} method
  * @param {string} path below /api/v1/admin
  * @param {unknown} [body]
- * @param {CallOptions} [opts]
+ * @param {{ token?: string | null, signal?: AbortSignal }} [opts] `token`: one other than the stored one
  * @returns {Promise<any>}
  */
 export async function api(method, path, body, opts = {}) {
@@ -105,17 +100,12 @@ export async function api(method, path, body, opts = {}) {
 }
 
 /**
- * @template T
- * @typedef {{ ok: true, value: T } | { ok: false, error: unknown }} Result
- */
-
-/**
  * Runs an action that calls the API. A failure becomes an error toast (a refused token signs out instead, and a
  * cancelled request says nothing); `success`, if given, is toasted once it worked.
  * @template T
  * @param {() => Promise<T>} fn
  * @param {string} [success]
- * @returns {Promise<Result<T>>}
+ * @returns {Promise<{ ok: true, value: T } | { ok: false, error: unknown }>}
  */
 export async function attempt(fn, success) {
   try {
@@ -123,8 +113,7 @@ export async function attempt(fn, success) {
     if (success) toast(success);
     return { ok: true, value };
   } catch (error) {
-    const quiet = isAborted(error) || isUnauthorized(error);
-    if (!quiet) toast(errorText(error), "error");
+    if (!isAborted(error) && !isUnauthorized(error)) toast(errorText(error), "error");
     return { ok: false, error };
   }
 }
