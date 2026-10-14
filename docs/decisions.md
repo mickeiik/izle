@@ -1467,3 +1467,68 @@ polling and Listen along sync.
   depends on timing only (whether the second 401 of a stale token is answered or cancelled by the sign-out).
 - **Not checked:** Listen along playback (the sample sources are remote, so the script only saves timings), the
   diagnostics list (Test sources probes remote URLs), hover and active states.
+
+## Simplification pass: TV app (2026-10-14)
+
+- **No behaviour change**, on top of the design pass (c9e4139): the same texts, look, focus, keys, requests, wire names
+  and timings. `AppViewModel.kt` 611 → 596 lines; `PlaybackController.kt` 759 → 782 (the repeated blocks went, each
+  new helper got a line of doc).
+- **Gone because nothing used it:** the empty `onTracksChanged` (`Player.Listener` has that default); the colour
+  parameter of `Spinner`, `PauseIcon` and `ProgressBar` and the height of `CountdownBar` (now private), which no caller
+  passed; `ApiClient.post()` with its `client` parameter; Home's explicit `height = 6.dp`, the default; an unused test
+  import. Private now: `AppViewModel.menuAvailable`, `ApiClient.url()` and `baseUrl`, `AppGraph.longPollHttp`.
+  `PlaybackController.isActive` is `inUse`: next to the coroutines' `while (isActive)` it read as one of them.
+- **One name per number:** `PlaybackPlan.FAILED_AUTO_HOME_SEC = 30`, like `AUTO_NEXT_COUNTDOWN_SEC`, replaces
+  `FAILED_AUTO_HOME_MS`, which both uses divided by 1000. `ServerRepository.Timing.outageReportMs` defaults to
+  `Problems.SERVER_UNREACHABLE_MIN_MS`, which nothing read. Tokens where the value already was one: the paused
+  badge's margins are `IzleSpacing.Safe`, the poster panel's gap `Huge`, the tiles' gap `XLarge`; the progress bar,
+  its fill and the offline chip's dot use `IzleShapes.Pill`. `Pill` (50 %) draws the corners of
+  `RoundedCornerShape(height / 2)`, the fill narrower than tall included: Compose scales corners that do not fit to
+  half the smaller side either way (checked in Foundation 1.12's `CornerBasedShape`). The one difference is under a
+  hundredth of a pixel at tvdpi, where 6 dp (7.99 px) is laid out 8 px high; at xhdpi there is none. `CircleShape` is
+  `RoundedCornerShape(50)`, the same shape as `Pill`.
+- **`orNullOnFailure { }`** (inline, next to `ApiException`) replaces the five pairs of identical `IOException` and
+  `ApiException` catches: the address check, the menu's episode list (still `failed` without a client), CH+/CH−'s
+  episode list, the command ack and the problem report. The other catch sites treat the two differently and stay.
+  A new test pins that anything else, a bug or the coroutine's cancellation, is thrown on.
+- **Data layer:** `ApiClient.jsonPost` builds the resolve, progress and problem requests (the same headers and bytes;
+  `ApiClientTest` checks the bodies); `DeviceStore` forgets a device's four keys in one `forgetDevice()`.
+- **Player:** `onResolveFailure` (rethrow anything else, report unless the viewer left, refresh on a 401) serves both
+  resolves; `seekNow` and `reportLive` the two seeks and the four live reports; `stopSessionLoops` the heartbeat and
+  expiry jobs; `launchOverlay` Up next, "The end" and the error screen; the player error's HTTP status is read once.
+  `resolveAndStart` hands a usable answer to `startSession`: the session, the screen's details, the player, the
+  heartbeat and the expiry refresh, moved as they were and in the same order. It also takes the media item (the
+  plan's signature did not): the item is built and checked first, an unusable address going to the error screen
+  before anything is set up.
+- **View model:** `enter(url, token)` (start, a new server address, an approved pairing, the last still under
+  `NonCancellable`), `showSetup(canGoBack)` (start without an address, Back from pairing, Settings → Server address)
+  and `endAutoplay()` (Play now, Not now). `IzleRoot` names `homeCovered` (the menu or the countdown over Home) once.
+- **UI:** `requestFocusWithin` is the loop behind the panel's first button, Home's tile and the menu's first row
+  (once a frame from the next one, up to 10, the requester looked up again each frame, each site's own "it took");
+  `Modifier.posterChip` the hairline, fill and side padding of both chips on a poster (`ActionChip` adds its 2 dp top
+  and bottom: the same layout); `PosterOrTitle` the poster or the title in its place, on the tile (4 lines, white)
+  and in the panel (5 lines, dim); `Modifier.fullScreen(background)` the root of the panel, the setup, pairing and
+  player loading screens. The scrim's doc names the paused badge too.
+- **Differences checked to be invisible.** Start with an address but no token now goes through
+  `repository.use(null)`, like a new address without one: every way the token goes also drops the client, so the
+  repository has none then, and `use(null)` changes nothing and does not suspend. Back from pairing now also runs
+  `clearAutoplay()`: on the pairing screen autoplay is neither armed nor showing (`showPairing` cleared it, only
+  Home arms it). `showSetup` leaves the address alone, so Back from pairing still shows it as stored (with its
+  trailing slash) and only Settings → Server address shows the short form, as before. An approved pairing clears
+  the focused tile before the repository switches instead of after: nothing reads it while pairing shows.
+- **Not done:** `requestFocusWithin` has no `frames` parameter (all three use 10; a parameter no caller passes is what
+  this pass removed elsewhere). The plan's skip list stands: `ProgressBar` and `CountdownBar` stay two (pixels could
+  shift), the models keep their fields, no generic job holder, `initialized`/`pendingLaunchServer` stay, nothing the
+  design pass chose not to extract, `autoplayArmed = false` in `onBack`/`openMenu`, `leading?.let { { it() } }`,
+  `BannerMaxWidth`, unused `modifier` parameters, Theme's unused typography styles and the separate colour roles.
+- **For the emulator** (the unit tests cannot reach a player in READY): play an episode (spinner, then video and the
+  information; the admin's "Now playing" follows), ←/→ seeks and the admin's +30 s, pause/resume from the remote and
+  the admin, Up next with its bar and the next episode starting, "The end" then Home after 8 s, the error screen
+  (a source on a closed port: "Home in 30 s", Try again focused, Home after 30 s, the problem reports), a source
+  fallback after a player error, CH+/CH− (and at the last episode), the expiry refresh with the example resolver
+  module's short-lived URLs, a command acknowledged once. Look: a tile and a panel without a poster, the chips, the
+  tile's and the player's progress bars, the offline chip, the paused badge, the loading, setup and pairing screens,
+  the focus on Play now / Try again, on the last played tile and on the menu's first row; Back from pairing and
+  Settings → Server address keep the address as before.
+- **Tests:** 170 → 171 (the `orNullOnFailure` test in `ApiClientTest`), green after every commit; a non-incremental
+  `compileDebugKotlin` and `compileDebugUnitTestKotlin` show no warnings, as before.
