@@ -254,10 +254,7 @@ class PlaybackController(
     fun onSeekKeyUp() {
         val p = _player.value ?: return
         val target = seek.commit() ?: return
-        p.seekTo(target)
-        _ui.update { it.copy(seekPreviewMs = null, positionMs = target) }
-        reportCurrent(PlaybackPlan.liveStatus(p.playWhenReady))
-        showInfo()
+        seekNow(p, target)
     }
 
     /** The owner's seek command: relative or absolute, clamped to the episode, shown like a key press. */
@@ -266,9 +263,14 @@ class PlaybackController(
         if (_ui.value.phase != PlayerPhase.Playing) return
         seek.cancel()
         val target = command.targetMs(p.currentPosition.coerceAtLeast(0), durationOf(p) ?: _ui.value.durationMs)
+        seekNow(p, target)
+    }
+
+    /** Jumps to [target] now, reported and shown like a key press. */
+    private fun seekNow(p: ExoPlayer, target: Long) {
         p.seekTo(target)
         _ui.update { it.copy(seekPreviewMs = null, positionMs = target) }
-        reportCurrent(PlaybackPlan.liveStatus(p.playWhenReady))
+        reportLive(p)
         showInfo()
     }
 
@@ -367,10 +369,7 @@ class PlaybackController(
         val resolved = try {
             api.resolve(ResolveRequest(episodeId, sourceId, exclude = attempts.excludeFor(sourceId)))
         } catch (e: Exception) {
-            if (e !is ApiException && e !is IOException) throw e
-            currentCoroutineContext().ensureActive() // the viewer left meanwhile: nothing to report
-            problems.send(Problems.resolveFailure(e, episodeId, sourceId, appVersion), api = api)
-            if (e is ApiException && e.status == 401) repository.refreshSoon()
+            onResolveFailure(e, api, episodeId, sourceId)
             if (attempts.continueAfterFailedResolve(sourceId)) {
                 resolveAndStart(api, episodeId, sourceId = null, startAtMs, playWhenReady)
             } else {
@@ -410,6 +409,17 @@ class PlaybackController(
         p.playWhenReady = playWhenReady
         startHeartbeat()
         watchExpiry(api, resolved, receivedAt)
+    }
+
+    /**
+     * A resolve that failed: anything but a network failure or an error answer is thrown on; otherwise the owner gets
+     * a problem report (unless the viewer left meanwhile) and a 401 is noticed by the next state fetch.
+     */
+    private suspend fun onResolveFailure(e: Exception, api: ApiClient, episodeId: String, sourceId: String?) {
+        if (e !is ApiException && e !is IOException) throw e
+        currentCoroutineContext().ensureActive() // the viewer left meanwhile: nothing to report
+        problems.send(Problems.resolveFailure(e, episodeId, sourceId, appVersion), api = api)
+        if (e is ApiException && e.status == 401) repository.refreshSoon()
     }
 
     /** The media item for a resolve answer (server-relative URLs made absolute), or null when its URL is unusable. */
@@ -472,10 +482,7 @@ class PlaybackController(
             val resolved = try {
                 api.resolve(ResolveRequest(episodeId, sourceId = sourceId))
             } catch (e: Exception) {
-                if (e !is ApiException && e !is IOException) throw e
-                currentCoroutineContext().ensureActive()
-                problems.send(Problems.resolveFailure(e, episodeId, sourceId, appVersion), api = api)
-                if (e is ApiException && e.status == 401) repository.refreshSoon()
+                onResolveFailure(e, api, episodeId, sourceId)
                 if (session !== s) return null
                 val status = (e as? ApiException)?.status
                 val retry = ExpiryPlan.retryDelayMs(ExpiryPlan.isRetryable(status), retried, deadline - SystemClock.elapsedRealtime())
@@ -511,7 +518,7 @@ class PlaybackController(
             }
         }
         // A resolve resets the server's "now playing" to the saved position: re-anchor it now (Listen along).
-        reportCurrent(PlaybackPlan.liveStatus(p.playWhenReady))
+        reportLive(p)
     }
 
     private val listener = object : Player.Listener {
@@ -539,7 +546,7 @@ class PlaybackController(
             // A rebuffer stall, its end, a pause or a resume: the phone's "Listen along" follows this anchor, so
             // report at once (a stall is status "playing" with playing=false).
             val p = _player.value ?: return
-            reportCurrent(PlaybackPlan.liveStatus(p.playWhenReady))
+            reportLive(p)
         }
 
         override fun onPlayerError(error: PlaybackException) {
@@ -568,8 +575,7 @@ class PlaybackController(
         reported = true
         val duration = durationOf(p) ?: s.resolved.episode.durationMs
         report(s, ProgressStatus.Finished, duration ?: p.currentPosition, duration, playing = false)
-        heartbeatJob?.cancel()
-        expiryJob?.cancel()
+        stopSessionLoops()
         lastPositionMs = 0
         val next = s.resolved.next
         if (next != null) startUpNext(next) else showFinished()
@@ -615,8 +621,7 @@ class PlaybackController(
     }
 
     private fun startUpNext(next: NextEpisode) {
-        overlayJob?.cancel()
-        overlayJob = scope.launch {
+        launchOverlay {
             countDown(PlaybackPlan.AUTO_NEXT_COUNTDOWN_SEC) { left ->
                 _ui.update { it.copy(phase = PlayerPhase.UpNext(next, left), showInfo = false, cues = null) }
             }
@@ -626,8 +631,7 @@ class PlaybackController(
 
     private fun showFinished() {
         _ui.update { it.copy(phase = PlayerPhase.Finished, showInfo = false, cues = null) }
-        overlayJob?.cancel()
-        overlayJob = scope.launch {
+        launchOverlay {
             delay(PlaybackPlan.FINISHED_MESSAGE_MS)
             exit()
         }
@@ -635,16 +639,14 @@ class PlaybackController(
 
     /** "Can't play right now". [reason] completes the problem report's "tried N sources". */
     private fun showFailed(reason: String? = null) {
-        heartbeatJob?.cancel()
-        expiryJob?.cancel()
+        stopSessionLoops()
         _player.value?.stop()
         episodeId?.let { id ->
             problems.send(Problems.gaveUp(id, session?.resolved?.sourceId ?: attempts.lastTried, lastPositionMs, attempts.triedCount, appVersion, reason))
         }
         val seconds = PlaybackPlan.FAILED_AUTO_HOME_SEC
         _ui.update { it.copy(phase = PlayerPhase.Failed(seconds), showInfo = false, buffering = false, cues = null) }
-        overlayJob?.cancel()
-        overlayJob = scope.launch {
+        launchOverlay {
             countDown(seconds) { left -> _ui.update { it.copy(phase = PlayerPhase.Failed(left)) } }
             exit()
         }
@@ -678,6 +680,9 @@ class PlaybackController(
         }
     }
 
+    /** Reports the position with the status the viewer wants: playing, or paused. */
+    private fun reportLive(p: ExoPlayer) = reportCurrent(PlaybackPlan.liveStatus(p.playWhenReady))
+
     private fun reportCurrent(status: ProgressStatus) {
         val s = session ?: return
         val p = _player.value ?: return
@@ -697,13 +702,24 @@ class PlaybackController(
         }
         reported = true
         session = null
-        heartbeatJob?.cancel()
-        expiryJob?.cancel()
+        stopSessionLoops()
         seek.cancel()
     }
 
     private fun report(s: Session, status: ProgressStatus, positionMs: Long, durationMs: Long?, playing: Boolean) =
         reporter.report(s.api, s.resolved.sessionId, s.resolved.episode.id, status, positionMs, durationMs, playing)
+
+    /** Up next's countdown, "The end"'s pause or the error screen's countdown, replacing the one before. */
+    private fun launchOverlay(block: suspend CoroutineScope.() -> Unit) {
+        overlayJob?.cancel()
+        overlayJob = scope.launch(block = block)
+    }
+
+    /** The loops that belong to one resolved session: the heartbeat and the refresh before the stream expires. */
+    private fun stopSessionLoops() {
+        heartbeatJob?.cancel()
+        expiryJob?.cancel()
+    }
 
     private fun cancelOverlays() {
         overlayJob?.cancel()

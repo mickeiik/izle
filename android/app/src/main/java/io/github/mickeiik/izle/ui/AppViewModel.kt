@@ -137,19 +137,8 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             val settings = store.current()
             serverUrl = settings.serverUrl?.toHttpUrlOrNull()
             _setup.value = SetupUi(address = settings.serverUrl ?: BuildConfig.DEFAULT_SERVER_URL)
-            val token = settings.deviceToken
             val url = serverUrl
-            when {
-                url == null -> {
-                    clearAutoplay()
-                    _screen.value = Screen.Setup(canGoBack = false)
-                }
-                token == null -> showPairing()
-                else -> {
-                    repository.use(graph.apiClient(url, token))
-                    showHome()
-                }
-            }
+            if (url == null) showSetup(canGoBack = false) else enter(url, settings.deviceToken)
             initialized = true
             pendingLaunchServer?.let { pendingLaunchServer = null; applyLaunchServer(it) }
         }
@@ -233,8 +222,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             Screen.Player -> player.exit()
             Screen.Pairing -> {
                 pairingJob?.cancel()
-                _setup.update { it.copy(busy = false, error = null) }
-                _screen.value = Screen.Setup(canGoBack = false)
+                showSetup(canGoBack = false)
             }
             is Screen.Setup -> if (screen.canGoBack) showHome()
             Screen.Home, Screen.Starting -> Unit
@@ -291,8 +279,11 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         store.setServer(url.toString())
         serverUrl = url
         _setup.update { it.copy(address = ServerUrls.display(url)) }
-        val settings = store.current()
-        val token = settings.deviceToken
+        enter(url, store.current().deviceToken)
+    }
+
+    /** With this device's token for [url]: its Home; without one: a pairing code. */
+    private suspend fun enter(url: HttpUrl, token: String?) {
         if (token != null) {
             repository.use(graph.apiClient(url, token))
             showHome()
@@ -300,6 +291,13 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             repository.use(null)
             showPairing()
         }
+    }
+
+    /** The server address screen; [canGoBack] to a working Home when the hidden menu opened it. */
+    private fun showSetup(canGoBack: Boolean) {
+        clearAutoplay()
+        _setup.update { it.copy(busy = false, error = null) }
+        _screen.value = Screen.Setup(canGoBack)
     }
 
     /** Every way to Home goes through here so live updates run whenever the app is in front. */
@@ -323,9 +321,8 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         pairingJob = viewModelScope.launch {
             PairingLoop.run(api, _pairing) { deviceId, deviceToken ->
                 store.savePairing(deviceId, deviceToken)
-                repository.use(graph.apiClient(url, deviceToken))
                 homeFocusItemId = null
-                showHome()
+                enter(url, deviceToken)
             }
         }
     }
@@ -407,19 +404,22 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     /** "Play now", or the end of the countdown: the show's `continue` episode under the normal resume rules. */
     fun onAutoplayPlayNow() {
-        val shown = _autoplay.value ?: return
-        autoplayJob?.cancel()
-        _autoplay.value = null
-        val entry = homeEntry(shown.entry.item.id) ?: return
+        val itemId = endAutoplay() ?: return
+        val entry = homeEntry(itemId) ?: return
         onTileClicked(entry)
     }
 
     /** Back, "Not now" or any other key: the viewer stays on Home, with the focus on the offered show. */
     fun cancelAutoplay() {
-        val shown = _autoplay.value ?: return
+        homeFocusItemId = endAutoplay() ?: return
+    }
+
+    /** Stops the countdown that is showing and takes it away: the offered show's id, or null when none shows. */
+    private fun endAutoplay(): String? {
+        val shown = _autoplay.value ?: return null
         autoplayJob?.cancel()
         _autoplay.value = null
-        homeFocusItemId = shown.entry.item.id
+        return shown.entry.item.id
     }
 
     /** Leaving Home some other way (playing, pairing, server address, the background): no autoplay this time. */
@@ -554,9 +554,8 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             SettingsEntry.ServerAddress -> {
                 closeMenu(resume = false)
                 player.stop()
-                clearAutoplay()
-                _setup.update { it.copy(address = serverUrl?.let(ServerUrls::display) ?: it.address, busy = false, error = null) }
-                _screen.value = Screen.Setup(canGoBack = true)
+                _setup.update { it.copy(address = serverUrl?.let(ServerUrls::display) ?: it.address) }
+                showSetup(canGoBack = true)
             }
             SettingsEntry.Language -> viewModelScope.launch {
                 val next = when (uiLanguageOverride.value) {
