@@ -37,9 +37,9 @@ test("deleting a device cascades to its rows; transactions roll back on error", 
       throw new Error("boom");
     }),
   );
-  assert.deepEqual(s.getHome("d1", "c"), ["a", "b"]);
+  assert.deepEqual(s.getHomeEntries("d1", "c").map((e) => e.itemId), ["a", "b"]);
   assert.equal(s.deleteDevice("d1"), true);
-  assert.deepEqual(s.getHome("d1", "c"), []);
+  assert.deepEqual(s.getHomeEntries("d1", "c").map((e) => e.itemId), []);
   assert.equal(s.getProgress("d1", "c", "a.1"), null);
   assert.deepEqual(s.pendingCommands("d1", 0), []);
   s.close();
@@ -162,7 +162,6 @@ test("migration 4: home entries keep the date they were added, cursors carry the
   s.setHome("d1", "c", ["x"], at + 3000);
   s.setHome("d1", "c", ["x", "a"], at + 4000);
   assert.deepEqual(s.getHomeEntries("d1", "c").map((e) => [e.itemId, e.addedAt]), [["x", at + 2000], ["a", at + 4000]], "taken off and put back: a new date");
-  assert.deepEqual(s.getHome("d1", "c"), ["x", "a"]);
 
   s.setCursor("d1", { catalogId: "c", itemId: "a", episodeId: "a.1", updatedAt: 6, wrapped: true });
   assert.equal(s.getCursor("d1", "c", "a")?.wrapped, true);

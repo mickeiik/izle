@@ -46,7 +46,7 @@ export function registerAdminDevices(app: Hono<Env>, ctx: AppContext): void {
     const d = requireDevice(store, c.req.param("id"));
     const body = await parseBody(c, homeBody);
     const version = tv.setHome(d.id, body.itemIds);
-    return c.json({ version, home: devices.home(store.getDevice(d.id)!) });
+    return c.json({ version, home: devices.home(d) });
   });
 
   app.put("/api/v1/admin/devices/:id/cursor", async (c) => {

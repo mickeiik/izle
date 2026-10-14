@@ -15,8 +15,6 @@ export const PAIR_CODE = /^[0-9]{6}$/;
 export type PairWaitResult = { status: "pending" } | { status: "approved"; deviceId: string; deviceToken: string };
 
 export interface PairingOptions {
-  ttlMs?: number;
-  maxOpen?: number;
   /** `pair/start` calls allowed per client address and window. */
   startLimit?: { max: number; windowMs: number };
 }
@@ -34,8 +32,6 @@ function hashesEqual(aHex: string, bHex: string): boolean {
 export class PairingService {
   private readonly waiters = new Waiters<string>();
   private readonly limiter: RateLimiter;
-  private readonly ttlMs: number;
-  private readonly maxOpen: number;
   private readonly store: Store;
   private readonly log: Logger;
   private readonly now: () => number;
@@ -44,8 +40,6 @@ export class PairingService {
     this.store = store;
     this.log = log;
     this.now = now;
-    this.ttlMs = opts.ttlMs ?? PAIR_CODE_TTL_MS;
-    this.maxOpen = opts.maxOpen ?? MAX_OPEN_PAIR_CODES;
     const limit = opts.startLimit ?? { max: 10, windowMs: 10 * 60_000 };
     this.limiter = new RateLimiter(limit.max, limit.windowMs, now);
   }
@@ -57,7 +51,7 @@ export class PairingService {
     }
     const t = this.now();
     this.store.purgePairCodes(t, 60 * 60_000);
-    if (this.store.listOpenPairCodes(t).length >= this.maxOpen) {
+    if (this.store.listOpenPairCodes(t).length >= MAX_OPEN_PAIR_CODES) {
       throw new HttpError(429, "too_many_pending", "too many pairing codes are waiting for approval");
     }
     let code = "";
@@ -67,9 +61,9 @@ export class PairingService {
     }
     if (!code) throw new HttpError(503, "busy", "no free pairing code");
     const pairToken = newToken();
-    const expiresAt = t + this.ttlMs;
+    const expiresAt = t + PAIR_CODE_TTL_MS;
     this.store.insertPairCode({ code, pairTokenHash: sha256(pairToken), now: t, expiresAt });
-    this.log.info("pairing started", { expiresInSec: Math.round(this.ttlMs / 1000) });
+    this.log.info("pairing started", { expiresInSec: Math.round(PAIR_CODE_TTL_MS / 1000) });
     return { code, pairToken, expiresAt };
   }
 

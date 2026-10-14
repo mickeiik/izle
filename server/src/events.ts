@@ -41,12 +41,8 @@ export class EventHub {
     for (const s of this.subscribers.get(deviceId) ?? []) s.send(event);
   }
 
-  connections(deviceId: string): number {
-    return this.subscribers.get(deviceId)?.size ?? 0;
-  }
-
   isOnline(deviceId: string): boolean {
-    return this.connections(deviceId) > 0;
+    return (this.subscribers.get(deviceId)?.size ?? 0) > 0;
   }
 
   /** Ends the open streams of one device (e.g. after it was deleted). */

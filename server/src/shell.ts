@@ -7,9 +7,6 @@ import { localServerUrl, type ServerConfig } from "./config.ts";
  * server answers on this host, calls to its admin API, and the admin page's sign-in link with its QR code.
  */
 
-// Where this host's own server answers; it lives with the config because the server's own URL is built the same way.
-export { localServerUrl };
-
 export interface LinkBase {
   url: string;
   /** Where the address came from, for the note printed next to the link. */

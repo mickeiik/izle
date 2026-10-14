@@ -44,7 +44,6 @@ export interface LoadResolverOptions {
   /** The server's data directory; the module gets `<dataDir>/resolver`. */
   dataDir: string;
   log: Logger;
-  fetch?: typeof fetch;
 }
 
 /** The class name of a thrown value, if it is a plausible identifier; never its message. */
@@ -73,7 +72,7 @@ function call<T>(fn: () => T | Promise<T>): Promise<T> {
 }
 
 /** The adapter-facing logger: the server's redacted logger, with level and arguments sanitized. */
-export function adapterLogger(log: Logger): AdapterContext["log"] {
+function adapterLogger(log: Logger): AdapterContext["log"] {
   return (level: LogLevel, msg: string, fields?: Record<string, unknown>) => {
     const lvl: LogLevel = level === "warn" || level === "error" ? level : "info";
     log[lvl](String(msg), fields !== null && typeof fields === "object" ? fields : undefined);
@@ -116,7 +115,7 @@ export async function loadResolver(opts: LoadResolverOptions): Promise<LoadedRes
   const dataDir = path.join(opts.dataDir, "resolver");
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const log = opts.log.child({ component: "resolver" });
-  const ctx: AdapterContext = { config: opts.config, dataDir, fetch: opts.fetch ?? globalThis.fetch, log: adapterLogger(log) };
+  const ctx: AdapterContext = { config: opts.config, dataDir, fetch: globalThis.fetch, log: adapterLogger(log) };
   const createAdapters = mod.createAdapters as (ctx: AdapterContext) => unknown;
 
   let created: unknown;
@@ -211,17 +210,17 @@ export type HealthOutcome =
   | { adapterId: string; ok: false; code: "timeout" | "error"; name: string; ms: number };
 
 /** Runs every adapter's healthcheck (adapters without one count as healthy). */
-export async function healthcheckAll(resolver: LoadedResolver, timeoutMs = HEALTHCHECK_TIMEOUT_MS): Promise<HealthOutcome[]> {
+export async function healthcheckAll(resolver: LoadedResolver): Promise<HealthOutcome[]> {
   return Promise.all(
     [...resolver.adapters.values()].map(async (adapter): Promise<HealthOutcome> => {
       const started = performance.now();
       const ms = () => Math.round(performance.now() - started);
       if (!adapter.healthcheck) return { adapterId: adapter.id, ok: true, ms: 0, skipped: true };
-      const signal = AbortSignal.timeout(timeoutMs);
+      const signal = AbortSignal.timeout(HEALTHCHECK_TIMEOUT_MS);
       try {
         await withTimeout(
           call(() => adapter.healthcheck!(signal)),
-          timeoutMs,
+          HEALTHCHECK_TIMEOUT_MS,
         );
         return { adapterId: adapter.id, ok: true, ms: ms(), skipped: false };
       } catch (err) {

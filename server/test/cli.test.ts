@@ -5,7 +5,8 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { main } from "../src/cli.ts";
-import { linkBase, localServerUrl, qrCode, signInLink } from "../src/shell.ts";
+import { localServerUrl } from "../src/config.ts";
+import { linkBase, qrCode, signInLink } from "../src/shell.ts";
 import { SCHEMA_VERSION } from "../src/store.ts";
 import { ADMIN_TOKEN, startTestServer, tempDir } from "./helpers.ts";
 

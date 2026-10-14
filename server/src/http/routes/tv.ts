@@ -25,7 +25,7 @@ export function registerTv(app: Hono<Env>, ctx: AppContext): void {
 
   app.post("/api/v1/tv/progress", async (c) => {
     const body = await parseBody(c, progressBody);
-    const r = tv.recordProgress(c.get("device"), { ...body, durationMs: body.durationMs ?? null });
+    const r = tv.recordProgress(c.get("device"), body);
     return c.json({ ok: true, version: r.version });
   });
 

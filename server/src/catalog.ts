@@ -167,7 +167,7 @@ export class CatalogService {
     return path.join(this.current.dir, this.current.manifest.assetsDir, file);
   }
 
-  search(query: string, limit = 50): CatalogItem[] {
+  search(query: string, limit: number): CatalogItem[] {
     const q = fold(query.trim());
     const items = this.current.items.filter(
       (i) => q === "" || fold(i.title).includes(q) || (i.originalTitle && fold(i.originalTitle).includes(q)) || fold(i.id).includes(q),

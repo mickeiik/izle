@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { errorMessage } from "../admin/lib.js";
-import { ADMIN_AUTH_MAX_FAILURES, ADMIN_AUTH_WINDOW_MS } from "../src/app.ts";
+import { ADMIN_AUTH_MAX_FAILURES, ADMIN_AUTH_WINDOW_MS } from "../src/http/middleware.ts";
 import { RateLimiter } from "../src/ratelimit.ts";
 import { ADMIN_TOKEN, startTestServer, type Json, type TestServer } from "./helpers.ts";
 

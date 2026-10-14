@@ -10,12 +10,6 @@ import { registerProxy } from "./http/routes/proxy.ts";
 import { registerTv } from "./http/routes/tv.ts";
 import { registerStatic } from "./http/static.ts";
 
-export type { AppContext } from "./context.ts";
-export type { Env } from "./http/middleware.ts";
-export { ADMIN_AUTH_MAX_FAILURES, ADMIN_AUTH_WINDOW_MS } from "./http/middleware.ts";
-export { CATALOG_BUILDS_LISTED } from "./catalog-admin.ts";
-export { COMMAND_REPLAY_MS } from "./commands.ts";
-
 /**
  * The HTTP app: one Hono instance, with every area's routes registered on it in a fixed order (middleware first).
  * Access logs name the route template, so routes are never mounted as sub-apps.

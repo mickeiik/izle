@@ -110,8 +110,8 @@ async function probe(stream: UpstreamStream, signal: AbortSignal | undefined, fe
 export interface DiagnosticsDeps {
   catalog: CatalogService;
   resolver: ResolveService;
-  /** How the probe reaches upstreams; the global fetch by default. */
-  fetch?: typeof fetch;
+  /** How the probe reaches upstreams. */
+  fetch: typeof fetch;
 }
 
 export async function diagnoseEpisode(
@@ -138,7 +138,7 @@ export async function diagnoseEpisode(
       if (a.tried.name) report.name = a.tried.name;
     } else {
       report.stream = summarize(a.stream, proxyAlways);
-      if (input.probe !== false) report.probe = await probe(a.stream, signal, deps.fetch ?? globalThis.fetch);
+      if (input.probe !== false) report.probe = await probe(a.stream, signal, deps.fetch);
     }
     reports.push(report);
   }

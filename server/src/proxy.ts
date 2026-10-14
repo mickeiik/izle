@@ -88,7 +88,6 @@ export interface ProxyOptions {
   ttlMs: number;
   alignTsSegments?: boolean;
   fetch?: typeof fetch;
-  headersTimeoutMs?: number;
   /** Told about failed upstream requests (problem reports). */
   onProblem?: (problem: ProxyProblem) => void;
 }
@@ -153,7 +152,6 @@ export class ProxyService {
   private readonly ttlMs: number;
   private readonly alignTs: boolean;
   private readonly fetch: typeof fetch;
-  private readonly headersTimeoutMs: number;
   private readonly onProblem: ((problem: ProxyProblem) => void) | undefined;
 
   constructor(opts: ProxyOptions) {
@@ -162,7 +160,6 @@ export class ProxyService {
     this.ttlMs = opts.ttlMs;
     this.alignTs = opts.alignTsSegments ?? false;
     this.fetch = opts.fetch ?? globalThis.fetch;
-    this.headersTimeoutMs = opts.headersTimeoutMs ?? UPSTREAM_HEADERS_TIMEOUT_MS;
     this.onProblem = opts.onProblem;
   }
 
@@ -189,10 +186,6 @@ export class ProxyService {
   /** Ends every session of an owner key (the device was deleted). */
   dropDevice(deviceId: string): void {
     for (const s of this.sessions.values()) if (s.deviceId === deviceId) this.sessions.delete(s.token);
-  }
-
-  get size(): number {
-    return this.sessions.size;
   }
 
   private prune(t: number): void {
@@ -275,7 +268,7 @@ export class ProxyService {
   ): Promise<Response> {
     const range = opts.kind === "r" ? req.headers.get("range") : null;
     const timeout = new AbortController();
-    const timer = setTimeout(() => timeout.abort(), this.headersTimeoutMs);
+    const timer = setTimeout(() => timeout.abort(), UPSTREAM_HEADERS_TIMEOUT_MS);
     let upstream: Response;
     try {
       upstream = await this.fetch(url, {
@@ -287,7 +280,7 @@ export class ProxyService {
       if (req.signal.aborted) return json(503, "aborted");
       const timedOut = timeout.signal.aborted;
       this.log.warn("upstream unreachable", { deviceId: s.deviceId, code: timedOut ? "timeout" : "network", error: errorName(err) });
-      const why = timedOut ? `no answer within ${Math.round(this.headersTimeoutMs / 1000)} s` : networkReason(err);
+      const why = timedOut ? `no answer within ${Math.round(UPSTREAM_HEADERS_TIMEOUT_MS / 1000)} s` : networkReason(err);
       this.problem(s, "upstream_unreachable", null, `${opts.what}: ${why}`);
       return json(timedOut ? 504 : 502, timedOut ? "upstream_timeout" : "upstream_unreachable");
     } finally {

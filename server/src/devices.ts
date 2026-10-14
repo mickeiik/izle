@@ -44,7 +44,7 @@ export class DeviceService {
   /** Every device, with the length of its home list. */
   list() {
     const { store, catalog } = this.s;
-    return store.listDevices().map((d) => ({ ...this.view(d), homeCount: store.getHome(d.id, catalog.catalogId).length }));
+    return store.listDevices().map((d) => ({ ...this.view(d), homeCount: store.getHomeEntries(d.id, catalog.catalogId).length }));
   }
 
   /** The device's home list with what OK would play; items gone from the catalog stay and are flagged `missing`. */

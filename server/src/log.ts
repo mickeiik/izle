@@ -114,7 +114,6 @@ export function redact(value: unknown, depth = 0, seen = new WeakSet<object>()):
 }
 
 export interface Logger {
-  level: Level;
   debug(msg: string, fields?: Record<string, unknown>): void;
   info(msg: string, fields?: Record<string, unknown>): void;
   warn(msg: string, fields?: Record<string, unknown>): void;
@@ -142,7 +141,6 @@ export function createLogger(opts: LoggerOptions = {}, bound: Record<string, unk
     write(JSON.stringify(line));
   };
   return {
-    level,
     debug: (m, f) => emit("debug", m, f),
     info: (m, f) => emit("info", m, f),
     warn: (m, f) => emit("warn", m, f),

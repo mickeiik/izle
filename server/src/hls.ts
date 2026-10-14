@@ -91,9 +91,9 @@ export function summarizePlaylist(text: string): PlaylistSummary {
 
 const TS_PACKET = 188;
 /** Junk accepted before the first packet. */
-export const TS_ALIGN_WINDOW = 4096;
+const TS_ALIGN_WINDOW = 4096;
 /** Consecutive sync bytes (one per packet) that identify an MPEG-TS stream. */
-export const TS_SYNC_PACKETS = 5;
+const TS_SYNC_PACKETS = 5;
 /** Bytes `tsSyncOffset` needs to decide for any offset in the window. */
 export const TS_ALIGN_LOOKAHEAD = TS_ALIGN_WINDOW + TS_PACKET * TS_SYNC_PACKETS;
 

@@ -3,8 +3,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
-import type { Hono } from "hono";
-import { createApp, type Env } from "./app.ts";
+import { createApp } from "./app.ts";
 import { loadAdminToken } from "./auth.ts";
 import { CatalogService } from "./catalog.ts";
 import { CommandService } from "./commands.ts";
@@ -25,7 +24,7 @@ import { Store } from "./store.ts";
 import { TvService } from "./tv.ts";
 import { VERSION } from "./version.ts";
 
-export const ADMIN_UI_DIR = fileURLToPath(new URL("../admin", import.meta.url));
+const ADMIN_UI_DIR = fileURLToPath(new URL("../admin", import.meta.url));
 
 export interface StartOptions {
   config: ServerConfig;
@@ -41,9 +40,7 @@ export interface StartOptions {
 
 export interface RunningServer {
   url: string;
-  port: number;
   ctx: AppContext;
-  app: Hono<Env>;
   close(): Promise<void>;
 }
 
@@ -138,9 +135,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   let closing: Promise<void> | null = null;
   return {
     url,
-    port,
     ctx,
-    app,
     close() {
       closing ??= (async () => {
         clearInterval(housekeeping);

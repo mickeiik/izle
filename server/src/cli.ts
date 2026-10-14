@@ -5,12 +5,12 @@ import { BundleValidationError, formatIssue, loadBundle } from "@izle/contract";
 import { loadAdminToken } from "./auth.ts";
 import { BackupError, backupDatabase } from "./backup.ts";
 import { reloadOnSignal } from "./catalog-admin.ts";
-import { ConfigError, loadConfig, SAMPLE_CATALOG_DIR, type ServerConfig } from "./config.ts";
+import { ConfigError, loadConfig, localServerUrl, SAMPLE_CATALOG_DIR, type ServerConfig } from "./config.ts";
 import { createLogger } from "./log.ts";
 import { PAIR_CODE } from "./pairing.ts";
 import { healthcheckAll, loadResolver, ResolverLoadError } from "./resolver.ts";
 import { startServer } from "./server.ts";
-import { adminCall, linkBase, localServerUrl, qrCode, ServerUnreachableError, signInLink } from "./shell.ts";
+import { adminCall, linkBase, qrCode, ServerUnreachableError, signInLink } from "./shell.ts";
 import { VERSION } from "./version.ts";
 
 const USAGE = `usage:

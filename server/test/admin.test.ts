@@ -2,8 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { CATALOG_BUILDS_LISTED } from "../src/app.ts";
-import { reloadOnSignal } from "../src/catalog-admin.ts";
+import { CATALOG_BUILDS_LISTED, reloadOnSignal } from "../src/catalog-admin.ts";
 import { HOME_MAX_ITEMS } from "../src/tv.ts";
 import { fixtureItems, openEvents, startTestServer, type Json } from "./helpers.ts";
 

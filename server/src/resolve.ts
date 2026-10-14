@@ -219,11 +219,11 @@ export class ResolveService {
   }
 
   /** Records that a source could not be played (the TV excluded it, or its adapter failed). */
-  markFailed(episodeId: string, sourceId: string): void {
+  private markFailed(episodeId: string, sourceId: string): void {
     this.failures.set(this.failureKey(episodeId, sourceId), this.now());
   }
 
-  recentlyFailed(episodeId: string, sources: readonly Source[]): Set<string> {
+  private recentlyFailed(episodeId: string, sources: readonly Source[]): Set<string> {
     const t = this.now();
     const out = new Set<string>();
     for (const s of sources) {

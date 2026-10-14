@@ -2,15 +2,12 @@ import type { CatalogItem } from "@izle/contract";
 import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
 import { requireEpisode, requireItem, requirePlayable } from "./lookup.ts";
-import { autoNextIndex, cursorAfterReport, cursorIndex, isPlayable, type ProgressLike, type ProgressReportStatus } from "./playback.ts";
+import { autoNextIndex, cursorAfterReport, cursorIndex, isPlayable, type ProgressReportStatus } from "./playback.ts";
 import { episodeDetails, episodeSummary, iso, itemCard, itemDetails } from "./presenters.ts";
 import { noPlayableDetail, triedDetail } from "./problems.ts";
 import type { ResolvedStream, ResolveInput, Tried } from "./resolve.ts";
 import type { Device, NowPlaying, Progress } from "./store.ts";
 import { Waiters } from "./waiters.ts";
-
-export type { Services } from "./context.ts";
-export type { ProgressReportStatus } from "./playback.ts";
 
 /** The server caps every device's home list (the TV shows a 4-column grid; ≤ 8 fits without scrolling). */
 export const HOME_MAX_ITEMS = 12;
@@ -22,7 +19,7 @@ export interface ProgressInput {
   sessionId?: string | null;
   episodeId: string;
   positionMs: number;
-  durationMs: number | null;
+  durationMs?: number | null;
   status: ProgressReportStatus;
   /** Whether the player was actually advancing (false during a rebuffer stall); defaults to `status === "playing"`. */
   playing?: boolean;
@@ -75,14 +72,14 @@ export class TvService {
 
   /**
    * The episode OK would play for this item and where it would start. Null when nothing is playable. After the
-   * item was watched to the end (a wrapped cursor), episodes the catalog gained since then come first.
+   * item was watched to the end (a wrapped cursor), episodes the catalog gained since then come first. `progress`
+   * is the device's saved positions in the item, when the caller already has them.
    */
-  continueFor(deviceId: string, item: CatalogItem) {
+  continueFor(deviceId: string, item: CatalogItem, progress = this.progressMap(deviceId, item.id)) {
     const catalogId = this.s.catalog.catalogId;
-    const progress = this.progressMap(deviceId, item.id);
     const cursor = this.s.store.getCursor(deviceId, catalogId, item.id);
     const appended = cursor?.wrapped ? new Set(this.s.store.episodesSeenAfter(catalogId, item.id, cursor.updatedAt)) : undefined;
-    const index = cursorIndex(item, cursor, progress as ReadonlyMap<string, ProgressLike>, appended);
+    const index = cursorIndex(item, cursor, progress, appended);
     if (index < 0) return null;
     const episode = item.episodes[index]!;
     const p = progress.get(episode.id);
@@ -133,7 +130,7 @@ export class TvService {
   item(device: Device, itemId: string) {
     const item = requireItem(this.s.catalog, itemId, 404, "unknown_item");
     const progress = this.progressMap(device.id, item.id);
-    const cont = this.continueFor(device.id, item);
+    const cont = this.continueFor(device.id, item, progress);
     return {
       item: itemDetails(this.s.catalog, item),
       cursorEpisodeId: cont?.episodeId ?? null,

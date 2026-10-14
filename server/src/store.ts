@@ -194,7 +194,7 @@ export type DevicePatch = Partial<Pick<Device, "name" | "uiLanguage" | "preferre
 
 /** Typed access to the SQLite database. All methods are synchronous (node:sqlite). */
 export class Store {
-  readonly db: DatabaseSync;
+  private readonly db: DatabaseSync;
   // Tracked by hand: DatabaseSync#isOpen / #isTransaction need Node 22.15+ / 22.16+.
   private open = true;
   private inTransaction = false;
@@ -207,7 +207,7 @@ export class Store {
   }
 
   private migrate(): void {
-    const current = Number((this.db.prepare("PRAGMA user_version").get() as Row).user_version);
+    const current = this.schemaVersion;
     if (current > MIGRATIONS.length) {
       throw new Error(`database schema version ${current} is newer than this server (${MIGRATIONS.length})`);
     }
@@ -370,10 +370,6 @@ export class Store {
   }
 
   // --- home ----------------------------------------------------------------------------------------------------
-
-  getHome(deviceId: string, catalogId: string): string[] {
-    return this.getHomeEntries(deviceId, catalogId).map((e) => e.itemId);
-  }
 
   getHomeEntries(deviceId: string, catalogId: string): HomeEntry[] {
     return this.all("SELECT item_id, added_at FROM home_entries WHERE device_id = ? AND catalog_id = ? ORDER BY position", deviceId, catalogId).map(
