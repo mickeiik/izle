@@ -28,7 +28,6 @@ import io.github.mickeiik.izle.data.api.EpisodeDetails
 import io.github.mickeiik.izle.data.api.EpisodeRef
 import io.github.mickeiik.izle.data.api.ItemCard
 import io.github.mickeiik.izle.data.api.NextEpisode
-import io.github.mickeiik.izle.data.api.ProgressReport
 import io.github.mickeiik.izle.data.api.ProgressStatus
 import io.github.mickeiik.izle.data.api.ResolveRequest
 import io.github.mickeiik.izle.data.api.ResolveResponse
@@ -40,18 +39,15 @@ import io.github.mickeiik.izle.domain.RemoteCommand
 import io.github.mickeiik.izle.domain.SeekAccumulator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.OkHttpClient
 import java.io.IOException
 
@@ -94,8 +90,8 @@ data class TrackOption(val groupIndex: Int, val trackIndex: Int, val language: S
 /**
  * Plays one episode at a time: resolve → play → heartbeat → auto-next, with source fallback on errors, a refresh of
  * expiring stream URLs and CH+/CH− episode steps. All methods run on the main thread. Progress reports go through
- * one ordered queue in [reportScope] so they outlive the screen and a late heartbeat can never overwrite a
- * `finished`. Problems (player errors, failed resolves, giving up) are reported to the owner through [problems].
+ * a [ProgressReporter] in [reportScope] (one ordered queue that outlives the screen). Problems (player errors, failed
+ * resolves, giving up) are reported to the owner through [problems].
  */
 @OptIn(UnstableApi::class)
 class PlaybackController(
@@ -149,61 +145,13 @@ class PlaybackController(
     private val episodeLists = mutableMapOf<String, List<EpisodeDetails>>()
     private var stepJob: Job? = null
 
-    /** A report with the moment its position was sampled, so its age is known when it is finally sent. */
-    private class QueuedReport(val api: ApiClient, val report: ProgressReport, val sampledAt: Long = SystemClock.elapsedRealtime())
-
-    private val reports = Channel<QueuedReport>(Channel.UNLIMITED)
-
-    /** The server rejected the anchor fields (it predates "Listen along"): send reports without them. */
-    private var legacyProgress = false
-
-    /** Reports queued or in flight; a new resolve waits for them so `resume` and the cursor are current. */
-    private val pendingReports = MutableStateFlow(0)
-
-    init {
-        reportScope.launch {
-            for (queued in reports) {
-                deliver(queued)
-                pendingReports.update { it - 1 }
-            }
-        }
-    }
-
-    /**
-     * Heartbeats are best effort (the next one carries the position again); `stopped` and `finished` are the last
-     * word on an episode, so they are retried a few times and then refresh Home, whose tile depends on them.
-     */
-    private suspend fun deliver(q: QueuedReport) {
-        val terminal = q.report.status.isFinal
-        val attempts = if (terminal) TERMINAL_REPORT_ATTEMPTS else 1
-        var attempt = 0
-        var retriedWithoutAnchor = false
-        while (attempt < attempts) {
-            if (attempt > 0) delay(2_000L * attempt)
-            val report = stamp(q)
-            try {
-                q.api.progress(report)
-                if (terminal) repository.refreshSoon()
-                return
-            } catch (e: IOException) {
-                attempt++ // retried for terminal reports
-            } catch (e: ApiException) {
-                if (e.status == 400 && !retriedWithoutAnchor && (report.playing != null || report.ageMs != null)) {
-                    // A server from before "Listen along" rejects the anchor fields: resend without them, from now on.
-                    legacyProgress = true
-                    retriedWithoutAnchor = true
-                    continue
-                }
-                if (e.status < 500) return // unknown episode after a catalog change: nothing to save
-                attempt++
-            }
-        }
-    }
-
-    /** The report as sent now: with the sample's age at send time (retries carry the grown age), or without the anchor fields for an old server. */
-    private fun stamp(q: QueuedReport): ProgressReport =
-        if (legacyProgress) q.report.copy(playing = null, ageMs = null)
-        else q.report.copy(ageMs = PlaybackPlan.reportAgeMs(q.sampledAt, SystemClock.elapsedRealtime()))
+    /** Progress reports, in order, from the application scope: they outlive the screen. */
+    private val reporter = ProgressReporter(
+        reportScope,
+        send = { api, report -> api.progress(report) },
+        onFinalDelivered = repository::refreshSoon,
+        clock = SystemClock::elapsedRealtime,
+    )
 
     val isActive: Boolean get() = _ui.value.phase != PlayerPhase.Idle
 
@@ -424,7 +372,7 @@ class PlaybackController(
         playWhenReady: Boolean = true,
     ) {
         // A stopped/finished report still on its way would make `resume` and the cursor stale.
-        withTimeoutOrNull(3_000) { pendingReports.first { it <= 0 } }
+        reporter.awaitDelivered()
         val resolved = try {
             api.resolve(ResolveRequest(episodeId, sourceId, exclude = if (sourceId == null) tried.toList().ifEmpty { null } else null))
         } catch (e: Exception) {
@@ -781,11 +729,8 @@ class PlaybackController(
         seek.cancel()
     }
 
-    private fun report(s: Session, status: ProgressStatus, positionMs: Long, durationMs: Long?, playing: Boolean) {
-        pendingReports.update { it + 1 }
-        val report = ProgressReport(s.resolved.sessionId, s.resolved.episode.id, positionMs.coerceAtLeast(0), durationMs, status, playing = playing)
-        reports.trySend(QueuedReport(s.api, report))
-    }
+    private fun report(s: Session, status: ProgressStatus, positionMs: Long, durationMs: Long?, playing: Boolean) =
+        reporter.report(s.api, s.resolved.sessionId, s.resolved.episode.id, status, positionMs, durationMs, playing)
 
     private fun cancelOverlays() {
         overlayJob?.cancel()
@@ -832,8 +777,6 @@ class PlaybackController(
     private fun durationOf(p: ExoPlayer): Long? = p.duration.takeIf { it != C.TIME_UNSET && it > 0 }
 
     companion object {
-        private const val TERMINAL_REPORT_ATTEMPTS = 4
-
         fun languagePreference(tag: String?): Array<String> {
             if (tag.isNullOrBlank()) return emptyArray()
             return listOf(tag, tag.substringBefore('-').lowercase()).distinct().toTypedArray()
