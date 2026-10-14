@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -51,6 +50,7 @@ import io.github.mickeiik.izle.R
 import io.github.mickeiik.izle.domain.EpisodeName
 import io.github.mickeiik.izle.domain.TileBadge
 import io.github.mickeiik.izle.ui.theme.IzleColors
+import io.github.mickeiik.izle.ui.theme.IzleShapes
 import io.github.mickeiik.izle.ui.theme.IzleSpacing
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
@@ -188,10 +188,10 @@ fun CheckIcon(modifier: Modifier = Modifier, color: Color = IzleColors.OnSurface
 /** A thin progress bar (tile progress, player position). */
 @Composable
 fun ProgressBar(fraction: Float, modifier: Modifier = Modifier, height: Dp = 6.dp) {
-    Box(modifier.fillMaxWidth().height(height).background(IzleColors.ProgressTrack, RoundedCornerShape(height / 2))) {
+    Box(modifier.fillMaxWidth().height(height).background(IzleColors.ProgressTrack, IzleShapes.Pill)) {
         Box(
             Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(height)
-                .background(IzleColors.Accent, RoundedCornerShape(height / 2)),
+                .background(IzleColors.Accent, IzleShapes.Pill),
         )
     }
 }

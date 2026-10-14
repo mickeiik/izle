@@ -72,7 +72,7 @@ fun PlayerScreen(ui: PlayerUi, player: Player?, onPlayNext: () -> Unit, onHome: 
                 if (!ui.playWhenReady && !ui.showInfo) {
                     Box(
                         Modifier.align(Alignment.TopEnd)
-                            .padding(horizontal = IzleSpacing.SafeHorizontal, vertical = IzleSpacing.SafeVertical)
+                            .padding(IzleSpacing.Safe)
                             .background(IzleColors.Scrim, IzleShapes.Large)
                             .padding(IzleSpacing.Large),
                     ) { PauseIcon(Modifier.size(48.dp)) }

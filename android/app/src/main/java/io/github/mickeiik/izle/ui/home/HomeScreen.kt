@@ -28,7 +28,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -90,7 +89,6 @@ import io.github.mickeiik.izle.ui.theme.IzleSpacing
 
 private val TileWidth = 190.dp
 private val PosterHeight = 285.dp
-private val TileGap = 24.dp
 
 /** Above, below and beside the rows: the focused poster grows by 10 %, 14 dp up and down and 10 dp sideways. */
 private val GridPadding = 16.dp
@@ -195,7 +193,7 @@ private fun OfflineChip() {
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.background(IzleColors.Offline, IzleShapes.Pill).padding(horizontal = IzleSpacing.Large, vertical = 2.dp),
     ) {
-        Box(Modifier.size(14.dp).background(IzleColors.OnOffline, CircleShape))
+        Box(Modifier.size(14.dp).background(IzleColors.OnOffline, IzleShapes.Pill))
         Spacer(Modifier.width(IzleSpacing.Medium))
         Text(stringResource(R.string.no_connection), style = MaterialTheme.typography.titleMedium, color = IzleColors.OnOffline)
     }
@@ -268,11 +266,11 @@ private fun TileGrid(
             LazyVerticalGrid(
                 columns = GridCells.Fixed(4),
                 state = gridState,
-                horizontalArrangement = Arrangement.spacedBy(TileGap),
-                verticalArrangement = Arrangement.spacedBy(TileGap),
+                horizontalArrangement = Arrangement.spacedBy(IzleSpacing.XLarge),
+                verticalArrangement = Arrangement.spacedBy(IzleSpacing.XLarge),
                 contentPadding = PaddingValues(start = GridPadding, end = GridPadding, top = GridPadding, bottom = bottom),
                 modifier = Modifier
-                    .width(TileWidth * 4 + TileGap * 3 + GridPadding * 2)
+                    .width(TileWidth * 4 + IzleSpacing.XLarge * 3 + GridPadding * 2)
                     .fillMaxHeight()
                     .fadeOutBottom(fadeHeight) { fade }
                     .onFocusChanged { gridHasFocus = it.hasFocus },

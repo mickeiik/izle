@@ -52,7 +52,6 @@ class PanelButton(val label: String, val onClick: () -> Unit)
 
 private val PosterWidth = 220.dp
 private val PosterHeight = 330.dp
-private val PosterGap = 48.dp
 private val TextWidth = 576.dp
 
 /**
@@ -79,8 +78,8 @@ fun PosterPanel(
     Box(modifier.fillMaxSize().background(IzleColors.Background).padding(IzleSpacing.Safe)) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(PosterGap),
-            modifier = Modifier.align(Alignment.Center).width(PosterWidth + PosterGap + TextWidth),
+            horizontalArrangement = Arrangement.spacedBy(IzleSpacing.Huge),
+            modifier = Modifier.align(Alignment.Center).width(PosterWidth + IzleSpacing.Huge + TextWidth),
         ) {
             Box(Modifier.size(PosterWidth, PosterHeight).clip(IzleShapes.Large).background(IzleColors.Surface)) {
                 if (posterUrl != null) {
