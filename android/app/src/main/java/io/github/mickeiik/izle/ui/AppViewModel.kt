@@ -9,7 +9,6 @@ import io.github.mickeiik.izle.data.api.ApiException
 import io.github.mickeiik.izle.data.api.EpisodeDetails
 import io.github.mickeiik.izle.data.api.HomeEntry
 import io.github.mickeiik.izle.data.api.ItemCard
-import io.github.mickeiik.izle.data.api.ItemDetailsResponse
 import io.github.mickeiik.izle.data.api.ServerEvent
 import io.github.mickeiik.izle.data.api.ServerUrls
 import io.github.mickeiik.izle.data.api.TvState
@@ -21,12 +20,12 @@ import io.github.mickeiik.izle.player.PlaybackController
 import io.github.mickeiik.izle.player.PlayerPhase
 import io.github.mickeiik.izle.player.TrackOption
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -53,25 +52,6 @@ data class SetupUi(val address: String = "", val busy: Boolean = false, val erro
 
 enum class HomeMessage { NoConnection }
 
-enum class RootEntry { Episodes, StartOver, Audio, Subtitles, Settings, About }
-
-enum class SettingsEntry { ServerAddress, Language, PairAgain }
-
-sealed interface MenuPage {
-    /** [focused]: the entry that opened the page above, so Back returns to it. */
-    data class Root(val entries: List<RootEntry>, val focused: Int = 0) : MenuPage
-    data class Episodes(val details: ItemDetailsResponse?, val failed: Boolean = false) : MenuPage
-    data class Audio(val options: List<TrackOption>) : MenuPage
-    data class Subtitles(val options: List<TrackOption>) : MenuPage
-    data object Settings : MenuPage
-    data object About : MenuPage
-}
-
-/** The hidden menu: a stack of pages; Back pops one, the last one closes the menu. */
-data class MenuUi(val pages: List<MenuPage>, val item: ItemCard?, val fromPlayer: Boolean, val playingEpisodeId: String? = null) {
-    val page: MenuPage get() = pages.last()
-}
-
 data class AboutInfo(val appVersion: String, val server: String?, val deviceName: String?, val catalogName: String?, val catalogBuild: String?)
 
 /** "Autoplay on start": the show about to start over Home, and the seconds left before it does. */
@@ -93,16 +73,16 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     private val _menu = MutableStateFlow<MenuUi?>(null)
     val menu: StateFlow<MenuUi?> = _menu.asStateFlow()
 
-    private val _homeMessage = MutableStateFlow<HomeMessage?>(null)
-    val homeMessage: StateFlow<HomeMessage?> = _homeMessage.asStateFlow()
+    private val homeMessages = TimedValue<HomeMessage>(viewModelScope)
+    val homeMessage: StateFlow<HomeMessage?> = homeMessages.value
 
     /** The autoplay-on-start countdown over Home, or null. */
     private val _autoplay = MutableStateFlow<AutoplayUi?>(null)
     val autoplay: StateFlow<AutoplayUi?> = _autoplay.asStateFlow()
 
     /** The owner's message banner (Home and player), or null. */
-    private val _banner = MutableStateFlow<String?>(null)
-    val banner: StateFlow<String?> = _banner.asStateFlow()
+    private val banners = TimedValue<String>(viewModelScope)
+    val banner: StateFlow<String?> = banners.value
 
     val state: StateFlow<TvState?> = repository.state
     val online: StateFlow<Boolean> = repository.online
@@ -114,7 +94,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         settings.uiLanguageOverride ?: state?.device?.uiLanguage ?: systemLanguage
     }.stateIn(viewModelScope, SharingStarted.Eagerly, systemLanguage)
 
-    val uiLanguageOverride: StateFlow<String?> = combine(store.settings, repository.state) { s, _ -> s.uiLanguageOverride }
+    val uiLanguageOverride: StateFlow<String?> = store.settings.map { it.uiLanguageOverride }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val player = PlaybackController(
@@ -141,8 +121,6 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     private var initialized = false
     private var pendingLaunchServer: String? = null
     private var pairingJob: Job? = null
-    private var messageJob: Job? = null
-    private var bannerJob: Job? = null
     private var autoplayJob: Job? = null
     private var resumeAfterMenu = false
 
@@ -205,7 +183,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     fun onBackground() {
         foreground = false
         clearAutoplay()
-        clearBanner()
+        banners.clear()
         if (_screen.value == Screen.Player || player.isActive) {
             player.stop()
             _screen.value = Screen.Home
@@ -248,7 +226,8 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         }
         val menu = _menu.value
         if (menu != null) {
-            if (menu.pages.size > 1) _menu.value = menu.copy(pages = menu.pages.dropLast(1)) else closeMenu(resume = true)
+            val back = menu.pop()
+            if (back != null) _menu.value = back else closeMenu(resume = true)
             return
         }
         when (val screen = _screen.value) {
@@ -361,8 +340,13 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     private suspend fun onUnauthorized() {
         if (serverUrl == null || _screen.value == Screen.Pairing) return
+        pairAgain()
+    }
+
+    /** The server no longer knows this TV, or the owner chose "Pair again": the token goes, a new code shows. */
+    private suspend fun pairAgain() {
+        closeMenu(resume = false)
         player.stop()
-        _menu.value = null
         store.forgetPairing()
         repository.use(null)
         showPairing()
@@ -384,19 +368,12 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         startPlayback(entry.playNext.episodeId, startAtMs = null, hint = entry.item)
     }
 
-    private fun showHomeMessage(message: HomeMessage) {
-        _homeMessage.value = message
-        messageJob?.cancel()
-        messageJob = viewModelScope.launch {
-            delay(5_000)
-            _homeMessage.value = null
-        }
-    }
+    private fun showHomeMessage(message: HomeMessage) = homeMessages.show(message, forMs = 5_000)
 
-    private fun focusedEntry(): HomeEntry? {
-        val home = state.value?.home ?: return null
-        return home.firstOrNull { it.item.id == homeFocusItemId } ?: home.firstOrNull()
-    }
+    /** The show [itemId] on Home in the latest state, if it is there. */
+    private fun homeEntry(itemId: String?): HomeEntry? = state.value?.home?.firstOrNull { it.item.id == itemId }
+
+    private fun focusedEntry(): HomeEntry? = homeEntry(homeFocusItemId) ?: state.value?.home?.firstOrNull()
 
     // --- autoplay on start ---------------------------------------------------------------------------------------
 
@@ -425,7 +402,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         autoplayJob = viewModelScope.launch {
             countDown(AutoplayPlan.COUNTDOWN_SEC) { left ->
                 // The latest state's entry: a live update may have moved its `continue` or removed the show.
-                val entry = state.value?.home?.firstOrNull { it.item.id == itemId }
+                val entry = homeEntry(itemId)
                 if (entry == null) {
                     _autoplay.value = null
                     return@launch
@@ -441,7 +418,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         val shown = _autoplay.value ?: return
         autoplayJob?.cancel()
         _autoplay.value = null
-        val entry = state.value?.home?.firstOrNull { it.item.id == shown.entry.item.id } ?: return
+        val entry = homeEntry(shown.entry.item.id) ?: return
         onTileClicked(entry)
     }
 
@@ -458,22 +435,6 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         autoplayArmed = false
         autoplayJob?.cancel()
         _autoplay.value = null
-    }
-
-    // --- the owner's message banner ------------------------------------------------------------------------------
-
-    private fun showBanner(message: RemoteCommand.Message) {
-        bannerJob?.cancel()
-        _banner.value = message.text
-        bannerJob = viewModelScope.launch {
-            delay(message.durationSec * 1_000L)
-            _banner.value = null
-        }
-    }
-
-    private fun clearBanner() {
-        bannerJob?.cancel()
-        _banner.value = null
     }
 
     // --- player --------------------------------------------------------------------------------------------------
@@ -503,8 +464,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             when (action) {
                 is CommandPlan.Action.Play -> {
                     action.itemId?.let { homeFocusItemId = it }
-                    val hint = state.value?.home?.firstOrNull { it.item.id == action.itemId }?.item
-                    startPlayback(action.episodeId, startAtMs = null, hint = hint)
+                    startPlayback(action.episodeId, startAtMs = null, hint = homeEntry(action.itemId)?.item)
                 }
                 CommandPlan.Action.Exit -> player.exit()
                 CommandPlan.Action.Pause -> player.pause()
@@ -513,7 +473,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
                 is CommandPlan.Action.Step -> player.stepEpisode(action.direction)
                 is CommandPlan.Action.CloseMenu -> closeMenu(action.resume)
                 CommandPlan.Action.StayPausedAfterMenu -> resumeAfterMenu = false
-                is CommandPlan.Action.ShowMessage -> showBanner(action.message)
+                is CommandPlan.Action.ShowMessage -> banners.show(action.message.text, forMs = action.message.durationSec * 1_000L)
             }
         }
     }
@@ -525,18 +485,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         autoplayArmed = false
         val fromPlayer = _screen.value == Screen.Player
         val item = if (fromPlayer) player.ui.value.item else focusedEntry()?.item
-        val entries = buildList {
-            if (item != null) {
-                if (item.kind == "series") add(RootEntry.Episodes)
-                add(RootEntry.StartOver)
-            }
-            if (fromPlayer) {
-                if (player.audioTracks().size > 1) add(RootEntry.Audio)
-                add(RootEntry.Subtitles)
-            }
-            add(RootEntry.Settings)
-            add(RootEntry.About)
-        }
+        val entries = MenuPlan.rootEntries(item?.kind, fromPlayer, audioTrackCount = if (fromPlayer) player.audioTracks().size else 0)
         if (fromPlayer) {
             resumeAfterMenu = player.ui.value.playWhenReady
             player.pause()
@@ -553,12 +502,12 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     private fun push(page: MenuPage) {
-        _menu.update { it?.copy(pages = it.pages + page) }
+        _menu.update { it?.push(page) }
     }
 
     fun onRootEntry(entry: RootEntry) {
         val menu = _menu.value ?: return
-        _menu.value = menu.copy(pages = menu.pages.map { if (it is MenuPage.Root) it.copy(focused = it.entries.indexOf(entry)) else it })
+        _menu.value = menu.focusingRoot(entry)
         when (entry) {
             RootEntry.Episodes -> {
                 val item = menu.item ?: return
@@ -592,7 +541,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
                 MenuPage.Episodes(null, failed = true)
             }
             _menu.update { m ->
-                if (m == null || m.page !is MenuPage.Episodes) m else m.copy(pages = m.pages.dropLast(1) + page)
+                if (m == null || m.page !is MenuPage.Episodes) m else m.replaceTop(page)
             }
         }
     }
@@ -631,13 +580,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
                 }
                 store.setUiLanguageOverride(next)
             }
-            SettingsEntry.PairAgain -> viewModelScope.launch {
-                closeMenu(resume = false)
-                player.stop()
-                store.forgetPairing()
-                repository.use(null)
-                showPairing()
-            }
+            SettingsEntry.PairAgain -> viewModelScope.launch { pairAgain() }
         }
     }
 
