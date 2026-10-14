@@ -1,31 +1,27 @@
 // @ts-check
-// Hash routing (`#/devices`, `#/devices/<id>`, `#/catalog`, `#/catalog/items/<id>`) and the view scope. Everything
-// a view starts (polls, timers, listeners, the requests it reads with) belongs to the scope of the route it was
-// rendered for, and ends with it: work that finishes after the owner left the page changes nothing.
+// Hash routing and the view scope. Everything a view starts (polls, timers, listeners, the requests it reads with)
+// belongs to the scope of the route it was rendered for, and ends with it: work that finishes after the owner left
+// the page changes nothing.
 
 import { h, pageTitle } from "./dom.js";
 import { api, isAborted } from "./api.js";
 import { errorText } from "./lib.js";
 
 /**
- * @typedef {object} Job
- * @property {() => Promise<void>} now runs at once (Retry, or right after an action changed what it shows), then
- *   on schedule again; a call while it runs makes it run once more afterwards
- */
-
-/**
  * What a job does when it fails: `retry` runs it again at once (a Retry button).
  * @typedef {(err: unknown, retry: () => Promise<void>) => void} OnError
+ * @typedef {{ now: () => Promise<void> }} Job `now()` runs it at once, then on schedule again; a call while it runs
+ *   makes it run once more afterwards
  */
 
 /**
  * @typedef {object} Scope
- * @property {AbortSignal} signal aborted when the view ends: `read` carries it; give it to the view's other reads
+ * @property {AbortSignal} signal aborted when the view ends
  * @property {(path: string) => Promise<any>} read a GET below /api/v1/admin that ends with the view
  * @property {() => boolean} alive whether the view is still the one shown
  * @property {(fn: () => Promise<void>, ms: number, onError?: OnError) => Job} poll calls `fn` now and every `ms`
  *   while the page is visible
- * @property {(fn: () => Promise<void>, onError?: OnError) => Job} load calls `fn` once (`now()` again for Retry)
+ * @property {(fn: () => Promise<void>, onError?: OnError) => Job} load calls `fn` once
  * @property {(fn: () => void, ms: number) => void} later a timeout that ends with the view
  * @property {(fn: () => void) => void} onCleanup runs `fn` when the view ends (at once if it already has)
  * @property {(hash: string) => void} go navigates, unless the view already ended
@@ -34,8 +30,7 @@ import { errorText } from "./lib.js";
 
 /**
  * The scope of one rendered view. A job failure is reported to `onError` (a view shows the error and Retry in
- * place of what never loaded) and, for a job that had worked before, in the scope's note. Anything started after
- * `end()` is a no-op.
+ * place of what never loaded) and, for a job that had worked before, in the scope's note.
  */
 function createScope() {
   const controller = new AbortController();
@@ -156,15 +151,11 @@ function createScope() {
 }
 
 /**
- * @typedef {object} Route
- * @property {(scope: Scope) => HTMLElement} view
- * @property {string} [nav] the main nav link to mark current (`#/devices`); without it the nav is hidden
- */
-
-/**
  * Starts the router: on every hash change the current view's scope ends and the next view renders in `app`; the
- * focus moves to its heading (`h1`, made focusable), so keyboard and screen reader users start at the top.
- * @param {{ app: HTMLElement, nav: HTMLElement, before: () => Promise<void>, pick: (parts: string[]) => Route }} o
+ * focus moves to its heading (`h1`, made focusable), so keyboard and screen reader users start at the top. `pick`
+ * returns the view and the main nav link to mark current (without one the nav is hidden).
+ * @param {{ app: HTMLElement, nav: HTMLElement, before: () => Promise<void>,
+ *   pick: (parts: string[]) => { view: (scope: Scope) => HTMLElement, nav?: string } }} o
  */
 export function startRouter({ app, nav, before, pick }) {
   /** @type {(Scope & { end(): void }) | null} */
@@ -184,16 +175,14 @@ export function startRouter({ app, nav, before, pick }) {
     current = null;
     await before();
     if (mine !== seq) return; // another navigation came in meanwhile
-    const parts = (location.hash.replace(/^#/, "") || "/devices").split("/").filter(Boolean).map(decode);
-    const r = pick(parts);
+    const r = pick((location.hash.replace(/^#/, "") || "/devices").split("/").filter(Boolean).map(decode));
     nav.hidden = r.nav === undefined;
     for (const a of nav.querySelectorAll("a")) {
       if (a.getAttribute("href") === r.nav) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
     }
-    const scope = createScope();
-    current = scope;
-    const view = r.view(scope);
+    current = createScope();
+    const view = r.view(current);
     app.replaceChildren(view);
     window.scrollTo(0, 0);
     const heading = view.querySelector("h1");
