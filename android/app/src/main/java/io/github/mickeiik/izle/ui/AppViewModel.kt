@@ -184,7 +184,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         foreground = false
         clearAutoplay()
         banners.clear()
-        if (_screen.value == Screen.Player || player.isActive) {
+        if (_screen.value == Screen.Player || player.inUse) {
             player.stop()
             _screen.value = Screen.Home
         }
@@ -248,7 +248,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             player.ui.value.phase.let { it == PlayerPhase.Playing || it == PlayerPhase.Loading }
 
     /** Whether a long press / Menu key may open the hidden menu here (not during the autoplay countdown). */
-    val menuAvailable: Boolean
+    private val menuAvailable: Boolean
         get() = _menu.value == null && _autoplay.value == null && (_screen.value == Screen.Home ||
             (_screen.value == Screen.Player && player.ui.value.phase == PlayerPhase.Playing))
 
@@ -393,7 +393,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     /** Home is showing with nothing on top and nothing playing. */
     private fun canOfferAutoplay(): Boolean =
-        foreground && _screen.value == Screen.Home && _menu.value == null && !player.isActive && _autoplay.value == null
+        foreground && _screen.value == Screen.Home && _menu.value == null && !player.inUse && _autoplay.value == null
 
     private fun startAutoplay(offered: HomeEntry) {
         val itemId = offered.item.id

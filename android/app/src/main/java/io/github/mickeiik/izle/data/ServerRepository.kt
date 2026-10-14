@@ -6,6 +6,7 @@ import io.github.mickeiik.izle.data.api.ApiJson
 import io.github.mickeiik.izle.data.api.EventsClient
 import io.github.mickeiik.izle.data.api.ServerEvent
 import io.github.mickeiik.izle.data.api.TvState
+import io.github.mickeiik.izle.domain.Problems
 import io.github.mickeiik.izle.settings.DeviceStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -41,7 +42,7 @@ class ServerRepository(
         val minBackoffMs: Long = 1_000,
         val maxBackoffMs: Long = 30_000,
         /** An outage at least this long is announced on [outages] once the server answers again. */
-        val outageReportMs: Long = 5 * 60_000,
+        val outageReportMs: Long = Problems.SERVER_UNREACHABLE_MIN_MS,
         /** A monotonic clock in milliseconds (outage lengths). */
         val clock: () -> Long = { System.nanoTime() / 1_000_000 },
     )

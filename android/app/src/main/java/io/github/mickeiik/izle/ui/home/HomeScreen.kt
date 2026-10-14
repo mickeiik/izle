@@ -355,7 +355,7 @@ private fun Tile(entry: HomeEntry, posterUrl: String?, modifier: Modifier, onFoc
                     ActionChip(badge)
                     if (progress != null) {
                         Spacer(Modifier.height(IzleSpacing.Small))
-                        ProgressBar(progress, height = 6.dp)
+                        ProgressBar(progress)
                     }
                 }
                 if (entry.newEpisodes > 0) {

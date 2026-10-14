@@ -36,7 +36,6 @@ import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -147,14 +146,14 @@ private fun PanelButtons(buttons: List<PanelButton>) {
  * frame loop and no animation measured against a clock, so a paused clock (the UI tests') simply holds it.
  */
 @Composable
-fun CountdownBar(secondsLeft: Int, totalSeconds: Int, modifier: Modifier = Modifier, height: Dp = 10.dp) {
+private fun CountdownBar(secondsLeft: Int, totalSeconds: Int, modifier: Modifier = Modifier) {
     val total = totalSeconds.coerceAtLeast(1).toFloat()
     val fraction = remember { Animatable((secondsLeft / total).coerceIn(0f, 1f)) }
     LaunchedEffect(secondsLeft) {
         fraction.animateTo(((secondsLeft - 1) / total).coerceIn(0f, 1f), tween(1_000, easing = LinearEasing))
     }
     Box(
-        modifier.height(height).drawBehind {
+        modifier.height(10.dp).drawBehind {
             val radius = CornerRadius(size.height / 2)
             drawRoundRect(IzleColors.ProgressTrack, cornerRadius = radius)
             drawRoundRect(IzleColors.Accent, size = Size(size.width * fraction.value, size.height), cornerRadius = radius)

@@ -32,7 +32,7 @@ class AppGraph(val context: Context) {
         .build()
 
     /** `pair/wait` holds the request up to 25 s. */
-    val longPollHttp: OkHttpClient = http.newBuilder().readTimeout(40, TimeUnit.SECONDS).build()
+    private val longPollHttp: OkHttpClient = http.newBuilder().readTimeout(40, TimeUnit.SECONDS).build()
 
     /** 60 s without a byte (the server pings every 20 s) means the event stream is dead. */
     private val sseHttp: OkHttpClient = http.newBuilder().readTimeout(60, TimeUnit.SECONDS).build()

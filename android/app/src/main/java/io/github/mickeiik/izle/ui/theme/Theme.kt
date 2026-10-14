@@ -59,7 +59,7 @@ object IzleColors {
     val Offline = Color(0xFFFF5C50)
     val OnOffline = Color(0xFF1F0000)
 
-    /** Behind the hidden menu, and the "No connection" message over Home. */
+    /** Behind the hidden menu, the "No connection" message over Home and the player's pause symbol. */
     val Scrim = Color(0xCC000000)
 
     /** The bottom of a poster, behind its chip. */

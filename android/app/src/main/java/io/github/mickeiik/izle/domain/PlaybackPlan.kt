@@ -27,7 +27,7 @@ object PlaybackPlan {
     const val HEARTBEAT_INTERVAL_MS = 15_000L
     const val AUTO_NEXT_COUNTDOWN_SEC = 10
     const val FINISHED_MESSAGE_MS = 8_000L
-    const val FAILED_AUTO_HOME_MS = 30_000L
+    const val FAILED_AUTO_HOME_SEC = 30
     const val INFO_OVERLAY_MS = 4_000L
 
     /** HTTP 403/410 after this much playback most likely means an expired URL: re-resolve the same source. */

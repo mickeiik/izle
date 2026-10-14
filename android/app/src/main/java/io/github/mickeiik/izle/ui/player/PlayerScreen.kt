@@ -186,11 +186,7 @@ private fun FailedPanel(ui: PlayerUi, phase: PlayerPhase.Failed, onRetry: () -> 
         showTitle = ui.item?.title,
         title = stringResource(R.string.cannot_play),
         lines = listOfNotNull(ui.item?.title),
-        countdown = PanelCountdown(
-            stringResource(R.string.auto_home_countdown, phase.secondsLeft),
-            phase.secondsLeft,
-            (PlaybackPlan.FAILED_AUTO_HOME_MS / 1_000).toInt(),
-        ),
+        countdown = PanelCountdown(stringResource(R.string.auto_home_countdown, phase.secondsLeft), phase.secondsLeft, PlaybackPlan.FAILED_AUTO_HOME_SEC),
         buttons = listOf(PanelButton(stringResource(R.string.try_again), onRetry), PanelButton(stringResource(R.string.go_home), onHome)),
     )
 }

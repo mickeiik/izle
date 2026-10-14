@@ -10,7 +10,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
-import androidx.media3.common.Tracks
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
@@ -151,7 +150,8 @@ class PlaybackController(
         clock = SystemClock::elapsedRealtime,
     )
 
-    val isActive: Boolean get() = _ui.value.phase != PlayerPhase.Idle
+    /** A player visit is on (loading, playing or one of its end screens). */
+    val inUse: Boolean get() = _ui.value.phase != PlayerPhase.Idle
 
     /**
      * Plays [episodeId] from [startAtMs], or from the server's saved position under the resume rules when null.
@@ -555,10 +555,6 @@ class PlaybackController(
             val text = cueGroup.cues.mapNotNull { it.text?.toString()?.trim() }.filter { it.isNotEmpty() }.joinToString("\n")
             _ui.update { it.copy(cues = text.ifEmpty { null }) }
         }
-
-        override fun onTracksChanged(tracks: Tracks) {
-            // The hidden menu reads tracks on demand; nothing to cache.
-        }
     }
 
     private fun syncFlags(p: ExoPlayer) {
@@ -588,9 +584,10 @@ class PlaybackController(
         val p = _player.value
         val current = session
         val position = p?.currentPosition?.coerceAtLeast(0) ?: lastPositionMs ?: 0
+        val httpStatus = error.httpStatus()
         problems.send(
             Problems.playbackError(
-                error, error.errorCodeName, error.httpStatus(), episodeId, current?.resolved?.sourceId,
+                error, error.errorCodeName, httpStatus, episodeId, current?.resolved?.sourceId,
                 current?.resolved?.sessionId, position, appVersion,
             ),
             api = current?.api,
@@ -600,7 +597,7 @@ class PlaybackController(
         val played = readyAt?.let { SystemClock.elapsedRealtime() - it } ?: 0
         val sourceId = s.resolved.sourceId
         val episodeId = this.episodeId ?: return showFailed()
-        when (attempts.afterPlaybackError(sourceId, error.httpStatus(), played)) {
+        when (attempts.afterPlaybackError(sourceId, httpStatus, played)) {
             PlaybackPlan.Recovery.RetrySameSource -> relaunch(s.api, episodeId, sourceId = sourceId, position)
             PlaybackPlan.Recovery.NextSource -> relaunch(s.api, episodeId, sourceId = null, position)
             PlaybackPlan.Recovery.GiveUp -> {
@@ -649,7 +646,7 @@ class PlaybackController(
         episodeId?.let { id ->
             problems.send(Problems.gaveUp(id, session?.resolved?.sourceId ?: attempts.lastTried, lastPositionMs, attempts.triedCount, appVersion, reason))
         }
-        val seconds = (PlaybackPlan.FAILED_AUTO_HOME_MS / 1_000).toInt()
+        val seconds = PlaybackPlan.FAILED_AUTO_HOME_SEC
         _ui.update { it.copy(phase = PlayerPhase.Failed(seconds), showInfo = false, buffering = false, cues = null) }
         overlayJob?.cancel()
         overlayJob = scope.launch {

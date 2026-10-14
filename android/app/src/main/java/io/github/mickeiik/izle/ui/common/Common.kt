@@ -139,13 +139,13 @@ fun Clock(modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun Spinner(modifier: Modifier = Modifier, size: Dp = 72.dp, color: Color = IzleColors.OnSurface) {
+fun Spinner(modifier: Modifier = Modifier, size: Dp = 72.dp) {
     val transition = rememberInfiniteTransition(label = "spinner")
     val angle by transition.animateFloat(0f, 360f, infiniteRepeatable(tween(1_000, easing = LinearEasing), RepeatMode.Restart), label = "angle")
     Canvas(modifier.size(size)) {
         val stroke = this.size.minDimension / 10
         rotate(angle) {
-            drawArc(color, startAngle = 0f, sweepAngle = 270f, useCenter = false, topLeft = Offset(stroke / 2, stroke / 2),
+            drawArc(IzleColors.OnSurface, startAngle = 0f, sweepAngle = 270f, useCenter = false, topLeft = Offset(stroke / 2, stroke / 2),
                 size = Size(this.size.width - stroke, this.size.height - stroke), style = Stroke(stroke, cap = StrokeCap.Round))
         }
     }
@@ -165,11 +165,11 @@ fun PlayIcon(modifier: Modifier = Modifier, color: Color = IzleColors.OnSurface)
 }
 
 @Composable
-fun PauseIcon(modifier: Modifier = Modifier, color: Color = IzleColors.OnSurface) {
+fun PauseIcon(modifier: Modifier = Modifier) {
     Canvas(modifier) {
         val w = size.width * 0.28f
-        drawRect(color, topLeft = Offset(size.width * 0.14f, size.height * 0.1f), size = Size(w, size.height * 0.8f))
-        drawRect(color, topLeft = Offset(size.width * 0.58f, size.height * 0.1f), size = Size(w, size.height * 0.8f))
+        drawRect(IzleColors.OnSurface, topLeft = Offset(size.width * 0.14f, size.height * 0.1f), size = Size(w, size.height * 0.8f))
+        drawRect(IzleColors.OnSurface, topLeft = Offset(size.width * 0.58f, size.height * 0.1f), size = Size(w, size.height * 0.8f))
     }
 }
 
@@ -187,11 +187,11 @@ fun CheckIcon(modifier: Modifier = Modifier, color: Color = IzleColors.OnSurface
 
 /** A thin progress bar (tile progress, player position). */
 @Composable
-fun ProgressBar(fraction: Float, modifier: Modifier = Modifier, height: Dp = 6.dp, color: Color = IzleColors.Accent) {
+fun ProgressBar(fraction: Float, modifier: Modifier = Modifier, height: Dp = 6.dp) {
     Box(modifier.fillMaxWidth().height(height).background(IzleColors.ProgressTrack, RoundedCornerShape(height / 2))) {
         Box(
             Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(height)
-                .background(color, RoundedCornerShape(height / 2)),
+                .background(IzleColors.Accent, RoundedCornerShape(height / 2)),
         )
     }
 }

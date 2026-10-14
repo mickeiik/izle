@@ -25,13 +25,13 @@ class ApiException(val status: Int, val code: String, val retryAfterSec: Long? =
  * share the OkHttp connection pool.
  */
 class ApiClient(
-    val baseUrl: HttpUrl,
+    private val baseUrl: HttpUrl,
     private val deviceToken: String?,
     private val http: OkHttpClient,
     private val longPollHttp: OkHttpClient = http,
     private val json: Json = ApiJson,
 ) {
-    fun url(path: String): HttpUrl = baseUrl.resolve(path) ?: error("bad path $path")
+    private fun url(path: String): HttpUrl = baseUrl.resolve(path) ?: error("bad path $path")
 
     /** A server-handed URL (poster, media, subtitle) made absolute; null when unusable. */
     fun resolve(reference: String?): HttpUrl? = reference?.let { ServerUrls.resolve(baseUrl, it) }
