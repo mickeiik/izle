@@ -184,4 +184,21 @@ class ApiClientTest {
             // expected
         }
     }
+
+    @Test
+    fun orNullOnFailureIgnoresOnlyTheServersFailures() = runBlocking {
+        server.enqueue(json("""{"ok":true}"""))
+        server.enqueue(json("""{"error":"unknown_command"}""", code = 404))
+        val api = client()
+        assertEquals(Unit, orNullOnFailure { api.healthz() })
+        assertNull("an error answer", orNullOnFailure { api.ackCommand(12) })
+        server.close()
+        assertNull("an unreachable server", orNullOnFailure { api.healthz() })
+        try {
+            orNullOnFailure { error("a bug") }
+            fail("expected IllegalStateException")
+        } catch (e: IllegalStateException) {
+            // anything else goes on: a bug, or the coroutine's cancellation
+        }
+    }
 }
