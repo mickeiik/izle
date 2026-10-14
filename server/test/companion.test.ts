@@ -14,23 +14,13 @@ const REFERER = "https://site.example.test/";
 async function startUpstream() {
   const mp4 = Buffer.alloc(4096, 7);
   const server = createServer((req, res) => {
-    const url = new URL(req.url ?? "/", "http://upstream");
-    if (url.pathname === "/plain/video.mp4") {
-      res.writeHead(200, { "Content-Type": "video/mp4", "Content-Length": mp4.length });
-      return res.end(mp4);
+    if (req.url === "/plain/video.mp4") return void res.writeHead(200, { "Content-Type": "video/mp4" }).end(mp4);
+    if (req.url?.startsWith("/ref/") && req.headers.referer !== REFERER) return void res.writeHead(403).end("no referer");
+    if (req.url === "/ref/master.m3u8") {
+      const playlist = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nseg0.ts\n#EXT-X-ENDLIST\n";
+      return void res.writeHead(200, { "Content-Type": "application/vnd.apple.mpegurl" }).end(playlist);
     }
-    if (url.pathname.startsWith("/ref/")) {
-      if (req.headers.referer !== REFERER) {
-        res.writeHead(403);
-        return res.end("referer required");
-      }
-      if (url.pathname === "/ref/master.m3u8") {
-        res.writeHead(200, { "Content-Type": "application/vnd.apple.mpegurl" });
-        return res.end("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nseg0.ts\n#EXT-X-ENDLIST\n");
-      }
-    }
-    res.writeHead(404);
-    res.end();
+    res.writeHead(404).end();
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   return {
@@ -151,14 +141,9 @@ test("GET /now long-polls on the sequence number", async (t) => {
 test("companion links: validation, storage per episode and source, copy to the item's other episodes", async (t) => {
   const { s, tv, as } = await setup(t);
   const put = (episodeId: string, sourceId: string, body: Json) => s.admin("PUT", `/companion/links/${episodeId}/${sourceId}`, body);
-  for (const bad of [
-    { offsetMs: 0, rate: 0.4 },
-    { offsetMs: 0, rate: 2.1 },
-    { offsetMs: 21_600_001, rate: 1 },
-    { offsetMs: 0 },
-    { offsetMs: 0, rate: 1, language: "not a tag" },
-  ]) {
-    assert.equal((await put("show.e2", "main", bad)).status, 400, JSON.stringify(bad));
+  const bad = [{ offsetMs: 0, rate: 0.4 }, { offsetMs: 0, rate: 2.1 }, { offsetMs: 21_600_001, rate: 1 }, { offsetMs: 0 }];
+  for (const body of [...bad, { offsetMs: 0, rate: 1, language: "not a tag" }]) {
+    assert.equal((await put("show.e2", "main", body)).status, 400, JSON.stringify(body));
   }
   assert.equal((await put("show.e2", "nope", { offsetMs: 0, rate: 1 })).status, 404);
   assert.equal((await put("nope", "main", { offsetMs: 0, rate: 1 })).status, 404);
@@ -169,14 +154,9 @@ test("companion links: validation, storage per episode and source, copy to the i
 
   const saved = await put("show.e2", "main", { offsetMs: -1_250, rate: 1.0427, language: "fr" });
   assert.equal(saved.status, 200, JSON.stringify(saved.json));
-  assert.deepEqual(saved.json.link, {
-    episodeId: "show.e2",
-    sourceId: "main",
-    offsetMs: -1250,
-    rate: 1.0427,
-    language: "fr",
-    updatedAt: new Date(s.clock.now()).toISOString(),
-  });
+  const updatedAt = new Date(s.clock.now()).toISOString();
+  const link = { offsetMs: -1250, rate: 1.0427, language: "fr", updatedAt };
+  assert.deepEqual(saved.json.link, { episodeId: "show.e2", sourceId: "main", ...link });
 
   // The candidates of what the TV plays carry the stored links.
   assert.equal((await as("POST", "/resolve", { episodeId: "show.e2" })).status, 200);
@@ -195,7 +175,7 @@ test("companion links: validation, storage per episode and source, copy to the i
   assert.deepEqual(copied.json, { updated: 1, episodeIds: ["show.e5"] });
   await as("POST", "/resolve", { episodeId: "show.e5" });
   const e5 = await s.admin("GET", `/devices/${tv.deviceId}/companion`);
-  assert.deepEqual(e5.json.candidates[0].link, { offsetMs: -1250, rate: 1.0427, language: "fr", updatedAt: new Date(s.clock.now()).toISOString() });
+  assert.deepEqual(e5.json.candidates[0].link, link);
 
   // A TV that has not played anything has no candidates.
   const other = await s.pair("Other");

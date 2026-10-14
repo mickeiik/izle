@@ -7,27 +7,20 @@ const hls = { kind: "hls" as const, url: "https://media.example.test/m.m3u8" };
 const dash = { kind: "dash" as const, url: "https://media.example.test/m.mpd" };
 const referer = { Referer: "https://site.example.test/" };
 
-test("delivery plan: plain media goes direct; headers, inline playlists and proxy.always go through the proxy", () => {
-  assert.deepEqual(deliveryPlan({ media: hls }, false), { servable: true, proxyMain: false, proxySubtitles: [] });
-  assert.deepEqual(deliveryPlan({ media: hls, headers: {} }, false), { servable: true, proxyMain: false, proxySubtitles: [] }, "empty headers are none");
-  assert.deepEqual(deliveryPlan({ media: hls, headers: referer }, false), { servable: true, proxyMain: true, proxySubtitles: [] });
-  assert.deepEqual(deliveryPlan({ media: { kind: "mp4", url: "https://media.example.test/v.mp4" } }, true), { servable: true, proxyMain: true, proxySubtitles: [] });
-  assert.deepEqual(deliveryPlan({ media: { kind: "hls", playlist: "#EXTM3U\n", baseUrl: "https://media.example.test/" } }, false), {
-    servable: true,
-    proxyMain: true,
-    proxySubtitles: [],
-  });
-});
-
-test("delivery plan: DASH is never proxied, and DASH that needs headers cannot be served", () => {
-  assert.deepEqual(deliveryPlan({ media: dash }, true), { servable: true, proxyMain: false, proxySubtitles: [] }, "proxy.always leaves DASH direct");
-  assert.equal(deliveryPlan({ media: dash, headers: referer }, false).servable, false);
-});
-
-test("delivery plan: each subtitle track goes through the proxy when it has headers, or with proxy.always", () => {
+test("delivery plan: headers, inline playlists and proxy.always go through the proxy; DASH never does", () => {
+  const plan = (s: Parameters<typeof deliveryPlan>[0], always = false) => deliveryPlan(s, always);
+  const direct = { servable: true, proxyMain: false, proxySubtitles: [] };
+  const proxied = { servable: true, proxyMain: true, proxySubtitles: [] };
+  assert.deepEqual(plan({ media: hls }), direct);
+  assert.deepEqual(plan({ media: hls, headers: {} }), direct, "empty headers are none");
+  assert.deepEqual(plan({ media: hls, headers: referer }), proxied);
+  assert.deepEqual(plan({ media: { kind: "mp4", url: "https://media.example.test/v.mp4" } }, true), proxied);
+  assert.deepEqual(plan({ media: { kind: "hls", playlist: "#EXTM3U\n", baseUrl: "https://media.example.test/" } }), proxied);
+  assert.deepEqual(plan({ media: dash }, true), direct, "proxy.always leaves DASH direct");
+  assert.equal(plan({ media: dash, headers: referer }).servable, false, "DASH that needs headers cannot be served");
   const subtitleTracks = [{ headers: referer }, {}, { headers: {} }];
-  assert.deepEqual(deliveryPlan({ media: hls, subtitleTracks }, false).proxySubtitles, [true, false, false]);
-  assert.deepEqual(deliveryPlan({ media: hls, subtitleTracks }, true).proxySubtitles, [true, true, true]);
+  assert.deepEqual(plan({ media: hls, subtitleTracks }).proxySubtitles, [true, false, false]);
+  assert.deepEqual(plan({ media: hls, subtitleTracks }, true).proxySubtitles, [true, true, true]);
 });
 
 test("playback sessions: open, look up, expire after their lifetime", () => {

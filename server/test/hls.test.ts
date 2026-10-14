@@ -81,20 +81,10 @@ test("media playlist: segments, keys, maps, parts and preload hints are raw reso
 test("summaries and playlist detection", () => {
   assert.equal(isPlaylistText("﻿  #EXTM3U\n"), true);
   assert.equal(isPlaylistText("<html>"), false);
-  assert.deepEqual(summarizePlaylist("#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,URI=\"a.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n"), {
-    master: true,
-    variants: 1,
-    renditions: 1,
-    segments: 0,
-    endList: false,
-  });
-  assert.deepEqual(summarizePlaylist("#EXTM3U\n#EXTINF:4,\na.ts\n#EXTINF:4,\nb.ts\n#EXT-X-ENDLIST\n"), {
-    master: false,
-    variants: 0,
-    renditions: 0,
-    segments: 2,
-    endList: true,
-  });
+  const master = summarizePlaylist("#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,URI=\"a.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n");
+  assert.deepEqual(master, { master: true, variants: 1, renditions: 1, segments: 0, endList: false });
+  const media = summarizePlaylist("#EXTM3U\r\n#EXTINF:4,\r\na.ts\r\n\r\n#EXTINF:4,\nb.ts\n#EXT-X-ENDLIST\n");
+  assert.deepEqual(media, { master: false, variants: 0, renditions: 0, segments: 2, endList: true });
 });
 
 test("TS sync detection: aligned data, junk prefixes, and data that is not TS", () => {
