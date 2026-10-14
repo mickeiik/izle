@@ -26,7 +26,7 @@
     <!-- Home -->
     <string name="home_empty">Nothing here yet</string>
     <string name="home_empty_detail">The owner adds shows from the izle admin page.</string>
-    <string name="home_hint">OK: Play · Back: Home</string>
+    <string name="home_hint">OK: Play</string>
     <string name="badge_new">New</string>
     <string name="badge_continue">Continue</string>
     <string name="badge_watch_again">Watch again</string>
@@ -36,6 +36,11 @@
     <plurals name="badge_new_episodes">
         <item quantity="one">%1$d new episode</item>
         <item quantity="other">%1$d new episodes</item>
+    </plurals>
+    <!-- The same count on the poster, short enough for one line; the full plural above is read out. -->
+    <plurals name="badge_new_episodes_short">
+        <item quantity="one">%1$d new</item>
+        <item quantity="other">%1$d new</item>
     </plurals>
 
     <!-- Player -->

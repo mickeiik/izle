@@ -20,7 +20,7 @@ contract share one version number. How to update (back up, update the server, th
 - **`izle-server backup <file>`** writes a consistent copy of the database while the service runs. The
   self-hosting guide's backup section uses it.
 - **New episodes on the TV's home tiles.** When a catalog reload adds episodes to a show on a TV's home screen, its
-  tile shows how many ("2 new episodes") at the top of the poster, until the TV plays any episode of the show. The
+  tile shows how many ("2 new") at the top of the poster, until the TV plays any episode of the show. The
   count starts when the TV last played the show, or when the show was put on that TV's home screen. A TV's page on
   the admin page shows the same count ("2 new"); in the API it is `newEpisodes` on each home entry.
 - **OK resumes a finished show at its first new episode:** when a show was watched to the end and a later catalog
@@ -71,6 +71,13 @@ contract share one version number. How to update (back up, update the server, th
 - **Countdown bars on the TV's Up next, autoplay and "Can't play right now" screens**, and "Can't play right now"
   now says when it goes back Home ("Home in 30 s"). The three screens and "The end" share one layout with the
   show's poster always in the same place; "The end" shows the poster and the show's title.
+- **The owner's message no longer covers the clock or the tiles on the TV's Home screen.** It takes its place at the
+  top, beside the clock, and the tiles move down while it shows; a long one gets the full width under the clock, so
+  all 200 characters fit. Over the video it still runs across the top.
+- **The TV's Home screen:** the chip saying what OK plays reads clearly on dark posters too, the new-episodes count is
+  shorter ("2 new"), "No connection" is a solid red chip, a further row of shows fades out at the bottom edge and
+  comes up whole, title included, when the viewer moves down to it, and the hint says just "OK: Play" (Back does
+  nothing on Home).
 
 ### Fixed
 

@@ -1182,7 +1182,103 @@ the resolve answer's `expiresAt`, which the TV used to drop). Routine decisions:
 
 ## Design pass: TV look and small UX fixes (2026-10-14)
 
-_(TV look branch)_
+Emulator screenshots of every screen: [`docs/verification/tv-design/`](verification/tv-design/README.md).
+
+- **Tokens** (`ui/theme/Theme.kt`). `IzleColors` gives each colour one role: white is the focus (`Focus`/`OnFocus`),
+  the warm accent is time and attention (Continue, countdowns, the owner's message), mint is "New" only, red is "no
+  connection" (`Offline`, a solid chip; `Error` stays the salmon used for error text on dark). New roles:
+  `ChipNeutral` (a light grey chip with dark text), `ChipInfo` (dark translucent), `Outline`, `Hairline`,
+  `PosterShade`, `InfoShade`, `ProgressTrack`, `Caption`, `Video`, `BannerEdge`. `IzleSpacing` holds the safe margins,
+  **48 dp horizontal and 27 dp vertical** (5 % of the 960×540 dp canvas; Home used 24 dp, the setup screen 96/48),
+  and a scale of 4, 8, 12, 16, 24, 32 and 48 dp. `IzleShapes` replaces the ad-hoc radii: 8 dp (chips, subtitles),
+  12 dp (tiles, menu rows, the address field), 16 dp (posters in panels, the banner, message boxes, the pairing code)
+  and a pill (buttons, the offline chip). `IzleBorders` has the 4 dp focus border and the 2 dp outline. The
+  tv-material colour scheme now sets `inverseSurface`, the containers, `border` and `scrim` too, so a component
+  without explicit colours never falls back to the stock lavender greys.
+- **One button style** (`TvButton`): dark with a grey outline; focused, a white fill, a white border and 10 % larger.
+  tv-material's default button is 80 % white when unfocused, so once the focus moved from Play now to Home both
+  looked white. The six repeated label styles and the setup screen's own button are gone.
+- **The hidden menu's focused row** has the white border on a slightly lighter fill, its text staying white (the stock
+  `ListItem` filled it lavender with dark text), and is not scaled. The panel is 520 dp wide with a 48 dp right
+  padding, so the rows end at the safe margin (they were 13 dp from the edge). The focus stays on the `ListItem`
+  holding the text, as the UI tests check. ✓ for watched is grey: mint means "New".
+- **The owner's message on Home is laid out in the top band**, left of the clock, instead of an overlay that covered
+  the clock and the focused tile's top border: the band grows to fit it, the grid moves down, and the hint row makes
+  room. The text is 30 sp bold and steps down (2 sp at a time, `TextAutoSize`) to 24 sp only when it would not fit
+  three lines otherwise. Beside the clock about 170 characters fit; when even 24 sp overflows there (the text
+  layout says so, after one frame), the banner takes the band's full width under the clock, where the server's
+  200 characters fit in three lines. Short messages, the usual case, cost the least height that way. Over the video,
+  the hidden menu and the opaque autoplay countdown the banner stays an overlay at the top: under the menu's scrim
+  the band's copy would be dimmed, and behind the countdown hidden. While one of them is up, Home's band leaves the
+  message out, so it is never drawn twice; the layout change happens behind them.
+- **A focused row comes up to the top of the grid** (a `BringIntoViewSpec` provided to the grid alone:
+  `LocalBringIntoViewSpec`, still `@ExperimentalFoundationApi` in Compose 1.12). Foundation's own TV default keeps a
+  focused item at 30 % of the viewport unless it does not fit, so a focused second-row poster ended at the bottom
+  edge with its title cut off, and the first row's titles were cut at the top. Now the focused poster always sits
+  16 dp below the grid's top (room for its 10 % growth), its title in view however tall the banner makes the band;
+  the bottom padding is computed from the grid's height so the last row can come up too. While Home is not active
+  (menu or countdown on top) the spec scrolls nothing: when the tiles stop taking the focus, the focus passes
+  through another tile for a moment, and that scrolled the grid behind the menu (seen on the emulator; restored on
+  closing, but the tiles moved under the scrim).
+- **The title sits 22 dp under the poster** (14 dp before): the focused poster grows 14 dp downwards, and touched it.
+  The grid's top padding stays 16 dp so the first row can grow.
+- **The next row fades out at the bottom edge** (a `DstIn` gradient over the grid's last 24 dp, offscreen
+  compositing) whenever a tile is cut there or rows are below, so the peek reads as "there is more" instead of a
+  clipping glitch. The fade is shortened so that it never reaches the focused poster when a long message leaves
+  little room.
+- **The chip at the bottom says what OK does and always reads clearly:** mint for New, the warm accent when OK
+  resumes, `ChipNeutral` (light grey, dark text) for "Episode N" and "Watch again" — the old dark grey nearly
+  disappeared on dark posters. "Continue · Episode 1" still needs two lines at 24 sp in a 190 dp poster; with 28 sp
+  lines and less padding it covers about a quarter of the poster instead of a third.
+- **The new-episodes chip is a one-line count, "2 new" / "2 yeni"** (a new plural, `badge_new_episodes_short`, the
+  same words as the admin page's chip), 24 sp regular on the dark `ChipInfo`: visibly quieter than the solid bottom
+  chip. The full plural ("2 new episodes") is its content description and the short text is cleared from the
+  semantics, so a screen reader says it once. It still takes no focus and does not change what OK plays.
+- **The offline chip is solid red with dark text** (about 7:1), 26 sp, where it was salmon on a 20 % salmon fill.
+- **The hint is "OK: Play" / "OK: Oynat"**: Back does nothing on Home, so it is not offered there. It shows only when
+  there are tiles (on "Nothing here yet" OK does nothing).
+- **One poster panel** (`ui/common/PosterPanel.kt`) for Up next, autoplay on start, "Can't play right now" and "The
+  end", which were written three times, each centred on its own content: a fixed-width row (844 dp) centred on the
+  screen, so the 220×330 dp poster is always at the same spot, vertically centred, and a 576 dp text column in a fixed
+  order — a small line above (Dim), the title (44 sp, two lines), up to two lines under it, the countdown (34 sp,
+  accent) over its bar, the buttons. Without a poster the box shows the show's title, like the tile. The first
+  button is the one OK presses (Play now, Try again) and takes the focus with the autoplay overlay's request retried
+  for up to 10 frames, until it really has the focus, from a `remember { FocusRequester() }` without a key: the phase
+  object changes every second.
+- **Countdown bars** on Up next (10 s), autoplay (10 s) and the error screen (30 s) are driven by the `secondsLeft`
+  the view model and the player already tick: each new value starts one linear step of 1 s from where the bar is
+  towards `(secondsLeft − 1) / total`, so the bar moves smoothly and is empty exactly when the countdown runs out. A
+  late tick leaves the bar waiting at its target, an early one continues from where it is. There is no frame loop
+  and no long animation against a clock, so under Robolectric's paused clock the bar simply holds its first step.
+  The bar is drawn in the draw phase (no recomposition per frame).
+- **The error screen says when it goes Home**: "Home in 30 s", counting down (`auto_home_countdown`).
+- **"The end" shows the poster and the show's title** in the same panel for the same 8 s, **without buttons**: OK in
+  the player falls through to whatever is focused, and nothing focusable is right there. No bar: the player state
+  has no time left for "The end".
+- **The player's information panel** is dark from 48 dp below its top edge (transparent → `InfoShade`, then solid),
+  and the text starts below that; the gradient used to run over the whole panel, so the title and "Paused" sat at
+  half strength over bright scenes. Subtitles now sit in a column just above the panel when it shows (they were
+  placed 190 dp up, under its top), 43 dp above the bottom otherwise.
+- **Consistency:** inline error lines (server address, pairing, the episode list) are one `ErrorText`, 30 sp in the
+  error colour (they were 28–30 sp); screen-level messages keep 44 sp titles. The setup screen uses the safe margins,
+  12 dp inset so the focused button's growth stays inside them, a 2 dp grey field border that turns into the 4 dp
+  white one, and `TvButton`. The pairing screen keeps its proportions, with the margins and the 16 dp radius.
+- **The clock follows a live language change** at once (the locale is part of what it remembers): switching the menu
+  to Turkish while Home showed kept "PM" until the next minute.
+- **Tests:** 101 (98 + 3), all in `SeniorInvariantsTest`: the error screen shows "Home in 30 s" with Try again
+  focused; the hint names OK and offers no Back, in English and Turkish; the owner's 200-character message on Home
+  covers neither the clock nor any tile (each grown by 10 %, since semantics bounds ignore the focus scale), takes no
+  focus, hides the hint, goes away by itself after its 5 s, and leaves the grid where it was with the same tile
+  focused. That test serves the message over SSE from the in-process server and advances Robolectric's paused looper
+  (`ShadowLooper.idleMainLooper`) past the event stream's 1 s backoff and the message's duration, and it runs with
+  Robolectric's `NATIVE` graphics: the default legacy graphics measure a character as about a pixel, and the overlap
+  checks then passed even with the old overlay (checked by putting the overlay back on Home: the test fails). The
+  new-episodes test was adapted to the chip's new form: it finds the count by the tile's content description, and
+  the tile's texts no longer include it.
+- **Turkish drafts for the owner to check:** "%1$d sn sonra ana ekran" (the error screen's countdown) and "%1$d yeni"
+  (the poster's new-episodes count). "OK: Oynat" is the old hint without its second half.
+- **Not done:** no countdown bar on "The end" (see above); the menu's list is still cut hard at its bottom when it
+  scrolls; the hint stays shown while offline, where OK says "No connection" instead of playing.
 
 ## Integration of the design pass (2026-10-14)
 

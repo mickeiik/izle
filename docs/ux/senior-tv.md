@@ -4,7 +4,8 @@ How the izle TV app behaves for its viewer: someone who knows classic TV (switch
 and should never need to read small text, browse or configure anything. Everything else is the owner's job,
 done remotely from the browser admin page (`/admin/` on the server) or, on the TV itself, behind a hidden menu.
 
-Screenshots of every screen below are in [`docs/verification/phase3/`](../verification/phase3/README.md); the
+Screenshots of every screen as it looks now are in [`docs/verification/tv-design/`](../verification/tv-design/README.md);
+the first emulator run of each screen in [`docs/verification/phase3/`](../verification/phase3/README.md); the
 channel keys, autoplay on start, the owner's messages and remote controls, the stream refresh and problem reports
 in [`docs/verification/tv-controls/`](../verification/tv-controls/README.md).
 
@@ -16,7 +17,8 @@ in [`docs/verification/tv-controls/`](../verification/tv-controls/README.md).
    HOME button belongs to the system; when it is pressed the app saves the position and comes back on Home.)
 3. **Every error ends on Home by itself**, after a short, large message. Nothing waits for an answer.
 4. **Nothing small.** No text below 24 sp on the 960×540 dp TV canvas; high contrast; one focused element with a
-   thick white border, everything else dimmed.
+   thick white border, everything else dimmed; nothing that matters outside the 5 % safe margins (48 dp left and
+   right, 27 dp top and bottom), where many TVs crop the picture.
 5. **Owner-controlled.** Which shows appear, their order, "continue from episode X", UI language, audio and
    subtitle languages, autoplay on start, play/stop/pause/resume/seek/next/previous and short messages all come
    from the server and apply live. When something goes wrong the TV tells the owner (problem reports), not the
@@ -26,42 +28,62 @@ in [`docs/verification/tv-controls/`](../verification/tv-controls/README.md).
 
 ### Home
 
-- Up to 12 poster tiles (190×285 dp, 2:3) in a 4-column grid with 5 % safe margins; one row (≤ 4 shows) fits
-  without scrolling, more rows scroll with the focus and the second row peeks in to show there is more.
-- The focused tile scales to 110 % with a 4 dp white border; the others are dimmed.
-- Under the poster: the title (24 sp bold, up to 2 lines). On the poster: a chip saying what OK will do, and a
-  progress bar when it will resume.
-- When episodes were added to a show since the viewer last watched it (or since it was put on Home), a second chip
-  at the poster's top right counts them ("2 new episodes", the server's `newEpisodes`). It only informs: it takes
-  no focus and never changes what OK plays; it goes away once an episode of the show has been played.
-- Top right: a clock (24-hour or 12-hour following the TV's setting, or the TV's own language when that is unset). Bottom: the hint "OK: Play · Back: Home".
+- Up to 12 poster tiles (190×285 dp, 2:3) in a 4-column grid inside the 5 % safe margins; one row (≤ 4 shows)
+  fits without scrolling. With more, the next row peeks in under the first and fades out at the bottom edge to show
+  there is more; moving down brings the focused row up to the top, its poster and title fully in view, and the row
+  above leaves the screen completely.
+- The focused tile scales to 110 % with a 4 dp white border; the others are dimmed. Its title sits clear of the
+  grown poster.
+- Under the poster: the title (24 sp bold, up to 2 lines). On the poster, at the bottom: a solid chip saying what
+  OK will do — mint for "New", the warm accent when OK resumes ("Continue", "Continue · Episode 2", with a progress
+  bar under it), light grey otherwise ("Episode 5", "Watch again") — so it reads on dark and bright posters alike.
+  A poster that is missing shows the show's title in its place.
+- When episodes were added to a show since the viewer last watched it (or since it was put on Home), a small dark
+  chip at the poster's top right counts them ("2 new", read out as "2 new episodes"; the server's `newEpisodes`).
+  It is quieter than the chip at the bottom and only informs: it takes no focus and never changes what OK plays; it
+  goes away once an episode of the show has been played.
+- Top right: a clock (24-hour or 12-hour following the TV's setting, or the TV's own language when that is unset).
+  Bottom: the hint "OK: Play" (Back does nothing on Home, so it is not offered).
 - The tile played last gets the focus back; after a live reorder the focus stays on the same show.
 - No shows: "Nothing here yet" in large type.
-- Server unreachable: the last home screen stays (cached), a red "No connection" chip appears top left, the TV
-  retries every 10 s, and OK shows "No connection · Trying again…" for 5 s instead of trying to play.
+- Server unreachable: the last home screen stays (cached), a solid red "No connection" chip with dark text appears
+  top left, the TV retries every 10 s, and OK shows "No connection · Trying again…" for 5 s instead of trying to
+  play.
 - **Autoplay on start** (per TV, owner setting, off by default): when the app comes to the front on Home — the TV
   is switched on, the app starts, or the viewer comes back from the launcher — and the first home state fetched
   from the server in that moment says so, the show played last on this TV (else the first tile) is offered over
-  Home like "Up next": its poster, title, what OK on its tile would play ("Episode 2", "Continue · Episode 2"),
-  "Starts in 10 s", **Play now** focused and **Not now** next to it. At 0 its tile's episode plays under the
+  Home in the same panel as "Up next": its poster, title, what OK on its tile would play ("Episode 2", "Continue ·
+  Episode 2"), "Starts in 10 s" over a bar that runs down with it, **Play now** focused and **Not now** next to it.
+  At 0 its tile's episode plays under the
   normal resume rules. Back, Not now or any other key cancels it and leaves the focus on that show; the viewer
   just started doing something. It never appears after in-app steps (Back from the player, "The end", the error
   screen, closing the hidden menu), from the offline cache, or once a key was pressed; the hidden menu and the
   tiles wait while it shows.
-- **Messages from the owner** appear as a banner across the top (30 sp bold, dark on yellow, up to 3 lines) for
-  the time the owner chose, on Home and over the playing video (playback goes on). A new message replaces the
-  current one; the banner takes no focus and has no buttons. Other screens ignore messages.
+- **Messages from the owner** appear as a banner (30 sp bold, stepping down to 24 sp only for the longest ones,
+  dark on yellow, up to 3 lines) for the time the owner chose, on Home and over the playing video (playback goes
+  on). On Home the banner takes its place in the top band, left of the clock, and covers nothing: the band grows to
+  fit it, the tiles move down while it shows and the hint makes room; a message that does not fit beside the clock
+  in three lines takes the band's full width under the clock. Over the video, and over the hidden menu or the
+  autoplay countdown on Home, it is drawn across the top. A new message replaces the current one; the banner takes
+  no focus and has no buttons. Other screens ignore messages.
 
 ### Player
 
-- Video only. Information appears for 4 s after a key press: title, episode, a progress bar and times; a small
-  pause symbol stays in the corner while paused.
+- Video only. Information appears for 4 s after a key press: title, episode, a progress bar and times, on a dark
+  shade that is solid behind the text; a small pause symbol stays in the corner while paused.
 - Resolving/buffering before the first frame: black screen with a spinner, the title and the episode.
+- Up next, "The end" and "Can't play right now" (and autoplay on start over Home) share one panel: the show's
+  poster always at the same spot, left of the centre, and beside it the text in a fixed order, then the countdown
+  over a bar that runs down with it, then the buttons. The first button is focused.
 - At the end of an episode with a next one (and auto-advance allowed): **Up next** — poster, "Episode 3",
-  its title and "Starts in 10 s"; **Play now** is focused, **Home** next to it. The next episode starts by itself.
-- At the end of the last episode (or an auto-advance boundary): "The end" for 8 s, then Home.
-- Nothing playable: "Can't play right now" with the poster, **Try again** focused and **Home**; Home after 30 s.
-- Subtitles (off unless the owner chose a language) are drawn large, white on a dark box, above the bottom edge.
+  its title and "Starts in 10 s" with its bar; **Play now** is focused, **Home** next to it. The next episode starts
+  by itself.
+- At the end of the last episode (or an auto-advance boundary): "The end" with the show's poster and title for 8 s,
+  then Home. No buttons: nothing on it takes the focus.
+- Nothing playable: "Can't play right now" with the poster, "Home in 30 s" counting down over its bar, **Try
+  again** focused and **Home**; Home after 30 s.
+- Subtitles (off unless the owner chose a language) are drawn large, white on a dark box, above the bottom edge, and
+  just above the information while it shows.
 - **CH+ / CH−** (and the remote's **|◀◀ / ▶▶|** keys) switch to the next / previous episode of the show, like
   changing channels: the episode playing ends exactly as with Back (its place is saved), the nearest playable
   episode starts in the same player (its name shows while it loads) under the normal resume rules. At the first
@@ -76,8 +98,9 @@ in [`docs/verification/tv-controls/`](../verification/tv-controls/README.md).
 ### Hidden menu
 
 Opened with the remote's **Menu** key or by **holding OK for 0.6 s** (on Home: for the focused show; in the
-player: for what is playing, which pauses). A panel slides over the right half; Back steps back one level and
-closes it.
+player: for what is playing, which pauses). A panel slides over a little more than the right half, its rows ending
+at the safe margin; the focused row has the same white border as the tiles and buttons. Back steps back one level
+and closes it.
 
 | Entry | Shown | Does |
 |---|---|---|
@@ -128,9 +151,9 @@ every other key cancel it and do nothing else.
 | Resume | saved position ≥ 30 s and not within the end threshold; start 5 s before it |
 | End threshold ("finished") | remaining ≤ max(2 min, 5 % of the duration), capped at 10 % of the duration (so a 90 s episode is finished in its last 9 s, a 2 h film in its last 6 min) |
 | Heartbeat | every 15 s while playing, plus pause, resume, seek, stop and end |
-| Auto-next countdown | 10 s |
+| Auto-next countdown | 10 s, with a bar that runs down a step a second |
 | "The end" | 8 s, then Home |
-| Error screen | Home after 30 s |
+| Error screen | Home after 30 s, counted down on screen ("Home in 30 s") with a bar |
 | Source errors | try the server's next alternative from the same position; HTTP 403/410 after more than 5 min of playback re-resolves the same source first (an expired signed URL) |
 | Stream refresh | when a resolve answer's `expiresAt` is ≥ 90 s away (measured on the server's clock): resolve the same source again at `expiresAt` − 60 s, playing or paused; new media only when the URL changed, at the same position; at most one refresh per 60 s; a network or server failure is retried once after 30 s while the URL is still valid, else the 403/410 rule above applies |
 | Episode keys (CH+/CH−, ▶▶\|/\|◀◀, next/previous commands) | the nearest `playbackAllowed` episode after / before the current one in play order; no wrap-around; the current one is reported like Back (stopped, or finished within the end threshold) |
@@ -143,18 +166,18 @@ every other key cancel it and do nothing else.
 
 | Key | English | Türkçe |
 |---|---|---|
-| Home hint | OK: Play · Back: Home | OK: Oynat · Geri: Ana ekran |
+| Home hint | OK: Play | OK: Oynat |
 | Empty home | Nothing here yet | Henüz içerik yok |
 | Chip: new / continue / watch again | New / Continue / Watch again | Yeni / Devam et / Tekrar izle |
 | Chip: episode | Episode 5 · Season 2, Episode 5 · Continue · Episode 5 | Bölüm 5 · Sezon 2, Bölüm 5 · Devam et · Bölüm 5 |
-| Chip: new episodes | 1 new episode · 3 new episodes | 1 yeni bölüm · 3 yeni bölüm |
+| Chip: new episodes (on the poster; read out) | 1 new · 3 new (1 new episode · 3 new episodes) | 1 yeni · 3 yeni (1 yeni bölüm · 3 yeni bölüm) |
 | Offline | No connection · Trying again… | Bağlantı yok · Yeniden deneniyor… |
 | Loading | Loading… | Yükleniyor… |
 | Paused | Paused | Duraklatıldı |
 | Up next | Up next · Starts in 10 s · Play now · Home | Sıradaki · 10 sn içinde başlıyor · Şimdi oynat · Ana ekran |
 | Autoplay on start | Starts in 10 s · Play now · Not now (with the tile's chip text) | 10 sn içinde başlıyor · Şimdi oynat · Şimdi değil |
-| End | The end | Bitti |
-| Error | Can't play right now · Try again · Home | Şu anda oynatılamıyor · Tekrar dene · Ana ekran |
+| End | The end (with the show's title) | Bitti |
+| Error | Can't play right now · Home in 30 s · Try again · Home | Şu anda oynatılamıyor · 30 sn sonra ana ekran · Tekrar dene · Ana ekran |
 | Pairing | Pair this TV · Open http://… /admin on your phone or computer and approve this code · Waiting for approval… | Bu televizyonu eşleştirin · Telefonunuzda veya bilgisayarınızda http://… /admin adresini açın ve bu kodu onaylayın · Onay bekleniyor… |
 | Server address | Server address · Connect · The server cannot be reached. | Sunucu adresi · Bağlan · Sunucuya ulaşılamıyor. |
 | Menu | Episodes · Start over · Audio language · Subtitles · Settings · About | Bölümler · Baştan başlat · Ses dili · Altyazı · Ayarlar · Hakkında |

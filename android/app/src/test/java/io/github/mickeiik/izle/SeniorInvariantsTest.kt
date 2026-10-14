@@ -1,6 +1,7 @@
 package io.github.mickeiik.izle
 
 import android.content.Context
+import android.content.res.Configuration
 import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsNode
@@ -12,6 +13,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isFocusable
 import androidx.compose.ui.test.isFocused
@@ -44,7 +46,11 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import org.robolectric.shadows.ShadowLooper
+import java.util.Locale
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
 
 /**
  * The senior viewer's rules (docs/ux/senior-tv.md) on the real [MainActivity], under Robolectric on a 960×540 dp TV.
@@ -73,6 +79,10 @@ class SeniorInvariantsTest {
     @Volatile
     private var entries = emptyMap<String, String>()
 
+    /** An owner's message (shown for 5 s) that the event stream hands out once, on the TV's next connection. */
+    @Volatile
+    private var message: String? = null
+
     @Before
     fun setUp() {
         server.dispatcher = object : Dispatcher() {
@@ -81,8 +91,13 @@ class SeniorInvariantsTest {
                 return when (request.url.encodedPath) {
                     "/api/v1/tv/state" -> json(200, stateJson())
                     // No live events: the TV retries the stream after a backoff (which Robolectric's paused clock
-                    // never reaches) and keeps the state it fetched.
-                    "/api/v1/tv/events" -> json(404, """{"error":"not_found"}""")
+                    // never reaches unless a test advances it) and keeps the state it fetched.
+                    "/api/v1/tv/events" -> message?.let { text ->
+                        message = null
+                        val command = """{"id":1,"type":"message","payload":{"text":"$text","durationSec":5}}"""
+                        MockResponse.Builder().code(200).addHeader("Content-Type", "text/event-stream")
+                            .body("event: command\ndata: $command\n\n").build()
+                    } ?: json(404, """{"error":"not_found"}""")
                     // resolve included: nothing is playable.
                     else -> json(404, """{"error":"not_found"}""")
                 }
@@ -160,16 +175,20 @@ class SeniorInvariantsTest {
         )
         onTv { tv ->
             awaitTiles("Show A", "Show B", "Show C")
+            // The poster says "2 new"; the tile reads the count out in full.
             val chip = quantity(R.plurals.badge_new_episodes, 2)
-            compose.onNode(hasClickAction() and hasText(chip)).assertIsDisplayed().assert(hasText("Show B"))
+            compose.onNode(hasClickAction() and hasContentDescription(chip)).assertIsDisplayed().assert(hasText("Show B"))
             // Added to B's tile next to the chip saying what OK does, which is unchanged; no chip where the count is 0.
-            assertEquals(setOf("Show B", string(R.string.episode_number, 7), chip), tileTexts("Show B"))
+            assertEquals(setOf("Show B", string(R.string.episode_number, 7)), tileTexts("Show B"))
+            assertEquals(listOf(chip), tileDescriptions("Show B"))
             assertEquals(setOf("Show A", string(R.string.badge_new)), tileTexts("Show A"))
+            assertEquals(emptyList<String>(), tileDescriptions("Show A"))
             assertEquals(setOf("Show C", string(R.string.badge_new)), tileTexts("Show C"))
+            assertEquals(emptyList<String>(), tileDescriptions("Show C"))
 
             // It never takes the focus: the only focusable element holding it is B's tile, and the remote moves from
             // tile to tile as before.
-            compose.onAllNodes(isFocusable() and hasAnyDescendant(hasText(chip)), useUnmergedTree = true).assertCountEquals(1)
+            compose.onAllNodes(isFocusable() and hasAnyDescendant(hasContentDescription(chip)), useUnmergedTree = true).assertCountEquals(1)
             tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
             assertFocusedTile("Show B")
             tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
@@ -194,6 +213,62 @@ class SeniorInvariantsTest {
         // The first button has the focus: OK tries again.
         compose.onNode(isFocused()).assert(hasText(string(R.string.try_again)))
         compose.onNodeWithText(string(R.string.go_home)).assertIsDisplayed()
+    }
+
+    @Test
+    fun theHomeHintSaysWhatOkDoesAndDoesNotOfferBack() = onTv { tv ->
+        awaitTiles("Show A", "Show B", "Show C")
+        compose.onNodeWithText(string(R.string.home_hint)).assertIsDisplayed()
+        // Back does nothing on Home, so the hint must not offer it, in either language.
+        val back = mapOf("en" to "Back", "tr" to "Geri")
+        for ((language, word) in back) {
+            val hint = localized(language).getString(R.string.home_hint)
+            assertTrue("the $language hint names OK: $hint", hint.startsWith("OK"))
+            assertFalse("the $language hint offers Back: $hint", hint.contains(word, ignoreCase = true))
+        }
+        tv.assertOnHome()
+    }
+
+    @Test
+    // Real text measurement (the default "legacy" graphics measure a character as about a pixel), so the banner has
+    // its real size.
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun theOwnersMessageOnHomeCoversNeitherTheClockNorATileAndLeavesTheFocusAlone() = onTv { tv ->
+        awaitTiles("Show A", "Show B", "Show C")
+        val tileBefore = focusedTileBounds()
+        // The longest message the server allows. The event stream hands it out on the TV's next connection, which
+        // the TV makes 1 s after the first one failed.
+        val text = "Dinner is ready! Please come to the kitchen when you have finished watching this episode, the " +
+            "soup is hot and your grandchildren have arrived to see you. They brought a cake and fresh flowers for you."
+        assertEquals(200, text.length)
+        message = text
+        advanceClock(1_500)
+        waitUntil("the owner's message") { exists(text) }
+
+        val banner = compose.onNodeWithText(text).fetchSemanticsNode().boundsInRoot
+        val clock = nodes { node -> node.texts().any { CLOCK.matches(it) } }.single().boundsInRoot
+        // Several lines of large type: it has its real size.
+        assertTrue("a banner of several lines: $banner", banner.height > 60f && banner.width > 500f)
+        assertFalse("the message covers the clock: $banner, $clock", banner.overlaps(clock))
+        // Every tile stays clear of it, also grown by 10 % as when it has the focus (semantics bounds are unscaled).
+        compose.onAllNodes(hasClickAction()).fetchSemanticsNodes().forEach {
+            val grown = it.boundsInRoot.inflate(it.boundsInRoot.height * 0.05f)
+            assertFalse("the message covers ${it.texts()}: $banner, $grown", banner.overlaps(grown))
+        }
+        // It takes no focus, and the remote moves from tile to tile as before; the hint makes room meanwhile.
+        compose.onAllNodes(isFocusable() and hasText(text)).assertCountEquals(0)
+        assertFocusedTile("Show A")
+        assertFalse(exists(string(R.string.home_hint)))
+        tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
+        assertFocusedTile("Show B")
+
+        // It goes away by itself after the owner's 5 s; the tiles move back up where they were, still focused.
+        advanceClock(5_500)
+        waitUntil("the message gone") { !exists(text) }
+        assertFocusedTile("Show B")
+        assertEquals(tileBefore.top, focusedTileBounds().top, 0.5f)
+        compose.onNodeWithText(string(R.string.home_hint)).assertIsDisplayed()
+        tv.assertOnHome()
     }
 
     @Test
@@ -245,7 +320,7 @@ class SeniorInvariantsTest {
         awaitTiles("Show A", "Show B", "Show C")
         // The owner chose an English menu (the state says `uiLanguage: en`) on a French TV that has no 12/24-hour
         // setting: the clock is the TV's 24-hour one ("14:54"), not the menu language's "2:54 PM".
-        val clock = allTexts().firstOrNull { Regex("""^\d{1,2}:\d{2}( [AP]M)?$""").matches(it) }
+        val clock = allTexts().firstOrNull { CLOCK.matches(it) }
         assertNotNull("a clock on Home", clock)
         assertTrue("a 24-hour clock, got $clock", Regex("""^\d{2}:\d{2}$""").matches(clock!!))
         assertTrue("the menu language stays English", exists(string(R.string.home_hint)))
@@ -298,8 +373,33 @@ class SeniorInvariantsTest {
     private fun tileTexts(title: String): Set<String> =
         compose.onNode(hasClickAction() and hasText(title)).fetchSemanticsNode().texts().toSet()
 
+    /** What the tile of this show reads out beyond its texts. */
+    private fun tileDescriptions(title: String): List<String> =
+        compose.onNode(hasClickAction() and hasText(title)).fetchSemanticsNode().config.getOrNull(SemanticsProperties.ContentDescription).orEmpty()
+
     private fun assertFocusedTile(title: String) {
         compose.onNode(isFocused() and hasClickAction()).assert(hasText(title))
+    }
+
+    /** Where the focused tile is drawn, grown by its focus scale. */
+    private fun focusedTileBounds() = compose.onNode(isFocused() and hasClickAction()).fetchSemanticsNode().boundsInRoot
+
+    /** Every node of the (merged) tree for which [predicate] holds. */
+    private fun nodes(predicate: (SemanticsNode) -> Boolean): List<SemanticsNode> {
+        fun collect(node: SemanticsNode): List<SemanticsNode> = listOf(node).filter(predicate) + node.children.flatMap(::collect)
+        return collect(compose.onRoot().fetchSemanticsNode())
+    }
+
+    /** Lets [ms] of the paused main-looper clock pass, running what was due in that time (backoffs, banner expiry). */
+    private fun advanceClock(ms: Long) {
+        ShadowLooper.idleMainLooper(ms, TimeUnit.MILLISECONDS)
+        compose.waitForIdle()
+    }
+
+    private fun localized(language: String): Context {
+        val base = ApplicationProvider.getApplicationContext<Context>()
+        val config = Configuration(base.resources.configuration).apply { setLocale(Locale.forLanguageTag(language)) }
+        return base.createConfigurationContext(config)
     }
 
     /** The first text of the focused element, if any. */
@@ -354,4 +454,9 @@ class SeniorInvariantsTest {
 
     private fun quantity(id: Int, count: Int): String =
         ApplicationProvider.getApplicationContext<Context>().resources.getQuantityString(id, count, count)
+
+    private companion object {
+        /** The Home clock: "14:54" or "2:54 PM". */
+        val CLOCK = Regex("""^\d{1,2}:\d{2}( [AP]M)?$""")
+    }
 }
