@@ -129,36 +129,23 @@ class ServerRepositoryTest {
     }
 
     @Test
-    fun commandsAreDeliveredOnceAndAcknowledged() = runBlocking {
-        // The stream ends after each delivery, so the command is replayed on every reconnect until acknowledged.
+    fun commandsOfAnyTypeAreDeliveredOnceAndAcknowledged() = runBlocking {
+        // The stream ends after each delivery, so the commands are replayed on every reconnect until acknowledged. A
+        // newer server's command (odd payload included) is handed on too (the app ignores it) and acknowledged.
         eventsBody = "event: state\ndata: {\"version\":5}\n\n" +
-            "event: command\ndata: {\"id\":7,\"type\":\"stop\",\"payload\":{}}\n\n"
+            "event: command\ndata: {\"id\":7,\"type\":\"stop\",\"payload\":{}}\n\n" +
+            "event: command\ndata: {\"id\":9,\"type\":\"dance\",\"payload\":{\"style\":[1,2]}}\n\n"
         val repo = repository()
         repo.use(api())
-        val first = async { withTimeout(5_000) { repo.commands.first() } }
+        val first = async { withTimeout(5_000) { repo.commands.take(2).toList() } }
         delay(50)
         repo.start()
-        assertEquals(ServerEvent.Command(7, "stop", null, null), first.await())
+        assertEquals(listOf(ServerEvent.Command(7, "stop"), ServerEvent.Command(9, "dance")), first.await())
         val more = withTimeoutOrNull(600) { repo.commands.take(1).toList() }
         assertNull("replays of an already handled command are not delivered again", more)
         repo.stop()
         assertTrue(paths.count { it == "/api/v1/tv/events" } >= 2)
-        assertTrue(paths.contains("/api/v1/tv/commands/7/ack"))
-    }
-
-    @Test
-    fun commandsOfUnknownTypesAreAcknowledgedToo() = runBlocking {
-        // A newer server's command (odd payload included): handed on (the app ignores it) and acknowledged, so it
-        // is not replayed on every reconnect.
-        eventsBody = "event: command\ndata: {\"id\":9,\"type\":\"dance\",\"payload\":{\"style\":[1,2]}}\n\n"
-        val repo = repository()
-        repo.use(api())
-        val first = async { withTimeout(5_000) { repo.commands.first() } }
-        delay(50)
-        repo.start()
-        assertEquals(ServerEvent.Command(9, "dance"), first.await())
-        withTimeout(5_000) { while (!paths.contains("/api/v1/tv/commands/9/ack")) delay(20) }
-        repo.stop()
+        assertTrue(paths.containsAll(listOf("/api/v1/tv/commands/7/ack", "/api/v1/tv/commands/9/ack")))
     }
 
     @Test

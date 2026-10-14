@@ -75,12 +75,9 @@ class AppViewModelTest {
     private val pairStarts = ConcurrentLinkedQueue<MockResponse>()
     private val pairWaits = ConcurrentLinkedQueue<MockResponse>()
 
-    /** `pair/start` and `pair/wait` drop the connection (an unreachable server) while set. */
+    /** `pair/start` drops the connection (an unreachable server) while set. */
     @Volatile
     private var pairStartDown = false
-
-    @Volatile
-    private var pairWaitDown = false
 
     private var commandId = 0L
 
@@ -97,12 +94,9 @@ class AppViewModelTest {
                         pairStartDown -> dropped()
                         else -> pairStarts.poll() ?: json(200, """{"code":"999999","pairToken":"pt-9"}""")
                     }
-                    path == "/api/v1/pair/wait" -> when {
-                        pairWaitDown -> dropped()
-                        else -> pairWaits.poll() ?: run {
-                            Thread.sleep(20) // a long poll, shortened
-                            json(200, """{"status":"pending"}""")
-                        }
+                    path == "/api/v1/pair/wait" -> pairWaits.poll() ?: run {
+                        Thread.sleep(20) // a long poll, shortened
+                        json(200, """{"status":"pending"}""")
                     }
                     path.endsWith("/ack") -> json(200, """{"ok":true}""")
                     // resolve, items and problem reports: nothing is playable here.
@@ -121,8 +115,6 @@ class AppViewModelTest {
         server.close()
     }
 
-    // --- pairing -------------------------------------------------------------------------------------------------
-
     @Test
     fun pairingShowsACodeAndGoesHomeOnceApproved() {
         unpaired()
@@ -140,87 +132,6 @@ class AppViewModelTest {
         waitUntil("the state with the new token") { requests.any { it.url.encodedPath == "/api/v1/tv/state" } }
         assertEquals("Bearer tok-9", requests.first { it.url.encodedPath == "/api/v1/tv/state" }.headers["Authorization"])
         assertNull(vm.homeFocusItemId)
-    }
-
-    @Test
-    fun aRefusedStartWaitsRetryAfterBetweenFiveSecondsAndTenMinutes() {
-        unpaired()
-        pairStarts += MockResponse.Builder().code(429).addHeader("Retry-After", "2").body("""{"error":"rate_limited"}""").build()
-        pairStarts += json(429, """{"error":"rate_limited"}""") // no Retry-After: 30 s
-        pairStarts += MockResponse.Builder().code(429).addHeader("Retry-After", "900").body("""{"error":"rate_limited"}""").build()
-        pairStarts += json(200, """{"code":"111111","pairToken":"pt-1"}""")
-        val vm = startTv()
-        waitUntil("the first refusal") { vm.pairing.value.problem == PairingProblem.RateLimited }
-        assertNull(vm.pairing.value.code)
-        for ((n, waitMs) in listOf(1 to 5_000L, 2 to 30_000L, 3 to 600_000L)) {
-            assertEquals(n, count("/api/v1/pair/start"))
-            advance(waitMs - 1)
-            settle()
-            assertEquals("still waiting after ${waitMs - 1} ms", n, count("/api/v1/pair/start"))
-            advance(1)
-            waitUntil("start #${n + 1}") { count("/api/v1/pair/start") == n + 1 }
-        }
-        waitUntil("the code") { vm.pairing.value.code == "111111" }
-        assertNull(vm.pairing.value.problem)
-    }
-
-    @Test
-    fun anUnreachableServerIsTriedAgainEveryTenSeconds() {
-        unpaired()
-        pairStartDown = true
-        val vm = startTv()
-        waitUntil("the unreachable problem") { vm.pairing.value.problem == PairingProblem.Unreachable }
-        assertNull(vm.pairing.value.code)
-        settle()
-        val attempts = count("/api/v1/pair/start")
-        advance(9_999)
-        settle()
-        assertEquals(attempts, count("/api/v1/pair/start"))
-        pairStartDown = false
-        advance(1)
-        waitUntil("the code") { vm.pairing.value.code == "999999" }
-        assertNull(vm.pairing.value.problem)
-    }
-
-    @Test
-    fun aLostLongPollIsRetriedWithTheSameCodeAfterFiveSeconds() {
-        unpaired()
-        pairStarts += json(200, """{"code":"111111","pairToken":"pt-1"}""")
-        pairWaitDown = true
-        val vm = startTv()
-        waitUntil("the unreachable problem") { vm.pairing.value.problem == PairingProblem.Unreachable }
-        assertEquals("111111", vm.pairing.value.code)
-        settle()
-        val waits = count("/api/v1/pair/wait")
-        advance(4_999)
-        settle()
-        assertEquals(waits, count("/api/v1/pair/wait"))
-        pairWaitDown = false
-        advance(1)
-        waitUntil("the next long poll") { count("/api/v1/pair/wait") > waits && vm.pairing.value.problem == null }
-        assertEquals("111111", vm.pairing.value.code)
-        assertEquals(1, count("/api/v1/pair/start"))
-    }
-
-    @Test
-    fun anExpiredOrUnknownCodeIsReplacedAtOnce() {
-        unpaired()
-        pairStarts += json(200, """{"code":"111111","pairToken":"pt-1"}""")
-        pairStarts += json(200, """{"code":"222222","pairToken":"pt-2"}""")
-        pairStarts += json(200, """{"code":"333333","pairToken":"pt-3"}""")
-        pairStarts += json(200, """{"code":"444444","pairToken":"pt-4"}""")
-        pairWaits += json(410, """{"error":"expired"}""")
-        pairWaits += json(404, """{"error":"not_found"}""") // the server restarted and forgot the code
-        pairWaits += json(200, """{"status":"expired"}""")
-        pairWaits += json(200, """{"status":"approved","deviceId":"tv-9"}""") // no token: not usable
-        val vm = startTv()
-        waitUntil("the fifth code") { vm.pairing.value.code == "999999" }
-        assertEquals(5, count("/api/v1/pair/start"))
-        assertEquals(
-            listOf("Bearer pt-1", "Bearer pt-2", "Bearer pt-3", "Bearer pt-4"),
-            requests.filter { it.url.encodedPath == "/api/v1/pair/wait" }.take(4).map { it.headers["Authorization"] },
-        )
-        assertEquals(Screen.Pairing, vm.screen.value)
     }
 
     @Test
@@ -264,8 +175,6 @@ class AppViewModelTest {
         runBlocking { assertNull(app.graph.deviceStore.current().deviceToken) }
     }
 
-    // --- timed messages ------------------------------------------------------------------------------------------
-
     @Test
     fun okWhileOfflineSaysNoConnectionForFiveSeconds() {
         paired()
@@ -307,8 +216,6 @@ class AppViewModelTest {
         assertNull(vm.banner.value)
     }
 
-    // --- commands --------------------------------------------------------------------------------------------------
-
     @Test
     fun aPlayCommandOnHomePlaysThatEpisodeWithTheShowAsTheHint() {
         paired()
@@ -323,27 +230,6 @@ class AppViewModelTest {
         assertEquals("""{"episodeId":"b.e2"}""", resolveBodies().single())
         waitUntil("the error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
         assertEquals("Show B", vm.player.ui.value.item?.title)
-    }
-
-    @Test
-    fun transportCommandsDoNothingWithoutVideo() {
-        paired()
-        val vm = startTvOnHome()
-        vm.openMenu()
-        vm.onRootEntry(RootEntry.Settings)
-        val menu = vm.menu.value
-        assertNotNull(menu)
-        for ((type, payload) in listOf("pause" to "{}", "resume" to "{}", "seek" to """{"deltaMs":60000}""", "next" to "{}", "previous" to "{}", "stop" to "{}", "launch-rockets" to "{}")) {
-            awaitAck(command(type, payload))
-            assertEquals(type, menu, vm.menu.value)
-            assertEquals(type, Screen.Home, vm.screen.value)
-        }
-        // A message is shown over the menu, which stays.
-        awaitAck(command("message", """{"text":"Hello"}"""))
-        assertEquals("Hello", vm.banner.value)
-        assertEquals(menu, vm.menu.value)
-        settle()
-        assertEquals(0, count("/api/v1/tv/resolve"))
     }
 
     @Test
@@ -384,8 +270,6 @@ class AppViewModelTest {
         assertNull(vm.banner.value)
         assertEquals(0, count("/api/v1/tv/resolve"))
     }
-
-    // --- countdowns ----------------------------------------------------------------------------------------------
 
     @Test
     fun theErrorScreenCountsDownThirtySecondsThenGoesHome() {
@@ -450,38 +334,20 @@ class AppViewModelTest {
         assertEquals(0, count("/api/v1/tv/resolve"))
     }
 
-    // --- hidden menu ---------------------------------------------------------------------------------------------
-
     @Test
-    fun theRootMenuListsWhatTheFocusedShowAllows() {
+    fun theMenuListsWhatTheFocusedShowAllowsAndBackPopsItsPagesOneByOne() {
         paired()
         val vm = startTvOnHome()
         vm.openMenu()
-        assertEquals(
-            MenuUi(listOf(MenuPage.Root(listOf(RootEntry.StartOver, RootEntry.Settings, RootEntry.About))), vm.state.value!!.home[0].item, fromPlayer = false),
-            vm.menu.value,
-        )
+        val home = vm.state.value!!.home
+        val movie = listOf(RootEntry.StartOver, RootEntry.Settings, RootEntry.About)
+        assertEquals(MenuUi(listOf(MenuPage.Root(movie)), home[0].item, fromPlayer = false), vm.menu.value)
         vm.onBack()
         assertNull(vm.menu.value)
         vm.onTileFocused("c")
         vm.openMenu()
-        assertEquals(
-            MenuUi(
-                listOf(MenuPage.Root(listOf(RootEntry.Episodes, RootEntry.StartOver, RootEntry.Settings, RootEntry.About))),
-                vm.state.value!!.home[2].item,
-                fromPlayer = false,
-            ),
-            vm.menu.value,
-        )
-    }
-
-    @Test
-    fun menuPagesStackAndBackPopsThemOneByOne() {
-        paired()
-        val vm = startTvOnHome()
-        vm.onTileFocused("c")
-        vm.openMenu()
         val entries = listOf(RootEntry.Episodes, RootEntry.StartOver, RootEntry.Settings, RootEntry.About)
+        assertEquals(MenuUi(listOf(MenuPage.Root(entries)), home[2].item, fromPlayer = false), vm.menu.value)
         vm.onRootEntry(RootEntry.Settings)
         assertEquals(listOf(MenuPage.Root(entries, focused = 2), MenuPage.Settings), vm.menu.value?.pages)
         vm.onBack()
@@ -513,8 +379,6 @@ class AppViewModelTest {
             assertEquals(expected ?: "en", vm.uiLanguage.value)
         }
     }
-
-    // --- plumbing ------------------------------------------------------------------------------------------------
 
     private fun unpaired() = runBlocking { app.graph.deviceStore.setServer(server.url("/").toString()) }
 

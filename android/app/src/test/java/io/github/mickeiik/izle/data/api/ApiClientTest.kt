@@ -7,8 +7,8 @@ import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import java.io.IOException
@@ -29,6 +29,9 @@ class ApiClientTest {
 
     private fun json(body: String, code: Int = 200) =
         MockResponse.Builder().code(code).addHeader("Content-Type", "application/json").body(body).build()
+
+    private inline fun <reified T : Throwable> failsWith(noinline call: suspend () -> Unit): T =
+        assertThrows(T::class.java) { runBlocking { call() } }
 
     @Test
     fun stateSendsTheDeviceToken() = runBlocking {
@@ -66,7 +69,7 @@ class ApiClientTest {
     }
 
     @Test
-    fun resolveWaitsLongerThanOtherCalls() = runBlocking {
+    fun resolveWaitsLongerThanOtherCalls() = runBlocking<Unit> {
         // The server may spend its whole resolver budget (30 s) before answering; other calls time out sooner.
         val short = OkHttpClient.Builder().readTimeout(200, TimeUnit.MILLISECONDS).build()
         val long = OkHttpClient.Builder().readTimeout(5, TimeUnit.SECONDS).build()
@@ -75,12 +78,7 @@ class ApiClientTest {
         server.enqueue(slow("""{"sessionId":"s","sourceId":"a","media":{"kind":"hls","url":"/p/x/index.m3u8"},"item":{"id":"m","kind":"movie","title":"M"},"episode":{"id":"m.film"}}"""))
         assertEquals("a", api.resolve(ResolveRequest("m.film")).sourceId)
         server.enqueue(slow("""{"version":1,"device":{"id":"d","name":"TV"},"catalog":{"id":"c","buildId":"b","name":"n"},"home":[]}"""))
-        try {
-            api.state()
-            fail("expected a read timeout")
-        } catch (e: IOException) {
-            // expected
-        }
+        failsWith<IOException> { api.state() } // a read timeout
     }
 
     @Test
@@ -88,26 +86,13 @@ class ApiClientTest {
         server.enqueue(json("""{"error":"not_allowed","message":"playback of this episode is not allowed"}""", code = 403))
         server.enqueue(MockResponse.Builder().code(429).addHeader("Retry-After", "42").body("""{"error":"rate_limited"}""").build())
         server.enqueue(MockResponse.Builder().code(502).body("<html>bad gateway</html>").build())
-        try {
-            client().resolve(ResolveRequest("e"))
-            fail("expected ApiException")
-        } catch (e: ApiException) {
-            assertEquals(403, e.status)
-            assertEquals("not_allowed", e.code)
-        }
-        try {
-            client(token = null).pairStart()
-            fail("expected ApiException")
-        } catch (e: ApiException) {
-            assertEquals("rate_limited", e.code)
-            assertEquals(42L, e.retryAfterSec)
-        }
-        try {
-            client().state()
-            fail("expected ApiException")
-        } catch (e: ApiException) {
-            assertEquals("http_502", e.code)
-        }
+        val notAllowed = failsWith<ApiException> { client().resolve(ResolveRequest("e")) }
+        assertEquals(403, notAllowed.status)
+        assertEquals("not_allowed", notAllowed.code)
+        val limited = failsWith<ApiException> { client(token = null).pairStart() }
+        assertEquals("rate_limited", limited.code)
+        assertEquals(42L, limited.retryAfterSec)
+        assertEquals("http_502", failsWith<ApiException> { client().state() }.code)
     }
 
     @Test
@@ -165,40 +150,21 @@ class ApiClientTest {
         assertEquals("/api/v1/tv/problems", request.url.encodedPath)
         assertEquals("Bearer device-token", request.headers["Authorization"])
         assertEquals("""{"kind":"playback","code":"gave_up","episodeId":"e","detail":"tried 2 sources","appVersion":"0.2.0"}""", request.body?.utf8())
-        try {
-            client().reportProblem(report)
-            fail("expected ApiException")
-        } catch (e: ApiException) {
-            assertEquals(400, e.status) // an older server: the reporter ignores it
-        }
+        val refused = failsWith<ApiException> { client().reportProblem(report) }
+        assertEquals("an older server: the reporter ignores it", 400, refused.status)
     }
 
     @Test
-    fun unreachableServerIsAnIOException() = runBlocking {
-        val api = client()
-        server.close()
-        try {
-            api.healthz()
-            fail("expected IOException")
-        } catch (e: IOException) {
-            // expected
-        }
-    }
-
-    @Test
-    fun orNullOnFailureIgnoresOnlyTheServersFailures() = runBlocking {
+    fun anUnreachableServerIsAnIOExceptionAndOrNullOnFailureIgnoresOnlyTheServersFailures() = runBlocking<Unit> {
         server.enqueue(json("""{"ok":true}"""))
         server.enqueue(json("""{"error":"unknown_command"}""", code = 404))
         val api = client()
         assertEquals(Unit, orNullOnFailure { api.healthz() })
         assertNull("an error answer", orNullOnFailure { api.ackCommand(12) })
         server.close()
+        failsWith<IOException> { api.healthz() }
         assertNull("an unreachable server", orNullOnFailure { api.healthz() })
-        try {
-            orNullOnFailure { error("a bug") }
-            fail("expected IllegalStateException")
-        } catch (e: IllegalStateException) {
-            // anything else goes on: a bug, or the coroutine's cancellation
-        }
+        // Anything else goes on: a bug, or the coroutine's cancellation.
+        failsWith<IllegalStateException> { orNullOnFailure { error("a bug") } }
     }
 }
