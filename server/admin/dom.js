@@ -50,13 +50,9 @@ export function setTitle(heading, text) {
  * @param {...(Child | Child[])} content
  */
 export function page({ back, title, aside = [] }, ...content) {
-  return h(
-    "div",
-    { class: "page" },
-    back ? h("p", { class: "back" }, h("a", { href: back[0] }, back[1])) : null,
-    h("div", { class: "title" }, typeof title === "string" ? h("h1", null, title) : title, aside),
-    ...content,
-  );
+  const backLink = back ? h("p", { class: "back" }, h("a", { href: back[0] }, back[1])) : null;
+  const heading = h("div", { class: "title" }, typeof title === "string" ? h("h1", null, title) : title, aside);
+  return h("div", { class: "page" }, backLink, heading, ...content);
 }
 
 /**
@@ -67,13 +63,8 @@ export function page({ back, title, aside = [] }, ...content) {
  */
 export function card(opts, ...children) {
   const o = typeof opts === "string" ? { title: opts } : opts;
-  return h(
-    "section",
-    { class: "card" },
-    h("div", { class: "card-head" }, h("h2", { tabindex: "-1" }, o.title), o.aside),
-    o.intro ? h("p", { class: "intro muted" }, o.intro) : null,
-    ...children,
-  );
+  const head = h("div", { class: "card-head" }, h("h2", { tabindex: "-1" }, o.title), o.aside);
+  return h("section", { class: "card" }, head, o.intro ? h("p", { class: "intro muted" }, o.intro) : null, ...children);
 }
 
 /** @param {string | null} url @param {string} [alt] */
