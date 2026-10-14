@@ -8,9 +8,11 @@ import { fixtureManifest, startTestServer, tempDir, TEST_RESOLVER, writeBundle, 
 import { seenSignals } from "./fixtures/test-resolver.js";
 
 const PROXY_URL = /^\/p\/([A-Za-z0-9_-]{43})\/(index\.m3u8|video\.mp4)$/;
+const REF = { Referer: DEFAULT_REFERER };
 
 const exampleSource = (id: string, ref: Json) => ({ id, type: "adapter", adapter: "example", ref, languages: { audio: ["en", "tr"], subtitles: ["en"] } });
 const testSource = (id: string, ref: Json) => ({ id, type: "adapter", adapter: "test", ref, languages: { audio: null, subtitles: null } });
+const direct = (id: string, media: Json) => ({ id, type: "direct", languages: { audio: ["en"], subtitles: [] }, media });
 const movie = (id: string, sources: Json[]) => ({ id, kind: "movie", title: id, poster: null, episodes: [{ id: `${id}.main`, playbackAllowed: true, sources }] });
 
 /** A bundle whose sources resolve against the example upstream at `up`. */
@@ -21,14 +23,7 @@ function proxyItems(up: string): Json {
       movie("inline", [exampleSource("inline", { video: "demo", inline: true })]),
       movie("mp4", [exampleSource("mp4", { video: "demo", format: "mp4" })]),
       movie("junk", [exampleSource("junk", { video: "demo", junkBytes: 1000 })]),
-      movie("static", [
-        {
-          id: "direct-referer",
-          type: "direct",
-          languages: { audio: ["en"], subtitles: [] },
-          media: { kind: "hls", url: `${up}/static/demo/master.m3u8`, headers: { Referer: DEFAULT_REFERER } },
-        },
-      ]),
+      movie("static", [direct("direct-referer", { kind: "hls", url: `${up}/static/demo/master.m3u8`, headers: REF })]),
       movie("fallback", [exampleSource("gone", { video: "gone" }), testSource("broken", { behavior: "throw" }), exampleSource("works", { video: "demo" })]),
       movie("hang", [testSource("hang", { behavior: "hang" }), testSource("hang2", { behavior: "hang-signal" })]),
       movie("hostile", [
@@ -47,7 +42,7 @@ function proxyItems(up: string): Json {
             {
               media: { kind: "hls", url: "https://plain.example.test/m.m3u8" },
               subtitleTracks: [
-                { url: `${up}/static/demo/subs/en/0.vtt`, language: "en", format: "vtt", headers: { Referer: DEFAULT_REFERER } },
+                { url: `${up}/static/demo/subs/en/0.vtt`, language: "en", format: "vtt", headers: REF },
                 { url: "https://subs.example.test/tr.vtt", language: "tr", format: "vtt", label: "Türkçe" },
               ],
               languages: { audio: ["tr"], subtitles: ["en", "tr"] },
@@ -174,7 +169,7 @@ test("Referer-bound HLS plays only through the proxy, with every URI rewritten a
   assert.ok(access.length > 0 && access.every((l) => l.route.includes(":token") && l.level === (l.status >= 400 ? "info" : "debug")));
 });
 
-test("inline playlists are served as the session's entry; relative URIs resolve against baseUrl", async (t) => {
+test("inline playlists are served as the session's entry; header-bound bundle sources are proxied too", async (t) => {
   const { up, resolve, text, get } = await setupProxy(t);
   const r = await resolve("inline.main");
   assert.equal(r.status, 200);
@@ -187,15 +182,11 @@ test("inline playlists are served as the session's entry; relative URIs resolve 
   const seg = await get(`/p/${token}/u/${uris(playlist.body)[0]}`);
   assert.deepEqual(Buffer.from(await seg.arrayBuffer()), syntheticTsSegment(10));
   assert.equal(up.requests.filter((q) => q.path.endsWith("/master.m3u8")).length, 0, "the master playlist was never fetched");
-});
 
-test("header-bound direct sources from the bundle go through the proxy too", async (t) => {
-  const { up, resolve, text } = await setupProxy(t);
-  const r = await resolve("static.main");
-  assert.equal(r.json.sourceId, "direct-referer");
-  assert.match(r.json.media.url, PROXY_URL);
-  const master = await text(r.json.media.url);
-  assert.equal(master.status, 200);
+  const st = await resolve("static.main");
+  assert.equal(st.json.sourceId, "direct-referer");
+  assert.match(st.json.media.url, PROXY_URL);
+  assert.equal((await text(st.json.media.url)).status, 200);
   assert.equal(up.requests.at(-1)!.referer, DEFAULT_REFERER);
 });
 
@@ -242,8 +233,9 @@ test("segments stream through without being buffered, and a TV that goes away ca
     slow.close();
   });
   const slowUrl = `http://127.0.0.1:${(slow.address() as AddressInfo).port}`;
-  const direct = (id: string, p: string) => ({ id, type: "direct", languages: { audio: [], subtitles: [] }, media: { kind: "mp4", url: `${slowUrl}${p}`, headers: { Referer: "https://r.example.test/" } } });
-  const { s, resolve, get } = await setupProxy(t, { items: () => ({ items: [movie("slow", [direct("a", "/slow")]), movie("held", [direct("b", "/hold")])] }) });
+  const mp4 = (id: string, p: string) => direct(id, { kind: "mp4", url: `${slowUrl}${p}`, headers: REF });
+  const items = () => ({ items: [movie("slow", [mp4("a", "/slow")]), movie("held", [mp4("b", "/hold")])] });
+  const { s, resolve, get } = await setupProxy(t, { items });
 
   const res = await get((await resolve("slow.main")).json.media.url);
   assert.equal(res.status, 200);
@@ -257,7 +249,7 @@ test("segments stream through without being buffered, and a TV that goes away ca
     got += value.byteLength;
   }
   assert.equal(got, 2 * 65536);
-  assert.deepEqual(seen, ["https://r.example.test/"]);
+  assert.deepEqual(seen, [DEFAULT_REFERER]);
 
   const controller = new AbortController();
   const held = await fetch(`${s.base}${(await resolve("held.main")).json.media.url}`, { signal: controller.signal });
@@ -377,15 +369,10 @@ test("adapter failures reach the TV and the log only as {adapterId, code, name};
   for (const leak of ["SuperSecret", "master.m3u8?token", "upstream 500", "bad ref", "behavior"]) assert.ok(!all.includes(leak), `leaked ${leak}`);
   const failures = s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === "adapter failed");
   assert.ok(failures.length >= 5);
-  for (const f of failures) assert.deepEqual(Object.keys(f).filter((k) => !["time", "level", "msg"].includes(k)).sort(), [
-    "adapterId",
-    "code",
-    "deviceId",
-    "episodeId",
-    "ms",
-    ...("name" in f ? ["name"] : []),
-    "sourceId",
-  ].sort());
+  for (const f of failures) {
+    const keys = ["adapterId", "code", "deviceId", "episodeId", "ms", ...("name" in f ? ["name"] : []), "sourceId"];
+    assert.deepEqual(Object.keys(f).filter((k) => !["time", "level", "msg"].includes(k)).sort(), keys.sort());
+  }
 });
 
 test("the first servable result wins; header-bound subtitle tracks are proxied; proxy.always proxies everything", async (t) => {
@@ -412,25 +399,12 @@ test("admin diagnostics: every source tried, hosts and header names only, option
   const { s, up, tv } = await setupProxy(t);
   const d = await s.admin("POST", "/diagnostics/resolve", { episodeId: "fallback.main" });
   assert.equal(d.status, 200);
-  assert.deepEqual(
-    d.json.sources.map((x: Json) => [x.sourceId, x.ok, x.code ?? null, x.name ?? null]),
-    [
-      ["gone", false, "empty", null],
-      ["broken", false, "error", "LeakyError"],
-      ["works", true, null, null],
-    ],
-  );
+  const outcomes = d.json.sources.map((x: Json) => [x.sourceId, x.ok, x.code ?? null, x.name ?? null]);
+  assert.deepEqual(outcomes, [["gone", false, "empty", null], ["broken", false, "error", "LeakyError"], ["works", true, null, null]]);
   const works = d.json.sources[2];
   assert.deepEqual(works.stream, {
-    kind: "hls",
-    inline: false,
-    host: new URL(up.url).host,
-    headerNames: ["Referer"],
-    delivery: "proxy",
-    languages: { audio: ["en", "tr"], subtitles: ["en"] },
-    subtitleTracks: 0,
-    label: null,
-    expiresAt: "2026-10-10T12:10:00.000Z",
+    kind: "hls", inline: false, host: new URL(up.url).host, headerNames: ["Referer"], delivery: "proxy", subtitleTracks: 0,
+    languages: { audio: ["en", "tr"], subtitles: ["en"] }, label: null, expiresAt: "2026-10-10T12:10:00.000Z",
   });
   assert.equal(works.probe.ok, true);
   assert.equal(works.probe.status, 200);

@@ -25,22 +25,25 @@ const load = async (source: string, dataDir?: string) =>
   loadResolver({ module: await moduleFile(source), config: {}, dataDir: dataDir ?? (await tempDir()), log: silentLogger });
 
 test("loader: API version, exports and adapter list are checked; module messages never surface", async () => {
-  await assert.rejects(load("export const apiVersion = 2; export function createAdapters() { return []; }"), (e: Error) =>
-    e instanceof ResolverLoadError && /declares apiVersion 2; this server implements resolver API 1/.test(e.message),
-  );
-  await assert.rejects(load("export const createAdapters = () => [];"), /declares apiVersion none/);
-  await assert.rejects(load("export const apiVersion = 1;"), /does not export createAdapters/);
-  await assert.rejects(load("export const apiVersion = 1; export const createAdapters = () => ({});"), /must return an array/);
-  await assert.rejects(load("export const apiVersion = 1; export const createAdapters = () => [{ id: 'a b', resolve() {} }];"), /needs an id/);
-  await assert.rejects(
-    load("export const apiVersion = 1; export const createAdapters = () => [{ id: 'a', resolve() {} }, { id: 'a', resolve() {} }];"),
-    /provides adapter "a" twice/,
-  );
-  await assert.rejects(
-    load("export const apiVersion = 1; export function createAdapters() { throw new TypeError('key https://secret.example.test/x?k=SECRET'); }"),
-    (e: Error) => /createAdapters\(\) of .* failed \(TypeError\)/.test(e.message) && !e.message.includes("SECRET"),
-  );
-  await assert.rejects(load("export const apiVersion = 1; this is not javascript"), /cannot import resolver module .* \(SyntaxError;/);
+  const v1 = "export const apiVersion = 1;";
+  const adapters = (list: string) => `${v1} export const createAdapters = () => [${list}];`;
+  const leaky = "throw new TypeError('key https://secret.example.test/x?k=SECRET');";
+  const cases: Array<[string, RegExp]> = [
+    ["export const apiVersion = 2;", /declares apiVersion 2; this server implements resolver API 1/],
+    ["export const createAdapters = () => [];", /declares apiVersion none/],
+    [v1, /does not export createAdapters/],
+    [`${v1} export const createAdapters = () => ({});`, /must return an array/],
+    [adapters("{ id: 'a b', resolve() {} }"), /needs an id/],
+    [adapters("{ id: 'a', resolve: 1 }"), /needs an id/],
+    [adapters("{ id: 'a', resolve() {}, healthcheck: 1 }"), /healthcheck that is not a function/],
+    [adapters("{ id: 'a', resolve() {} }, { id: 'a', resolve() {} }"), /provides adapter "a" twice/],
+    [`${v1} export function createAdapters() { ${leaky} }`, /createAdapters\(\) of .* failed \(TypeError\)$/],
+    [`${v1} this is not javascript`, /cannot import resolver module .* \(SyntaxError;/],
+  ];
+  for (const [source, message] of cases) {
+    const refused = (e: Error) => e instanceof ResolverLoadError && message.test(e.message) && !e.message.includes("SECRET");
+    await assert.rejects(load(source), refused, source);
+  }
   await assert.rejects(
     loadResolver({ module: "/nonexistent/izle-resolver.js", config: {}, dataDir: await tempDir(), log: silentLogger }),
     /cannot read resolver module/,
@@ -69,30 +72,28 @@ test("loader: default export or namespace, async createAdapters, context, sha256
 });
 
 test("runAdapter: sync throws, deadlines, outer aborts and invalid results are classified", async () => {
-  const adapter = (resolve: Adapter["resolve"]): Adapter => ({ id: "a", resolve });
   const req = { catalogId: "c", itemId: "i", episodeId: "e", sourceId: "s", ref: { x: 1 }, preferredAudioLanguage: null };
-  const syncThrow = adapter(() => {
-    throw new SyntaxError("nope");
-  });
-  assert.deepEqual(await runAdapter(syncThrow, req, { deadlineMs: 1000 }).then(({ ms: _ms, ...o }) => o), { ok: false, code: "error", name: "SyntaxError" });
-  const never = adapter(() => new Promise(() => {}));
-  assert.deepEqual(await runAdapter(never, req, { deadlineMs: 50 }).then(({ ms: _ms, ...o }) => o), { ok: false, code: "timeout", name: "TimeoutError" });
+  const run = (resolve: Adapter["resolve"], opts: { deadlineMs?: number; signal?: AbortSignal } = {}) =>
+    runAdapter({ id: "a", resolve }, req, { deadlineMs: 1000, ...opts }).then(({ ms: _ms, ...o }) => o as Json);
+  const never = () => new Promise<never>(() => {});
+  assert.deepEqual(await run(() => { throw new SyntaxError("nope"); }), { ok: false, code: "error", name: "SyntaxError" });
+  assert.deepEqual(await run(never, { deadlineMs: 50 }), { ok: false, code: "timeout", name: "TimeoutError" });
   const outer = new AbortController();
-  const pending = runAdapter(never, req, { deadlineMs: 5000, signal: outer.signal });
+  const pending = run(never, { deadlineMs: 5000, signal: outer.signal });
   outer.abort();
-  assert.deepEqual(await pending.then(({ ms: _ms, ...o }) => o), { ok: false, code: "abort", name: "AbortError" });
-  const weird = adapter(() => Promise.reject(Object.assign(new Error("x"), { name: "has spaces and https://x" })));
-  assert.equal((await runAdapter(weird, req, { deadlineMs: 1000 }) as Json).name, "Error");
-  const notError = adapter(() => Promise.reject("https://secret.example.test"));
-  assert.equal((await runAdapter(notError, req, { deadlineMs: 1000 }) as Json).name, "NonError");
-  const mutating = adapter(async (r) => {
-    (r.ref as Json).x = 2;
-    return [{ media: { kind: "mp4", url: "https://a.example.test/v.mp4" } }];
-  });
-  assert.equal((await runAdapter(mutating, req, { deadlineMs: 1000 })).ok, true);
+  assert.deepEqual(await pending, { ok: false, code: "abort", name: "AbortError" });
+  assert.equal((await run(() => Promise.reject(Object.assign(new Error("x"), { name: "has spaces and https://x" })))).name, "Error");
+  assert.equal((await run(() => Promise.reject("https://secret.example.test"))).name, "NonError");
+  const mutating = async (r: Json) => {
+    r.ref.x = 2;
+    return [{ media: { kind: "mp4" as const, url: "https://a.example.test/v.mp4" } }];
+  };
+  assert.equal((await run(mutating)).ok, true);
   assert.equal(req.ref.x, 1, "adapters get a copy of the ref");
-  const big = adapter(async () => [{ media: { kind: "hls", playlist: `#EXTM3U\n${"#".repeat(2 * 1024 * 1024)}`, baseUrl: "https://a.example.test/" } }]);
-  assert.equal((await runAdapter(big, req, { deadlineMs: 1000 }) as Json).name, "InvalidResult");
+  const playlist = (text: string) => async () => [{ media: { kind: "hls" as const, playlist: text, baseUrl: "https://a.example.test/" } }];
+  assert.equal((await run(playlist(`#EXTM3U\n${"#".repeat(2 * 1024 * 1024)}`))).name, "InvalidResult");
+  assert.equal((await run(playlist("<html>not a playlist</html>"))).name, "NotAPlaylist");
+  assert.deepEqual(await run(async () => []), { ok: false, code: "empty", name: null });
 });
 
 test("startup refuses a catalog that needs adapters the module does not provide; so does a reload", async (t) => {
