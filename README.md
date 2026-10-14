@@ -7,10 +7,11 @@ screen of big poster tiles. OK plays the next unwatched episode (or resumes the 
 advance on their own, and Back always returns to that single home screen. There is no browsing, no seasons
 list, no settings in the viewer's path.
 
-Everything else is done remotely by the owner: which shows are on the home screen and in what order, "continue
-from episode X", language settings, play/stop. The owner's phone can also **listen along**: from the same admin
-page it plays another source of the episode the TV is showing (a dub in another language) in sync with the
-picture, with an adjustable offset and speed for releases that differ in timing.
+Everything else is done remotely by the owner from the server's admin page: which shows are on the home screen and
+in what order, "continue from episode X", languages, playback control. The owner's phone can also **listen along**:
+it plays another source of the episode the TV is showing (a dub in another language) in sync with the picture, with
+an adjustable offset and speed for releases that differ in timing. The TV app always talks to the server; there is
+no standalone mode.
 
 ## Bring your own catalog
 
@@ -19,20 +20,14 @@ versioned contract — and, optionally, a **resolver module** the owner writes t
 playable streams at play time. A small [sample catalog](sample-catalog/) of openly licensed films (Blender
 Foundation open movies and public-domain titles) is included and served by default.
 
-- Catalog bundle contract: [`docs/spec/catalog-bundle-v1.md`](docs/spec/catalog-bundle-v1.md)
+- Catalog bundle contract: [`docs/spec/catalog-bundle-v1.md`](docs/spec/catalog-bundle-v1.md); check a bundle with
+  `npx izle-validate <dir>` (`--probe` also range-GETs every media URL)
 - Resolver module API: [`docs/spec/resolver-module-v1.md`](docs/spec/resolver-module-v1.md), with a runnable
   [example module](server/examples/resolver-example/README.md)
 - Server API: [`docs/spec/server-api-v1.md`](docs/spec/server-api-v1.md)
 
 Streams that need upstream request headers (a `Referer`, say) or come as playlist text are served to the TV through
 the server's media proxy, so those headers and the upstream URLs never reach the TV.
-
-Check a bundle with the validator from `@izle/contract`:
-
-```bash
-npx izle-validate sample-catalog          # schema + semantic checks
-npm run sample:check                      # also range-GETs every sample media URL (network)
-```
 
 ## Repository layout
 
@@ -45,74 +40,40 @@ npm run sample:check                      # also range-GETs every sample media U
 | `android/` | Android TV app (Kotlin, Compose for TV, Media3) |
 | `scripts/` | release tooling: server package build (`pack-server.mjs`) and smoke test, version bump/check |
 | `Dockerfile` | container image of the server package |
-| `docs/` | specs, [UX](docs/ux/senior-tv.md), [self-hosting](docs/deploy/self-hosting.md), [releasing](docs/releasing.md) |
+| `docs/` | specs, [TV UX](docs/ux/senior-tv.md), [self-hosting](docs/deploy/self-hosting.md), [releasing](docs/releasing.md), [decision log](docs/decisions.md) |
 
-## Status
-
-Early development. Done: Phase 0 (bootstrap), Phase 1 (catalog bundle contract, validator, sample catalog),
-Phase 2 (server core for direct sources: pairing, TV and admin APIs, live events, progress and play order),
-Phase 3 (the Android TV app: pairing, home tiles, player with resume, auto-next, fallback and live updates, the
-hidden menu, English and Turkish), Phase 4 (resolver modules, the media proxy and admin diagnostics), Phase 5
-(the browser admin page) and Phase 6 (self-hosting: server package, systemd and Caddy examples, Docker image,
-release workflow). Private catalogs and their resolver modules (Phase 7) live outside this repository. How the TV
-behaves is described in [docs/ux/senior-tv.md](docs/ux/senior-tv.md).
+Status: early development. The server, the TV app (English and Turkish), the admin page and the self-hosting setup
+are implemented; private catalogs and their resolver modules live outside this repository.
 
 ## Self-hosting
 
 Each [release](https://github.com/mickeiik/izle/releases) has the server as one dependency-free package
-(`izle-server-X.Y.Z.tgz`, Node.js ≥ 22.13) and the TV app as an APK; what changed between releases:
-[CHANGELOG.md](CHANGELOG.md). The [self-hosting guide](docs/deploy/self-hosting.md) covers installing the server as
-a systemd service, HTTPS with Caddy, the admin token, the firewall, Docker, updates and backups, and installing the
-app on a TV. How releases are made, Android release signing and the checklist for publishing the repository are in
-[docs/releasing.md](docs/releasing.md). Security problems are reported privately, as described in
-[SECURITY.md](SECURITY.md).
+(`izle-server-X.Y.Z.tgz`, Node.js ≥ 22.13) and the TV app as an APK; [CHANGELOG.md](CHANGELOG.md) says what
+changed. Installing the server (systemd, HTTPS with Caddy, Docker), backups and installing the app on a TV: the
+[self-hosting guide](docs/deploy/self-hosting.md). Making releases: [docs/releasing.md](docs/releasing.md).
+Security problems are reported privately: [SECURITY.md](SECURITY.md).
 
 ## Development
 
-Requirements: Node.js ≥ 22.13 and npm; for the TV app a JDK 21+ and the Android SDK.
+Requirements: Node.js ≥ 22.13 and npm; for the TV app a JDK 21+ and the Android SDK. Every command (tests,
+typecheck, packaging, the emulator loop) is listed in [AGENTS.md](AGENTS.md#commands).
 
 ```bash
-npm ci
-npm test            # all workspaces
-npm run typecheck
-npm run pack:server && npm run smoke:server   # build dist/izle-server-X.Y.Z.tgz and test the installed package
+npm ci && npm test
+npm run -w server dev -- --config server/izle.dev.json            # sample catalog on :8787, state in server/data/
+npm run -s -w server dev -- admin-token --config server/izle.dev.json   # prints the admin token
 ```
 
-### Run the server
+Open `http://localhost:8787/admin/` and sign in with the token (`admin-token --link` prints a sign-in link and its
+QR code for a phone). There the owner approves the pairing code a TV shows; per TV, picks and orders the home
+screen's shows, sets "continue from episode X", the menu, audio and subtitle languages and autoplay on start, sees
+what is playing, plays, stops, pauses, resumes, seeks and skips episodes, sends a short message, and sees the
+problems the TV ran into (its own reports, and failed resolves or proxy requests the server saw); and reloads the
+catalog and tests episode sources.
 
-```bash
-npm run -w server dev -- --config server/izle.dev.json
-```
-
-This serves the sample catalog on port 8787 and keeps its state in `server/data/` (SQLite database and the
-admin token, created on first start). Without `--config` the server uses the same defaults with `./data`.
-Print the admin token with:
-
-```bash
-npm run -s -w server dev -- admin-token --config server/izle.dev.json
-```
-
-### Admin page
-
-Open `http://localhost:8787/admin/` and sign in with the admin token (`admin-token --link` prints a sign-in link and
-its QR code for a phone). From there the owner approves the pairing code a TV shows, picks and orders the shows on
-each TV's home screen, sets "continue from episode X", the menu,
-audio and subtitle languages, starts or stops playback, sees what is playing, reloads the catalog and tests
-episode sources. It can also pause, resume, seek and skip episodes on the TV, send it a short message, turn on
-autoplay when the TV starts, and see the problems a TV ran into (its own reports, and failed resolves or proxy
-requests the server saw).
-
-### Resolver modules
-
-To play a catalog whose streams are resolved at play time, point `resolver.module` in the config at a local
-resolver module and check it:
-
-```bash
-npm run -s -w server dev -- check-resolver --config server/examples/resolver-example/izle.example.json
-```
-
-[`server/examples/resolver-example/`](server/examples/resolver-example/README.md) runs the whole chain locally: an
-example module, a stand-in streaming site with signed, Referer-bound URLs, and a catalog that uses them.
+Streams resolved at play time need `resolver.module` in the config pointing at a local module;
+`npm run -s -w server dev -- check-resolver --config <file>` checks it, and
+[`server/examples/resolver-example/`](server/examples/resolver-example/README.md) runs the whole chain locally.
 
 ### Try the API with curl
 
@@ -126,9 +87,8 @@ ADMIN=$(npm run -s -w server dev -- admin-token --config server/izle.dev.json)
 # 1. The TV asks for a pairing code and shows it on screen.
 START=$(curl -s -X POST $B/api/v1/pair/start)
 CODE=$(echo "$START" | jq -r .code); PAIR=$(echo "$START" | jq -r .pairToken)
-echo "code on the TV: $CODE"
 
-# 2. The owner approves the code and names the TV (the name is optional; the shell equivalent is
+# 2. The owner approves the code, optionally naming the TV (in a shell:
 #    `npm run -s -w server dev -- pair approve $CODE Living room --config server/izle.dev.json`).
 curl -s -X POST $B/api/v1/admin/pair/approve -H "Authorization: Bearer $ADMIN" \
   -H 'Content-Type: application/json' -d "{\"code\":\"$CODE\",\"name\":\"Living room\"}"; echo
@@ -161,20 +121,12 @@ change the home list again from another terminal.
 
 ### Android
 
-From `android/`, with `JAVA_HOME` (JDK 21+, e.g. Android Studio's bundled JBR) and `ANDROID_HOME` set:
-
-```bash
-./gradlew :app:assembleDebug :app:testDebugUnitTest
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n io.github.mickeiik.izle/.MainActivity --es izle.server http://10.0.2.2:8787
-```
-
-The emulator reaches a server on the host at `http://10.0.2.2:8787` (debug builds also prefill that address on
-the first-run screen; `--es izle.server` skips typing it). The TV then shows a 6-digit pairing code and the admin
-page's address: approve it on the admin page (or with `pair approve`, as in step 2 of the curl flow above), put
-shows on its home screen, and the tiles appear on the TV without a restart. Everything else the owner controls — order, "continue from", languages, play/stop — applies
-live the same way. On the TV, the remote's Menu key or holding OK opens a hidden menu (episodes, start over,
-audio, subtitles, settings, about).
+Build, install and start the app on a TV emulator as in the [emulator loop](AGENTS.md#emulator-loop). The emulator
+reaches a server on the host at `http://10.0.2.2:8787`, which debug builds prefill on the first-run screen. The TV
+then shows a 6-digit pairing code and the admin page's address: approve it (admin page, or step 2 above), put shows
+on its home screen, and the tiles appear without a restart; everything else the owner controls applies live the same
+way. On the TV, the remote's Menu key or holding OK opens a hidden menu (episodes, start over, audio, subtitles,
+settings, about).
 
 ## License
 
