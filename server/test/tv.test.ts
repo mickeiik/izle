@@ -156,7 +156,7 @@ test("a finished show that gains an episode resumes there until the owner's curs
   await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["show"] });
   for (const e of ["show.e1", "show.e2", "show.e4", "show.e5"]) await progress(as, e, "finished", 1_000, 1_000);
   let c = await continueOf(as, "show");
-  assert.deepEqual([c.episodeId, c.status, c.positionMs], ["show.e1", "finished", 0], "wrapped to the first episode's start");
+  assert.deepEqual([c.episodeId, c.status, c.positionMs], ["show.e1", "finished", 0], "wrapped, from the start");
 
   s.clock.advance(1_000);
   await appendToShow(s, "fixture-2", [extraEpisode("show.e6", 4, false), extraEpisode("show.e7", 5)]);

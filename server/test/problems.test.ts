@@ -318,10 +318,7 @@ test("server-origin: a TV resolve with nothing playable, and sources the server 
   assert.equal(ok.json.sourceId, "plain");
   assert.deepEqual(
     rows("source_failed").map((p) => [p.kind, p.sourceId, p.detail, p.episodeId]).sort(),
-    [
-      ["resolve", "bad", "error LeakyError", "mixed.main"],
-      ["resolve", "none", "empty", "mixed.main"],
-    ],
+    [["resolve", "bad", "error LeakyError", "mixed.main"], ["resolve", "none", "empty", "mixed.main"]],
   );
   // The failed sources now go last for 10 minutes: the next resolve plays at once and records nothing new.
   assert.equal((await as("POST", "/resolve", { episodeId: "mixed.main" })).json.sourceId, "plain");
