@@ -111,7 +111,8 @@ export function episodeName(e, kind) {
 }
 
 /**
- * @typedef {EpisodeLike & { status: "new" | "watching" | "finished", positionMs: number, durationMs: number | null, index: number, count: number }} ContinueInfo
+ * What OK plays for a home entry (`continue` of `GET /admin/devices/<id>`).
+ * @typedef {EpisodeLike & { episodeId: string, status: "new" | "watching" | "finished", positionMs: number, durationMs: number | null }} ContinueInfo
  */
 
 /**
@@ -496,7 +497,7 @@ export const LANGUAGES = /** @type {const} */ ([
 ]);
 
 /**
- * "Türkçe (tr)" for known tags, the tag itself otherwise; "Off"/"Default" for null as `none` says.
+ * "Türkçe (tr)" for known tags, the tag itself otherwise; `none` (by default "–") when there is no tag.
  * @param {string | null | undefined} tag
  * @param {string} [none]
  */

@@ -39,7 +39,7 @@ export function homeCard(ctx) {
   const hintId = uid("add-hint");
   const search = h("input", { type: "search", id: searchId, placeholder: "Search the catalog", autocomplete: "off", spellcheck: "false", "aria-describedby": hintId });
 
-  /** Saves the list; while a save runs, other edits wait for it (each is computed from the list it saw). */
+  /** Saves the list. While a save runs, other edits are ignored (each is computed from the list it saw). */
   const save = async (/** @type {string[]} */ itemIds, /** @type {string} */ message) => {
     if (saving) return;
     saving = true;
@@ -154,7 +154,8 @@ export function homeCard(ctx) {
     const add = actionButton("Add", { "data-control": "add", "data-focus": `add:${item.id}`, "aria-label": `Add ${item.title}` }, async () => {
       const after = (results ?? []).map((/** @type {any} */ r) => `add:${r.id}`);
       const at = after.indexOf(`add:${item.id}`);
-      // The row's Add turns into "On Home": the focus goes to the next show's Add, else the search box.
+      // The row's Add turns into "On Home": the focus goes to the next show's Add, else to the nearest one above, else
+      // to the search box.
       await keepFocus(() => save([...ids(), item.id], `${item.title} added to Home.`), ...after.slice(at + 1), ...after.slice(0, at).reverse(), search);
     });
     const reason = chip("");
@@ -246,7 +247,7 @@ function episodePicker(ctx, itemId, continued) {
     try {
       const [item, prog] = await Promise.all([ctx.scope.read(`/catalog/items/${encodeURIComponent(itemId)}`), ctx.scope.read(`${ctx.path}/progress`)]);
       kind = item.item.kind;
-      const episodes = /** @type {Array<{ id: string, playbackAllowed: boolean }>} */ (item.item.episodes);
+      const episodes = /** @type {Array<import("./lib.js").EpisodeLike & { id: string, playbackAllowed: boolean }>} */ (item.item.episodes);
       states = episodeStates(episodes, entry.continue?.episodeId ?? null, prog.progress.filter((/** @type {any} */ p) => p.itemId === itemId));
     } catch (err) {
       if (mine === seq && ctx.scope.alive()) element.replaceChildren(loadError(err, load, "Could not load the episodes."));
@@ -254,7 +255,7 @@ function episodePicker(ctx, itemId, continued) {
     }
     if (mine !== seq || element.hidden) return;
     const rows = states.map((s) => {
-      const e = /** @type {any} */ (s.episode);
+      const e = s.episode;
       const label = episodeName(e, kind);
       return h(
         "li",

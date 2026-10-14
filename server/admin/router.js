@@ -20,7 +20,7 @@ import { errorText } from "./lib.js";
 
 /**
  * @typedef {object} Scope
- * @property {AbortSignal} signal aborted when the view ends: give it to the view's reads
+ * @property {AbortSignal} signal aborted when the view ends: `read` carries it; give it to the view's other reads
  * @property {(path: string) => Promise<any>} read a GET below /api/v1/admin that ends with the view
  * @property {() => boolean} alive whether the view is still the one shown
  * @property {(fn: () => Promise<void>, ms: number, onError?: OnError) => Job} poll calls `fn` now and every `ms`

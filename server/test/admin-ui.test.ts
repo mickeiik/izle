@@ -92,7 +92,7 @@ test("admin helpers: episode names and what OK does", () => {
   assert.equal(episodeName({ number: 5, title: null }, "series"), "Episode 5");
   assert.equal(episodeName({ label: "Special", number: 9, title: "Xmas" }, "series"), "Special — Xmas");
   assert.equal(episodeName({ title: null }, "movie"), "Film");
-  const c = { season: 1, number: 2, title: "Two", label: null, index: 1, count: 3, durationMs: 600_000 };
+  const c = { episodeId: "show.s1e2", season: 1, number: 2, title: "Two", label: null, durationMs: 600_000 };
   assert.equal(continueText({ ...c, status: "new", positionMs: 0 }, "series"), "S1 · E2 — Two · new");
   assert.equal(continueText({ ...c, status: "watching", positionMs: 90_000 }, "series"), "S1 · E2 — Two · continues at 1:30 of 10:00");
   assert.equal(continueText({ ...c, status: "watching", positionMs: 17_000 }, "movie"), "starts from the beginning", "the TV resumes from 30 s on");

@@ -57,11 +57,11 @@ export function companionCard({ deviceId, signal }) {
   let candidatesKey = "";
   /** @type {"idle" | "starting" | "listening"} */
   let phase = "idle";
-  /** @type {{ episodeId: string, sourceId: string, language: string | null, link: { offsetMs: number, rate: number }, expiresAt: string | null, transport: string } | null} */
+  /** @type {{ episodeId: string, sourceId: string, language: string | null, link: import("./lib.js").LinkTiming, expiresAt: string | null, transport: string } | null} */
   let playing = null;
-  /** @type {{ transport: string, destroy(): void } | null} */
+  /** @type {import("./companion-player.js").Attached | null} */
   let stream = null;
-  /** @type {any} */
+  /** @type {import("./lib.js").Anchor | null} */
   let anchor = null;
   let tvActive = false;
   let lastActiveAt = Date.now();
@@ -75,8 +75,9 @@ export function companionCard({ deviceId, signal }) {
   let seekHoldUntil = 0;
   let recoveries = 0;
   let lastReResolveAt = 0;
-  /** Bumped by stop() and by every load(): work that awaited across a change drops its result. */
+  /** Bumped by stop(): work that awaited across it drops its result. */
   let generation = 0;
+  /** Bumped by every load(): a load that another one overtook drops its result. */
   let loadSeq = 0;
   /** @type {ReturnType<typeof setInterval> | undefined} */
   let loopTimer;

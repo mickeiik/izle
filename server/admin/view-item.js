@@ -9,8 +9,9 @@ import { episodeName, errorText, formatClock, plural, showMeta, sourceReport } f
 
 /** @param {any} report the answer of POST /admin/diagnostics/resolve */
 function reportView(report) {
+  /** @type {Array<ReturnType<typeof sourceReport>>} */
   const sources = report.sources.map((/** @type {any} */ s) => sourceReport(s));
-  const working = sources.filter((/** @type {any} */ r) => r.ok).length;
+  const working = sources.filter((r) => r.ok).length;
   return h(
     "div",
     null,
@@ -18,7 +19,7 @@ function reportView(report) {
     h(
       "ul",
       { class: "diag" },
-      sources.map((/** @type {ReturnType<typeof sourceReport>} */ r) =>
+      sources.map((r) =>
         h(
           "li",
           { class: r.ok ? "ok" : "bad" },

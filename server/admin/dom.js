@@ -386,8 +386,8 @@ export async function keepFocus(update, ...fallbacks) {
  * Keeps `parent`'s children as one row per item, in order, keyed by `keyOf`: a row is created once and kept while
  * its key is there, so a refresh never rebuilds a row that holds the focus or a half-typed value. Rows are moved
  * only when the order changed, and the focus stays on the element that had it. When its row went away, the focus
- * moves to the row that took its place (else the last row; there, to the control of the same `data-control` kind),
- * else to `fallback`.
+ * moves to the row that took its place (else the last row), onto its control of the same `data-control` kind (else
+ * its first control); with no row left, to `fallback`.
  * @template T
  * @template {Row<T>} R
  * @param {HTMLElement} parent only the rows live there
