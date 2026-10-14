@@ -45,10 +45,9 @@ import io.github.mickeiik.izle.ui.theme.IzleColors
 import io.github.mickeiik.izle.ui.theme.IzleShapes
 import io.github.mickeiik.izle.ui.theme.IzleSpacing
 
-/** A countdown in a [PosterPanel]: what happens when ("Starts in 8 s"), and a bar for the time left. */
+/** What happens when ("Starts in 8 s"), and a bar for the time left. */
 class PanelCountdown(val text: String, val secondsLeft: Int, val totalSeconds: Int)
 
-/** A button of a [PosterPanel]. */
 class PanelButton(val label: String, val onClick: () -> Unit)
 
 private val PosterWidth = 220.dp
@@ -56,27 +55,22 @@ private val PosterHeight = 330.dp
 private val TextWidth = 576.dp
 
 /**
- * The full-screen panel of "Up next", autoplay on start, "Can't play right now" and "The end". The poster is
- * always at the same spot (left of the centre, vertically centred), the text beside it always in the same order:
- * a small line above the title, the title, up to two lines under it, the countdown with its bar, the buttons.
- * Opaque: the end credits or the tiles behind would compete with the countdown.
- *
- * The first button takes the focus and comes first: it is what OK does (Play now, Try again). With no buttons
- * nothing here can take the focus.
+ * The full-screen panel of "Up next", autoplay on start, "Can't play right now" and "The end": the poster always at the
+ * same spot, the text beside it always in the same order. Opaque: the end credits or the tiles behind would compete
+ * with the countdown. The first button takes the focus: it is what OK does (Play now, Try again). [showTitle] is drawn
+ * in the poster's place when there is none.
  */
 @Composable
 fun PosterPanel(
     posterUrl: String?,
-    /** The show's name, drawn in the poster's place when it has none (as on its Home tile). */
     showTitle: String?,
     title: String,
-    modifier: Modifier = Modifier,
     overline: String? = null,
     lines: List<String> = emptyList(),
     countdown: PanelCountdown? = null,
     buttons: List<PanelButton> = emptyList(),
 ) {
-    Box(modifier.fullScreen()) {
+    Box(Modifier.fullScreen()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(IzleSpacing.Huge),
@@ -97,7 +91,7 @@ fun PosterPanel(
                     Spacer(Modifier.height(IzleSpacing.XLarge))
                     Text(countdown.text, style = MaterialTheme.typography.headlineMedium, color = IzleColors.Accent)
                     Spacer(Modifier.height(IzleSpacing.Small))
-                    CountdownBar(countdown.secondsLeft, countdown.totalSeconds, Modifier.fillMaxWidth())
+                    CountdownBar(countdown.secondsLeft, countdown.totalSeconds)
                 }
                 if (buttons.isNotEmpty()) {
                     Spacer(Modifier.height(IzleSpacing.XXLarge))
@@ -108,10 +102,7 @@ fun PosterPanel(
     }
 }
 
-/**
- * The poster filling its box or, without one, [title] drawn in its place: split at syllables, not anywhere, when a
- * word is too long.
- */
+/** The poster filling its box or, without one, [title] in its place, split at syllables when a word is too long. */
 @Composable
 fun BoxScope.PosterOrTitle(posterUrl: String?, title: String?, maxLines: Int, color: Color) {
     if (posterUrl != null) {
@@ -144,19 +135,18 @@ private fun PanelButtons(buttons: List<PanelButton>) {
 }
 
 /**
- * The time left of a countdown that the view model ticks once a second. Each tick starts one linear step of at most
- * a second towards the next value, so the bar moves smoothly and is empty when the countdown runs out; there is no
- * frame loop and no animation measured against a clock, so a paused clock (the UI tests') simply holds it.
+ * The time left of a countdown that the view model ticks once a second: each tick starts one linear step of a second
+ * towards the next value, so the bar moves smoothly; no frame loop, so a paused clock (the UI tests') holds it.
  */
 @Composable
-private fun CountdownBar(secondsLeft: Int, totalSeconds: Int, modifier: Modifier = Modifier) {
+private fun CountdownBar(secondsLeft: Int, totalSeconds: Int) {
     val total = totalSeconds.coerceAtLeast(1).toFloat()
     val fraction = remember { Animatable((secondsLeft / total).coerceIn(0f, 1f)) }
     LaunchedEffect(secondsLeft) {
         fraction.animateTo(((secondsLeft - 1) / total).coerceIn(0f, 1f), tween(1_000, easing = LinearEasing))
     }
     Box(
-        modifier.height(10.dp).drawBehind {
+        Modifier.fillMaxWidth().height(10.dp).drawBehind {
             val radius = CornerRadius(size.height / 2)
             drawRoundRect(IzleColors.ProgressTrack, cornerRadius = radius)
             drawRoundRect(IzleColors.Accent, size = Size(size.width * fraction.value, size.height), cornerRadius = radius)

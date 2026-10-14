@@ -13,14 +13,17 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -44,13 +47,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
+import androidx.tv.material3.Button
+import androidx.tv.material3.ButtonDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import io.github.mickeiik.izle.R
 import io.github.mickeiik.izle.domain.EpisodeName
 import io.github.mickeiik.izle.domain.TileBadge
+import io.github.mickeiik.izle.ui.theme.IzleBorders
 import io.github.mickeiik.izle.ui.theme.IzleColors
 import io.github.mickeiik.izle.ui.theme.IzleShapes
 import io.github.mickeiik.izle.ui.theme.IzleSpacing
@@ -122,7 +131,10 @@ fun languageName(tag: String?, uiLocale: Locale): String? {
 }
 
 @Composable
-fun Clock(modifier: Modifier = Modifier) {
+fun languageLabel(tag: String): String = stringResource(if (tag == "tr") R.string.language_tr else R.string.language_en)
+
+@Composable
+fun Clock() {
     val context = LocalContext.current
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) {
@@ -137,7 +149,7 @@ fun Clock(modifier: Modifier = Modifier) {
     // The locale is a key too: the owner may switch the menu language while Home shows ("PM" becomes "ÖS").
     val locale = context.currentLocale()
     val text = remember(now, pattern, locale) { SimpleDateFormat(pattern, locale).format(Date(now)) }
-    Text(text, modifier = modifier, style = MaterialTheme.typography.headlineMedium, color = IzleColors.OnSurface)
+    Text(text, style = MaterialTheme.typography.headlineMedium, color = IzleColors.OnSurface)
 }
 
 @Composable
@@ -176,7 +188,7 @@ fun PauseIcon(modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun CheckIcon(modifier: Modifier = Modifier, color: Color = IzleColors.OnSurface) {
+fun CheckIcon(modifier: Modifier, color: Color) {
     Canvas(modifier) {
         val path = Path().apply {
             moveTo(size.width * 0.12f, size.height * 0.52f)
@@ -189,12 +201,9 @@ fun CheckIcon(modifier: Modifier = Modifier, color: Color = IzleColors.OnSurface
 
 /** A thin progress bar (tile progress, player position). */
 @Composable
-fun ProgressBar(fraction: Float, modifier: Modifier = Modifier, height: Dp = 6.dp) {
-    Box(modifier.fillMaxWidth().height(height).background(IzleColors.ProgressTrack, IzleShapes.Pill)) {
-        Box(
-            Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(height)
-                .background(IzleColors.Accent, IzleShapes.Pill),
-        )
+fun ProgressBar(fraction: Float, height: Dp = 6.dp) {
+    Box(Modifier.fillMaxWidth().height(height).background(IzleColors.ProgressTrack, IzleShapes.Pill)) {
+        Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(height).background(IzleColors.Accent, IzleShapes.Pill))
     }
 }
 
@@ -215,28 +224,77 @@ suspend fun requestFocusWithin(requester: () -> FocusRequester?, took: () -> Boo
     }
 }
 
-/** A full-screen message in big type (errors, "Nothing here yet"). */
+/** A line saying what went wrong (server address, pairing, the episode list): one size and colour everywhere. */
 @Composable
-fun FullScreenMessage(title: String, detail: String? = null, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxSize().background(IzleColors.Background), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(IzleSpacing.Safe)) {
-            Text(title, style = MaterialTheme.typography.displaySmall, color = IzleColors.OnSurface, textAlign = TextAlign.Center)
-            if (detail != null) {
-                Spacer(Modifier.height(IzleSpacing.Large))
-                Text(detail, style = MaterialTheme.typography.bodyLarge, color = IzleColors.Dim, textAlign = TextAlign.Center)
-            }
-        }
+fun ErrorText(text: String, textAlign: TextAlign? = null) {
+    Text(text, style = MaterialTheme.typography.headlineSmall, color = IzleColors.Error, textAlign = textAlign)
+}
+
+/**
+ * The app's one button: dark with a grey outline, and white with a white border, 10 % larger, while focused, so the
+ * focused one is unmistakable from across the room.
+ */
+@Composable
+fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+    Button(
+        onClick = onClick,
+        modifier = modifier,
+        enabled = enabled,
+        scale = ButtonDefaults.scale(focusedScale = 1.1f),
+        shape = ButtonDefaults.shape(IzleShapes.Pill),
+        colors = ButtonDefaults.colors(
+            containerColor = IzleColors.SurfaceHigh,
+            contentColor = IzleColors.OnSurface,
+            focusedContainerColor = IzleColors.Focus,
+            focusedContentColor = IzleColors.OnFocus,
+            pressedContainerColor = IzleColors.Focus,
+            pressedContentColor = IzleColors.OnFocus,
+            disabledContainerColor = IzleColors.Surface,
+            disabledContentColor = IzleColors.Dim,
+        ),
+        border = ButtonDefaults.border(
+            border = IzleBorders.outline(IzleShapes.Pill),
+            focusedBorder = IzleBorders.focus(IzleShapes.Pill),
+            pressedBorder = IzleBorders.focus(IzleShapes.Pill),
+            disabledBorder = IzleBorders.outline(IzleShapes.Pill),
+            focusedDisabledBorder = IzleBorders.focus(IzleShapes.Pill),
+        ),
+        contentPadding = PaddingValues(horizontal = IzleSpacing.XXLarge, vertical = IzleSpacing.Small),
+    ) {
+        Text(text, style = MaterialTheme.typography.titleLarge, maxLines = 1)
     }
 }
 
-/** A line saying what went wrong (server address, pairing, the episode list): one size and colour everywhere. */
+/**
+ * The owner's message: 30 sp bold, stepping down to 24 sp only when a long one would not fit otherwise, at most three
+ * lines, dark on the warm accent so it stands out on any picture. Not focusable, no buttons: it goes away by itself.
+ * [onCutShort]: even 24 sp does not fit three lines.
+ */
 @Composable
-fun ErrorText(text: String, modifier: Modifier = Modifier, textAlign: TextAlign? = null) {
-    Text(text, modifier = modifier, style = MaterialTheme.typography.headlineSmall, color = IzleColors.Error, textAlign = textAlign)
+fun MessageBanner(
+    text: String,
+    modifier: Modifier = Modifier,
+    textAlign: TextAlign = TextAlign.Start,
+    onCutShort: () -> Unit = {},
+) {
+    BasicText(
+        text,
+        style = MaterialTheme.typography.headlineSmall.copy(color = IzleColors.OnAccent, lineHeight = 1.25.em, textAlign = textAlign),
+        maxLines = 3,
+        overflow = TextOverflow.Ellipsis,
+        autoSize = TextAutoSize.StepBased(minFontSize = 24.sp, maxFontSize = 30.sp, stepSize = 2.sp),
+        onTextLayout = { if (it.hasVisualOverflow) onCutShort() },
+        modifier = modifier
+            .border(IzleBorders.OutlineWidth, IzleColors.BannerEdge, IzleShapes.Large)
+            .background(IzleColors.Accent, IzleShapes.Large)
+            .padding(horizontal = IzleSpacing.XLarge, vertical = IzleSpacing.Medium),
+    )
 }
 
+/** The banner across the top of the screen, inside the safe margins (864 dp wide): over the video, menu and overlays. */
 @Composable
-fun languageLabel(tag: String): String = when (tag) {
-    "tr" -> stringResource(R.string.language_tr)
-    else -> stringResource(R.string.language_en)
+fun MessageBannerOverlay(text: String, modifier: Modifier) {
+    Box(modifier.fillMaxWidth().padding(IzleSpacing.Safe), contentAlignment = Alignment.TopCenter) {
+        MessageBanner(text, Modifier.widthIn(max = 864.dp), textAlign = TextAlign.Center)
+    }
 }
