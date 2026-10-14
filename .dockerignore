@@ -4,7 +4,6 @@
 .github
 android
 dist
-docs/verification
 server/data
 server/examples
 **/*.token

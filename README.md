@@ -45,7 +45,7 @@ npm run sample:check                      # also range-GETs every sample media U
 | `android/` | Android TV app (Kotlin, Compose for TV, Media3) |
 | `scripts/` | release tooling: server package build (`pack-server.mjs`) and smoke test, version bump/check |
 | `Dockerfile` | container image of the server package |
-| `docs/` | [roadmap](docs/roadmap.md), [decision log](docs/decisions.md), specs, [self-hosting](docs/deploy/self-hosting.md), [releasing](docs/releasing.md) |
+| `docs/` | specs, [UX](docs/ux/senior-tv.md), [self-hosting](docs/deploy/self-hosting.md), [releasing](docs/releasing.md) |
 
 ## Status
 
@@ -54,9 +54,8 @@ Phase 2 (server core for direct sources: pairing, TV and admin APIs, live events
 Phase 3 (the Android TV app: pairing, home tiles, player with resume, auto-next, fallback and live updates, the
 hidden menu, English and Turkish), Phase 4 (resolver modules, the media proxy and admin diagnostics), Phase 5
 (the browser admin page) and Phase 6 (self-hosting: server package, systemd and Caddy examples, Docker image,
-release workflow). Private catalogs and their resolver modules (Phase 7) live outside this repository; see the
-[roadmap](docs/roadmap.md). How the TV behaves is described in [docs/ux/senior-tv.md](docs/ux/senior-tv.md), with
-screenshots in [docs/verification/](docs/verification/phase3/README.md).
+release workflow). Private catalogs and their resolver modules (Phase 7) live outside this repository. How the TV
+behaves is described in [docs/ux/senior-tv.md](docs/ux/senior-tv.md).
 
 ## Self-hosting
 
@@ -101,7 +100,7 @@ each TV's home screen, sets "continue from episode X", the menu,
 audio and subtitle languages, starts or stops playback, sees what is playing, reloads the catalog and tests
 episode sources. It can also pause, resume, seek and skip episodes on the TV, send it a short message, turn on
 autoplay when the TV starts, and see the problems a TV ran into (its own reports, and failed resolves or proxy
-requests the server saw). Screenshots: [docs/verification/phase5/](docs/verification/phase5/README.md).
+requests the server saw).
 
 ### Resolver modules
 

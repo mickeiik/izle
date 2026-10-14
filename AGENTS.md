@@ -1,9 +1,8 @@
 # AGENTS.md
 
-Guidance for coding agents (and humans) working in this repository. The plan is
-[docs/roadmap.md](docs/roadmap.md); routine decisions are logged in [docs/decisions.md](docs/decisions.md) —
-read both before starting, and append to the decision log whenever you make a choice the roadmap does not
-settle.
+Guidance for coding agents (and humans) working in this repository. The specs in [docs/spec/](docs/spec/) and the
+UX rules in [docs/ux/senior-tv.md](docs/ux/senior-tv.md) describe what the software does. Append a few lines to
+[docs/decisions.md](docs/decisions.md) only for a choice that the code, the specs and this file do not explain.
 
 ## Product principles
 

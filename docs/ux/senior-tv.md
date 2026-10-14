@@ -4,11 +4,6 @@ How the izle TV app behaves for its viewer: someone who knows classic TV (switch
 and should never need to read small text, browse or configure anything. Everything else is the owner's job,
 done remotely from the browser admin page (`/admin/` on the server) or, on the TV itself, behind a hidden menu.
 
-Screenshots of every screen as it looks now are in [`docs/verification/tv-design/`](../verification/tv-design/README.md);
-the first emulator run of each screen in [`docs/verification/phase3/`](../verification/phase3/README.md); the
-channel keys, autoplay on start, the owner's messages and remote controls, the stream refresh and problem reports
-in [`docs/verification/tv-controls/`](../verification/tv-controls/README.md).
-
 ## Principles
 
 1. **Home → OK → plays.** One screen of poster tiles. OK on a tile plays the right episode at the right place:

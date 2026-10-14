@@ -42,8 +42,7 @@ contract share one version number. How to update (back up, update the server, th
   characters or more as the admin token.
 - Compose UI tests for the TV's senior-path rules (development only).
 - Repository: this changelog, a [security policy](SECURITY.md) with private vulnerability reporting, GitHub Actions
-  pinned by commit SHA, Dependabot version updates, and
-  [notes from a first run on a real Android TV box](docs/verification/real-device/README.md).
+  pinned by commit SHA and Dependabot version updates. The TV app had its first run on a real Android TV box.
 
 ### Changed
 
