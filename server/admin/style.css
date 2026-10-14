@@ -136,6 +136,9 @@ th { font-size: 0.85rem; color: var(--muted); border-top: none; }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
 details { margin-top: 0.75rem; }
 
+.builds > li.current strong { color: var(--accent); }
+.builds button[aria-pressed="true"] { border-color: var(--accent); }
+
 .sources { list-style: none; padding: 0; margin: 0.25rem 0 0; font-size: 0.9rem; color: var(--muted); }
 .diag { list-style: none; padding: 0.5rem 0.75rem; margin: 0.5rem 0 0; background: var(--bg); border-radius: 8px; font-size: 0.92rem; }
 .diag li { padding: 0.35rem 0; border-top: 1px solid var(--line); }

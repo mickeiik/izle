@@ -904,3 +904,13 @@ the resolve answer's `expiresAt`, which the TV used to drop). Routine decisions:
   `cursorIndex` takes the cursor as a bare episode id (an ordinary cursor) or `{episodeId, wrapped}`, so existing
   callers keep their behaviour; `/tv/items/:id` (`cursorEpisodeId`) and the admin page's `continue` follow the rule
   through `continueFor`.
+- **`GET /admin/catalog` lists the loaded catalog id's newest 50 builds** (by load time); older rows stay in the
+  database and `GET /admin/catalog/builds/:buildId` reads any of them. **`changes` is the newest non-baseline
+  build's**, since the baseline never has any: null while the baseline is the only build. The reload answer's
+  `catalog` is the same object and carries both.
+- **The admin page's Builds card** shows the newest five builds (older ones folded away) and, below, what the
+  selected one changed, by default the newest non-baseline build. Episodes of shows the build added or removed are
+  not repeated under "New episodes"/"Removed episodes": those shows are listed as shows (a new series with its
+  episode count), so a new film does not appear twice. An episode is named `S1 E7`, else by its label, else `E7`,
+  else by its id (removed episodes carry only the id). A TV's home rows show a muted `N new` chip from
+  `newEpisodes`, and the page's 15-second refresh redraws the rows when a count changes.

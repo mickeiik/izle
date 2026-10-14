@@ -387,10 +387,30 @@ deleted.
 
 | Route | Response |
 |---|---|
-| `GET /api/v1/admin/catalog` | `{"id", "buildId", "builtAt", "name", "loadedAt", "stats", "adapters", "warnings", "resolver", "server"}` — `resolver` is `{"sha256", "adapters"}` of the loaded module, or null; `server` is `{"version"}` of the running server |
+| `GET /api/v1/admin/catalog` | `{"id", "buildId", "builtAt", "name", "loadedAt", "stats", "adapters", "warnings", "resolver", "server", "builds", "changes"}` — `resolver` is `{"sha256", "adapters"}` of the loaded module, or null; `server` is `{"version"}` of the running server; `builds` is the loaded catalog's [history](#catalog-history), `[Build]` newest first, at most 50; `changes` is the `Changes` of the newest build that is not the baseline, or null |
+| `GET /api/v1/admin/catalog/builds/:buildId` | `{"build": Build, "changes": Changes}` — any build in the loaded catalog's history (also one beyond the 50 listed); `404 unknown_build` |
 | `GET /api/v1/admin/catalog/search?q=&limit=` | `{"items": [{"id", "kind", "title", "year", "posterUrl", "episodeCount", "playableCount"}]}` — case-, accent- and dotless-ı-insensitive match on title, original title and id; empty `q` lists everything (by title, `limit` ≤ 200, default 50) |
 | `GET /api/v1/admin/catalog/items/:id` | the item with all episodes; sources as `{id, type, label, languages, kind, needsProxy}` or `{…, adapter}` — upstream URLs, headers and refs are not exposed |
 | `POST /api/v1/admin/catalog/reload` | re-reads the bundle from disk: `200 {"catalog"}`, or `422 {"error": "invalid_catalog", "issues"}` and the previous catalog stays active (also when the bundle needs an adapter the resolver module does not provide). `SIGHUP` does the same. All devices get a new state version. |
+
+#### Catalog history
+
+The server records each build of a catalog id that it loads, at start and on every reload; loading the build id it
+recorded last (a restart, a reload of the same bundle) records nothing.
+
+`Build` = `{"buildId", "builtAt", "loadedAt", "baseline", "counts": {"items", "episodes"}, "added": {"items",
+"episodes"}, "removed": {"items", "episodes"}}` — `builtAt` comes from the bundle, `loadedAt` (ISO) is when this
+server loaded it; `counts` is what the build holds, `added`/`removed` what changed against the build loaded before it
+(exact counts). `baseline: true` marks the first build the server loaded for this catalog id: everything in it was
+already there, nothing counts as new, and its `added`/`removed` are 0.
+
+`Changes` = `{"items": {"added": [{"id", "title", "kind"}], "removed": [{"id", "title"}]}, "episodes": {"added":
+[{"id", "itemId", "itemTitle", "season", "number", "label", "playbackAllowed"}], "removed": [{"id", "itemId",
+"itemTitle"}]}}` — each list holds at most 500 entries. Added ones are in catalog order (play order within an item),
+removed ones by item id, then episode id. An item counts as added when none of its episodes was in the catalog before
+(also when it comes back); an episode that comes back is not listed as added. A removed entry's `title`/`itemTitle`
+is null when the catalog loaded before was not in memory (a restart onto a changed bundle). The baseline's lists are
+empty.
 
 ### Diagnostics
 

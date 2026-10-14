@@ -18,7 +18,7 @@ import { PROXY_TOKEN, type ProxyService, type ProxyTarget } from "./proxy.ts";
 import { RateLimiter } from "./ratelimit.ts";
 import { companionScope } from "./resolve.ts";
 import type { LoadedResolver } from "./resolver.ts";
-import type { Device } from "./store.ts";
+import type { CatalogBuild, Device } from "./store.ts";
 import { HOME_MAX_ITEMS, MAX_NOW_WAIT_MS, type Services, type TvService } from "./tv.ts";
 import { VERSION } from "./version.ts";
 import {
@@ -58,6 +58,8 @@ export const COMMAND_REPLAY_MS = 2 * 60_000;
 /** Failed admin authentications allowed per client address and window before the address is locked out. */
 export const ADMIN_AUTH_MAX_FAILURES = 10;
 export const ADMIN_AUTH_WINDOW_MS = 10 * 60_000;
+/** Builds listed by `GET /admin/catalog`, newest first; older ones stay readable by id. */
+export const CATALOG_BUILDS_LISTED = 50;
 const API_BODY_LIMIT = 64 * 1024;
 
 type Env = { Variables: { device: Device } };
@@ -538,8 +540,21 @@ export function createApp(ctx: AppContext): Hono<Env> {
     return c.body(null, 204);
   });
 
+  const buildJson = (b: CatalogBuild) => ({
+    buildId: b.buildId,
+    builtAt: b.builtAt,
+    loadedAt: iso(b.loadedAt),
+    baseline: b.baseline,
+    counts: { items: b.items, episodes: b.episodes },
+    added: { items: b.itemsAdded, episodes: b.episodesAdded },
+    removed: { items: b.itemsRemoved, episodes: b.episodesRemoved },
+  });
+
   const catalogInfo = () => {
     const cur = catalog.current;
+    const builds = store.listCatalogBuilds(cur.manifest.catalogId, CATALOG_BUILDS_LISTED);
+    // What the last real update brought: the baseline has no changes by definition.
+    const latest = builds.find((b) => !b.baseline);
     return {
       id: cur.manifest.catalogId,
       buildId: cur.manifest.buildId,
@@ -551,6 +566,8 @@ export function createApp(ctx: AppContext): Hono<Env> {
       warnings: cur.warnings.map((w) => ({ file: w.file, path: w.path, message: w.message })),
       resolver: ctx.resolverModule ? { sha256: ctx.resolverModule.sha256, adapters: [...ctx.resolverModule.adapters.keys()] } : null,
       server: { version: VERSION },
+      builds: builds.map(buildJson),
+      changes: latest ? (store.getCatalogBuild(latest.catalogId, latest.buildId)?.changes ?? null) : null,
     };
   };
 
@@ -566,6 +583,12 @@ export function createApp(ctx: AppContext): Hono<Env> {
         playableCount: item.episodes.filter((e) => e.playbackAllowed).length,
       })),
     });
+  });
+
+  app.get("/api/v1/admin/catalog/builds/:buildId", (c) => {
+    const found = store.getCatalogBuild(catalog.catalogId, c.req.param("buildId"));
+    if (!found) throw new HttpError(404, "unknown_build");
+    return c.json({ build: buildJson(found.build), changes: found.changes });
   });
 
   app.get("/api/v1/admin/catalog/items/:id", (c) => {

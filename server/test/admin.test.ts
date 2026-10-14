@@ -2,14 +2,26 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { CATALOG_BUILDS_LISTED } from "../src/app.ts";
 import { HOME_MAX_ITEMS } from "../src/tv.ts";
-import { startTestServer } from "./helpers.ts";
+import { fixtureItems, startTestServer, type Json } from "./helpers.ts";
 
 async function setup(t: { after(fn: () => unknown): void }) {
   const s = await startTestServer();
   t.after(() => s.close());
   const tv = await s.pair("Salon");
   return { s, tv };
+}
+
+/** Rewrites the test server's bundle on disk: `edit` changes its items, the manifest gets `buildId`. */
+async function rewriteBundle(bundleDir: string, buildId: string, edit: (items: Json[]) => Json[]) {
+  const itemsFile = path.join(bundleDir, "items.json");
+  const manifestFile = path.join(bundleDir, "bundle.json");
+  const items = JSON.parse(await readFile(itemsFile, "utf8"));
+  await writeFile(itemsFile, JSON.stringify({ ...items, items: edit(items.items) }));
+  const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
+  await writeFile(manifestFile, JSON.stringify({ ...manifest, buildId }));
+  return { manifest, manifestFile };
 }
 
 test("admin auth", async (t) => {
@@ -244,13 +256,7 @@ test("catalog: info, accent-insensitive search, item detail without upstream URL
 test("catalog reload: new build applies, invalid build is refused and the old one stays", async (t) => {
   const { s, tv } = await setup(t);
   await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["film", "show"] });
-  const itemsFile = path.join(s.bundleDir, "items.json");
-  const manifestFile = path.join(s.bundleDir, "bundle.json");
-  const items = JSON.parse(await readFile(itemsFile, "utf8"));
-  items.items = items.items.filter((i: { id: string }) => i.id !== "film");
-  await writeFile(itemsFile, JSON.stringify(items));
-  const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
-  await writeFile(manifestFile, JSON.stringify({ ...manifest, buildId: "fixture-2" }));
+  const { manifest, manifestFile } = await rewriteBundle(s.bundleDir, "fixture-2", (items) => items.filter((i) => i.id !== "film"));
   const v0 = (await s.call("GET", "/api/v1/tv/state", { token: tv.token })).json.version;
 
   const ok = await s.admin("POST", "/catalog/reload");
@@ -269,4 +275,91 @@ test("catalog reload: new build applies, invalid build is refused and the old on
   assert.equal(bad.json.error, "invalid_catalog");
   assert.ok(bad.json.issues.some((i: { path: string }) => i.path === "/formatVersion"));
   assert.equal((await s.admin("GET", "/catalog")).json.buildId, "fixture-2");
+});
+
+test("catalog builds: the baseline, then each reload's changes newest first; one build by id; unknown build", async (t) => {
+  const { s } = await setup(t);
+  const baseline = {
+    buildId: "fixture-1",
+    builtAt: "2026-10-10T12:00:00Z",
+    loadedAt: "2026-10-10T12:00:00.000Z",
+    baseline: true,
+    counts: { items: 16, episodes: 20 },
+    added: { items: 0, episodes: 0 },
+    removed: { items: 0, episodes: 0 },
+  };
+  const first = await s.admin("GET", "/catalog");
+  assert.deepEqual(first.json.builds, [baseline]);
+  assert.equal(first.json.changes, null, "the baseline changed nothing");
+  assert.equal(first.json.buildId, "fixture-1", "the existing fields are unchanged");
+
+  // Build 2 drops the film.
+  s.clock.advance(3_600_000);
+  await rewriteBundle(s.bundleDir, "fixture-2", (items) => items.filter((i) => i.id !== "film"));
+  const reload = await s.admin("POST", "/catalog/reload");
+  assert.equal(reload.status, 200);
+  assert.deepEqual(reload.json.catalog.builds.map((b: { buildId: string }) => b.buildId), ["fixture-2", "fixture-1"], "the reload answers with the new history");
+  const second = await s.admin("GET", "/catalog");
+  const build2 = {
+    buildId: "fixture-2",
+    builtAt: "2026-10-10T12:00:00Z",
+    loadedAt: "2026-10-10T13:00:00.000Z",
+    baseline: false,
+    counts: { items: 15, episodes: 19 },
+    added: { items: 0, episodes: 0 },
+    removed: { items: 1, episodes: 1 },
+  };
+  assert.deepEqual(second.json.builds, [build2, baseline]);
+  const changes2 = {
+    items: { added: [], removed: [{ id: "film", title: "Film" }] },
+    episodes: { added: [], removed: [{ id: "film.main", itemId: "film", itemTitle: "Film" }] },
+  };
+  assert.deepEqual(second.json.changes, changes2);
+
+  // Build 3 brings the film back and appends an episode to the show.
+  s.clock.advance(3_600_000);
+  const extra = { id: "show.e6", season: 2, number: 4, playbackAllowed: true, sources: [{ id: "main", type: "direct", languages: { audio: ["tr"], subtitles: [] }, media: { kind: "hls", url: "https://media.example.test/e6.m3u8" } }] };
+  await rewriteBundle(s.bundleDir, "fixture-3", () => fixtureItems().items.map((i: Json) => (i.id === "show" ? { ...i, episodes: [...i.episodes, extra] } : i)));
+  assert.equal((await s.admin("POST", "/catalog/reload")).status, 200);
+  const third = await s.admin("GET", "/catalog");
+  assert.deepEqual(third.json.builds.map((b: Json) => [b.buildId, b.added, b.removed]), [
+    ["fixture-3", { items: 1, episodes: 1 }, { items: 0, episodes: 0 }],
+    ["fixture-2", { items: 0, episodes: 0 }, { items: 1, episodes: 1 }],
+    ["fixture-1", { items: 0, episodes: 0 }, { items: 0, episodes: 0 }],
+  ]);
+  assert.deepEqual(third.json.changes, {
+    items: { added: [{ id: "film", title: "Film", kind: "movie" }], removed: [] },
+    episodes: {
+      added: [{ id: "show.e6", itemId: "show", itemTitle: "Şov Dünyası", season: 2, number: 4, label: null, playbackAllowed: true }],
+      removed: [],
+    },
+  }, "a returning film counts as an added show, its returning episode not as a new one");
+  assert.ok(!JSON.stringify(third.json).includes("media.example.test"), "no upstream URLs");
+
+  // Any build of the history by id.
+  const one = await s.admin("GET", "/catalog/builds/fixture-2");
+  assert.equal(one.status, 200);
+  assert.deepEqual(one.json, { build: build2, changes: changes2 });
+  const base = await s.admin("GET", "/catalog/builds/fixture-1");
+  assert.deepEqual(base.json, { build: baseline, changes: { items: { added: [], removed: [] }, episodes: { added: [], removed: [] } } });
+  const ghost = await s.admin("GET", "/catalog/builds/ghost");
+  assert.equal(ghost.status, 404);
+  assert.equal(ghost.json.error, "unknown_build");
+  assert.equal((await s.call("GET", "/api/v1/admin/catalog/builds/fixture-2")).status, 401, "admin token required");
+
+  // The list holds the newest builds only; older ones are still readable by id.
+  const store = s.srv.ctx.store;
+  const empty = { items: { added: [], removed: [] }, episodes: { added: [], removed: [] } };
+  for (let i = 0; i < CATALOG_BUILDS_LISTED; i++) {
+    store.recordCatalogBuild(
+      { catalogId: "fixture", buildId: `old-${i}`, builtAt: "2026-10-01T00:00:00Z", loadedAt: s.clock.now() + 1000 + i, baseline: false, items: 16, episodes: 21, itemsAdded: 0, itemsRemoved: 0, episodesAdded: 0, episodesRemoved: 0 },
+      empty,
+    );
+  }
+  const capped = await s.admin("GET", "/catalog");
+  assert.equal(capped.json.builds.length, CATALOG_BUILDS_LISTED);
+  assert.equal(capped.json.builds[0].buildId, `old-${CATALOG_BUILDS_LISTED - 1}`, "newest first");
+  assert.ok(!capped.json.builds.some((b: Json) => b.baseline), "the baseline fell off the list");
+  assert.deepEqual(capped.json.changes, empty, "the latest build's changes");
+  assert.equal((await s.admin("GET", "/catalog/builds/fixture-1")).status, 200);
 });

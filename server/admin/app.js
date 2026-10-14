@@ -8,6 +8,7 @@ import {
   HOME_MAX,
   LANGUAGES,
   RESUME_MIN_MS,
+  buildSummary,
   canControlPlayback,
   continueText,
   episodeName,
@@ -17,6 +18,7 @@ import {
   formatCode,
   formatCountdown,
   formatRelative,
+  groupEpisodeChanges,
   isActive,
   languageLabel,
   moveItem,
@@ -256,6 +258,9 @@ function applyBars(/** @type {ParentNode} */ root) {
 }
 
 const loading = () => h("p", { class: "muted" }, "Loading…");
+
+/** A build id short enough for a list row; the full id goes in its tooltip. @param {string} id */
+const shortId = (id) => (id.length > 24 ? `${id.slice(0, 20)}…` : id);
 
 // --- views --------------------------------------------------------------------------------------------------------
 
@@ -584,7 +589,16 @@ function deviceView(id) {
                 "div",
                 { class: "grow" },
                 h("strong", null, entry.title ?? entry.itemId),
-                entry.missing ? h("span", { class: "chip warn" }, "Missing from the catalog — hidden on the TV") : h("div", { class: "muted" }, continueText(c, entry.kind)),
+                entry.missing
+                  ? h("span", { class: "chip warn" }, "Missing from the catalog — hidden on the TV")
+                  : h(
+                      "div",
+                      { class: "muted" },
+                      continueText(c, entry.kind),
+                      entry.newEpisodes > 0
+                        ? [" ", h("span", { class: "chip", title: `${plural(entry.newEpisodes, "episode")} added since this TV last played the show` }, `${entry.newEpisodes} new`)]
+                        : null,
+                    ),
                 c && c.status === "watching" && c.positionMs >= RESUME_MIN_MS ? progressBar(percent(c.positionMs, c.durationMs)) : null,
               ),
               h(
@@ -827,10 +841,12 @@ function deviceView(id) {
       await refreshNow();
       await listenAlong.refresh();
     }, 5000);
+    // What the home rows show; they are rebuilt only when it changed (an open episode picker stays open).
+    const homeKey = () => JSON.stringify(entries.map((e) => [e.itemId, e.continue?.episodeId, e.continue?.status, e.continue?.positionMs, e.newEpisodes]));
     poll(async () => {
-      const before = JSON.stringify(entries.map((e) => [e.itemId, e.continue?.episodeId, e.continue?.status, e.continue?.positionMs]));
+      const before = homeKey();
       await loadDevice();
-      if (JSON.stringify(entries.map((e) => [e.itemId, e.continue?.episodeId, e.continue?.status, e.continue?.positionMs])) !== before) renderHome();
+      if (homeKey() !== before) renderHome();
       await Promise.all([refreshHistory(), refreshProblems()]);
     }, 15000);
   })();
@@ -867,8 +883,118 @@ function deviceView(id) {
 
 function catalogView() {
   const info = h("div", null, loading());
+  const builds = h("div", null, loading());
   const items = h("div", { class: "list" }, loading());
   const search = h("input", { type: "search", placeholder: "Search titles", "aria-label": "Search titles" });
+
+  // Builds --------------------------------------------------------------------------------------------------------
+  // The history of the loaded catalog, newest first; below it what the selected build changed (by default the
+  // latest one after the first load, whose changes come with GET /catalog; older ones are fetched on demand).
+  const BUILDS_SHOWN = 5;
+  /** @type {any[]} */
+  let buildList = [];
+  /** @type {Map<string, any>} changes fetched so far, by build id */
+  let changesById = new Map();
+  /** @type {Map<string, { li: HTMLElement, button: HTMLButtonElement }>} */
+  let buildRows = new Map();
+  const detail = h("div", { class: "build-detail" });
+  let detailSeq = 0;
+
+  /** @param {any} b @param {any} changes */
+  const buildDetail = (b, changes) => {
+    const head = h("h3", null, "Changes in build ", h("code", { title: b.buildId }, shortId(b.buildId)));
+    if (b.baseline) {
+      return h("div", null, head, h("p", { class: "muted" }, "The first build this server loaded for this catalog: everything in it was already there, so nothing in it counts as new."));
+    }
+    // Shows that are new (or gone) are listed as shows; their episodes are not repeated under episodes.
+    const newShows = new Set(changes.items.added.map((/** @type {any} */ i) => i.id));
+    const goneShows = new Set(changes.items.removed.map((/** @type {any} */ i) => i.id));
+    const added = groupEpisodeChanges(changes.episodes.added);
+    const episodeCount = new Map(added.map((g) => [g.itemId, g.episodes.length]));
+    const groupLine = (/** @type {{ title: string, episodes: string[] }} */ g) => h("div", null, h("strong", null, g.title), ` — ${g.episodes.join(", ")}`);
+    /** @type {Array<[string, HTMLElement[]]>} */
+    const sections = [
+      ["New episodes", added.filter((g) => !newShows.has(g.itemId)).map(groupLine)],
+      [
+        "New shows",
+        changes.items.added.map((/** @type {any} */ i) =>
+          h("div", null, h("strong", null, i.title), i.kind === "series" && episodeCount.has(i.id) ? ` · ${plural(episodeCount.get(i.id) ?? 0, "episode")}` : null),
+        ),
+      ],
+      ["Removed shows", changes.items.removed.map((/** @type {any} */ i) => h("div", null, h("strong", null, i.title ?? i.id)))],
+      ["Removed episodes", groupEpisodeChanges(changes.episodes.removed).filter((g) => !goneShows.has(g.itemId)).map(groupLine)],
+    ];
+    const shown = sections.filter(([, lines]) => lines.length > 0);
+    const cut =
+      changes.items.added.length < b.added.items ||
+      changes.items.removed.length < b.removed.items ||
+      changes.episodes.added.length < b.added.episodes ||
+      changes.episodes.removed.length < b.removed.episodes;
+    return h(
+      "div",
+      null,
+      head,
+      shown.length
+        ? h("dl", { class: "facts" }, shown.flatMap(([title, lines]) => [h("dt", null, title), h("dd", null, lines)]))
+        : h("p", { class: "muted" }, "No show or episode was added or removed: this build changed something else, such as titles or sources."),
+      cut ? h("p", { class: "hint" }, "Long lists are cut short; the counts in the list above are exact.") : null,
+    );
+  };
+
+  const selectBuild = async (/** @type {string} */ buildId) => {
+    for (const [id, row] of buildRows) {
+      row.li.classList.toggle("current", id === buildId);
+      row.button.setAttribute("aria-pressed", String(id === buildId));
+    }
+    const build = buildList.find((b) => b.buildId === buildId);
+    if (!build) return;
+    const mine = ++detailSeq;
+    let changes = changesById.get(buildId);
+    if (!changes && !build.baseline) {
+      detail.replaceChildren(loading());
+      const r = await attempt(() => api("GET", `/catalog/builds/${encodeURIComponent(buildId)}`));
+      if (mine !== detailSeq) return;
+      if (!r) return detail.replaceChildren(h("p", { class: "error" }, "Could not load what this build changed."));
+      changes = r.changes;
+      changesById.set(buildId, changes);
+    }
+    detail.replaceChildren(buildDetail(build, changes));
+  };
+
+  const renderBuilds = (/** @type {any} */ c) => {
+    buildList = c.builds ?? [];
+    const latest = buildList.find((b) => !b.baseline);
+    changesById = new Map(latest && c.changes ? [[latest.buildId, c.changes]] : []);
+    buildRows = new Map();
+    if (buildList.length === 0) return builds.replaceChildren(h("p", { class: "muted" }, "No build recorded yet."));
+    const row = (/** @type {any} */ b) => {
+      const button = h("button", { type: "button", "aria-pressed": "false", onclick: () => void selectBuild(b.buildId) }, "What changed");
+      const li = h(
+        "li",
+        null,
+        h(
+          "div",
+          { class: "row" },
+          h(
+            "div",
+            { class: "grow" },
+            h("strong", null, buildSummary(b)),
+            h("div", { class: "muted" }, h("code", { title: b.buildId }, shortId(b.buildId)), ` · built ${formatRelative(b.builtAt)} · loaded ${formatRelative(b.loadedAt)}`),
+          ),
+          button,
+        ),
+      );
+      buildRows.set(b.buildId, { li, button });
+      return li;
+    };
+    const older = buildList.slice(BUILDS_SHOWN);
+    builds.replaceChildren(
+      h("ol", { class: "list builds" }, buildList.slice(0, BUILDS_SHOWN).map(row)),
+      h("details", { hidden: older.length === 0 }, h("summary", null, plural(older.length, "older build")), h("ol", { class: "list builds" }, older.map(row))),
+      detail,
+    );
+    void selectBuild((latest ?? buildList[0]).buildId);
+  };
 
   const renderInfo = (/** @type {any} */ c) => {
     const reload = h(
@@ -926,6 +1052,7 @@ function catalogView() {
       ),
       h("div", { class: "actions" }, reload),
     );
+    renderBuilds(c);
   };
 
   let seq = 0;
@@ -961,7 +1088,14 @@ function catalogView() {
     renderInfo(await api("GET", "/catalog"));
     await refreshItems();
   })().catch(() => {});
-  return h("div", { class: "page" }, h("h1", null, "Catalog"), card("Bundle", info), card("Shows", search, items));
+  return h(
+    "div",
+    { class: "page" },
+    h("h1", null, "Catalog"),
+    card("Bundle", info),
+    card("Builds", h("p", { class: "muted" }, "Each build this server loaded, newest first, with what it added and removed compared with the build before it."), builds),
+    card("Shows", search, items),
+  );
 }
 
 /** @param {string} itemId */

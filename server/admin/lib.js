@@ -227,6 +227,62 @@ export function problemContext(p) {
   return parts.join(" · ");
 }
 
+// --- Catalog builds -------------------------------------------------------------------------------------------
+
+/**
+ * @typedef {object} BuildLike
+ * @property {boolean} baseline
+ * @property {{ items: number, episodes: number }} added
+ * @property {{ items: number, episodes: number }} removed
+ */
+
+/**
+ * What a catalog build changed, in a few words: `+2 shows · +14 episodes · −1 episode`; `first load` for the
+ * baseline (the first build the server loaded: nothing in it counts as new).
+ * @param {BuildLike} b
+ */
+export function buildSummary(b) {
+  if (b.baseline) return "first load";
+  const parts = [];
+  if (b.added.items > 0) parts.push(`+${plural(b.added.items, "show")}`);
+  if (b.added.episodes > 0) parts.push(`+${plural(b.added.episodes, "episode")}`);
+  if (b.removed.items > 0) parts.push(`−${plural(b.removed.items, "show")}`);
+  if (b.removed.episodes > 0) parts.push(`−${plural(b.removed.episodes, "episode")}`);
+  return parts.length ? parts.join(" · ") : "nothing added or removed";
+}
+
+/**
+ * @typedef {object} EpisodeChange
+ * @property {string} id
+ * @property {string} itemId
+ * @property {string | null} itemTitle
+ * @property {number | null} [season]
+ * @property {number | null} [number]
+ * @property {string | null} [label]
+ * @property {boolean} [playbackAllowed]
+ */
+
+/**
+ * A build's added or removed episodes grouped by show, shows in the order they first appear: `Title — S1 E7, S1 E8`
+ * once joined. An episode is `S1 E7`, else its label, else `E7`, else its id (removed episodes carry nothing
+ * more); one the catalog does not allow to play is marked. A show without a title is named by its id.
+ * @param {EpisodeChange[]} list
+ * @returns {Array<{ itemId: string, title: string, episodes: string[] }>}
+ */
+export function groupEpisodeChanges(list) {
+  /** @type {Map<string, { itemId: string, title: string, episodes: string[] }>} */
+  const groups = new Map();
+  for (const e of list) {
+    let group = groups.get(e.itemId);
+    if (!group) groups.set(e.itemId, (group = { itemId: e.itemId, title: e.itemTitle ?? e.itemId, episodes: [] }));
+    const season = e.season ?? null;
+    const number = e.number ?? null;
+    const name = season !== null && number !== null ? `S${season} E${number}` : (e.label ?? (number !== null ? `E${number}` : e.id));
+    group.episodes.push(e.playbackAllowed === false ? `${name} (not allowed)` : name);
+  }
+  return [...groups.values()];
+}
+
 /** Owner-facing text for API error codes. */
 const ERRORS = /** @type {Record<string, string>} */ ({
   unauthorized: "The admin token is not valid.",
@@ -240,6 +296,7 @@ const ERRORS = /** @type {Record<string, string>} */ ({
   not_allowed: "Playback of that episode is not allowed by the catalog.",
   unknown_episode: "That episode is not in the catalog (any more).",
   unknown_device: "That TV does not exist any more.",
+  unknown_build: "That build is not in the catalog's history.",
   invalid_catalog: "The catalog on disk is invalid; the previous one stays active.",
   invalid_request: "The server did not accept the request.",
   body_too_large: "The request was too large.",

@@ -21,7 +21,10 @@ contract share one version number. How to update (back up, update the server, th
   self-hosting guide's backup section uses it.
 - **Catalog build history:** the server records every catalog build it loads, with the shows and episodes it added
   and removed, and when each episode first appeared. The first load of a catalog is the starting point: nothing in it
-  counts as new.
+  counts as new. `GET /api/v1/admin/catalog` lists the builds (newest first, up to 50) with the latest build's
+  changes, and `GET /api/v1/admin/catalog/builds/<buildId>` returns any one of them.
+- **Catalog tab: build history** with what each build added and removed: new episodes by show, new shows, removed
+  shows and episodes. On a TV's page, the home list marks shows with new episodes ("2 new").
 - **New-episode count on home entries:** each entry of a TV's home state (and of a TV's home list in the admin API)
   says how many playable episodes a catalog reload added since the TV last played the show, or since the show was
   put on that TV's home screen. It goes back to 0 as soon as the TV plays any episode of the show.

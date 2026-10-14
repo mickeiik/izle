@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
+  buildSummary,
   canControlPlayback,
   candidateOptions,
   clockOffset,
@@ -16,6 +17,7 @@ import {
   formatDrift,
   formatPosition,
   formatRelative,
+  groupEpisodeChanges,
   isActive,
   languageLabel,
   moveItem,
@@ -148,6 +150,61 @@ test("admin helpers: when the remote-control buttons apply, and how a problem re
   assert.equal(problemContext({ ...bare, itemTitle: null, itemKind: null, missing: true }), "show (no longer in the catalog)");
   assert.equal(problemContext({ ...bare, itemId: null, itemTitle: null, itemKind: null, episodeId: "gone.e1", missing: true }), "gone.e1 (no longer in the catalog)");
   assert.equal(problemContext({ ...bare, itemId: null, itemTitle: null, itemKind: null, episodeId: null }), "", "nothing known: no context line");
+});
+
+test("admin helpers: build summaries and episode changes grouped by show", () => {
+  const build = (added: [number, number], removed: [number, number], baseline = false) => ({
+    baseline,
+    added: { items: added[0], episodes: added[1] },
+    removed: { items: removed[0], episodes: removed[1] },
+  });
+  assert.equal(buildSummary(build([2, 14], [0, 1])), "+2 shows · +14 episodes · −1 episode");
+  assert.equal(buildSummary(build([0, 1], [1, 3])), "+1 episode · −1 show · −3 episodes");
+  assert.equal(buildSummary(build([1, 1], [0, 0])), "+1 show · +1 episode");
+  assert.equal(buildSummary(build([0, 0], [0, 0])), "nothing added or removed", "a new build id with the same shows and episodes");
+  assert.equal(buildSummary(build([0, 0], [0, 0], true)), "first load");
+
+  const added = (id: string, itemId: string, itemTitle: string, rest: Record<string, unknown> = {}) => ({
+    id,
+    itemId,
+    itemTitle,
+    season: null,
+    number: null,
+    label: null,
+    playbackAllowed: true,
+    ...rest,
+  });
+  assert.deepEqual(
+    groupEpisodeChanges([
+      added("a.s1e7", "a", "Aşk", { season: 1, number: 7 }),
+      added("b.x", "b", "Bahar", { label: "Special" }),
+      added("a.s1e8", "a", "Aşk", { season: 1, number: 8 }),
+      added("b.e3", "b", "Bahar", { number: 3, label: "Finale" }),
+      added("b.e4", "b", "Bahar", { number: 4 }),
+      added("b.e5", "b", "Bahar", { season: 2, number: 5, playbackAllowed: false }),
+      added("c.bonus", "c", "Cem"),
+    ]),
+    [
+      { itemId: "a", title: "Aşk", episodes: ["S1 E7", "S1 E8"] },
+      { itemId: "b", title: "Bahar", episodes: ["Special", "Finale", "E4", "S2 E5 (not allowed)"] },
+      { itemId: "c", title: "Cem", episodes: ["c.bonus"] },
+    ],
+    "shows in the order they first appear; S1 E7, else the label, else E4, else the id",
+  );
+  assert.deepEqual(
+    groupEpisodeChanges([
+      { id: "gone.e1", itemId: "gone", itemTitle: null },
+      { id: "gone.e2", itemId: "gone", itemTitle: null },
+      { id: "a.e1", itemId: "a", itemTitle: "Aşk" },
+    ]),
+    [
+      { itemId: "gone", title: "gone", episodes: ["gone.e1", "gone.e2"] },
+      { itemId: "a", title: "Aşk", episodes: ["a.e1"] },
+    ],
+    "removed episodes: ids only, and the show's id without a title",
+  );
+  assert.deepEqual(groupEpisodeChanges([]), []);
+  assert.equal(errorMessage("unknown_build"), "That build is not in the catalog's history.");
 });
 
 test("the admin UI is served from an allow-list with a strict CSP and no inline code", async (t) => {
