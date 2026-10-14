@@ -24,6 +24,8 @@ export type CommandBody =
 
 /** Unacknowledged commands younger than this are replayed when a TV (re)connects to the event stream. */
 export const COMMAND_REPLAY_MS = 2 * 60_000;
+/** Commands older than this are deleted by the housekeeping timer, acknowledged or not. */
+export const COMMAND_RETENTION_MS = 7 * 24 * 60 * 60_000;
 
 export class CommandService {
   private readonly s: Services;
@@ -66,5 +68,10 @@ export class CommandService {
   /** The TV acknowledges a command; false when the device has no command with this id. */
   ack(deviceId: string, id: number): boolean {
     return this.s.store.ackCommand(deviceId, id, this.s.now());
+  }
+
+  /** Housekeeping: drops commands older than COMMAND_RETENTION_MS. */
+  purge(): void {
+    this.s.store.purgeCommands(this.s.now() - COMMAND_RETENTION_MS);
   }
 }

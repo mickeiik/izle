@@ -44,7 +44,7 @@ export class PairingService {
     const rate = this.limiter.hit(clientKey);
     if (!rate.ok) throw tooManyRequests("rate_limited", "too many pairing attempts", rate.retryAfterSec);
     const t = this.now();
-    this.store.purgePairCodes(t, PAIR_CODE_PURGE_GRACE_MS);
+    this.purge(t);
     if (this.store.listOpenPairCodes(t).length >= MAX_OPEN_PAIR_CODES) {
       throw new HttpError(429, "too_many_pending", "too many pairing codes are waiting for approval");
     }
@@ -113,6 +113,11 @@ export class PairingService {
     await this.waiters.wait(code, timeout, signal);
     if (signal?.aborted) return { status: "pending" };
     return this.check(code, pairToken);
+  }
+
+  /** Deletes codes that expired or were delivered over PAIR_CODE_PURGE_GRACE_MS ago, and the devices never collected. */
+  purge(t = this.now()): void {
+    this.store.purgePairCodes(t, PAIR_CODE_PURGE_GRACE_MS);
   }
 
   listOpen(): Array<{ code: string; createdAt: number; expiresAt: number; approved: boolean }> {

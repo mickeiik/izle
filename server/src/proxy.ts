@@ -146,6 +146,25 @@ export async function readText(res: Response, limit: number): Promise<string | n
   return Buffer.concat(chunks).toString("utf8");
 }
 
+/** The headers the TV gets with streamed upstream media: the passed ones, with `contentType` in place of the upstream's. */
+function passedHeaders(upstream: Response, contentType: string | undefined): Headers {
+  const out = new Headers({ "Cache-Control": "no-store" });
+  for (const name of PASSED_HEADERS) {
+    const value = upstream.headers.get(name);
+    if (value !== null) out.set(name, value);
+  }
+  if (upstream.headers.has("content-encoding")) out.delete("content-length"); // fetch already decoded the body
+  if (contentType) out.set("content-type", contentType);
+  return out;
+}
+
+/** How a streamed body begins: bytes already read (`head`), and whether the upstream ended or broke while reading them. */
+interface StreamStart {
+  head: Uint8Array | null;
+  ended: boolean;
+  broken: boolean;
+}
+
 export class ProxyService {
   private readonly sessions = new Map<string, Session>();
   private readonly log: Logger;
@@ -308,37 +327,11 @@ export class ProxyService {
       return status === 404 ? json(404, "upstream_not_found") : json(502, "upstream_error", { status });
     }
 
-    const contentType = upstream.headers.get("content-type") ?? "";
-    if (opts.prefix !== null && status === 200 && (opts.kind === "p" || /mpegurl/i.test(contentType))) {
-      let text: string | null;
-      try {
-        text = await readText(upstream, MAX_PLAYLIST_BYTES);
-      } catch (err) {
-        if (req.signal.aborted) return json(503, "aborted");
-        this.log.warn("upstream playlist read failed", { deviceId: s.deviceId, error: errorName(err) });
-        this.problem(s, "upstream_error", status, `${opts.what}: broke off (${errorName(err)})`);
-        return json(502, "upstream_error");
-      }
-      if (text === null) {
-        this.problem(s, "playlist_too_large", status, `${opts.what}: larger than ${MAX_PLAYLIST_BYTES / (1024 * 1024)} MiB`);
-        return json(502, "playlist_too_large");
-      }
-      if (!isPlaylistText(text)) {
-        // The media type says what came instead (an HTML page is a block or captcha page); its text is never kept.
-        const type = contentType.split(";")[0]!.trim();
-        this.problem(s, "not_a_playlist", status, `${opts.what}: ${/^[\w.+-]{1,40}\/[\w.+-]{1,60}$/.test(type) ? type : "unknown content type"}`);
-        return json(502, "not_a_playlist");
-      }
-      return this.playlistResponse(s, text, upstream.url || url, opts.prefix);
+    if (opts.prefix !== null && status === 200 && (opts.kind === "p" || /mpegurl/i.test(upstream.headers.get("content-type") ?? ""))) {
+      return this.upstreamPlaylist(req, s, upstream, url, opts.prefix, opts.what);
     }
 
-    const out = new Headers({ "Cache-Control": "no-store" });
-    for (const name of PASSED_HEADERS) {
-      const value = upstream.headers.get(name);
-      if (value !== null) out.set(name, value);
-    }
-    if (upstream.headers.has("content-encoding")) out.delete("content-length"); // fetch already decoded the body
-    if (opts.contentType) out.set("content-type", opts.contentType);
+    const out = passedHeaders(upstream, opts.contentType);
     if (!upstream.body) return new Response(null, { status, headers: out });
 
     const align =
@@ -347,41 +340,76 @@ export class ProxyService {
   }
 
   /**
+   * An upstream playlist (status 200) read, checked and answered rewritten. A read that breaks off, a playlist over
+   * MAX_PLAYLIST_BYTES and anything that is not a playlist answer 502 and are reported.
+   */
+  private async upstreamPlaylist(req: Request, s: Session, upstream: Response, url: string, prefix: string, what: string): Promise<Response> {
+    const status = upstream.status;
+    let text: string | null;
+    try {
+      text = await readText(upstream, MAX_PLAYLIST_BYTES);
+    } catch (err) {
+      if (req.signal.aborted) return json(503, "aborted");
+      this.log.warn("upstream playlist read failed", { deviceId: s.deviceId, error: errorName(err) });
+      this.problem(s, "upstream_error", status, `${what}: broke off (${errorName(err)})`);
+      return json(502, "upstream_error");
+    }
+    if (text === null) {
+      this.problem(s, "playlist_too_large", status, `${what}: larger than ${MAX_PLAYLIST_BYTES / (1024 * 1024)} MiB`);
+      return json(502, "playlist_too_large");
+    }
+    if (!isPlaylistText(text)) {
+      // The media type says what came instead (an HTML page is a block or captcha page); its text is never kept.
+      const type = (upstream.headers.get("content-type") ?? "").split(";")[0]!.trim();
+      this.problem(s, "not_a_playlist", status, `${what}: ${/^[\w.+-]{1,40}\/[\w.+-]{1,60}$/.test(type) ? type : "unknown content type"}`);
+      return json(502, "not_a_playlist");
+    }
+    return this.playlistResponse(s, text, upstream.url || url, prefix);
+  }
+
+  /**
+   * Reads up to TS_ALIGN_LOOKAHEAD bytes and cuts off any junk before the first MPEG-TS packet; when there was some,
+   * `headers` get the shorter length and the MPEG-TS content type.
+   */
+  private async alignedStart(reader: ReadableStreamDefaultReader<Uint8Array>, headers: Headers): Promise<StreamStart> {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    let ended = false;
+    let broken = false;
+    try {
+      while (size < TS_ALIGN_LOOKAHEAD) {
+        const { done, value } = await reader.read();
+        if (done) {
+          ended = true;
+          break;
+        }
+        chunks.push(value);
+        size += value.byteLength;
+      }
+    } catch {
+      broken = true;
+    }
+    const buffered = Buffer.concat(chunks);
+    const offset = tsSyncOffset(buffered);
+    if (offset > 0) {
+      const length = Number(headers.get("content-length"));
+      if (Number.isFinite(length) && length > offset) headers.set("content-length", String(length - offset));
+      else headers.delete("content-length");
+      headers.set("content-type", "video/mp2t");
+      this.log.debug("aligned TS segment", { trimmedBytes: offset });
+    }
+    return { head: buffered.subarray(offset), ended, broken };
+  }
+
+  /**
    * Wraps the upstream body so it streams chunk by chunk, a broken upstream ends the response like a dropped
    * connection, and (when `align` is set) junk before the first MPEG-TS packet is cut off.
    */
   private async stream(body: ReadableStream<Uint8Array>, align: boolean, headers: Headers): Promise<ReadableStream<Uint8Array>> {
     const reader = body.getReader();
-    let head: Uint8Array | null = null;
-    let ended = false;
-    let broken = false;
-    if (align) {
-      const chunks: Uint8Array[] = [];
-      let size = 0;
-      try {
-        while (size < TS_ALIGN_LOOKAHEAD) {
-          const { done, value } = await reader.read();
-          if (done) {
-            ended = true;
-            break;
-          }
-          chunks.push(value);
-          size += value.byteLength;
-        }
-      } catch {
-        broken = true;
-      }
-      const buffered = Buffer.concat(chunks);
-      const offset = tsSyncOffset(buffered);
-      head = buffered.subarray(offset);
-      if (offset > 0) {
-        const length = Number(headers.get("content-length"));
-        if (Number.isFinite(length) && length > offset) headers.set("content-length", String(length - offset));
-        else headers.delete("content-length");
-        headers.set("content-type", "video/mp2t");
-        this.log.debug("aligned TS segment", { trimmedBytes: offset });
-      }
-    }
+    const start: StreamStart = align ? await this.alignedStart(reader, headers) : { head: null, ended: false, broken: false };
+    let head = start.head;
+    const { ended, broken } = start;
     const log = this.log;
     return new ReadableStream<Uint8Array>({
       async pull(controller) {

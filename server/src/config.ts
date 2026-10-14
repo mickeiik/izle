@@ -154,6 +154,37 @@ export function databaseFile(config: Pick<ServerConfig, "dataDir">): string {
   return path.join(config.dataDir, "izle.db");
 }
 
+/** Reads, parses and validates a config file; a ConfigError says what is wrong with it. */
+function readConfigFile(configPath: string): ConfigFile {
+  let text: string;
+  try {
+    text = readFileSync(configPath, "utf8");
+  } catch {
+    throw new ConfigError(`cannot read config file ${configPath}`);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new ConfigError(`config file ${configPath} is not valid JSON`);
+  }
+  if (!validateConfigFile(parsed)) {
+    const details = (validateConfigFile.errors ?? [])
+      .filter((e) => e.keyword !== "anyOf")
+      .map((e) => {
+        const extra = (e.params as { additionalProperty?: string }).additionalProperty;
+        return `${e.instancePath || "/"} ${extra ? `has unknown property "${extra}"` : e.message}`;
+      });
+    throw new ConfigError(`invalid config file ${configPath}: ${[...new Set(details)].join("; ")}`);
+  }
+  const file = parsed as ConfigFile;
+  const { invalid } = compileTrustedProxies(file.trustedProxies ?? []);
+  if (invalid !== null) {
+    throw new ConfigError(`invalid config file ${configPath}: /trustedProxies "${invalid}" is not an IP address or CIDR range`);
+  }
+  return file;
+}
+
 export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
   const env = opts.env ?? process.env;
   const cwd = opts.cwd ?? process.cwd();
@@ -164,32 +195,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
   if (opts.path) {
     configPath = path.resolve(cwd, opts.path);
     base = path.dirname(configPath);
-    let text: string;
-    try {
-      text = readFileSync(configPath, "utf8");
-    } catch {
-      throw new ConfigError(`cannot read config file ${configPath}`);
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      throw new ConfigError(`config file ${configPath} is not valid JSON`);
-    }
-    if (!validateConfigFile(parsed)) {
-      const details = (validateConfigFile.errors ?? [])
-        .filter((e) => e.keyword !== "anyOf")
-        .map((e) => {
-          const extra = (e.params as { additionalProperty?: string }).additionalProperty;
-          return `${e.instancePath || "/"} ${extra ? `has unknown property "${extra}"` : e.message}`;
-        });
-      throw new ConfigError(`invalid config file ${configPath}: ${[...new Set(details)].join("; ")}`);
-    }
-    file = parsed as ConfigFile;
-    const { invalid } = compileTrustedProxies(file.trustedProxies ?? []);
-    if (invalid !== null) {
-      throw new ConfigError(`invalid config file ${configPath}: /trustedProxies "${invalid}" is not an IP address or CIDR range`);
-    }
+    file = readConfigFile(configPath);
   }
 
   const resolve = (p: string) => path.resolve(base, p);

@@ -145,7 +145,8 @@ export class TvService {
     };
   }
 
-  async resolve(device: Device, input: ResolveInput, signal?: AbortSignal) {
+  /** The TV's resolve, recording for the owner what went wrong on the way (problem reports). */
+  private async resolveRecordingProblems(device: Device, input: ResolveInput, signal: AbortSignal | undefined): Promise<ResolvedStream> {
     let r: ResolvedStream;
     try {
       r = await this.s.resolver.resolve(device.id, this.settings(device).preferredAudioLanguage, input, signal);
@@ -162,6 +163,11 @@ export class TvService {
       if (t.code === "adapter_unavailable") continue;
       this.s.problems.record(device.id, { kind: "resolve", code: "source_failed", episodeId: r.ref.episode.id, sourceId: t.sourceId, detail: triedDetail(t) });
     }
+    return r;
+  }
+
+  async resolve(device: Device, input: ResolveInput, signal?: AbortSignal) {
+    const r = await this.resolveRecordingProblems(device, input, signal);
     const { item, episode, index } = r.ref;
     const nextIndex = autoNextIndex(item, index);
     const next = nextIndex >= 0 ? item.episodes[nextIndex]! : null;

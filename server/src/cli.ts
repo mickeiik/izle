@@ -122,6 +122,27 @@ async function pair(config: ServerConfig, args: string[], serverUrl: string | un
   }
 }
 
+/**
+ * `admin-token`: prints the admin token (creating it, or with `rotate` replacing it), or with `link` the admin page's
+ * sign-in link and its QR code.
+ */
+function adminToken(config: ServerConfig, opts: { rotate: boolean; link: boolean; base: string | undefined }): number {
+  const { token, source } = loadAdminToken(config, stderrLog, { rotate: opts.rotate });
+  if (source === "env" && !opts.rotate) process.stderr.write("note: IZLE_ADMIN_TOKEN is set and overrides the token file\n");
+  if (!opts.link) {
+    out(token);
+    return 0;
+  }
+  // The link carries the token, like the plain print does; the QR code is the same link for a phone's camera.
+  const base = opts.base !== undefined ? { url: opts.base, source: "--base" } : linkBase(config);
+  const link = signInLink(base.url, token);
+  out(`${link}\n\n${qrCode(link)}`);
+  if (base.source === "interface" || base.source === "loopback") {
+    process.stderr.write(`note: the link uses ${base.source === "loopback" ? "the loopback address" : "this host's first address"}; set publicUrl in the config or pass --base <url> for the address your phone reaches\n`);
+  }
+  return 0;
+}
+
 const size = (bytes: number) => (bytes < 1024 ? `${bytes} bytes` : bytes < 1024 ** 2 ? `${Math.round(bytes / 1024)} KiB` : `${(bytes / 1024 ** 2).toFixed(1)} MiB`);
 
 /** `backup <file>`: a consistent copy of the database, taken while the server keeps running (BackupError → exit 1). */
@@ -200,22 +221,7 @@ export async function main(argv: string[]): Promise<number> {
     if (command === "check-resolver") return await checkResolver(config);
     if (command === "backup") return backup(config, positionals[0]!, values.force ?? false);
 
-    if (command === "admin-token") {
-      const { token, source } = loadAdminToken(config, stderrLog, { rotate: values.rotate ?? false });
-      if (source === "env" && !values.rotate) process.stderr.write("note: IZLE_ADMIN_TOKEN is set and overrides the token file\n");
-      if (!values.link) {
-        out(token);
-        return 0;
-      }
-      // The link carries the token, like the plain print does; the QR code is the same link for a phone's camera.
-      const base = values.base !== undefined ? { url: values.base, source: "--base" } : linkBase(config);
-      const link = signInLink(base.url, token);
-      out(`${link}\n\n${qrCode(link)}`);
-      if (base.source === "interface" || base.source === "loopback") {
-        process.stderr.write(`note: the link uses ${base.source === "loopback" ? "the loopback address" : "this host's first address"}; set publicUrl in the config or pass --base <url> for the address your phone reaches\n`);
-      }
-      return 0;
-    }
+    if (command === "admin-token") return adminToken(config, { rotate: values.rotate ?? false, link: values.link ?? false, base: values.base });
     if (command === "pair") return await pair(config, positionals, values.server);
     if (command !== undefined) return usage(`unknown command "${command}"`);
 

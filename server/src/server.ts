@@ -13,7 +13,7 @@ import { DeviceService } from "./devices.ts";
 import { EventHub } from "./events.ts";
 import { CatalogHistory } from "./history.ts";
 import { createLogger, type Logger } from "./log.ts";
-import { PAIR_CODE_PURGE_GRACE_MS, PairingService, type PairingOptions } from "./pairing.ts";
+import { PairingService, type PairingOptions } from "./pairing.ts";
 import { ProblemService } from "./problems.ts";
 import { ProxyService } from "./proxy.ts";
 import { PlaybackSessions, ResolveService } from "./resolve.ts";
@@ -124,9 +124,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   log.info("listening", { version: VERSION, host: config.listen.host, port, adminAuth: source, catalogDir: catalog.dir, dataDir: config.dataDir });
 
   const housekeeping = setInterval(() => {
-    const t = now();
-    store.purgePairCodes(t, PAIR_CODE_PURGE_GRACE_MS);
-    store.purgeCommands(t - 7 * 24 * 60 * 60_000);
+    ctx.pairing.purge();
+    ctx.commands.purge();
     problems.purge();
   }, 10 * 60_000);
   housekeeping.unref();
