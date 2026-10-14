@@ -23,9 +23,9 @@ import type { Logger } from "./log.ts";
 import { stopwatch } from "./stopwatch.ts";
 
 /** Time allowed for `createAdapters` at startup. */
-export const CREATE_ADAPTERS_TIMEOUT_MS = 30_000;
+const CREATE_ADAPTERS_TIMEOUT_MS = 30_000;
 /** Time allowed for one adapter's `healthcheck`. */
-export const HEALTHCHECK_TIMEOUT_MS = 15_000;
+const HEALTHCHECK_TIMEOUT_MS = 15_000;
 
 export class ResolverLoadError extends Error {
   override name = "ResolverLoadError";
@@ -36,14 +36,6 @@ export interface LoadedResolver {
   file: string;
   sha256: string;
   adapters: ReadonlyMap<string, Adapter>;
-}
-
-export interface LoadResolverOptions {
-  module: string;
-  config: Record<string, unknown>;
-  /** The server's data directory; the module gets `<dataDir>/resolver`. */
-  dataDir: string;
-  log: Logger;
 }
 
 /** Resolves when `promise` settles, or rejects with a TimeoutError after `ms` (the promise is left to settle alone). */
@@ -65,19 +57,17 @@ function call<T>(fn: () => T | Promise<T>): Promise<T> {
   }
 }
 
-/** The adapter-facing logger: the server's redacted logger, with level and arguments sanitized. */
-function adapterLogger(log: Logger): AdapterContext["log"] {
-  return (level: LogLevel, msg: string, fields?: Record<string, unknown>) => {
-    const lvl: LogLevel = level === "warn" || level === "error" ? level : "info";
-    log[lvl](String(msg), fields !== null && typeof fields === "object" ? fields : undefined);
-  };
-}
-
 /**
  * Imports the module, checks the API version and creates the adapters once. Throws ResolverLoadError with a
  * message fit for the owner's terminal (it never includes the module's own error messages).
  */
-export async function loadResolver(opts: LoadResolverOptions): Promise<LoadedResolver> {
+export async function loadResolver(opts: {
+  module: string;
+  config: Record<string, unknown>;
+  /** The server's data directory; the module gets `<dataDir>/resolver`. */
+  dataDir: string;
+  log: Logger;
+}): Promise<LoadedResolver> {
   const file = path.resolve(opts.module);
   let bytes: Buffer;
   try {
@@ -91,11 +81,10 @@ export async function loadResolver(opts: LoadResolverOptions): Promise<LoadedRes
   try {
     ns = (await import(pathToFileURL(file).href)) as Record<string, unknown>;
   } catch (err) {
-    throw new ResolverLoadError(`cannot import resolver module ${file} (${errorName(err)}; run it with node to see the details)`, {
-      cause: err,
-    });
+    const why = `${errorName(err)}; run it with node to see the details`;
+    throw new ResolverLoadError(`cannot import resolver module ${file} (${why})`, { cause: err });
   }
-  const mod = (ns.default !== undefined && ns.default !== null ? ns.default : ns) as Record<string, unknown>;
+  const mod = (ns.default ?? ns) as Record<string, unknown>;
   if (mod.apiVersion !== RESOLVER_API_VERSION) {
     const declared = typeof mod.apiVersion === "number" ? String(mod.apiVersion) : "none";
     throw new ResolverLoadError(
@@ -109,7 +98,12 @@ export async function loadResolver(opts: LoadResolverOptions): Promise<LoadedRes
   const dataDir = path.join(opts.dataDir, "resolver");
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const log = opts.log.child({ component: "resolver" });
-  const ctx: AdapterContext = { config: opts.config, dataDir, fetch: globalThis.fetch, log: adapterLogger(log) };
+  // The adapter-facing logger is the server's redacted logger, with level and arguments sanitized.
+  const adapterLog = (level: LogLevel, msg: string, fields?: Record<string, unknown>) => {
+    const lvl = level === "warn" || level === "error" ? level : "info";
+    log[lvl](String(msg), fields !== null && typeof fields === "object" ? fields : undefined);
+  };
+  const ctx: AdapterContext = { config: opts.config, dataDir, fetch: globalThis.fetch, log: adapterLog };
   const createAdapters = mod.createAdapters as (ctx: AdapterContext) => unknown;
 
   let created: unknown;
@@ -138,20 +132,9 @@ export async function loadResolver(opts: LoadResolverOptions): Promise<LoadedRes
 
 export type AdapterFailureCode = "timeout" | "abort" | "error" | "empty";
 
-export type AdapterOutcome =
+type AdapterOutcome =
   | { ok: true; results: ResolveResult[]; ms: number }
   | { ok: false; code: AdapterFailureCode; name: string | null; ms: number };
-
-/** Why a result fails validation beyond the JSON Schema, or null. */
-function semanticProblem(results: ResolveResult[]): string | null {
-  for (const r of results) {
-    if ("playlist" in r.media) {
-      if (Buffer.byteLength(r.media.playlist, "utf8") > MAX_INLINE_PLAYLIST_BYTES) return "PlaylistTooLarge";
-      if (!isPlaylistText(r.media.playlist)) return "NotAPlaylist";
-    }
-  }
-  return null;
-}
 
 /**
  * Runs `adapter.resolve` under `AbortSignal.any([signal, <deadline>])`. A call that ignores the signal is abandoned
@@ -165,6 +148,7 @@ export async function runAdapter(
   opts: { deadlineMs: number; signal?: AbortSignal },
 ): Promise<AdapterOutcome> {
   const ms = stopwatch();
+  const fail = (code: AdapterFailureCode, name: string | null): AdapterOutcome => ({ ok: false, code, name, ms: ms() });
   const deadlineController = new AbortController();
   const timer = setTimeout(
     () => deadlineController.abort(new DOMException("The operation was aborted due to timeout", "TimeoutError")),
@@ -185,20 +169,23 @@ export async function runAdapter(
   try {
     value = await Promise.race([running, aborted]);
   } catch (err) {
-    const code: AdapterFailureCode = deadline.aborted ? "timeout" : opts.signal?.aborted ? "abort" : "error";
-    return { ok: false, code, name: code === "error" ? errorName(err) : code === "timeout" ? "TimeoutError" : "AbortError", ms: ms() };
+    const code = deadline.aborted ? "timeout" : opts.signal?.aborted ? "abort" : "error";
+    return fail(code, code === "error" ? errorName(err) : code === "timeout" ? "TimeoutError" : "AbortError");
   } finally {
     clearTimeout(timer);
     if (onAbort) signal.removeEventListener("abort", onAbort);
   }
-  if (!validateResolveResultsSchema(value)) return { ok: false, code: "error", name: "InvalidResult", ms: ms() };
-  const problem = semanticProblem(value);
-  if (problem) return { ok: false, code: "error", name: problem, ms: ms() };
-  if (value.length === 0) return { ok: false, code: "empty", name: null, ms: ms() };
+  if (!validateResolveResultsSchema(value)) return fail("error", "InvalidResult");
+  for (const { media } of value) {
+    if (!("playlist" in media)) continue;
+    if (Buffer.byteLength(media.playlist, "utf8") > MAX_INLINE_PLAYLIST_BYTES) return fail("error", "PlaylistTooLarge");
+    if (!isPlaylistText(media.playlist)) return fail("error", "NotAPlaylist");
+  }
+  if (value.length === 0) return fail("empty", null);
   return { ok: true, results: value, ms: ms() };
 }
 
-export type HealthOutcome =
+type HealthOutcome =
   | { adapterId: string; ok: true; ms: number; /** the adapter has no healthcheck */ skipped: boolean }
   | { adapterId: string; ok: false; code: "timeout" | "error"; name: string; ms: number };
 
@@ -210,10 +197,7 @@ export async function healthcheckAll(resolver: LoadedResolver): Promise<HealthOu
       if (!adapter.healthcheck) return { adapterId: adapter.id, ok: true, ms: 0, skipped: true };
       const signal = AbortSignal.timeout(HEALTHCHECK_TIMEOUT_MS);
       try {
-        await withTimeout(
-          call(() => adapter.healthcheck!(signal)),
-          HEALTHCHECK_TIMEOUT_MS,
-        );
+        await withTimeout(call(() => adapter.healthcheck!(signal)), HEALTHCHECK_TIMEOUT_MS);
         return { adapterId: adapter.id, ok: true, ms: ms(), skipped: false };
       } catch (err) {
         const timedOut = signal.aborted || (err instanceof DOMException && err.name === "TimeoutError");
