@@ -1282,4 +1282,38 @@ Emulator screenshots of every screen: [`docs/verification/tv-design/`](verificat
 
 ## Integration of the design pass (2026-10-14)
 
-_(main session)_
+The owner asked for a design pass over the whole codebase, both the code's structure and the look of the TV and the
+admin page, and chose on the TV the polish plus the small UX additions (countdown bars, the poster on "The end",
+"OK: Play"), and on the admin page the polish plus the TV page's section bar and search as you type.
+
+- **One branch, `design-pass`, from `catalog-history`** (unmerged at the time and holding the latest work). Three
+  preparation commits came first (the admin allow-list module, the error screen's time left, the sections of this
+  log), then four parallel branches with separate files: server and contract structure, admin page, TV logic, TV look.
+- **The parallel worktrees started from `origin/main`**, not from `design-pass`; each branch fast-forwarded to the
+  preparation commit before any work (it is an ancestor of `design-pass`, so nothing was rebased).
+- **Merge order:** server, TV logic, admin page, TV look (the plan said admin before TV logic; TV logic finished first
+  and the two share no files). The server branch fast-forwarded; the others were cherry-picked. The only conflicts
+  were the `CHANGELOG.md` entries the branches appended to the same lists; both sides were kept.
+- **Integration fixes:** the package smoke test now fetches every top-level file of `server/admin/` from the installed
+  server (16 today) rather than `app.js` alone, since a module missing from the package or from `ADMIN_FILES` would
+  only show as a blank page; `server/admin/vendor/README.md` names `admin-files.ts` as the allow-list's home; and the
+  History and Problems cards keep their relative times current. The admin branch rebuilt those lists only when their
+  data changed, so a problem kept saying "just now" for minutes; unchanged lists are now kept and only their time
+  texts move on, so nothing in them loses the focus.
+- **Verified on the merged branch:** `npm ci`, `npm test` (contract 31, server 141), `npm run typecheck`,
+  `npm run version:check`, `npm run pack:server` and `npm run smoke:server`; `./gradlew :app:assembleDebug
+  :app:testDebugUnitTest` (170 tests). Then the debug APK on the emulator against the merged server with a scratch
+  copy of the sample catalog plus one film whose source is a closed local port: the pairing code approved from the
+  admin page, the home list built there with search as you type and "Show all" and reaching the TV live, a
+  144-character message in Home's top band and a short one over the video, playback and the information panel, the
+  admin remote (resume, +30 s), Up next with its bar, episode 2 then 3 starting on their own, "The end" with the poster
+  and then Home, the error screen counting "Home in … s" with Try again focused, its two problem reports on the
+  admin page, the hidden menu and its episode list, and autoplay on start with its bar, cancelled by → with the focus
+  kept. The admin page was used at 497 and 280 px wide without a horizontal scroll. The server log of the whole run
+  holds no URL; the player's error code shows as `<token>` there, the strict log rule recorded with the problem
+  reports.
+- **Seen and left as they are (not part of this pass):** "Now playing" on the admin page keeps saying "Starting" for a
+  playback that never started (the TV reports `stopped` only after READY); a hidden admin tab that becomes visible
+  wakes all its polls at once, as before.
+- **Not verified:** Listen along on a phone (the admin branch checked it in desktop Chromium) and the TV look on the
+  real TV box.
