@@ -4,7 +4,7 @@ import type { ServerConfig } from "./config.ts";
 import { HttpError } from "./errors.ts";
 import type { EventHub } from "./events.ts";
 import type { Logger } from "./log.ts";
-import { autoNextIndex, cursorAfterFinished, cursorIndex, isPlayable, type ProgressLike } from "./playback.ts";
+import { autoNextIndex, cursorAfterFinished, cursorIndex, isPlayable, nextAllowedIndex, type ProgressLike } from "./playback.ts";
 import { noPlayableDetail, triedDetail, type ProblemService } from "./problems.ts";
 import type { ResolvedStream, ResolveInput, ResolveService, Tried } from "./resolve.ts";
 import type { Device, NowPlaying, Progress, Store } from "./store.ts";
@@ -120,11 +120,16 @@ export class TvService {
     return new Map(this.s.store.listProgress(deviceId, this.s.catalog.catalogId, itemId).map((p) => [p.episodeId, p]));
   }
 
-  /** The episode OK would play for this item and where it would start. Null when nothing is playable. */
+  /**
+   * The episode OK would play for this item and where it would start. Null when nothing is playable. After the
+   * item was watched to the end (a wrapped cursor), episodes the catalog gained since then come first.
+   */
   continueFor(deviceId: string, item: CatalogItem) {
+    const catalogId = this.s.catalog.catalogId;
     const progress = this.progressMap(deviceId, item.id);
-    const cursor = this.s.store.getCursor(deviceId, this.s.catalog.catalogId, item.id);
-    const index = cursorIndex(item, cursor?.episodeId ?? null, progress as ReadonlyMap<string, ProgressLike>);
+    const cursor = this.s.store.getCursor(deviceId, catalogId, item.id);
+    const appended = cursor?.wrapped ? new Set(this.s.store.episodesSeenAfter(catalogId, item.id, cursor.updatedAt)) : undefined;
+    const index = cursorIndex(item, cursor, progress as ReadonlyMap<string, ProgressLike>, appended);
     if (index < 0) return null;
     const episode = item.episodes[index]!;
     const p = progress.get(episode.id);
@@ -140,6 +145,20 @@ export class TvService {
     };
   }
 
+  /**
+   * How many episodes of the item with playbackAllowed entered the catalog after both the device's last progress
+   * report on the item and the moment the item went on its home list (`addedAt`). Episodes of the first load of
+   * the catalog (the history's baseline) never count.
+   */
+  newEpisodesFor(deviceId: string, item: CatalogItem, addedAt: number | null): number {
+    const catalogId = this.s.catalog.catalogId;
+    const since = Math.max(this.s.store.lastProgressAt(deviceId, catalogId, item.id) ?? 0, addedAt ?? 0);
+    const added = this.s.store.episodesSeenAfter(catalogId, item.id, since);
+    if (added.length === 0) return 0;
+    const allowed = new Set(item.episodes.filter((e) => e.playbackAllowed).map((e) => e.id));
+    return added.filter((id) => allowed.has(id)).length;
+  }
+
   itemCard(item: CatalogItem) {
     return { id: item.id, kind: item.kind, title: item.title, year: item.year ?? null, posterUrl: this.s.catalog.posterUrl(item) };
   }
@@ -147,12 +166,12 @@ export class TvService {
   state(device: Device) {
     const { manifest } = this.s.catalog.current;
     const home = [];
-    for (const itemId of this.s.store.getHome(device.id, manifest.catalogId)) {
+    for (const { itemId, addedAt } of this.s.store.getHomeEntries(device.id, manifest.catalogId)) {
       const item = this.s.catalog.item(itemId);
       if (!item) continue; // gone after a catalog reload; the admin API flags it
       const cont = this.continueFor(device.id, item);
       if (!cont) continue; // nothing playable
-      home.push({ item: this.itemCard(item), continue: cont });
+      home.push({ item: this.itemCard(item), continue: cont, newEpisodes: this.newEpisodesFor(device.id, item, addedAt) });
     }
     return {
       version: device.stateVersion,
@@ -241,7 +260,8 @@ export class TvService {
 
   /**
    * Heartbeat from the player. Saves the position, keeps the item's cursor on the episode being watched, and on
-   * `finished` moves the cursor to the next allowed episode (wrapping to the first after the last).
+   * `finished` moves the cursor to the next allowed episode (wrapping to the first after the last). Only that wrap
+   * stores a wrapped cursor; every other report makes it an ordinary one.
    */
   recordProgress(device: Device, input: ProgressInput): { version: number } {
     const ref = this.s.catalog.episode(input.episodeId);
@@ -259,6 +279,7 @@ export class TvService {
     this.s.store.transaction(() => {
       const before = this.s.store.getCursor(device.id, catalogId, item.id);
       let cursorEpisode = episode;
+      let wrapped = false;
       if (input.status === "finished") {
         this.s.store.upsertProgress(device.id, {
           catalogId,
@@ -270,6 +291,7 @@ export class TvService {
           updatedAt: t,
         });
         cursorEpisode = item.episodes[cursorAfterFinished(item, index)] ?? episode;
+        wrapped = nextAllowedIndex(item, index) < 0;
         changed = true;
       } else {
         this.s.store.upsertProgress(device.id, {
@@ -283,8 +305,9 @@ export class TvService {
         });
         if (input.status === "stopped") changed = true;
       }
-      if (before?.episodeId !== cursorEpisode.id) changed = true;
-      this.s.store.setCursor(device.id, { catalogId, itemId: item.id, episodeId: cursorEpisode.id, updatedAt: t });
+      // A wrapped cursor becoming an ordinary one on the same episode is a cursor change too (OK may play another).
+      if (before?.episodeId !== cursorEpisode.id || (before?.wrapped ?? false) !== wrapped) changed = true;
+      this.s.store.setCursor(device.id, { catalogId, itemId: item.id, episodeId: cursorEpisode.id, updatedAt: t, wrapped });
       this.s.store.setNowPlaying(device.id, {
         catalogId,
         itemId: item.id,
@@ -303,7 +326,10 @@ export class TvService {
     return { version: changed ? this.bump(device.id) : (this.s.store.getDevice(device.id)?.stateVersion ?? device.stateVersion) };
   }
 
-  /** Owner override "continue from episode X": moves the cursor and forgets X's saved position so it starts over. */
+  /**
+   * Owner override "continue from episode X": moves the cursor (an ordinary one, so it wins over episodes added
+   * after a wrap) and forgets X's saved position so it starts over.
+   */
   setCursor(deviceId: string, itemId: string, episodeId: string): number {
     const item = this.s.catalog.item(itemId);
     if (!item) throw new HttpError(404, "unknown_item");

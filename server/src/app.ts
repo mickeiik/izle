@@ -351,7 +351,7 @@ export function createApp(ctx: AppContext): Hono<Env> {
   });
 
   const homeJson = (d: Device) =>
-    store.getHome(d.id, catalog.catalogId).map((itemId) => {
+    store.getHomeEntries(d.id, catalog.catalogId).map(({ itemId, addedAt }) => {
       const item = catalog.item(itemId);
       return {
         itemId,
@@ -360,6 +360,7 @@ export function createApp(ctx: AppContext): Hono<Env> {
         posterUrl: item ? catalog.posterUrl(item) : null,
         missing: !item,
         continue: item ? tv.continueFor(d.id, item) : null,
+        newEpisodes: item ? tv.newEpisodesFor(d.id, item, addedAt) : 0,
       };
     });
 

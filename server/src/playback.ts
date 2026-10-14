@@ -29,17 +29,38 @@ export function isPlayable(item: CatalogItem): boolean {
   return firstAllowedIndex(item) >= 0;
 }
 
+/** An item's cursor as the play-order rules see it; a bare episode id is an ordinary (not wrapped) cursor. */
+export interface CursorLike {
+  episodeId: string;
+  /** Placed by the wrap to the first episode after the last one was finished. */
+  wrapped: boolean;
+}
+
+const EMPTY: ReadonlySet<string> = new Set();
+
 /**
  * The episode OK plays (index into item.episodes), or -1 when nothing is playable.
+ * - A wrapped cursor (the item was watched to the end) with `appended` episodes (added to the catalog after the
+ *   wrap) plays the first of them in play order with playbackAllowed; when none is allowed, the rules below apply.
  * - A cursor on an allowed episode wins.
  * - A cursor on a no-longer-allowed episode moves to the next allowed one (wrapping to the first).
  * - Without a usable cursor: the first allowed episode not yet finished, else the first allowed one (rewatch).
  */
-export function cursorIndex(item: CatalogItem, cursorEpisodeId: string | null, progress: ReadonlyMap<string, ProgressLike>): number {
+export function cursorIndex(
+  item: CatalogItem,
+  cursor: string | CursorLike | null,
+  progress: ReadonlyMap<string, ProgressLike>,
+  appended: ReadonlySet<string> = EMPTY,
+): number {
   const first = firstAllowedIndex(item);
   if (first < 0) return -1;
-  if (cursorEpisodeId !== null) {
-    const at = item.episodes.findIndex((e) => e.id === cursorEpisodeId);
+  const c: CursorLike | null = typeof cursor === "string" ? { episodeId: cursor, wrapped: false } : cursor;
+  if (c?.wrapped && appended.size > 0) {
+    const added = item.episodes.findIndex((e) => e.playbackAllowed && appended.has(e.id));
+    if (added >= 0) return added;
+  }
+  if (c !== null) {
+    const at = item.episodes.findIndex((e) => e.id === c.episodeId);
     if (at >= 0) {
       if (item.episodes[at]!.playbackAllowed) return at;
       const next = nextAllowedIndex(item, at);

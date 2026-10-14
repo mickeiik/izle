@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ADMIN_TOKEN, startTestServer, type TestServer } from "./helpers.ts";
+import { ADMIN_TOKEN, fixtureItems, fixtureManifest, startTestServer, writeBundle, type Json, type TestServer } from "./helpers.ts";
 
 async function setup(t: { after(fn: () => unknown): void }) {
   const s = await startTestServer();
@@ -17,6 +17,25 @@ async function continueOf(as: Awaited<ReturnType<typeof setup>>["as"], itemId: s
   const state = await as("GET", "/state");
   return state.json.home.find((h: { item: { id: string } }) => h.item.id === itemId)?.continue;
 }
+
+/** A playable episode shaped like the fixture's last episode of "show"; `allowed: false` makes it not playable. */
+const extraEpisode = (id: string, number: number, allowed = true): Json => ({
+  ...fixtureItems().items[0].episodes.at(-1),
+  id,
+  season: 3,
+  number,
+  ...(allowed ? {} : { playbackAllowed: false, sources: [] }),
+});
+
+/** Publishes the fixture with `episodes` appended to "show" as build `buildId` and reloads the server's catalog. */
+async function appendToShow(s: TestServer, buildId: string, episodes: Json[]) {
+  const items = fixtureItems();
+  items.items[0].episodes.push(...episodes);
+  await writeBundle(s.bundleDir, { ...fixtureManifest(), buildId }, items);
+  assert.equal((await s.admin("POST", "/catalog/reload")).status, 200);
+}
+
+const newEpisodes = (home: Array<{ item: { id: string }; newEpisodes: number }>) => home.map((h) => [h.item.id, h.newEpisodes]);
 
 test("auth: TV routes need a device token; the admin token is not one", async (t) => {
   const { s, tv } = await setup(t);
@@ -111,6 +130,69 @@ test("state version: bumped by stop/finish and cursor changes, not by playing he
   const c = await progress(as, "show.e1", "stopped", 30_000);
   assert.equal(c.json.version, v0 + 2);
   assert.equal((await as("GET", "/state")).json.version, v0 + 2);
+});
+
+test("newEpisodes: allowed episodes a reload added after the item went on the list and after the last progress", async (t) => {
+  const { s, tv, as } = await setup(t);
+  const kitchen = await s.pair("Mutfak");
+  const asKitchen = (method: string, route: string) => s.call(method, `/api/v1/tv${route}`, { token: kitchen.token });
+  await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["show", "film"] });
+  s.clock.advance(1_000);
+  await progress(as, "show.e1", "stopped", 60_000);
+  assert.deepEqual(newEpisodes((await as("GET", "/state")).json.home), [["show", 0], ["film", 0]], "the first load is the baseline");
+
+  s.clock.advance(1_000);
+  await appendToShow(s, "fixture-2", [extraEpisode("show.e6", 4), extraEpisode("show.e7", 5, false)]);
+  s.clock.advance(1_000);
+  await s.admin("PUT", `/devices/${kitchen.deviceId}/home`, { itemIds: ["show"] });
+
+  let state = await as("GET", "/state");
+  assert.deepEqual(newEpisodes(state.json.home), [["show", 1], ["film", 0]], "show.e7 is not allowed");
+  assert.equal(state.json.home[0].continue.episodeId, "show.e1", "the count does not change what OK plays");
+  assert.deepEqual(newEpisodes((await asKitchen("GET", "/state")).json.home), [["show", 0]], "put on the list after the reload");
+  const detail = await s.admin("GET", `/devices/${tv.deviceId}`);
+  assert.deepEqual(detail.json.home.map((h: { itemId: string; newEpisodes: number }) => [h.itemId, h.newEpisodes]), [["show", 1], ["film", 0]]);
+
+  s.clock.advance(1_000);
+  await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["film", "show"] });
+  assert.deepEqual(newEpisodes((await as("GET", "/state")).json.home), [["film", 0], ["show", 1]], "a reorder keeps the date");
+
+  s.clock.advance(1_000);
+  await progress(as, "show.e1", "playing", 70_000);
+  state = await as("GET", "/state");
+  assert.deepEqual(newEpisodes(state.json.home), [["film", 0], ["show", 0]], "any progress on the item clears it");
+  assert.equal((await s.admin("GET", `/devices/${tv.deviceId}`)).json.home[1].newEpisodes, 0);
+});
+
+test("a finished show that gains an episode resumes there until the owner's cursor or any progress", async (t) => {
+  const { s, tv, as } = await setup(t);
+  await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["show"] });
+  for (const e of ["show.e1", "show.e2", "show.e4", "show.e5"]) await progress(as, e, "finished", 1_000, 1_000);
+  let c = await continueOf(as, "show");
+  assert.deepEqual([c.episodeId, c.status], ["show.e1", "finished"], "wrapped to the first episode");
+
+  s.clock.advance(1_000);
+  await appendToShow(s, "fixture-2", [extraEpisode("show.e6", 4, false), extraEpisode("show.e7", 5)]);
+  c = await continueOf(as, "show");
+  assert.deepEqual([c.episodeId, c.index, c.count, c.positionMs, c.status], ["show.e7", 6, 7, 0, "new"], "the first new allowed episode");
+  assert.equal((await as("GET", "/items/show")).json.cursorEpisodeId, "show.e7");
+  assert.equal((await s.admin("GET", `/devices/${tv.deviceId}`)).json.home[0].continue.episodeId, "show.e7");
+
+  await s.admin("PUT", `/devices/${tv.deviceId}/cursor`, { itemId: "show", episodeId: "show.e2" });
+  c = await continueOf(as, "show");
+  assert.deepEqual([c.episodeId, c.status], ["show.e2", "new"], "the owner's cursor wins");
+
+  // Watched to the end again, then another episode arrives; a report on the cursor episode makes it ordinary.
+  await progress(as, "show.e7", "finished", 1_000, 1_000);
+  assert.equal((await continueOf(as, "show")).episodeId, "show.e1");
+  s.clock.advance(1_000);
+  await appendToShow(s, "fixture-3", [extraEpisode("show.e6", 4, false), extraEpisode("show.e7", 5), extraEpisode("show.e8", 6)]);
+  assert.equal((await continueOf(as, "show")).episodeId, "show.e8");
+  const v = (await as("GET", "/state")).json.version;
+  const r = await progress(as, "show.e1", "playing", 5_000);
+  assert.equal(r.json.version, v + 1, "the cursor stays on show.e1 but is no longer wrapped");
+  c = await continueOf(as, "show");
+  assert.deepEqual([c.episodeId, c.status, c.positionMs], ["show.e1", "watching", 5_000]);
 });
 
 test("resolve: language order, alternatives, next episode and resume", async (t) => {

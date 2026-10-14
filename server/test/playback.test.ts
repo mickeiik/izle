@@ -35,6 +35,34 @@ test("cursor: an explicit cursor wins; a cursor on a disallowed or vanished epis
   assert.equal(cursorIndex(show, "gone", progress([["show.e1", "finished"]])), 1);
 });
 
+// The fixture's show as if a later build appended e6 (not allowed), e7 and e8, after it was watched to the end.
+const grown: CatalogItem = {
+  ...show,
+  episodes: [
+    ...show.episodes,
+    { ...show.episodes[4]!, id: "show.e6", playbackAllowed: false, sources: [] },
+    { ...show.episodes[4]!, id: "show.e7" },
+    { ...show.episodes[4]!, id: "show.e8" },
+  ],
+};
+const wrapped = { episodeId: "show.e1", wrapped: true };
+const watched = progress(["show.e1", "show.e2", "show.e4", "show.e5"].map((e) => [e, "finished"] as [string, "finished"]));
+
+test("cursor: a wrapped cursor plays the first appended episode with playbackAllowed in play order", () => {
+  assert.equal(cursorIndex(grown, wrapped, watched, new Set(["show.e8", "show.e7"])), 6, "play order, not the set's order");
+  assert.equal(cursorIndex(grown, wrapped, watched, new Set(["show.e6", "show.e8"])), 7, "an appended episode that is not allowed is skipped");
+  assert.equal(cursorIndex(grown, wrapped, watched, new Set(["show.e6"])), 0, "none allowed: the cursor episode");
+});
+
+test("cursor: without appended episodes, or with an ordinary cursor, the rules are unchanged", () => {
+  assert.equal(cursorIndex(grown, wrapped, watched), 0, "wrapped without appended episodes: the cursor episode");
+  assert.equal(cursorIndex(grown, wrapped, watched, new Set()), 0);
+  assert.equal(cursorIndex(grown, { episodeId: "show.e1", wrapped: false }, watched, new Set(["show.e7"])), 0, "an ordinary cursor ignores them");
+  assert.equal(cursorIndex(grown, "show.e1", watched, new Set(["show.e7"])), 0, "a bare episode id is an ordinary cursor");
+  assert.equal(cursorIndex(grown, null, watched, new Set(["show.e7"])), 6, "without a cursor: the first unfinished allowed episode");
+  assert.equal(cursorIndex(grown, { episodeId: "show.e3", wrapped: true }, watched, new Set(["show.e6"])), 3, "a disallowed cursor moves on as before");
+});
+
 test("finishing an episode advances the cursor to the next allowed one and wraps after the last", () => {
   assert.equal(cursorAfterFinished(show, 0), 1);
   assert.equal(cursorAfterFinished(show, 1), 3, "autoAdvance:false does not stop the cursor; e3 is skipped");

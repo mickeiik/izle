@@ -22,6 +22,11 @@ contract share one version number. How to update (back up, update the server, th
 - **Catalog build history:** the server records every catalog build it loads, with the shows and episodes it added
   and removed, and when each episode first appeared. The first load of a catalog is the starting point: nothing in it
   counts as new.
+- **New-episode count on home entries:** each entry of a TV's home state (and of a TV's home list in the admin API)
+  says how many playable episodes a catalog reload added since the TV last played the show, or since the show was
+  put on that TV's home screen. It goes back to 0 as soon as the TV plays any episode of the show.
+- **OK resumes a finished show at its first new episode:** when a show was watched to the end and a later catalog
+  adds episodes to it, OK plays the first new playable one instead of starting the show over.
 - **Pairing from the server's shell:** `izle-server pair pending` lists the codes waiting for approval and
   `izle-server pair approve <code> [name]` approves one.
 - **Sign-in link for a phone:** `izle-server admin-token --link` prints a sign-in link for the admin page and the

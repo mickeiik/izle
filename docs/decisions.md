@@ -884,3 +884,23 @@ the resolve answer's `expiresAt`, which the TV used to drop). Routine decisions:
   cursor write stays an ordinary cursor. The appended-episodes rule that reads it comes with the TV state change.
 - `listCatalogBuilds` returns the build rows without their change lists (newest load first); `getCatalogBuild`
   returns one build with its changes.
+- **`newEpisodes` on home entries** (`GET /tv/state` and the admin device page's home rows): the item's present
+  episodes that first appeared after the later of the TV's last progress report on the item and the item's
+  `added_at`, counted only when they have `playbackAllowed` (the TV cannot play the others). A missing item's admin
+  row has 0.
+- **The count clears on any progress report on the item**, rewatching episode 1 included: the server does not track
+  which of the new episodes were watched, only when the TV last played the show. Clearing does not bump the state
+  version by itself (that would cost a lookup on every heartbeat): progress comes from the player, and leaving it
+  (`stopped` or `finished`) bumps the version, so Home shows the cleared count on return.
+- **An explicit `wrapped` cursor flag rather than inferring the wrap from progress:** "every allowed episode
+  finished and the cursor on the first" stops holding the moment an episode is appended, which is exactly when it is
+  needed, and also holds after the owner moves the cursor to episode 1. Only `finished` on an episode with no allowed
+  episode after it stores `wrapped = 1`; every other cursor write (heartbeats, `stopped`, finishing an earlier
+  episode, the owner's `PUT …/cursor`) stores 0. A wrapped cursor that becomes an ordinary one on the same episode
+  (a report on the first episode) bumps the state version like a cursor move, since OK may now play another one.
+- **Appended episodes for the cursor rule** are the item's present episodes first seen after the cursor's
+  `updated_at` (the moment of the wrap). OK plays the first of them in play order with `playbackAllowed`, so the
+  bundle's order is honoured and disallowed ones are skipped; with none allowed, the cursor episode as before.
+  `cursorIndex` takes the cursor as a bare episode id (an ordinary cursor) or `{episodeId, wrapped}`, so existing
+  callers keep their behaviour; `/tv/items/:id` (`cursorEpisodeId`) and the admin page's `continue` follow the rule
+  through `continueFor`.

@@ -93,7 +93,8 @@ Everything the home screen needs.
       "continue": {
         "episodeId": "caminandes.s01e02", "season": 1, "number": 2, "title": "Gran Dillama", "label": null,
         "index": 1, "count": 3, "positionMs": 0, "durationMs": 146050, "status": "new"
-      }
+      },
+      "newEpisodes": 0
     }
   ]
 }
@@ -113,6 +114,10 @@ Everything the home screen needs.
 - `continue` is what OK plays: the item's cursor episode (see [Play order](#play-order-and-the-cursor)).
   `status`: `new` (never started), `watching` (`positionMs` is the saved position), `finished` (`positionMs` is
   0: it starts over). `index`/`count` are the position in the item's play order.
+- `newEpisodes` (integer, 0 when none): episodes with `playbackAllowed` that entered the catalog (a reload that
+  first carried them) after the later of the TV's last progress report on this item and the moment the item was put
+  on this home list. Episodes present when the server first loaded this catalog never count. It returns to 0 as soon
+  as the TV reports progress on any episode of the item.
 
 ### `GET /api/v1/tv/events`
 
@@ -316,6 +321,11 @@ that is not finished (or the first allowed one when all are). A cursor pointing 
 allowed moves to the next allowed one. Episode array order in the bundle is the play order; `season`/`number`
 are display only.
 
+A cursor the server placed by wrapping after the last episode marks a finished item. When episodes were added to
+the item after that, OK plays the first added episode with `playbackAllowed` in play order instead of the cursor;
+otherwise the cursor episode. Any later progress report or owner cursor change makes the cursor an ordinary one
+again.
+
 ## Admin API
 
 ### Devices
@@ -323,7 +333,7 @@ are display only.
 | Route | Body | Response |
 |---|---|---|
 | `GET /api/v1/admin/devices` | | `{"devices": [Device & {"homeCount"}]}` |
-| `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "missing", "continue"}], "homeMax": 12}` |
+| `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "missing", "continue", "newEpisodes"}], "homeMax": 12}` — `continue` and `newEpisodes` as in [`GET /tv/state`](#get-apiv1tvstate) (`null` and 0 for a missing item) |
 | `PATCH /api/v1/admin/devices/:id` | any of `name`, `uiLanguage` (`"tr"`/`"en"`/null), `preferredAudioLanguage` (tag/null), `subtitlesLanguage` (tag/null = off), `autoplayOnStart` (boolean) | `{"device": Device}` |
 | `DELETE /api/v1/admin/devices/:id` | | `204` — the TV must pair again |
 | `PUT /api/v1/admin/devices/:id/home` | `{"itemIds": [...]}` (≤ 12, in display order) | `{"version", "home"}` |
