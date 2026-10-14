@@ -22,3 +22,21 @@ export class HttpError extends Error {
     this.headers = headers;
   }
 }
+
+/** 429 with `Retry-After` in seconds. */
+export function tooManyRequests(code: string, message: string, retryAfterSec: number): HttpError {
+  return new HttpError(429, code, message, {}, { "Retry-After": String(retryAfterSec) });
+}
+
+/** 401 `unauthorized` with `WWW-Authenticate: Bearer realm="<realm>"`. */
+export function unauthorized(realm: string, message: string): HttpError {
+  return new HttpError(401, "unauthorized", message, {}, { "WWW-Authenticate": `Bearer realm="${realm}"` });
+}
+
+const ERROR_NAME = /^[A-Za-z][A-Za-z0-9_.-]{0,59}$/;
+
+/** The class name of a thrown value, if it is a plausible identifier; never its message. */
+export function errorName(err: unknown): string {
+  if (err instanceof Error) return ERROR_NAME.test(err.name) ? err.name : "Error";
+  return err === null || typeof err !== "object" ? "NonError" : "Error";
+}

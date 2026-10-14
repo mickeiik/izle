@@ -1,6 +1,6 @@
-import { randomInt, timingSafeEqual } from "node:crypto";
-import { newId, newToken, sha256 } from "./auth.ts";
-import { HttpError } from "./errors.ts";
+import { randomInt } from "node:crypto";
+import { newId, newToken, secretsEqual, sha256 } from "./auth.ts";
+import { HttpError, tooManyRequests } from "./errors.ts";
 import type { Logger } from "./log.ts";
 import { RateLimiter } from "./ratelimit.ts";
 import type { Store } from "./store.ts";
@@ -17,12 +17,6 @@ export type PairWaitResult = { status: "pending" } | { status: "approved"; devic
 export interface PairingOptions {
   /** `pair/start` calls allowed per client address and window. */
   startLimit?: { max: number; windowMs: number };
-}
-
-function hashesEqual(aHex: string, bHex: string): boolean {
-  const a = Buffer.from(aHex, "hex");
-  const b = Buffer.from(bHex, "hex");
-  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 /**
@@ -46,9 +40,7 @@ export class PairingService {
 
   start(clientKey: string): { code: string; pairToken: string; expiresAt: number } {
     const rate = this.limiter.hit(clientKey);
-    if (!rate.ok) {
-      throw new HttpError(429, "rate_limited", "too many pairing attempts", {}, { "Retry-After": String(rate.retryAfterSec) });
-    }
+    if (!rate.ok) throw tooManyRequests("rate_limited", "too many pairing attempts", rate.retryAfterSec);
     const t = this.now();
     this.store.purgePairCodes(t, 60 * 60_000);
     if (this.store.listOpenPairCodes(t).length >= MAX_OPEN_PAIR_CODES) {
@@ -98,7 +90,7 @@ export class PairingService {
   private check(code: string, pairToken: string): PairWaitResult {
     const t = this.now();
     const row = this.store.getPairCode(code);
-    if (!row || !hashesEqual(row.pairTokenHash, sha256(pairToken))) throw new HttpError(404, "not_found");
+    if (!row || !secretsEqual(row.pairTokenHash, sha256(pairToken))) throw new HttpError(404, "not_found");
     if (row.deliveredAt !== null || row.expiresAt <= t) throw new HttpError(410, "expired", "the pairing code expired", { status: "expired" });
     if (row.approvedAt === null || row.deviceId === null) return { status: "pending" };
     const deviceToken = newToken();

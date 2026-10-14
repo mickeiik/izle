@@ -17,15 +17,15 @@ import {
   type ResolveRequest,
   type ResolveResult,
 } from "@izle/contract";
+import { errorName } from "./errors.ts";
 import { isPlaylistText } from "./hls.ts";
 import type { Logger } from "./log.ts";
+import { stopwatch } from "./stopwatch.ts";
 
 /** Time allowed for `createAdapters` at startup. */
 export const CREATE_ADAPTERS_TIMEOUT_MS = 30_000;
 /** Time allowed for one adapter's `healthcheck`. */
 export const HEALTHCHECK_TIMEOUT_MS = 15_000;
-
-const ERROR_NAME = /^[A-Za-z][A-Za-z0-9_.-]{0,59}$/;
 
 export class ResolverLoadError extends Error {
   override name = "ResolverLoadError";
@@ -44,12 +44,6 @@ export interface LoadResolverOptions {
   /** The server's data directory; the module gets `<dataDir>/resolver`. */
   dataDir: string;
   log: Logger;
-}
-
-/** The class name of a thrown value, if it is a plausible identifier; never its message. */
-export function errorName(err: unknown): string {
-  if (err instanceof Error) return ERROR_NAME.test(err.name) ? err.name : "Error";
-  return err === null || typeof err !== "object" ? "NonError" : "Error";
 }
 
 /** Resolves when `promise` settles, or rejects with a TimeoutError after `ms` (the promise is left to settle alone). */
@@ -170,8 +164,7 @@ export async function runAdapter(
   req: Omit<ResolveRequest, "signal" | "deadlineMs">,
   opts: { deadlineMs: number; signal?: AbortSignal },
 ): Promise<AdapterOutcome> {
-  const started = performance.now();
-  const ms = () => Math.round(performance.now() - started);
+  const ms = stopwatch();
   const deadlineController = new AbortController();
   const timer = setTimeout(
     () => deadlineController.abort(new DOMException("The operation was aborted due to timeout", "TimeoutError")),
@@ -213,8 +206,7 @@ export type HealthOutcome =
 export async function healthcheckAll(resolver: LoadedResolver): Promise<HealthOutcome[]> {
   return Promise.all(
     [...resolver.adapters.values()].map(async (adapter): Promise<HealthOutcome> => {
-      const started = performance.now();
-      const ms = () => Math.round(performance.now() - started);
+      const ms = stopwatch();
       if (!adapter.healthcheck) return { adapterId: adapter.id, ok: true, ms: 0, skipped: true };
       const signal = AbortSignal.timeout(HEALTHCHECK_TIMEOUT_MS);
       try {

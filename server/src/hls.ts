@@ -8,8 +8,13 @@ const PLAYLIST_URI_TAGS = new Set(["#EXT-X-MEDIA", "#EXT-X-I-FRAME-STREAM-INF", 
 
 const URI_ATTRIBUTE = /(^|,|:)(\s*URI\s*=\s*)"([^"]*)"/g;
 
+/** Line endings a playlist may use: `\n`, `\r\n` or a lone `\r`. */
+const LINE_BREAK = /\r?\n|\r/;
+
+const withoutBom = (text: string): string => text.replace(/^\uFEFF/, "");
+
 export function isPlaylistText(text: string): boolean {
-  return text.replace(/^﻿/, "").trimStart().startsWith("#EXTM3U");
+  return withoutBom(text).trimStart().startsWith("#EXTM3U");
 }
 
 function tagName(line: string): string {
@@ -37,7 +42,7 @@ export function rewritePlaylist(text: string, baseUrl: string, link: (url: strin
   };
 
   let nextIsPlaylist = false;
-  const lines = text.replace(/^﻿/, "").split(/\r?\n|\r/);
+  const lines = withoutBom(text).split(LINE_BREAK);
   const out = lines.map((line) => {
     const trimmed = line.trim();
     if (trimmed === "") return line;
@@ -68,7 +73,7 @@ export interface PlaylistSummary {
 export function summarizePlaylist(text: string): PlaylistSummary {
   const s: PlaylistSummary = { master: false, variants: 0, renditions: 0, segments: 0, endList: false };
   let nextIsPlaylist = false;
-  for (const raw of text.split(/\r?\n|\r/)) {
+  for (const raw of text.split(LINE_BREAK)) {
     const line = raw.trim();
     if (line === "") continue;
     if (line.startsWith("#")) {

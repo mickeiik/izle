@@ -5,7 +5,7 @@
 // Free text from the TV is redacted before it is stored, and detail is never logged.
 
 import type { CatalogService } from "./catalog.ts";
-import { HttpError } from "./errors.ts";
+import { tooManyRequests } from "./errors.ts";
 import { redactReportText, type Logger } from "./log.ts";
 import { iso } from "./presenters.ts";
 import type { ProxyProblem, ProxyProblemCode } from "./proxy.ts";
@@ -107,9 +107,7 @@ export class ProblemService {
   /** A TV's own report. Free text is redacted before it is stored; 429 beyond the rate limit. */
   report(device: Device, body: ProblemReportBody): Problem {
     const rate = this.reports.hit(device.id);
-    if (!rate.ok) {
-      throw new HttpError(429, "too_many_problems", "too many problem reports from this TV", {}, { "Retry-After": String(rate.retryAfterSec) });
-    }
+    if (!rate.ok) throw tooManyRequests("too_many_problems", "too many problem reports from this TV", rate.retryAfterSec);
     const t = this.o.now();
     const found = body.sessionId ? this.o.session?.(body.sessionId) : undefined;
     // Only the TV's own session, and only for the episode it played.

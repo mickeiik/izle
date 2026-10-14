@@ -11,8 +11,9 @@ import { bearerToken, secretsEqual, sha256 } from "../auth.ts";
 import { clientAddress, compileTrustedProxies } from "../clientip.ts";
 import type { ServerConfig } from "../config.ts";
 import type { AppContext } from "../context.ts";
-import { HttpError } from "../errors.ts";
+import { HttpError, tooManyRequests, unauthorized } from "../errors.ts";
 import { RateLimiter } from "../ratelimit.ts";
+import { stopwatch } from "../stopwatch.ts";
 import type { Device } from "../store.ts";
 
 /** The app's Hono environment: TV routes find the device their token belongs to in `c.get("device")`. */
@@ -41,7 +42,7 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
   const { store, log } = ctx;
 
   app.use("*", async (c, next) => {
-    const started = performance.now();
+    const ms = stopwatch();
     c.header("X-Content-Type-Options", "nosniff");
     c.header("Referrer-Policy", "no-referrer");
     c.header("X-Frame-Options", "DENY");
@@ -52,7 +53,7 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
       method: c.req.method,
       route,
       status: c.res.status,
-      ms: Math.round(performance.now() - started),
+      ms: ms(),
       deviceId: c.get("device")?.id,
     };
     // Health checks and the proxy's steady stream of segment requests only show up at debug level.
@@ -85,7 +86,7 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
   const tvAuth = createMiddleware<Env>(async (c, next) => {
     const token = bearerToken(c.req.header("Authorization"));
     const device = token ? store.getDeviceByTokenHash(sha256(token)) : null;
-    if (!device) throw new HttpError(401, "unauthorized", "missing or invalid device token", {}, { "WWW-Authenticate": 'Bearer realm="izle"' });
+    if (!device) throw unauthorized("izle", "missing or invalid device token");
     const t = ctx.now();
     if (device.lastSeenAt === null || t - device.lastSeenAt > 60_000) store.touchDevice(device.id, t);
     c.set("device", device);
@@ -99,9 +100,7 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
   const adminAuth = createMiddleware<Env>(async (c, next) => {
     const client = clientKey(c);
     const locked = adminFailures.check(client);
-    if (!locked.ok) {
-      throw new HttpError(429, "too_many_attempts", "too many wrong admin tokens from this address; try again later", {}, { "Retry-After": String(locked.retryAfterSec) });
-    }
+    if (!locked.ok) throw tooManyRequests("too_many_attempts", "too many wrong admin tokens from this address; try again later", locked.retryAfterSec);
     const token = bearerToken(c.req.header("Authorization"));
     if (!token || !secretsEqual(token, ctx.adminToken)) {
       adminFailures.hit(client);
@@ -109,7 +108,7 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
       log.warn("admin auth failed", { client, route: routePath(c, -1), reason: token ? "wrong token" : "no token" });
       const after = adminFailures.check(client);
       if (!after.ok) log.warn("admin auth locked out", { client, failures: ADMIN_AUTH_MAX_FAILURES, retryAfterSec: after.retryAfterSec });
-      throw new HttpError(401, "unauthorized", "missing or invalid admin token", {}, { "WWW-Authenticate": 'Bearer realm="izle-admin"' });
+      throw unauthorized("izle-admin", "missing or invalid admin token");
     }
     await next();
   });

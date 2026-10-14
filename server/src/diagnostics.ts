@@ -4,11 +4,12 @@
 
 import type { MediaKind, ResolveResult, Source } from "@izle/contract";
 import type { CatalogService } from "./catalog.ts";
+import { errorName } from "./errors.ts";
 import { isPlaylistText, summarizePlaylist, type PlaylistSummary } from "./hls.ts";
 import { requireEpisode, requireSource } from "./lookup.ts";
-import { MAX_PLAYLIST_BYTES } from "./proxy.ts";
+import { MAX_PLAYLIST_BYTES, readText } from "./proxy.ts";
 import { deliveryPlan, type ResolveService, type TriedCode, type UpstreamStream } from "./resolve.ts";
-import { errorName } from "./resolver.ts";
+import { stopwatch } from "./stopwatch.ts";
 
 export const PROBE_TIMEOUT_MS = 10_000;
 
@@ -79,8 +80,7 @@ function summarize(r: Summarized, proxyAlways: boolean): StreamSummary {
 }
 
 async function probe(stream: UpstreamStream, signal: AbortSignal | undefined, fetchUpstream: typeof fetch): Promise<ProbeReport> {
-  const started = performance.now();
-  const ms = () => Math.round(performance.now() - started);
+  const ms = stopwatch();
   if ("playlist" in stream.media) {
     return { ok: true, ms: 0, playlist: summarizePlaylist(stream.media.playlist) };
   }
@@ -97,9 +97,8 @@ async function probe(stream: UpstreamStream, signal: AbortSignal | undefined, fe
       await res.body?.cancel().catch(() => {});
       return { ok: res.status === 200 || res.status === 206, ms: ms(), ...base };
     }
-    const bytes = new Uint8Array(await res.arrayBuffer());
-    if (bytes.byteLength > MAX_PLAYLIST_BYTES) return { ok: false, ms: ms(), ...base, error: "too_large" };
-    const text = Buffer.from(bytes).toString("utf8");
+    const text = await readText(res, MAX_PLAYLIST_BYTES);
+    if (text === null) return { ok: false, ms: ms(), ...base, error: "too_large" };
     if (!isPlaylistText(text)) return { ok: false, ms: ms(), ...base, error: "not_a_playlist" };
     return { ok: true, ms: ms(), ...base, playlist: summarizePlaylist(text) };
   } catch (err) {

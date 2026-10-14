@@ -6,8 +6,8 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { newToken } from "./auth.ts";
 import { isPlaylistText, rewritePlaylist, tsSyncOffset, TS_ALIGN_LOOKAHEAD, type LinkKind } from "./hls.ts";
+import { errorName } from "./errors.ts";
 import type { Logger } from "./log.ts";
-import { errorName } from "./resolver.ts";
 
 export const MAX_SESSIONS_PER_DEVICE = 2;
 /** Absolute session lifetime, whatever the sliding TTL. */
@@ -127,7 +127,8 @@ function networkReason(err: unknown): string {
   return typeof code === "string" && /^[A-Z][A-Z0-9_]{1,39}$/.test(code) ? code : errorName(err);
 }
 
-async function readText(res: Response, limit: number): Promise<string | null> {
+/** The response body as UTF-8 text, or null (the rest cancelled) once it grows past `limit` bytes. */
+export async function readText(res: Response, limit: number): Promise<string | null> {
   if (!res.body) return "";
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -196,9 +197,14 @@ export class ProxyService {
     return t - s.lastUsedAt > this.ttlMs || t - s.createdAt > SESSION_MAX_AGE_MS;
   }
 
+  /** The signature of a rewritten link: the first 16 bytes of the session key's HMAC of `<kind>.<base64url URL>`. */
+  private mac(s: Session, kind: LinkKind, b64: string): Buffer {
+    return createHmac("sha256", s.key).update(`${kind}.${b64}`).digest().subarray(0, 16);
+  }
+
   private sign(s: Session, url: string, kind: LinkKind): string {
     const b64 = Buffer.from(url, "utf8").toString("base64url");
-    const mac = createHmac("sha256", s.key).update(`${kind}.${b64}`).digest().subarray(0, 16).toString("base64url");
+    const mac = this.mac(s, kind, b64).toString("base64url");
     const ext = extensionOf(url);
     return `${kind}.${b64}.${mac}${ext ? `.${ext}` : ""}`;
   }
@@ -206,7 +212,7 @@ export class ProxyService {
   private verify(s: Session, ref: string): { url: string; kind: LinkKind } | null {
     const [kind, b64, mac] = ref.split(".");
     if ((kind !== "p" && kind !== "r") || !b64 || !mac || !/^[A-Za-z0-9_-]+$/.test(b64)) return null;
-    const expected = createHmac("sha256", s.key).update(`${kind}.${b64}`).digest().subarray(0, 16);
+    const expected = this.mac(s, kind, b64);
     const given = Buffer.from(mac, "base64url");
     if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
     const url = Buffer.from(b64, "base64url").toString("utf8");
