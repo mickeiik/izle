@@ -1,9 +1,6 @@
-# Dependabot version updates: weekly on Monday, one grouped pull request per ecosystem for minor and patch
-# updates, and a pull request of its own for every major update. Dependabot alerts and security updates are
-# switched on in the repository settings (docs/releasing.md, make-public checklist).
+# Weekly version updates: one grouped pull request per ecosystem for minor and patch updates, one per major update.
 version: 2
 updates:
-  # Root package.json with the npm workspaces `contract` and `server` (one lockfile for all of them).
   - package-ecosystem: npm
     directory: /
     schedule:
@@ -21,7 +18,6 @@ updates:
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
 
-  # Android app: the version catalog (android/gradle/libs.versions.toml) and the Gradle wrapper.
   - package-ecosystem: gradle
     directory: /android
     schedule:
@@ -35,8 +31,7 @@ updates:
         patterns: ["*"]
         update-types: [minor, patch]
 
-  # Workflow actions are pinned by commit SHA with the release as a comment (`@<sha> # vX.Y.Z`); Dependabot
-  # updates both.
+  # Actions are pinned by commit SHA with the release as a comment (`@<sha> # vX.Y.Z`); Dependabot updates both.
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -50,8 +45,7 @@ updates:
         patterns: ["*"]
         update-types: [minor, patch]
 
-  # The Node base images of the Dockerfile. Their tags carry only the major (`node:24-slim`), so every update is a
-  # major one and gets its own pull request.
+  # The Dockerfile's tags carry only the major (`node:24-slim`), so every update is a major one with its own PR.
   - package-ecosystem: docker
     directory: /
     schedule:

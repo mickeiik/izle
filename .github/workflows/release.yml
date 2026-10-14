@@ -1,8 +1,6 @@
 name: Release
 
-# A pushed tag vX.Y.Z builds the server package and the Android APKs and publishes them as a GitHub release.
-# Running the workflow by hand (Actions → Release → Run workflow) is a dry run: the same builds, uploaded to the run
-# as artifacts, and no release. The process is described in docs/releasing.md.
+# A pushed tag vX.Y.Z publishes a GitHub release; a manual run is a dry run (artifacts only). See docs/releasing.md.
 
 on:
   push:
