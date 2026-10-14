@@ -1,9 +1,5 @@
 # syntax=docker/dockerfile:1
-# izle-server image, built from this repository with the same package a release ships:
-#   docker build -t izle-server .
-#   docker run -d --name izle -p 8787:8787 -v izle-data:/var/lib/izle izle-server
-#   docker exec izle izle-server admin-token --config /etc/izle/izle.json
-# Your own catalog and config: docs/deploy/self-hosting.md (Docker).
+# izle-server image, built with the same package a release ships; usage: docs/deploy/self-hosting.md (Docker).
 
 FROM node:24-slim AS build
 WORKDIR /src

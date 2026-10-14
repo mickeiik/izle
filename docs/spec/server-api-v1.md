@@ -1,12 +1,7 @@
 # izle-server API v1
 
-Status: **draft, implemented**: direct sources (Phase 2), resolver modules and the media proxy (Phase 4), browser
-admin UI over the admin API (Phase 5), reverse-proxy client addresses (Phase 6), companion audio on the owner's
-phone ([Listen along](#listen-along)), remote control beyond play/stop ([commands](#commands)),
-[problem reports](#problem-reports), autoplay on start, and catalog history (the admin API's
-[build history](#catalog-history), `newEpisodes` on home entries, and OK playing episodes appended to a finished
-item: [Play order](#play-order-and-the-cursor)). Changes within v1 are additive only (new optional request fields,
-new response fields, new routes); clients MUST ignore unknown response fields.
+Status: **draft, implemented**. Changes within v1 are additive only (new optional request fields, new response
+fields, new routes); clients MUST ignore unknown response fields.
 
 ## Conventions
 
@@ -49,11 +44,9 @@ device token.
 
 ### `POST /api/v1/pair/start`
 
-No body. → `200 {"code": "483920", "pairToken": "<secret>", "expiresAt": "…"}`. Codes live 10 minutes.
-
-Errors: `429 rate_limited` (more than 10 starts per client address in 10 minutes; `Retry-After` header; behind
-a reverse proxy see `trustedProxies` in [Configuration](#configuration)),
-`429 too_many_pending` (5 codes are already open).
+No body. → `200 {"code": "483920", "pairToken": "<secret>", "expiresAt": "…"}`. Codes live 10 minutes. Errors:
+`429 rate_limited` (more than 10 starts per client address in 10 minutes; `Retry-After` header; behind a reverse
+proxy see `trustedProxies` in [Configuration](#configuration)), `429 too_many_pending` (5 codes are already open).
 
 ### `GET /api/v1/pair/wait?code=<6 digits>[&wait=<0..25>]`
 
@@ -82,7 +75,7 @@ Errors: `404 unknown_code`, `409 already_approved`.
 
 ### `GET /api/v1/tv/state`
 
-Everything the home screen needs.
+Everything the home screen needs:
 
 ```json
 {
@@ -152,12 +145,11 @@ below); the TV gets `{"id", "type", "payload"}`. What a command does is the TV's
 
 Transport commands (`stop`, `pause`, `resume`, `seek`, `next`, `previous`) act only while the TV is in the player;
 otherwise they are acknowledged and ignored. A TV acknowledges and ignores command types it does not know, so new
-types can be added within v1; the server refuses unknown types (`400 invalid_request`). The server logs a
-command's type and ids, never a message's text.
+types can be added within v1; the server refuses unknown types (`400 invalid_request`).
 
 ### `GET /api/v1/tv/items/:itemId`
 
-The hidden menu's episode list, for any catalog item.
+The hidden menu's episode list, for any catalog item (`404 unknown_item`).
 
 ```json
 {
@@ -171,8 +163,6 @@ The hidden menu's episode list, for any catalog item.
   ]
 }
 ```
-
-Errors: `404 unknown_item`.
 
 ### `POST /api/v1/tv/resolve`
 
@@ -285,12 +275,12 @@ Errors: `404 unknown_episode`.
 
 ### `POST /api/v1/tv/commands/:id/ack`
 
-→ `{"ok": true}`. Errors: `404 unknown_command` (not this device's command).
+→ `{"ok": true}`, or `404 unknown_command` (not this device's command).
 
 ### `POST /api/v1/tv/problems`
 
-Something went wrong on the TV ("Can't play right now", a player error, the server unreachable for a while). The
-owner is usually not in the room; the report shows up on the admin page ([Problem reports](#problem-reports)).
+Something went wrong on the TV ("Can't play right now", a player error, the server unreachable for a while); the
+owner sees it on the admin page ([Problem reports](#problem-reports)).
 
 ```json
 { "kind": "playback", "code": "ERROR_CODE_IO_BAD_HTTP_STATUS", "ageMs": 4000, "episodeId": "show.e1",
@@ -309,8 +299,7 @@ owner is usually not in the room; the report shows up on the admin page ([Proble
   `null`s.
 - `code`, `detail` and `appVersion` are redacted before they are stored: URLs become `<url host>`, runs of 20 or more
   letters, digits, `_` and `-` become `<token>` unless they read as an identifier (`SCREAMING_SNAKE`, `snake_case`,
-  `CamelCase` without digits, such as player error names). The server logs a report's kind and code, never its
-  detail.
+  `CamelCase` without digits, such as player error names).
 
 Errors: `429 too_many_problems` (more than 30 reports in 10 minutes from one TV; `Retry-After` header). A report
 for an episode the catalog does not have is stored all the same.
@@ -441,8 +430,7 @@ is fetched and summarized; MP4/DASH get `Range: bytes=0-1023`). Nothing secret i
 ### Listen along
 
 The owner's phone plays **another source of the episode the TV is playing** (a dubbed release, or another audio
-language inside the same multi-audio stream), in sync with the picture, from the admin page. The TV side is
-unchanged; the senior sees nothing.
+language inside the same multi-audio stream) in sync with the picture, from the admin page. Nothing changes on the TV.
 
 - **Anchor.** `GET …/now` carries `serverNowMs` (the server clock), `seq` (bumped on every now-playing write) and
   `anchor`: the TV's `positionMs` as of `atMs` (server clock, = receipt of the report − its `ageMs`), advancing at
@@ -475,7 +463,7 @@ unchanged; the senior sees nothing.
 |---|---|
 | `GET /healthz` | `{"ok": true}` |
 | `GET /assets/<sha256>.<jpg\|png\|webp>` | catalog posters, `Cache-Control: public, max-age=31536000, immutable` |
-| `GET /admin/` | the admin UI: `index.html` plus an allow-list of files, `ADMIN_FILES` in `server/src/admin-files.ts` (its ES modules — `app.js`, the entry, and the modules it imports, all flat in `server/admin/` — `style.css`, `icon.svg`, and `vendor/hls.min.js`, the pinned hls.js build listed in `server/admin/vendor/README.md`); anything else under `/admin/` is `404`; `Cache-Control: no-cache`, `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; …` |
+| `GET /admin/` | the admin UI: `index.html` plus the allow-list `ADMIN_FILES` in `server/src/admin-files.ts` (the ES modules flat in `server/admin/`, entry `app.js`; `style.css`, `icon.svg`, and the pinned hls.js build `vendor/hls.min.js`, see `server/admin/vendor/README.md`); anything else under `/admin/` is `404`; `Cache-Control: no-cache`, `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; …` |
 | `GET /p/<token>/…` | media proxy (see [Media proxy](#media-proxy)) |
 
 ## Logging

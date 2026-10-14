@@ -1,9 +1,8 @@
 # AGENTS.md
 
-Guidance for coding agents (and humans) working in this repository. The plan is
-[docs/roadmap.md](docs/roadmap.md); routine decisions are logged in [docs/decisions.md](docs/decisions.md) —
-read both before starting, and append to the decision log whenever you make a choice the roadmap does not
-settle.
+Guidance for coding agents (and humans) working in this repository. The specs in [docs/spec/](docs/spec/) and the
+UX rules in [docs/ux/senior-tv.md](docs/ux/senior-tv.md) describe what the software does. Append a few lines to
+[docs/decisions.md](docs/decisions.md) only for a choice that the code, the specs and this file do not explain.
 
 ## Product principles
 
@@ -29,7 +28,7 @@ settle.
 
 ## Commands
 
-Root (npm workspaces `contract`, `server`):
+Root (npm workspaces `contract`, `server`; Node.js ≥ 22.13):
 
 ```bash
 npm ci
@@ -41,11 +40,11 @@ npm run smoke:server     # installs that tarball offline into a temp prefix and 
 npm run version:check    # contract, server, lockfile and Android versionName agree; version:set -- X.Y.Z bumps all
 ```
 
-Releases (tag `vX.Y.Z` → `.github/workflows/release.yml`), Android release signing and the make-public checklist:
-[docs/releasing.md](docs/releasing.md). Deployment (systemd, Caddy, Docker): [docs/deploy/](docs/deploy/self-hosting.md).
-The package mirrors the source tree's relative paths (`server/dist/` → `../admin`, `../schema`,
-`../../sample-catalog`); the smoke test catches a resource that moved.
-User-visible changes get an entry under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md), in the same commit.
+Releases, Android release signing and the make-public checklist: [docs/releasing.md](docs/releasing.md); deployment
+(systemd, Caddy, Docker): [docs/deploy/self-hosting.md](docs/deploy/self-hosting.md). The package mirrors the source
+tree's relative paths (`server/dist/` → `../admin`, `../schema`, `../../sample-catalog`); the smoke test catches a
+resource that moved. User-visible changes get an entry under `## [Unreleased]` in [CHANGELOG.md](CHANGELOG.md), in
+the same commit.
 
 - `contract/`: `npm test -w contract`, `npx izle-validate <bundleDir> [--probe]`
 - `server/`: `npm test -w server`, `npm run -w server dev -- --config server/izle.dev.json` (sample catalog on :8787,
@@ -83,8 +82,6 @@ adb shell input keyevent KEYCODE_DPAD_CENTER     # hidden menu: KEYCODE_MENU or 
 adb exec-out screencap -p > /tmp/izle.png
 ```
 
-The emulator reaches a server on the host at `http://10.0.2.2:8787`. Approve the TV's pairing code with
-`npm run -s -w server dev -- pair approve <code> --config server/izle.dev.json` (or `POST /api/v1/admin/pair/approve`,
-see the README's curl flow). `input keyevent --longpress` holds OK for only
-400 ms, shorter than the app's 0.6 s long press, so it acts as a click. The UX rules the app implements are in
-[docs/ux/senior-tv.md](docs/ux/senior-tv.md).
+The emulator reaches a server on the host at `http://10.0.2.2:8787`; approve the TV's pairing code with `pair approve`
+(above). `input keyevent --longpress` holds OK for only 400 ms, shorter than the app's 0.6 s long press, so it acts
+as a click.

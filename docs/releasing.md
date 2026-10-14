@@ -1,7 +1,7 @@
 # Releasing izle
 
-A release is a git tag `vX.Y.Z`. Pushing it runs [`.github/workflows/release.yml`](../.github/workflows/release.yml),
-which publishes a GitHub release with:
+Pushing a git tag `vX.Y.Z` runs [`.github/workflows/release.yml`](../.github/workflows/release.yml), which
+publishes a GitHub release with:
 
 | File | What |
 |---|---|
@@ -21,8 +21,8 @@ Owners install them as described in [deploy/self-hosting.md](deploy/self-hosting
    npm run version:check                 # prints 0.2.0
    ```
 2. In [`CHANGELOG.md`](../CHANGELOG.md), move the entries under `## [Unreleased]` to a new `## [0.2.0] - YYYY-MM-DD`
-   heading with the release date, leave the Unreleased heading empty above it, and update the compare links at the
-   bottom of the file. Then commit both steps together:
+   heading, leave the Unreleased heading empty above it, and update the compare links at the bottom. Commit both
+   steps together:
    ```bash
    git commit -am "Release 0.2.0"
    git push
@@ -42,20 +42,19 @@ To build the same files locally: `npm ci && npm run pack:server && npm run smoke
 
 ## Android release signing
 
-Android only installs an update when it is signed with the same key as the installed app. The debug APK of each CI
-run is signed with a new throwaway key, which is why TVs should run the release APK.
+Android only installs an update signed with the same key as the installed app. The debug APK of each CI run is
+signed with a new throwaway key, which is why TVs should run the release APK.
 
-**Create the key once** and keep it, with its password, somewhere safe and backed up. If it is lost, every TV has
+**Create the key once** and keep it, with its password, somewhere safe and backed up: if it is lost, every TV has
 to uninstall izle (and pair again) to get the next version. `keytool` comes with any JDK (Android Studio:
-`/opt/android-studio/jbr/bin/keytool` or the equivalent on your system):
+`/opt/android-studio/jbr/bin/keytool` or the equivalent):
 
 ```bash
 keytool -genkeypair -v -keystore izle-release.jks -alias izle -keyalg RSA -keysize 4096 -validity 10000
 ```
 
-Keep the keystore outside the repository. `*.jks` and `keystore.properties` are git-ignored anyway.
-
-**Local builds** read `android/keystore.properties`:
+Keep the keystore outside the repository (`*.jks` and `keystore.properties` are git-ignored anyway). **Local
+builds** read `android/keystore.properties`:
 
 ```properties
 storeFile=/home/you/keys/izle-release.jks
@@ -69,8 +68,8 @@ without the environment variables below) the same task produces `app-release-uns
 not install. Check a signature with `$ANDROID_HOME/build-tools/<version>/apksigner verify --print-certs <apk>`.
 
 **Releases from CI** use four repository secrets, which the workflow turns into the `IZLE_SIGNING_STORE_FILE`,
-`IZLE_SIGNING_STORE_PASSWORD`, `IZLE_SIGNING_KEY_ALIAS` and `IZLE_SIGNING_KEY_PASSWORD` environment variables the
-Gradle build reads:
+`IZLE_SIGNING_STORE_PASSWORD`, `IZLE_SIGNING_KEY_ALIAS` and `IZLE_SIGNING_KEY_PASSWORD` variables the Gradle build
+reads (only the release workflow's signing step sees them; pull requests from forks never get secrets):
 
 ```bash
 base64 -w0 izle-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
@@ -79,19 +78,17 @@ gh secret set ANDROID_KEY_ALIAS
 gh secret set ANDROID_KEY_PASSWORD
 ```
 
-Only the release workflow's signing step sees them. Pull requests from forks never get secrets.
-
-**Moving a TV (or the emulator) from a debug to a release APK** needs an uninstall first, because the keys differ.
-Otherwise the install fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`:
+**Moving a TV (or the emulator) from a debug to a release APK** needs an uninstall first, because the keys differ
+(otherwise: `INSTALL_FAILED_UPDATE_INCOMPATIBLE`):
 
 ```bash
 adb uninstall io.github.mickeiik.izle
 adb install izle-tv-X.Y.Z.apk
 ```
 
-The TV then pairs again and shows up as a new TV on the admin page. Set up its home screen and forget the old
-entry. Release builds have no minification (R8 is off), start with an empty server address and ignore the debug-only
-`izle.server` launch extra.
+The TV then pairs again as a new TV: set up its home screen and forget the old entry on the admin page. Release
+builds have no minification (R8 is off), start with an empty server address and ignore the debug-only `izle.server`
+launch extra.
 
 ## Make-public checklist
 
@@ -105,13 +102,13 @@ automated session) goes through this list.
 - [ ] **Private names.** Search the history for the names of your private catalogs, their sources, their hosts and
   your private repositories. Only you know the list:
   `git log -p --all | grep -n -i -E 'name-one|name-two|private-host'`.
-- [ ] **Author identities.** `git log --all --format='%an <%ae>' | sort -u`. Every address shown becomes public.
-  Rewrite them (e.g. to your GitHub `noreply` address) before publishing if needed.
+- [ ] **Author identities.** `git log --all --format='%an <%ae>' | sort -u`: every address shown becomes public;
+  rewrite them (e.g. to your GitHub `noreply` address) if needed.
 - [ ] **Tracked files.** Nothing like `*.token`, `*.db`, `*.jks`, `keystore.properties` or a local `izle.json`:
   `git ls-files | grep -E '\.(token|db|jks)$|keystore\.properties|(^|/)izle\.json$'` prints nothing.
 - [ ] **Binary files are ours or licensed.** `git ls-files '*.jpg' '*.png' '*.apk'`: sample posters are listed in
-  [`sample-catalog/NOTICE.md`](../sample-catalog/NOTICE.md), the example catalog's posters are generated, and
-  verification screenshots show only sample or generated content.
+  [`sample-catalog/NOTICE.md`](../sample-catalog/NOTICE.md), the example catalog's posters are generated, and the
+  verification screenshots in earlier commits show only sample or generated content.
 - [ ] **If something must go**, rewrite the history (`git filter-repo`) before publishing, and rotate whatever
   leaked anyway.
 - [ ] **Pinned actions.** Every `uses:` in the workflows names a commit SHA, with the release it belongs to as a

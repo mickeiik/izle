@@ -27,22 +27,22 @@ import { build } from "esbuild";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const at = (/** @type {string[]} */ ...p) => path.join(ROOT, ...p);
+const readJson = async (/** @type {string} */ file) => JSON.parse(await readFile(file, "utf8"));
 
 const { values: args } = parseArgs({ options: { out: { type: "string" }, "keep-stage": { type: "boolean" } } });
 const outDir = path.resolve(args.out ?? at("dist"));
 
-const rootPackage = JSON.parse(await readFile(at("package.json"), "utf8"));
-const serverPackage = JSON.parse(await readFile(at("server", "package.json"), "utf8"));
+const rootPackage = await readJson(at("package.json"));
+const serverPackage = await readJson(at("server", "package.json"));
 const version = serverPackage.version;
 const nodeRange = rootPackage.engines.node;
 const minNode = /^>=(\d+)\.(\d+)$/.exec(nodeRange);
 if (!minNode) throw new Error(`unexpected engines.node "${nodeRange}" in package.json`);
+const [, major, minor] = minNode;
 
 const stage = path.join(await mkdtemp(path.join(tmpdir(), "izle-pack-")), "package");
 const to = (/** @type {string[]} */ ...p) => path.join(stage, ...p);
 await mkdir(stage, { recursive: true });
-
-// --- the bundle ------------------------------------------------------------------------------------------------
 
 const result = await build({
   entryPoints: [at("server", "src", "cli.ts")],
@@ -50,7 +50,7 @@ const result = await build({
   bundle: true,
   platform: "node",
   format: "esm",
-  target: `node${minNode[1]}.${minNode[2]}`,
+  target: `node${major}.${minor}`,
   // CommonJS dependencies (ajv) may require() Node built-ins; ES module output has no `require` of its own.
   banner: { js: 'import { createRequire as __izleCreateRequire } from "node:module";\nconst require = __izleCreateRequire(import.meta.url);' },
   legalComments: "none", // the notices are collected in THIRD_PARTY_LICENSES.md
@@ -58,8 +58,6 @@ const result = await build({
   metafile: true,
   logLevel: "warning",
 });
-
-// --- files next to the bundle ----------------------------------------------------------------------------------
 
 /** Copies the files of `from` (not recursing) that `keep` accepts into `into`. */
 async function copyFiles(/** @type {string} */ from, /** @type {string} */ into, keep = (/** @type {string} */ _name) => true) {
@@ -83,8 +81,8 @@ await writeFile(
   `#!/usr/bin/env node
 // izle-server ${version}: checks the Node.js version, then runs the bundled server.
 const [major, minor] = process.versions.node.split(".").map(Number);
-if (major < ${minNode[1]} || (major === ${minNode[1]} && minor < ${minNode[2]})) {
-  process.stderr.write(\`izle-server needs Node.js ${minNode[1]}.${minNode[2]} or newer; this is \${process.version}\\n\`);
+if (major < ${major} || (major === ${major} && minor < ${minor})) {
+  process.stderr.write(\`izle-server needs Node.js ${major}.${minor} or newer; this is \${process.version}\\n\`);
   process.exit(1);
 }
 const { main } = await import("../server/dist/izle-server.js");
@@ -94,9 +92,9 @@ if (code >= 0) process.exitCode = code;
   { mode: 0o755 },
 );
 
-// --- third-party notices ---------------------------------------------------------------------------------------
-
-/** npm packages that ended up in the bundle (workspace packages are ours and resolve outside node_modules). */
+// Third-party notices: npm packages that ended up in the bundle (workspace packages resolve outside node_modules),
+// then the files vendored into the admin page (server/admin/vendor/README.md lists versions and hashes).
+const fence = (/** @type {string} */ heading, /** @type {string} */ text) => `## ${heading}\n\n\`\`\`\n${text.trim()}\n\`\`\``;
 const packageDirs = new Set();
 for (const input of Object.keys(result.metafile.inputs)) {
   const m = /^(.*node_modules\/(?:@[^/]+\/)?[^/]+)\//.exec(input);
@@ -105,18 +103,16 @@ for (const input of Object.keys(result.metafile.inputs)) {
 const notices = [];
 const bundled = [];
 for (const dir of [...packageDirs].sort()) {
-  const pkg = JSON.parse(await readFile(path.join(dir, "package.json"), "utf8"));
+  const pkg = await readJson(path.join(dir, "package.json"));
   bundled.push(`${pkg.name}@${pkg.version}`);
   const licenseFile = (await readdir(dir)).find((f) => /^licen[cs]e(\.(md|txt))?$/i.test(f));
   if (!licenseFile) throw new Error(`${pkg.name} has no LICENSE file; add its notice by hand`);
-  const text = (await readFile(path.join(dir, licenseFile), "utf8")).trim();
-  notices.push(`## ${pkg.name} ${pkg.version} (${pkg.license})\n\n\`\`\`\n${text}\n\`\`\``);
+  notices.push(fence(`${pkg.name} ${pkg.version} (${pkg.license})`, await readFile(path.join(dir, licenseFile), "utf8")));
 }
-// Files vendored into the admin page (server/admin/vendor/README.md lists versions and hashes).
 const vendored = [];
 for (const name of (await readdir(at("server", "admin", "vendor"))).filter((n) => n.startsWith("LICENSE-")).sort()) {
-  const text = (await readFile(at("server", "admin", "vendor", name), "utf8")).trim();
-  vendored.push(`## ${name.slice("LICENSE-".length)} (vendored in server/admin/vendor/)\n\n\`\`\`\n${text}\n\`\`\``);
+  const text = await readFile(at("server", "admin", "vendor", name), "utf8");
+  vendored.push(fence(`${name.slice("LICENSE-".length)} (vendored in server/admin/vendor/)`, text));
 }
 await writeFile(
   to("THIRD_PARTY_LICENSES.md"),
@@ -124,29 +120,21 @@ await writeFile(
     `The admin page (\`server/admin/\`) vendors the following files; see \`server/admin/vendor/README.md\`.\n\n${vendored.join("\n\n")}\n`,
 );
 
-// --- package.json and README -----------------------------------------------------------------------------------
+const manifest = {
+  name: serverPackage.name,
+  version,
+  private: true, // never published to a registry; installed from the release tarball
+  description: serverPackage.description,
+  license: serverPackage.license,
+  repository: rootPackage.repository,
+  type: "module",
+  engines: { node: nodeRange },
+  bin: { "izle-server": "bin/izle-server.js" },
+  files: ["bin", "server", "sample-catalog", "deploy", "THIRD_PARTY_LICENSES.md"],
+};
+await writeFile(to("package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
-await writeFile(
-  to("package.json"),
-  `${JSON.stringify(
-    {
-      name: serverPackage.name,
-      version,
-      private: true, // never published to a registry; installed from the release tarball
-      description: serverPackage.description,
-      license: serverPackage.license,
-      repository: rootPackage.repository,
-      type: "module",
-      engines: { node: nodeRange },
-      bin: { "izle-server": "bin/izle-server.js" },
-      files: ["bin", "server", "sample-catalog", "deploy", "THIRD_PARTY_LICENSES.md"],
-    },
-    null,
-    2,
-  )}\n`,
-);
-
-const docs = "https://github.com/mickeiik/izle/blob/main/docs/deploy/self-hosting.md";
+const guide = "https://github.com/mickeiik/izle/blob/main/docs/deploy/self-hosting.md";
 await writeFile(
   to("README.md"),
   `# izle-server ${version}
@@ -163,14 +151,12 @@ sudo npm install --global --prefix /opt/izle ./izle-server-${version}.tgz
 
 Without \`--config\` the server listens on port 8787, serves the sample catalog in \`sample-catalog/\` and keeps its
 data in \`./data\`. \`deploy/\` holds an example config, systemd units for the server and a daily database backup, and
-a Caddyfile; the setup is described in the self-hosting guide: ${docs}
+a Caddyfile; the setup is described in the self-hosting guide: ${guide}
 
 Licenses: [LICENSE](LICENSE) (MIT), bundled npm packages in [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), the
 sample catalog's media and posters in [sample-catalog/NOTICE.md](sample-catalog/NOTICE.md).
 `,
 );
-
-// --- pack ------------------------------------------------------------------------------------------------------
 
 await mkdir(outDir, { recursive: true });
 const [packed] = JSON.parse(

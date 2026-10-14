@@ -9,7 +9,6 @@ release of the server package and the TV app; the [changelog](CHANGELOG.md) says
 
 Report it privately through GitHub: on the repository's **Security** tab, choose **Report a vulnerability**. Only
 you and the maintainers see the report and the discussion that follows. There is no e-mail address for reports.
-
 Please do not open a public issue, pull request or discussion for a vulnerability.
 
 A useful report says which version is affected (`izle-server --version`, About in the TV's hidden menu), how the
@@ -19,7 +18,6 @@ device token, the admin token) and how to reproduce the problem.
 ## Scope
 
 In scope:
-
 - anything that lets a TV, or a client without a token, reach the admin API, or lets one TV read or change another
   TV's data;
 - a media-proxy session that can be made to fetch arbitrary URLs, or that leaks upstream request headers;
@@ -28,7 +26,6 @@ In scope:
 - pairing-code abuse: guessing or taking over a code, or getting a device token without the owner's approval.
 
 Out of scope:
-
 - the demo CDNs and hosts that the sample catalog links to;
 - owners' private catalogs and resolver modules: the server runs a resolver module as trusted code in its own
   process;
@@ -43,7 +40,6 @@ and credited to you in the report and the release notes if you want.
 
 ## Hardening
 
-The [self-hosting guide](docs/deploy/self-hosting.md) describes the setup the project expects: HTTPS through a
-reverse proxy (the Caddy example), the admin page and admin API limited to private address ranges (the Caddyfile's
-optional block), the systemd unit's sandbox, and `trustedProxies` so that rate limits see the real client behind a
-proxy.
+The [self-hosting guide](docs/deploy/self-hosting.md) describes the expected setup: HTTPS through a reverse proxy,
+the admin page and admin API limited to private address ranges (the Caddyfile's optional block), the systemd unit's
+sandbox, and `trustedProxies` so that rate limits see the real client behind a proxy.

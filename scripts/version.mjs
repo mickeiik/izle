@@ -15,29 +15,26 @@ import { parseArgs } from "node:util";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const GRADLE = path.join(ROOT, "android", "app", "build.gradle.kts");
+const LOCK = path.join(ROOT, "package-lock.json");
 const WORKSPACES = ["contract", "server"];
 const VERSION_NAME = /^(\s*versionName\s*=\s*")([^"]*)(")/m;
 // Major.minor.patch, each < 100 except major, so versionCode = major * 10000 + minor * 100 + patch grows with it.
 const SEMVER = /^(0|[1-9]\d*)\.([1-9]?\d)\.([1-9]?\d)(-[0-9A-Za-z.-]+)?$/;
 
-/** @returns {Promise<Array<{ where: string, version: string }>>} */
-async function readVersions() {
-  const found = [];
-  for (const ws of WORKSPACES) {
-    const pkg = JSON.parse(await readFile(path.join(ROOT, ws, "package.json"), "utf8"));
-    found.push({ where: `${ws}/package.json`, version: pkg.version });
-  }
-  const lock = JSON.parse(await readFile(path.join(ROOT, "package-lock.json"), "utf8"));
-  for (const ws of WORKSPACES) found.push({ where: `package-lock.json (${ws})`, version: lock.packages[ws]?.version });
-  const m = VERSION_NAME.exec(await readFile(GRADLE, "utf8"));
-  found.push({ where: "android/app/build.gradle.kts versionName", version: m ? m[2] : "(not found)" });
-  return found;
-}
+const pkgFile = (/** @type {string} */ ws) => path.join(ROOT, ws, "package.json");
+const readJson = async (/** @type {string} */ file) => JSON.parse(await readFile(file, "utf8"));
+const writeJson = (/** @type {string} */ file, /** @type {unknown} */ value) => writeFile(file, `${JSON.stringify(value, null, 2)}\n`);
 
 const [command, ...rest] = process.argv.slice(2);
 if (command === "check") {
   const { values } = parseArgs({ args: rest, options: { tag: { type: "string" } } });
-  const found = await readVersions();
+  const lock = await readJson(LOCK);
+  const found = [];
+  for (const ws of WORKSPACES) found.push({ where: `${ws}/package.json`, version: (await readJson(pkgFile(ws))).version });
+  for (const ws of WORKSPACES) found.push({ where: `package-lock.json (${ws})`, version: lock.packages[ws]?.version });
+  const m = VERSION_NAME.exec(await readFile(GRADLE, "utf8"));
+  found.push({ where: "android/app/build.gradle.kts versionName", version: m ? m[2] : "(not found)" });
+
   const expected = values.tag ? values.tag.replace(/^v/, "") : found[0].version;
   const wrong = found.filter((f) => f.version !== expected);
   if (!SEMVER.test(expected)) wrong.unshift({ where: `"${expected}" is not a version like 1.2.3 (minor and patch < 100)`, version: "" });
@@ -55,15 +52,13 @@ if (command === "check") {
     for (const name of Object.keys(pkg.dependencies ?? {})) if (name.startsWith("@izle/")) pkg.dependencies[name] = `^${version}`;
   };
   for (const ws of WORKSPACES) {
-    const file = path.join(ROOT, ws, "package.json");
-    const pkg = JSON.parse(await readFile(file, "utf8"));
+    const pkg = await readJson(pkgFile(ws));
     update(pkg);
-    await writeFile(file, `${JSON.stringify(pkg, null, 2)}\n`);
+    await writeJson(pkgFile(ws), pkg);
   }
-  const lockFile = path.join(ROOT, "package-lock.json");
-  const lock = JSON.parse(await readFile(lockFile, "utf8"));
+  const lock = await readJson(LOCK);
   for (const ws of WORKSPACES) update(lock.packages[ws]);
-  await writeFile(lockFile, `${JSON.stringify(lock, null, 2)}\n`);
+  await writeJson(LOCK, lock);
   const gradle = await readFile(GRADLE, "utf8");
   if (!VERSION_NAME.test(gradle)) throw new Error(`no versionName in ${GRADLE}`);
   await writeFile(GRADLE, gradle.replace(VERSION_NAME, `$1${version}$3`));
