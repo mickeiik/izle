@@ -28,8 +28,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -193,6 +195,23 @@ fun ProgressBar(fraction: Float, modifier: Modifier = Modifier, height: Dp = 6.d
             Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(height)
                 .background(IzleColors.Accent, IzleShapes.Pill),
         )
+    }
+}
+
+/** A whole screen in [background], its content inside the safe margins. */
+fun Modifier.fullScreen(background: Color = IzleColors.Background): Modifier =
+    fillMaxSize().background(background).padding(IzleSpacing.Safe)
+
+/**
+ * Asks for the focus once a frame, from the next frame on and for up to 10 frames, until the request goes through and
+ * [took] says the focus really arrived: the screen may still be laying out. [requester] is looked up again each frame,
+ * since a lazy list composes its rows late (null: not there yet).
+ */
+suspend fun requestFocusWithin(requester: () -> FocusRequester?, took: () -> Boolean = { true }) {
+    repeat(10) {
+        withFrameNanos { }
+        val r = requester() ?: return@repeat
+        if (runCatching { r.requestFocus() }.isSuccess && took()) return
     }
 }
 

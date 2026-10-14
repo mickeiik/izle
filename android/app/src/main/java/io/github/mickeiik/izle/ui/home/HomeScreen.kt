@@ -37,7 +37,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -53,14 +52,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.text.style.Hyphens
-import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -70,7 +66,6 @@ import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import coil3.compose.AsyncImage
 import io.github.mickeiik.izle.R
 import io.github.mickeiik.izle.data.api.HomeEntry
 import io.github.mickeiik.izle.data.api.TvState
@@ -80,7 +75,9 @@ import io.github.mickeiik.izle.ui.HomeMessage
 import io.github.mickeiik.izle.ui.common.Clock
 import io.github.mickeiik.izle.ui.common.FullScreenMessage
 import io.github.mickeiik.izle.ui.common.MessageBanner
+import io.github.mickeiik.izle.ui.common.PosterOrTitle
 import io.github.mickeiik.izle.ui.common.ProgressBar
+import io.github.mickeiik.izle.ui.common.requestFocusWithin
 import io.github.mickeiik.izle.ui.common.tileBadgeText
 import io.github.mickeiik.izle.ui.theme.IzleBorders
 import io.github.mickeiik.izle.ui.theme.IzleColors
@@ -235,11 +232,7 @@ private fun TileGrid(
         if (!active || gridHasFocus) return@LaunchedEffect
         val target = ids.indexOf(initialFocusItemId).takeIf { it >= 0 } ?: lastFocusedIndex.coerceIn(0, ids.lastIndex)
         gridState.scrollToItem(target)
-        repeat(10) {
-            withFrameNanos { }
-            val requester = requesters[ids[target]] ?: return@repeat
-            if (runCatching { requester.requestFocus() }.isSuccess && gridHasFocus) return@LaunchedEffect
-        }
+        requestFocusWithin({ requesters[ids[target]] }, took = { gridHasFocus })
     }
 
     // A tile cut by the bottom edge, or rows below it: the edge fades out to say there is more.
@@ -331,20 +324,7 @@ private fun Tile(entry: HomeEntry, posterUrl: String?, modifier: Modifier, onFoc
             modifier = modifier.fillMaxWidth().aspectRatio(2f / 3f),
         ) {
             Box(Modifier.fillMaxSize()) {
-                if (posterUrl != null) {
-                    AsyncImage(model = posterUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                } else {
-                    // No poster: the title, drawn as one (split at syllables, not anywhere, when a word is too long).
-                    Text(
-                        entry.item.title,
-                        style = MaterialTheme.typography.headlineSmall.copy(hyphens = Hyphens.Auto, lineBreak = LineBreak.Heading),
-                        color = IzleColors.OnSurface,
-                        textAlign = TextAlign.Center,
-                        maxLines = 4,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.align(Alignment.Center).padding(IzleSpacing.Large),
-                    )
-                }
+                PosterOrTitle(posterUrl, entry.item.title, maxLines = 4, color = IzleColors.OnSurface)
                 Column(
                     Modifier.align(Alignment.BottomStart).fillMaxWidth()
                         .background(Brush.verticalGradient(listOf(Color.Transparent, IzleColors.PosterShade)))
@@ -384,11 +364,7 @@ private fun ActionChip(badge: TileBadge) {
         TileBadge.WatchAgain -> IzleColors.ChipNeutral to IzleColors.OnChipNeutral
         is TileBadge.Episode -> if (badge.resume) IzleColors.Accent to IzleColors.OnAccent else IzleColors.ChipNeutral to IzleColors.OnChipNeutral
     }
-    Box(
-        Modifier.border(1.dp, IzleColors.Hairline, IzleShapes.Small)
-            .background(background, IzleShapes.Small)
-            .padding(horizontal = IzleSpacing.Small, vertical = 2.dp),
-    ) {
+    Box(Modifier.posterChip(background).padding(vertical = 2.dp)) {
         // Tighter lines than running text: "Continue · Episode 2" takes two lines on a 190 dp poster.
         Text(
             tileBadgeText(badge),
@@ -400,6 +376,12 @@ private fun ActionChip(badge: TileBadge) {
     }
 }
 
+/** A chip on a poster, in [color]: the hairline edge lifts it off a busy picture. */
+private fun Modifier.posterChip(color: Color) = this
+    .border(1.dp, IzleColors.Hairline, IzleShapes.Small)
+    .background(color, IzleShapes.Small)
+    .padding(horizontal = IzleSpacing.Small)
+
 /**
  * "2 new" at the top of the poster when episodes were added: dark, regular weight and short, so it stays quieter than
  * the chip saying what OK does. It only informs: no focus, and OK still plays what the bottom chip says. Read out in
@@ -408,12 +390,7 @@ private fun ActionChip(badge: TileBadge) {
 @Composable
 private fun NewEpisodesChip(count: Int, modifier: Modifier) {
     val description = pluralStringResource(R.plurals.badge_new_episodes, count, count)
-    Box(
-        modifier.clearAndSetSemantics { contentDescription = description }
-            .border(1.dp, IzleColors.Hairline, IzleShapes.Small)
-            .background(IzleColors.ChipInfo, IzleShapes.Small)
-            .padding(horizontal = IzleSpacing.Small),
-    ) {
+    Box(modifier.clearAndSetSemantics { contentDescription = description }.posterChip(IzleColors.ChipInfo)) {
         Text(pluralStringResource(R.plurals.badge_new_episodes_short, count, count), style = MaterialTheme.typography.labelSmall, color = IzleColors.OnChipInfo, maxLines = 1)
     }
 }

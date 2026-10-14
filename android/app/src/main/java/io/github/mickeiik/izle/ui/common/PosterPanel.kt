@@ -6,6 +6,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -21,7 +22,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,6 +31,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.LineBreak
@@ -75,26 +76,14 @@ fun PosterPanel(
     countdown: PanelCountdown? = null,
     buttons: List<PanelButton> = emptyList(),
 ) {
-    Box(modifier.fillMaxSize().background(IzleColors.Background).padding(IzleSpacing.Safe)) {
+    Box(modifier.fullScreen()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(IzleSpacing.Huge),
             modifier = Modifier.align(Alignment.Center).width(PosterWidth + IzleSpacing.Huge + TextWidth),
         ) {
             Box(Modifier.size(PosterWidth, PosterHeight).clip(IzleShapes.Large).background(IzleColors.Surface)) {
-                if (posterUrl != null) {
-                    AsyncImage(model = posterUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                } else if (showTitle != null) {
-                    Text(
-                        showTitle,
-                        style = MaterialTheme.typography.headlineSmall.copy(hyphens = Hyphens.Auto, lineBreak = LineBreak.Heading),
-                        color = IzleColors.Dim,
-                        textAlign = TextAlign.Center,
-                        maxLines = 5,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.align(Alignment.Center).padding(IzleSpacing.Large),
-                    )
-                }
+                PosterOrTitle(posterUrl, showTitle, maxLines = 5, color = IzleColors.Dim)
             }
             Column(Modifier.width(TextWidth)) {
                 if (overline != null) {
@@ -119,18 +108,33 @@ fun PosterPanel(
     }
 }
 
+/**
+ * The poster filling its box or, without one, [title] drawn in its place: split at syllables, not anywhere, when a
+ * word is too long.
+ */
+@Composable
+fun BoxScope.PosterOrTitle(posterUrl: String?, title: String?, maxLines: Int, color: Color) {
+    if (posterUrl != null) {
+        AsyncImage(model = posterUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+    } else if (title != null) {
+        Text(
+            title,
+            style = MaterialTheme.typography.headlineSmall.copy(hyphens = Hyphens.Auto, lineBreak = LineBreak.Heading),
+            color = color,
+            textAlign = TextAlign.Center,
+            maxLines = maxLines,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.align(Alignment.Center).padding(IzleSpacing.Large),
+        )
+    }
+}
+
 @Composable
 private fun PanelButtons(buttons: List<PanelButton>) {
     // No key: the panel's state changes every second (the countdown), and the focus must be asked for only once.
     val focus = remember { FocusRequester() }
     var firstFocused by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        // The panel may still be laying out on the first frame; try for a few frames.
-        repeat(10) {
-            withFrameNanos { }
-            if (runCatching { focus.requestFocus() }.isSuccess && firstFocused) return@LaunchedEffect
-        }
-    }
+    LaunchedEffect(Unit) { requestFocusWithin({ focus }, took = { firstFocused }) }
     Row(horizontalArrangement = Arrangement.spacedBy(IzleSpacing.XLarge)) {
         buttons.forEachIndexed { i, button ->
             val first = if (i == 0) Modifier.focusRequester(focus).onFocusChanged { firstFocused = it.isFocused } else Modifier

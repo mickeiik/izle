@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -24,6 +23,7 @@ import io.github.mickeiik.izle.ui.PairingProblem
 import io.github.mickeiik.izle.ui.PairingUi
 import io.github.mickeiik.izle.ui.common.ErrorText
 import io.github.mickeiik.izle.ui.common.Spinner
+import io.github.mickeiik.izle.ui.common.fullScreen
 import io.github.mickeiik.izle.ui.theme.IzleColors
 import io.github.mickeiik.izle.ui.theme.IzleShapes
 import io.github.mickeiik.izle.ui.theme.IzleSpacing
@@ -34,7 +34,7 @@ import io.github.mickeiik.izle.ui.theme.IzleSpacing
  */
 @Composable
 fun PairingScreen(ui: PairingUi) {
-    Box(Modifier.fillMaxSize().background(IzleColors.Background).padding(IzleSpacing.Safe)) {
+    Box(Modifier.fullScreen()) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.align(Alignment.Center)) {
             Text(stringResource(R.string.pair_title), style = MaterialTheme.typography.displaySmall, color = IzleColors.OnSurface)
             Spacer(Modifier.height(IzleSpacing.Medium))

@@ -43,6 +43,7 @@ import io.github.mickeiik.izle.ui.common.ProgressBar
 import io.github.mickeiik.izle.ui.common.Spinner
 import io.github.mickeiik.izle.ui.common.episodeNameText
 import io.github.mickeiik.izle.ui.common.formatTime
+import io.github.mickeiik.izle.ui.common.fullScreen
 import io.github.mickeiik.izle.ui.theme.IzleColors
 import io.github.mickeiik.izle.ui.theme.IzleShapes
 import io.github.mickeiik.izle.ui.theme.IzleSpacing
@@ -114,7 +115,7 @@ private fun Captions(text: String, modifier: Modifier) {
 
 @Composable
 private fun LoadingOverlay(ui: PlayerUi) {
-    Box(Modifier.fillMaxSize().background(IzleColors.Video).padding(IzleSpacing.Safe), contentAlignment = Alignment.Center) {
+    Box(Modifier.fullScreen(IzleColors.Video), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Spinner()
             Spacer(Modifier.height(IzleSpacing.XXLarge))

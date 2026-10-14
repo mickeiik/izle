@@ -17,7 +17,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -49,6 +48,7 @@ import io.github.mickeiik.izle.ui.common.currentLocale
 import io.github.mickeiik.izle.ui.common.episodeNameText
 import io.github.mickeiik.izle.ui.common.languageLabel
 import io.github.mickeiik.izle.ui.common.languageName
+import io.github.mickeiik.izle.ui.common.requestFocusWithin
 import io.github.mickeiik.izle.ui.theme.IzleBorders
 import io.github.mickeiik.izle.ui.theme.IzleColors
 import io.github.mickeiik.izle.ui.theme.IzleShapes
@@ -159,11 +159,7 @@ private fun MenuList(page: Any, initial: Int, content: LazyListScope.(focus: (In
     val requesters = remember(page) { mutableMapOf<Int, FocusRequester>() }
     LaunchedEffect(page) {
         state.scrollToItem(initial.coerceAtLeast(0))
-        repeat(10) {
-            withFrameNanos { }
-            val r = requesters[initial] ?: return@repeat
-            if (runCatching { r.requestFocus() }.isSuccess) return@LaunchedEffect
-        }
+        requestFocusWithin({ requesters[initial] })
     }
     LazyColumn(state = state) {
         content { index -> Modifier.focusRequester(requesters.getOrPut(index) { FocusRequester() }) }

@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.BasicTextField
@@ -40,6 +39,7 @@ import io.github.mickeiik.izle.ui.SetupUi
 import io.github.mickeiik.izle.ui.common.ErrorText
 import io.github.mickeiik.izle.ui.common.Spinner
 import io.github.mickeiik.izle.ui.common.TvButton
+import io.github.mickeiik.izle.ui.common.fullScreen
 import io.github.mickeiik.izle.ui.theme.IzleBorders
 import io.github.mickeiik.izle.ui.theme.IzleColors
 import io.github.mickeiik.izle.ui.theme.IzleShapes
@@ -53,7 +53,7 @@ fun SetupScreen(ui: SetupUi, onAddressChange: (String) -> Unit, onConnect: () ->
     var fieldFocused by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { fieldFocus.requestFocus() }
 
-    Box(Modifier.fillMaxSize().background(IzleColors.Background).padding(IzleSpacing.Safe)) {
+    Box(Modifier.fullScreen()) {
         // Inset a little: the focused button grows by 10 % and must stay inside the safe margin.
         Column(verticalArrangement = Arrangement.spacedBy(IzleSpacing.XLarge), modifier = Modifier.align(Alignment.CenterStart).padding(start = IzleSpacing.Medium)) {
             Text(stringResource(R.string.setup_title), style = MaterialTheme.typography.displaySmall, color = IzleColors.OnSurface)
