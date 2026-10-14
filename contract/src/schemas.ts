@@ -24,7 +24,7 @@ export const validateResolveResultsSchema = ajv.compile(loadSchema("resolve-resu
 >;
 
 /** One-line, human-readable description of an ajv error. */
-export function describeSchemaError(err: ErrorObject): string {
+function describeSchemaError(err: ErrorObject): string {
   const p = err.params as Record<string, unknown>;
   switch (err.keyword) {
     case "additionalProperties":
