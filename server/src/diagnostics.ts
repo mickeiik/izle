@@ -7,7 +7,7 @@ import type { CatalogService } from "./catalog.ts";
 import { isPlaylistText, summarizePlaylist, type PlaylistSummary } from "./hls.ts";
 import { requireEpisode, requireSource } from "./lookup.ts";
 import { MAX_PLAYLIST_BYTES } from "./proxy.ts";
-import { servable, type ResolveService, type TriedCode, type UpstreamStream } from "./resolve.ts";
+import { deliveryPlan, type ResolveService, type TriedCode, type UpstreamStream } from "./resolve.ts";
 import { errorName } from "./resolver.ts";
 
 export const PROBE_TIMEOUT_MS = 10_000;
@@ -57,13 +57,14 @@ function hostOf(url: string): string | null {
   }
 }
 
-function summarize(
-  r: { media: UpstreamStream["media"]; headers?: Record<string, string> | undefined; languages?: UpstreamStream["languages"] | undefined; subtitleTracks?: unknown[] | undefined; label?: string | null | undefined; expiresAt?: string | null | undefined },
-  proxyAlways: boolean,
-): StreamSummary {
+/** An adapter's result, or the stream resolve picked from it. */
+type Summarized = Pick<UpstreamStream, "media"> & Partial<Pick<UpstreamStream, "headers" | "languages" | "subtitleTracks" | "label" | "expiresAt">>;
+
+function summarize(r: Summarized, proxyAlways: boolean): StreamSummary {
   const inline = "playlist" in r.media;
   const headerNames = Object.keys(r.headers ?? {}).sort();
-  const delivery = !servable(r.media, r.headers) ? "unsupported" : inline || headerNames.length > 0 || (proxyAlways && r.media.kind !== "dash") ? "proxy" : "direct";
+  const plan = deliveryPlan(r, proxyAlways);
+  const delivery = !plan.servable ? "unsupported" : plan.proxyMain ? "proxy" : "direct";
   return {
     kind: r.media.kind,
     inline,

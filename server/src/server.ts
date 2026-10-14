@@ -18,7 +18,7 @@ import { createLogger, type Logger } from "./log.ts";
 import { PairingService, type PairingOptions } from "./pairing.ts";
 import { ProblemService } from "./problems.ts";
 import { ProxyService } from "./proxy.ts";
-import { ResolveService } from "./resolve.ts";
+import { PlaybackSessions, ResolveService } from "./resolve.ts";
 import { Notifier } from "./notifier.ts";
 import { loadResolver, type LoadedResolver } from "./resolver.ts";
 import { Store } from "./store.ts";
@@ -69,8 +69,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     throw err;
   }
   const events = new EventHub();
-  // Problem reports name the episode and source of a TV's playback session (the resolver is created below).
-  const problems = new ProblemService({ store, catalog, log, now, session: (id) => resolver.session(id) });
+  // Resolve opens playback sessions; problem reports name the episode and source of a TV's session.
+  const sessions = new PlaybackSessions(now);
+  const problems = new ProblemService({ store, catalog, log, now, session: (id) => sessions.get(id) });
   const proxy = new ProxyService({
     log,
     now,
@@ -83,6 +84,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     log,
     now,
     proxy,
+    sessions,
     adapters: resolverModule?.adapters ?? null,
     proxyAlways: config.proxy.always,
     deadlineMs: config.resolver?.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,

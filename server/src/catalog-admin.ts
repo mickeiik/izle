@@ -6,6 +6,7 @@ import type { CatalogService, ReloadResult } from "./catalog.ts";
 import type { Logger } from "./log.ts";
 import type { Notifier } from "./notifier.ts";
 import { episodeDetails, iso, itemCard, itemDetails } from "./presenters.ts";
+import { hasHeaders } from "./resolve.ts";
 import { errorName, type LoadedResolver } from "./resolver.ts";
 import type { CatalogBuild, Store } from "./store.ts";
 import { VERSION } from "./version.ts";
@@ -103,7 +104,7 @@ export function catalogItemJson(catalog: CatalogService, item: CatalogItem) {
         type: s.type,
         label: s.label ?? null,
         languages: s.languages,
-        ...(s.type === "direct" ? { kind: s.media.kind, needsProxy: Boolean(s.media.headers && Object.keys(s.media.headers).length) } : { adapter: s.adapter }),
+        ...(s.type === "direct" ? { kind: s.media.kind, needsProxy: hasHeaders(s.media.headers) } : { adapter: s.adapter }),
       })),
     })),
   };

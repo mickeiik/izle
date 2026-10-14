@@ -1,4 +1,4 @@
-import type { Adapter, LanguageFacts, MediaKind, ResolvedMedia, ResolveResult, Source, SubtitleTrack } from "@izle/contract";
+import type { Adapter, Episode, LanguageFacts, MediaKind, ResolvedMedia, ResolveResult, Source, SubtitleTrack } from "@izle/contract";
 import { newId } from "./auth.ts";
 import type { CatalogService, EpisodeRef } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
@@ -90,6 +90,8 @@ export interface ResolveServiceOptions {
   log: Logger;
   now?: () => number;
   proxy: ProxyService;
+  /** Where resolve opens the playback sessions that progress and problem reports refer to. */
+  sessions: PlaybackSessions;
   /** Adapters of the loaded resolver module; null when none is configured. */
   adapters: ReadonlyMap<string, Adapter> | null;
   /** `proxy.always`: send every HLS/MP4 stream through the proxy. */
@@ -100,11 +102,88 @@ export interface ResolveServiceOptions {
   budgetMs: number;
 }
 
-const hasHeaders = (h: Record<string, string> | undefined): h is Record<string, string> => h !== undefined && Object.keys(h).length > 0;
+/** Whether a set of upstream request headers is present and not empty. */
+export const hasHeaders = (h: Record<string, string> | undefined): h is Record<string, string> => h !== undefined && Object.keys(h).length > 0;
 
 /** DASH manifests are not rewritten by the proxy (v1), so DASH that needs upstream headers cannot be served. */
 export function servable(media: ResolvedMedia, headers: Record<string, string> | undefined): boolean {
   return !(media.kind === "dash" && hasHeaders(headers));
+}
+
+/** How a stream reaches the client. */
+export interface DeliveryPlan {
+  /** False for DASH that needs upstream headers (see `servable`). */
+  servable: boolean;
+  /** The main media goes through the proxy: inline playlists, header-bound media, and with `proxyAlways` any HLS or MP4. */
+  proxyMain: boolean;
+  /** One entry per subtitle track: whether it goes through the proxy. */
+  proxySubtitles: boolean[];
+}
+
+/** The delivery of a stream, shared by resolve and the admin diagnostics so both always agree. */
+export function deliveryPlan(
+  s: {
+    media: ResolvedMedia;
+    headers?: Record<string, string> | undefined;
+    subtitleTracks?: ReadonlyArray<{ headers?: Record<string, string> | undefined }> | undefined;
+  },
+  proxyAlways: boolean,
+): DeliveryPlan {
+  const inline = "playlist" in s.media;
+  return {
+    servable: servable(s.media, s.headers),
+    proxyMain: inline || (s.media.kind !== "dash" && (hasHeaders(s.headers) || proxyAlways)),
+    proxySubtitles: (s.subtitleTracks ?? []).map((t) => hasHeaders(t.headers) || proxyAlways),
+  };
+}
+
+/** A source's upstream stream from what resolved it (its own media, or an adapter's result), the source filling gaps. */
+function upstreamStream(
+  source: Source,
+  r: Pick<ResolveResult, "media" | "headers" | "languages" | "subtitleTracks" | "label" | "expiresAt">,
+): UpstreamStream {
+  return {
+    media: r.media,
+    headers: r.headers ?? {},
+    languages: r.languages ?? source.languages,
+    subtitleTracks: r.subtitleTracks ?? source.subtitleTracks ?? [],
+    label: r.label ?? source.label ?? null,
+    expiresAt: r.expiresAt ?? null,
+  };
+}
+
+/** The playback sessions resolve hands out, in memory; progress and problem reports name them. */
+export class PlaybackSessions {
+  private readonly sessions = new Map<string, PlaybackSession>();
+  private readonly now: () => number;
+
+  constructor(now: () => number = Date.now) {
+    this.now = now;
+  }
+
+  /** Opens a session (pruning expired ones once there are many). */
+  open(s: Omit<PlaybackSession, "id" | "createdAt">): PlaybackSession {
+    const t = this.now();
+    this.prune(t);
+    const session: PlaybackSession = { id: newId(16), ...s, createdAt: t };
+    this.sessions.set(session.id, session);
+    return session;
+  }
+
+  /** A session by id, until it is older than PLAYBACK_SESSION_TTL_MS. */
+  get(id: string): PlaybackSession | undefined {
+    const s = this.sessions.get(id);
+    if (s && this.now() - s.createdAt > PLAYBACK_SESSION_TTL_MS) {
+      this.sessions.delete(id);
+      return undefined;
+    }
+    return s;
+  }
+
+  private prune(t: number): void {
+    if (this.sessions.size < 1000) return;
+    for (const [id, s] of this.sessions) if (t - s.createdAt > PLAYBACK_SESSION_TTL_MS) this.sessions.delete(id);
+  }
 }
 
 /**
@@ -114,7 +193,6 @@ export function servable(media: ResolvedMedia, headers: Record<string, string> |
  */
 export class ResolveService {
   private readonly failures = new Map<string, number>();
-  private readonly sessions = new Map<string, PlaybackSession>();
   private readonly o: ResolveServiceOptions;
   private readonly now: () => number;
 
@@ -156,12 +234,7 @@ export class ResolveService {
   }
 
   session(id: string): PlaybackSession | undefined {
-    const s = this.sessions.get(id);
-    if (s && this.now() - s.createdAt > PLAYBACK_SESSION_TTL_MS) {
-      this.sessions.delete(id);
-      return undefined;
-    }
-    return s;
+    return this.o.sessions.get(id);
   }
 
   /** Whether a source can be tried at all (known before resolving it). */
@@ -184,19 +257,7 @@ export class ResolveService {
     const unavailable = this.staticCheck(source);
     if (unavailable) return { ok: false, tried: unavailable, results: null, ms: 0 };
     if (source.type === "direct") {
-      return {
-        ok: true,
-        results: null,
-        ms: 0,
-        stream: {
-          media: { kind: source.media.kind, url: source.media.url },
-          headers: source.media.headers ?? {},
-          languages: source.languages,
-          subtitleTracks: source.subtitleTracks ?? [],
-          label: source.label ?? null,
-          expiresAt: null,
-        },
-      };
+      return { ok: true, results: null, ms: 0, stream: upstreamStream(source, { media: { kind: source.media.kind, url: source.media.url }, headers: source.media.headers }) };
     }
     const adapter = this.o.adapters!.get(source.adapter)!;
     const outcome = await runAdapter(
@@ -219,19 +280,7 @@ export class ResolveService {
     // Results come in the adapter's preference order; the first one the server can serve wins.
     const result = outcome.results.find((r) => servable(r.media, r.headers));
     if (!result) return { ok: false, tried: { sourceId: source.id, code: "unsupported", adapterId: adapter.id }, results: outcome.results, ms: outcome.ms };
-    return {
-      ok: true,
-      results: outcome.results,
-      ms: outcome.ms,
-      stream: {
-        media: result.media,
-        headers: result.headers ?? {},
-        languages: result.languages ?? source.languages,
-        subtitleTracks: result.subtitleTracks ?? source.subtitleTracks ?? [],
-        label: result.label ?? source.label ?? null,
-        expiresAt: result.expiresAt ?? null,
-      },
-    };
+    return { ok: true, results: outcome.results, ms: outcome.ms, stream: upstreamStream(source, result) };
   }
 
   /**
@@ -244,11 +293,9 @@ export class ResolveService {
     proxyAlways: boolean,
     playing: { episodeId: string; sourceId: string },
   ): Pick<ResolvedStream, "media" | "subtitleTracks" | "delivery"> {
-    const inline = "playlist" in s.media;
-    const proxyMain = inline || (s.media.kind !== "dash" && (hasHeaders(s.headers) || proxyAlways));
-    const proxySub = s.subtitleTracks.map((t) => hasHeaders(t.headers) || proxyAlways);
+    const { proxyMain, proxySubtitles } = deliveryPlan(s, proxyAlways);
     let token: string | null = null;
-    if (proxyMain || proxySub.some(Boolean)) {
+    if (proxyMain || proxySubtitles.some(Boolean)) {
       const m = s.media;
       token = this.o.proxy.create({
         deviceId: owner,
@@ -259,14 +306,14 @@ export class ResolveService {
             ? { kind: "hls", playlist: m.playlist, baseUrl: m.baseUrl }
             : { kind: m.kind === "mp4" ? "mp4" : "hls", url: m.url },
         headers: s.headers,
-        subtitles: s.subtitleTracks.map((t, i) => (proxySub[i] ? { url: t.url, headers: t.headers ?? {} } : null)),
+        subtitles: s.subtitleTracks.map((t, i) => (proxySubtitles[i] ? { url: t.url, headers: t.headers ?? {} } : null)),
       });
     }
     const kind = s.media.kind;
     return {
       media: proxyMain ? { kind, url: entryPath(token!, kind === "mp4" ? "mp4" : "hls") } : { kind, url: (s.media as { url: string }).url },
       subtitleTracks: s.subtitleTracks.map((t, i) => ({
-        url: proxySub[i] ? subtitlePath(token!, i, t.format) : t.url,
+        url: proxySubtitles[i] ? subtitlePath(token!, i, t.format) : t.url,
         language: t.language,
         format: t.format,
         ...(t.label !== undefined ? { label: t.label } : {}),
@@ -283,25 +330,36 @@ export class ResolveService {
     opts: ResolveOptions = {},
   ): Promise<ResolvedStream> {
     const ref = requireEpisode(this.catalog, input.episodeId, 404, "unknown_episode");
-    const { episode } = ref;
-    requirePlayable(episode, 403, "not_allowed");
+    requirePlayable(ref.episode, 403, "not_allowed");
     const companion = opts.scope === "companion";
-    const owner = companion ? companionScope(deviceId) : deviceId;
+    const candidates = this.candidatesFor(ref.episode, input, preferredAudioLanguage, companion);
+    return this.tryCandidates(deviceId, ref, candidates, { preferredAudioLanguage, signal, companion });
+  }
 
+  /**
+   * The sources to try, in order: the forced one, or the episode's sources by audio language with recent failures
+   * last. Sources the TV excluded are left out, and count as failed for the TV.
+   */
+  private candidatesFor(episode: Episode, input: ResolveInput, preferredAudioLanguage: string | null, companion: boolean): Source[] {
     const exclude = new Set(input.exclude ?? []);
     if (!companion) for (const id of exclude) if (episode.sources.some((s) => s.id === id)) this.markFailed(episode.id, id);
+    if (input.sourceId !== undefined) return [requireSource(episode, input.sourceId, 404, "unknown_source")];
+    return orderSources(episode.sources, { preferredAudioLanguage, exclude, failed: this.recentlyFailed(episode.id, episode.sources) });
+  }
 
-    let candidates: Source[];
-    if (input.sourceId !== undefined) {
-      candidates = [requireSource(episode, input.sourceId, 404, "unknown_source")];
-    } else {
-      candidates = orderSources(episode.sources, {
-        preferredAudioLanguage,
-        exclude,
-        failed: this.recentlyFailed(episode.id, episode.sources),
-      });
-    }
-
+  /**
+   * Tries the candidates in order within the request's time budget and delivers the first one that resolves, with
+   * a new playback session. None does: 502 `no_playable_source` with what was tried.
+   */
+  private async tryCandidates(
+    deviceId: string,
+    ref: EpisodeRef,
+    candidates: Source[],
+    o: { preferredAudioLanguage: string | null; signal: AbortSignal | undefined; companion: boolean },
+  ): Promise<ResolvedStream> {
+    const { episode } = ref;
+    const { preferredAudioLanguage, signal, companion } = o;
+    const owner = companion ? companionScope(deviceId) : deviceId;
     const budgetEnd = performance.now() + this.o.budgetMs;
     const tried: Tried[] = [];
     for (let i = 0; i < candidates.length; i++) {
@@ -325,18 +383,7 @@ export class ResolveService {
       if (companion && a.stream.media.kind === "dash") {
         throw new HttpError(400, "unsupported_media", "DASH cannot be played on the phone: the proxy does not rewrite manifests", { kind: "dash" });
       }
-      const t = this.now();
-      this.pruneSessions(t);
-      const session: PlaybackSession = {
-        id: newId(16),
-        deviceId: owner,
-        catalogId: this.catalog.catalogId,
-        itemId: ref.item.id,
-        episodeId: episode.id,
-        sourceId: source.id,
-        createdAt: t,
-      };
-      this.sessions.set(session.id, session);
+      const session = this.o.sessions.open({ deviceId: owner, catalogId: this.catalog.catalogId, itemId: ref.item.id, episodeId: episode.id, sourceId: source.id });
       const delivered = this.deliver(owner, a.stream, this.o.proxyAlways || companion, { episodeId: episode.id, sourceId: source.id });
       const alternatives = candidates.slice(i + 1).filter((s) => this.staticCheck(s) === null).map((s) => s.id);
       this.o.log.info("resolved", {
@@ -362,10 +409,5 @@ export class ResolveService {
     }
     this.o.log.warn("no playable source", { deviceId, episodeId: episode.id, tried: tried.length });
     throw new HttpError(502, "no_playable_source", "none of the episode's sources can be played", { tried });
-  }
-
-  private pruneSessions(t: number): void {
-    if (this.sessions.size < 1000) return;
-    for (const [id, s] of this.sessions) if (t - s.createdAt > PLAYBACK_SESSION_TTL_MS) this.sessions.delete(id);
   }
 }
