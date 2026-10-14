@@ -336,7 +336,6 @@ class AppViewModelTest {
         assertNotNull(menu)
         for ((type, payload) in listOf("pause" to "{}", "resume" to "{}", "seek" to """{"deltaMs":60000}""", "next" to "{}", "previous" to "{}", "stop" to "{}", "launch-rockets" to "{}")) {
             awaitAck(command(type, payload))
-            settle()
             assertEquals(type, menu, vm.menu.value)
             assertEquals(type, Screen.Home, vm.screen.value)
         }
@@ -344,6 +343,7 @@ class AppViewModelTest {
         awaitAck(command("message", """{"text":"Hello"}"""))
         assertEquals("Hello", vm.banner.value)
         assertEquals(menu, vm.menu.value)
+        settle()
         assertEquals(0, count("/api/v1/tv/resolve"))
     }
 
@@ -355,10 +355,10 @@ class AppViewModelTest {
         waitUntil("the error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
         for ((type, payload) in listOf("pause" to "{}", "resume" to "{}", "seek" to """{"positionMs":0}""", "next" to "{}", "previous" to "{}")) {
             awaitAck(command(type, payload))
-            settle()
             assertTrue(type, vm.player.ui.value.phase is PlayerPhase.Failed)
             assertEquals(type, Screen.Player, vm.screen.value)
         }
+        settle()
         assertEquals(1, count("/api/v1/tv/resolve"))
         command("play", """{"itemId":"c","episodeId":"c.e2"}""")
         waitUntil("the second resolve") { count("/api/v1/tv/resolve") == 2 }
@@ -550,10 +550,12 @@ class AppViewModelTest {
     private fun commandEvent(id: Long, type: String, payload: String) =
         "event: command\ndata: {\"id\":$id,\"type\":\"$type\",\"payload\":$payload}\n\n"
 
-    /** The TV acknowledges a command right after handing it to the view model. */
+    /**
+     * The TV acknowledges a command right after handing it to the view model, which acts on it at once: once the ack
+     * arrives, the command's immediate effects are there (what it sends to the server may still be on its way).
+     */
     private fun awaitAck(id: Long) {
         waitUntil("the ack of command $id") { requests.any { it.url.encodedPath == "/api/v1/tv/commands/$id/ack" } }
-        settle()
     }
 
     private fun count(path: String) = requests.count { it.url.encodedPath == path }
