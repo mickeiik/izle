@@ -68,8 +68,8 @@ sealed interface PlayerPhase {
     /** The item ended (or auto-advance stops here): "The end", then Home. */
     data object Finished : PlayerPhase
 
-    /** Nothing could be played: "Can't play right now" with Try again / Home, then Home on its own. */
-    data object Failed : PlayerPhase
+    /** Nothing could be played: "Can't play right now" with Try again / Home, then Home on its own after [secondsLeft]. */
+    data class Failed(val secondsLeft: Int) : PlayerPhase
 }
 
 data class PlayerUi(
@@ -716,10 +716,14 @@ class PlaybackController(
         episodeId?.let { id ->
             problems.send(Problems.gaveUp(id, session?.resolved?.sourceId ?: tried.lastOrNull(), lastPositionMs, tried.size, appVersion, reason))
         }
-        _ui.update { it.copy(phase = PlayerPhase.Failed, showInfo = false, buffering = false, cues = null) }
+        val seconds = (PlaybackPlan.FAILED_AUTO_HOME_MS / 1_000).toInt()
+        _ui.update { it.copy(phase = PlayerPhase.Failed(seconds), showInfo = false, buffering = false, cues = null) }
         overlayJob?.cancel()
         overlayJob = scope.launch {
-            delay(PlaybackPlan.FAILED_AUTO_HOME_MS)
+            for (left in seconds downTo 1) {
+                _ui.update { it.copy(phase = PlayerPhase.Failed(left)) }
+                delay(1_000)
+            }
             exit()
         }
     }

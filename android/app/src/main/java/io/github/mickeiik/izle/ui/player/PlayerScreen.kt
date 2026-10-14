@@ -63,7 +63,7 @@ fun PlayerScreen(ui: PlayerUi, player: Player?, onPlayNext: () -> Unit, onHome: 
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        if (player != null && ui.phase != PlayerPhase.Failed && ui.phase != PlayerPhase.Finished) {
+        if (player != null && ui.phase !is PlayerPhase.Failed && ui.phase != PlayerPhase.Finished) {
             ContentFrame(player, modifier = Modifier.fillMaxSize(), surfaceType = SURFACE_TYPE_SURFACE_VIEW, contentScale = ContentScale.Fit)
         }
         val cues = ui.cues
@@ -93,7 +93,7 @@ fun PlayerScreen(ui: PlayerUi, player: Player?, onPlayNext: () -> Unit, onHome: 
             }
             is PlayerPhase.UpNext -> UpNextOverlay(ui, phase, onPlayNext, onHome)
             PlayerPhase.Finished -> FullScreenMessage(stringResource(R.string.finished), ui.item?.title)
-            PlayerPhase.Failed -> FailedOverlay(ui, onRetry, onHome)
+            is PlayerPhase.Failed -> FailedOverlay(ui, onRetry, onHome)
         }
     }
 }
