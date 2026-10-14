@@ -1,19 +1,10 @@
 // Pure play-order rules: which episode OK plays, what auto-next does, and in which order sources are tried.
 // No I/O here so the rules are easy to test.
 
-import type { CatalogItem, Episode, LanguageFacts, Source } from "@izle/contract";
+import type { CatalogItem, LanguageFacts, Source } from "@izle/contract";
+import type { Progress } from "./store.ts";
 
-export interface ProgressLike {
-  episodeId: string;
-  positionMs: number;
-  durationMs: number | null;
-  status: "watching" | "finished";
-}
-
-/** Whether playback should auto-start the next episode after `episode` (episode setting, else item, else true). */
-export function autoAdvanceAfter(item: CatalogItem, episode: Episode): boolean {
-  return episode.autoAdvance ?? item.autoAdvance ?? true;
-}
+export type ProgressLike = Pick<Progress, "episodeId" | "positionMs" | "durationMs" | "status">;
 
 /** Index of the first episode after `from` (exclusive) with playbackAllowed, or -1. */
 export function nextAllowedIndex(item: CatalogItem, from: number): number {
@@ -36,8 +27,6 @@ export interface CursorLike {
   wrapped: boolean;
 }
 
-const EMPTY: ReadonlySet<string> = new Set();
-
 /**
  * The episode OK plays (index into item.episodes), or -1 when nothing is playable.
  * - A wrapped cursor (the item was watched to the end) with `appended` episodes (added to the catalog after the
@@ -50,7 +39,7 @@ export function cursorIndex(
   item: CatalogItem,
   cursor: string | CursorLike | null,
   progress: ReadonlyMap<string, ProgressLike>,
-  appended: ReadonlySet<string> = EMPTY,
+  appended: ReadonlySet<string> = new Set(),
 ): number {
   const first = firstAllowedIndex(item);
   if (first < 0) return -1;
@@ -88,26 +77,19 @@ export const PROGRESS_REPORT_STATUSES = ["playing", "paused", "stopped", "finish
 
 export type ProgressReportStatus = (typeof PROGRESS_REPORT_STATUSES)[number];
 
-/** Where an item's cursor goes after a progress report, and whether the TV must be told. */
-export interface CursorAfterReport {
-  episodeId: string;
-  wrapped: boolean;
-  /** The state version must be bumped: the TV left the player, or what OK plays may have changed. */
-  changed: boolean;
-}
-
 /**
  * The cursor after a progress report on the episode at `index`. `finished` moves it to the next allowed episode,
  * wrapping to the first after the last; only that wrap gives a wrapped cursor. Every other report keeps it on the
- * reported episode as an ordinary cursor. `stopped` and `finished` are always a change; any other report is one
- * when the cursor moves, or stops being wrapped (OK may then play another episode).
+ * reported episode as an ordinary cursor. `changed` (the state version must be bumped) is always true for `stopped`
+ * and `finished` (the TV left the player); any other report is a change when the cursor moves, or stops being
+ * wrapped (OK may then play another episode).
  */
 export function cursorAfterReport(
   item: CatalogItem,
   index: number,
   status: ProgressReportStatus,
   before: CursorLike | null,
-): CursorAfterReport {
+): CursorLike & { changed: boolean } {
   const here = item.episodes[index]!;
   const finished = status === "finished";
   const episodeId = finished ? (item.episodes[cursorAfterFinished(item, index)] ?? here).id : here.id;
@@ -116,47 +98,40 @@ export function cursorAfterReport(
   return { episodeId, wrapped, changed };
 }
 
-/** The episode auto-next would start after `index`, or -1 (end of the item, or an autoAdvance boundary). */
+/**
+ * The episode auto-next would start after `index`, or -1: the end of the item, or an autoAdvance boundary (the
+ * episode's setting, else the item's, else true).
+ */
 export function autoNextIndex(item: CatalogItem, index: number): number {
   const episode = item.episodes[index];
-  if (!episode || !autoAdvanceAfter(item, episode)) return -1;
+  if (!episode || !(episode.autoAdvance ?? item.autoAdvance ?? true)) return -1;
   return nextAllowedIndex(item, index);
-}
-
-export function primarySubtag(tag: string): string {
-  return tag.split("-")[0]!.toLowerCase();
 }
 
 /**
  * 0 = matches the preferred audio language (or has no dialogue, or no preference is set), 1 = unknown,
- * 2 = known not to match.
+ * 2 = known not to match. Languages match on their primary subtag.
  */
 export function audioRank(languages: LanguageFacts, preferred: string | null): 0 | 1 | 2 {
   if (!preferred) return 0;
   if (languages.audio === null) return 1;
   if (languages.audio.length === 0) return 0;
-  const want = primarySubtag(preferred);
-  return languages.audio.some((t) => primarySubtag(t) === want) ? 0 : 2;
-}
-
-export interface OrderOptions {
-  preferredAudioLanguage: string | null;
-  /** Source ids to leave out (the TV already tried them). */
-  exclude?: ReadonlySet<string>;
-  /** Source ids that failed recently; they go last. */
-  failed?: ReadonlySet<string>;
+  const primary = (tag: string) => tag.split("-")[0]!.toLowerCase();
+  return languages.audio.some((t) => primary(t) === primary(preferred)) ? 0 : 2;
 }
 
 /**
  * Candidate sources in the order they are tried: bundle order, stable-sorted by audio match > unknown > mismatch,
- * with recently failed sources moved to the end.
+ * with the `exclude`d ones (the TV already tried them) left out and the recently `failed` ones moved to the end.
  */
-export function orderSources(sources: readonly Source[], opts: OrderOptions): Source[] {
-  const exclude = opts.exclude ?? new Set<string>();
-  const failed = opts.failed ?? new Set<string>();
+export function orderSources(
+  sources: readonly Source[],
+  opts: { preferredAudioLanguage: string | null; exclude?: ReadonlySet<string>; failed?: ReadonlySet<string> },
+): Source[] {
+  const preferred = opts.preferredAudioLanguage;
   return sources
-    .filter((s) => !exclude.has(s.id))
-    .map((s, i) => ({ s, i, f: failed.has(s.id) ? 1 : 0, r: audioRank(s.languages, opts.preferredAudioLanguage) }))
+    .filter((s) => !opts.exclude?.has(s.id))
+    .map((s, i) => ({ s, i, f: opts.failed?.has(s.id) ? 1 : 0, r: audioRank(s.languages, preferred) }))
     .sort((a, b) => a.f - b.f || a.r - b.r || a.i - b.i)
     .map((x) => x.s);
 }

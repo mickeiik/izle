@@ -1,26 +1,10 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
 import type { CommandType } from "./commands.ts";
 import type { ProgressReportStatus } from "./playback.ts";
 import type { ProblemKind } from "./problems.ts";
 import { MIGRATIONS } from "./store/migrations.ts";
-import {
-  num,
-  numOrNull,
-  str,
-  toCatalogBuild,
-  toCommand,
-  toCompanionLink,
-  toCursor,
-  toDevice,
-  toNowPlaying,
-  toPairCode,
-  toProblem,
-  toProgress,
-  toSeenEpisode,
-  type Row,
-} from "./store/rows.ts";
 
 export { MIGRATIONS, SCHEMA_VERSION } from "./store/migrations.ts";
 
@@ -48,15 +32,13 @@ export interface PairCode {
   deliveredAt: number | null;
 }
 
-export type ProgressStatus = "watching" | "finished";
-
 export interface Progress {
   catalogId: string;
   itemId: string;
   episodeId: string;
   positionMs: number;
   durationMs: number | null;
-  status: ProgressStatus;
+  status: "watching" | "finished";
   updatedAt: number;
 }
 
@@ -69,25 +51,18 @@ export interface Cursor {
   wrapped: boolean;
 }
 
-/** An item on a device's home list and when it was put there (epoch ms; null only for rows written outside the store). */
-export interface HomeEntry {
-  itemId: string;
-  addedAt: number | null;
-}
-
-/** An episode of a catalog as the history knows it: when it first appeared and whether it is gone now. */
+/** An episode as the catalog history knows it. */
 export interface SeenEpisode {
   episodeId: string;
   itemId: string;
   /** When the first build carrying it was loaded (epoch ms); 0 for episodes present at the first load ever. */
   firstSeenAt: number;
-  /** The build that first carried it. */
   buildId: string;
   /** Set while the loaded catalog does not carry it. */
   removedAt: number | null;
 }
 
-/** What a build changed against the catalog loaded before it. Each list holds at most 500 entries; the build's counts are exact. */
+/** What a build changed against the catalog loaded before it. Each list holds at most 500 entries. */
 export interface CatalogChanges {
   items: {
     added: Array<{ id: string; title: string; kind: string }>;
@@ -108,7 +83,7 @@ export interface CatalogChanges {
   };
 }
 
-/** One loaded build of a catalog. Counts are exact; the lists in its changes are capped. */
+/** One loaded build of a catalog, with the exact counts of its changes. */
 export interface CatalogBuild {
   catalogId: string;
   buildId: string;
@@ -139,7 +114,6 @@ export type ProblemOrigin = "tv" | "server";
 export interface Problem {
   id: number;
   deviceId: string;
-  /** When it happened (epoch ms). */
   at: number;
   origin: ProblemOrigin;
   kind: ProblemKind;
@@ -155,9 +129,6 @@ export interface Problem {
   appVersion: string | null;
 }
 
-/** `starting` from a resolve until the player's first report, then the report's status. */
-export type NowPlayingState = "starting" | ProgressReportStatus;
-
 export interface NowPlaying {
   catalogId: string;
   itemId: string;
@@ -165,7 +136,8 @@ export interface NowPlaying {
   sourceId: string | null;
   positionMs: number;
   durationMs: number | null;
-  state: NowPlayingState;
+  /** `starting` from a resolve until the player's first report, then the report's status. */
+  state: "starting" | ProgressReportStatus;
   updatedAt: number;
   /** Whether the player was actually advancing when it sampled `positionMs` (a rebuffer stall reports false). */
   playing: boolean;
@@ -192,6 +164,28 @@ export interface CompanionLink {
 
 export type DevicePatch = Partial<Pick<Device, "name" | "uiLanguage" | "preferredAudioLanguage" | "subtitlesLanguage" | "autoplayOnStart">>;
 
+type Row = Record<string, SQLOutputValue>;
+
+const PATCHABLE = ["name", "uiLanguage", "preferredAudioLanguage", "subtitlesLanguage", "autoplayOnStart"] as const;
+/** 0/1 columns, read as booleans. */
+const FLAGS = new Set(["autoplay_on_start", "wrapped", "playing", "baseline"]);
+const column = (key: string) => key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+const sqlValue = (v: unknown) => (typeof v === "boolean" ? Number(v) : v) as SQLInputValue;
+
+/**
+ * A row as the store's types have it: snake_case columns in camelCase, flags as booleans, `*_json` columns parsed
+ * (named without the suffix), and the `omit` column (the key the caller selected by) left out.
+ */
+function fromRow<T>(r: Row, omit?: string): T {
+  const out: Record<string, unknown> = {};
+  for (const [c, v] of Object.entries(r)) {
+    if (c === omit) continue;
+    const key = c.replace(/_json$/, "").replace(/_([a-z])/g, (_, l: string) => l.toUpperCase());
+    out[key] = FLAGS.has(c) ? v === 1 : c.endsWith("_json") ? JSON.parse(v as string) : v;
+  }
+  return out as T;
+}
+
 /** Typed access to the SQLite database. All methods are synchronous (node:sqlite). */
 export class Store {
   private readonly db: DatabaseSync;
@@ -203,24 +197,17 @@ export class Store {
     if (file !== ":memory:") mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(file, { enableForeignKeyConstraints: true });
     this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
-    this.migrate();
-  }
-
-  private migrate(): void {
     const current = this.schemaVersion;
     if (current > MIGRATIONS.length) {
       throw new Error(`database schema version ${current} is newer than this server (${MIGRATIONS.length})`);
     }
     for (let v = current; v < MIGRATIONS.length; v++) {
-      this.transaction(() => {
-        this.db.exec(MIGRATIONS[v]!);
-        this.db.exec(`PRAGMA user_version = ${v + 1}`);
-      });
+      this.transaction(() => this.db.exec(`${MIGRATIONS[v]!}; PRAGMA user_version = ${v + 1}`));
     }
   }
 
   get schemaVersion(): number {
-    return Number((this.db.prepare("PRAGMA user_version").get() as Row).user_version);
+    return Number(this.get("PRAGMA user_version")!.user_version);
   }
 
   close(): void {
@@ -245,21 +232,38 @@ export class Store {
   }
 
   private get(sql: string, ...params: SQLInputValue[]): Row | undefined {
-    return this.db.prepare(sql).get(...params) as Row | undefined;
-  }
-
-  private all(sql: string, ...params: SQLInputValue[]): Row[] {
-    return this.db.prepare(sql).all(...params) as Row[];
+    return this.db.prepare(sql).get(...params);
   }
 
   private run(sql: string, ...params: SQLInputValue[]): number {
     return Number(this.db.prepare(sql).run(...params).changes);
   }
 
+  private one<T>(sql: string, params: SQLInputValue[], omit?: string): T | null {
+    const r = this.get(sql, ...params);
+    return r ? fromRow<T>(r, omit) : null;
+  }
+
+  private many<T>(sql: string, params: SQLInputValue[], omit?: string): T[] {
+    return this.db.prepare(sql).all(...params).map((r) => fromRow<T>(r, omit));
+  }
+
+  /**
+   * Inserts `row` (the store's own field names as columns, never request input). With `key`, the columns of a
+   * unique key, a conflicting row is updated instead: every other column takes the new value.
+   */
+  private insert(table: string, row: object, key?: string, returning = ""): Row | undefined {
+    const columns = Object.keys(row).map(column);
+    const update = columns.filter((c) => !key?.split(", ").includes(c)).map((c) => `${c} = excluded.${c}`);
+    const upsert = key ? ` ON CONFLICT (${key}) DO UPDATE SET ${update.join(", ")}` : "";
+    const sql = `INSERT INTO ${table} (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})${upsert}`;
+    return this.get(`${sql}${returning}`, ...Object.values(row).map(sqlValue));
+  }
+
   // --- devices -------------------------------------------------------------------------------------------------
 
   createDevice(d: { id: string; name: string; tokenHash: string | null; now: number }): Device {
-    this.run("INSERT INTO devices (id, name, token_hash, created_at) VALUES (?, ?, ?, ?)", d.id, d.name, d.tokenHash, d.now);
+    this.insert("devices", { id: d.id, name: d.name, tokenHash: d.tokenHash, createdAt: d.now });
     return this.getDevice(d.id)!;
   }
 
@@ -268,38 +272,22 @@ export class Store {
   }
 
   getDevice(id: string): Device | null {
-    const r = this.get("SELECT * FROM devices WHERE id = ?", id);
-    return r ? toDevice(r) : null;
+    return this.one("SELECT * FROM devices WHERE id = ?", [id]);
   }
 
   getDeviceByTokenHash(tokenHash: string): Device | null {
-    const r = this.get("SELECT * FROM devices WHERE token_hash = ?", tokenHash);
-    return r ? toDevice(r) : null;
+    return this.one("SELECT * FROM devices WHERE token_hash = ?", [tokenHash]);
   }
 
   listDevices(): Device[] {
-    return this.all("SELECT * FROM devices ORDER BY created_at, id").map(toDevice);
+    return this.many("SELECT * FROM devices ORDER BY created_at, id", []);
   }
 
   /** Applies a patch (undefined fields are left alone, null clears) and bumps the state version. */
   updateDevice(id: string, patch: DevicePatch): Device | null {
-    const columns: Array<[keyof DevicePatch, string]> = [
-      ["name", "name"],
-      ["uiLanguage", "ui_language"],
-      ["preferredAudioLanguage", "preferred_audio_language"],
-      ["subtitlesLanguage", "subtitles_language"],
-      ["autoplayOnStart", "autoplay_on_start"],
-    ];
-    const sets: string[] = [];
-    const values: SQLInputValue[] = [];
-    for (const [key, column] of columns) {
-      const value = patch[key];
-      if (value !== undefined) {
-        sets.push(`${column} = ?`);
-        values.push(typeof value === "boolean" ? (value ? 1 : 0) : value);
-      }
-    }
-    sets.push("state_version = state_version + 1");
+    const keys = PATCHABLE.filter((k) => patch[k] !== undefined);
+    const sets = [...keys.map((k) => `${column(k)} = ?`), "state_version = state_version + 1"];
+    const values = keys.map((k) => sqlValue(patch[k]));
     if (this.run(`UPDATE devices SET ${sets.join(", ")} WHERE id = ?`, ...values, id) === 0) return null;
     return this.getDevice(id);
   }
@@ -314,36 +302,26 @@ export class Store {
 
   bumpStateVersion(id: string): number {
     const r = this.get("UPDATE devices SET state_version = state_version + 1 WHERE id = ? RETURNING state_version", id);
-    return r ? num(r.state_version) : 0;
+    return Number(r?.state_version ?? 0);
   }
 
   bumpAllStateVersions(): Array<{ id: string; stateVersion: number }> {
-    return this.all("UPDATE devices SET state_version = state_version + 1 RETURNING id, state_version").map((r) => ({
-      id: str(r.id),
-      stateVersion: num(r.state_version),
-    }));
+    return this.many("UPDATE devices SET state_version = state_version + 1 RETURNING id, state_version", []);
   }
 
   // --- pairing -------------------------------------------------------------------------------------------------
 
-  insertPairCode(p: { code: string; pairTokenHash: string; now: number; expiresAt: number }): void {
-    this.run(
-      "INSERT INTO pair_codes (code, pair_token_hash, created_at, expires_at) VALUES (?, ?, ?, ?)",
-      p.code,
-      p.pairTokenHash,
-      p.now,
-      p.expiresAt,
-    );
+  insertPairCode(p: Pick<PairCode, "code" | "pairTokenHash" | "createdAt" | "expiresAt">): void {
+    this.insert("pair_codes", p);
   }
 
   getPairCode(code: string): PairCode | null {
-    const r = this.get("SELECT * FROM pair_codes WHERE code = ?", code);
-    return r ? toPairCode(r) : null;
+    return this.one("SELECT * FROM pair_codes WHERE code = ?", [code]);
   }
 
   /** Codes that are neither expired nor delivered. */
   listOpenPairCodes(now: number): PairCode[] {
-    return this.all("SELECT * FROM pair_codes WHERE expires_at > ? AND delivered_at IS NULL ORDER BY created_at", now).map(toPairCode);
+    return this.many("SELECT * FROM pair_codes WHERE expires_at > ? AND delivered_at IS NULL ORDER BY created_at", [now]);
   }
 
   approvePairCode(code: string, deviceId: string, now: number): void {
@@ -371,10 +349,9 @@ export class Store {
 
   // --- home ----------------------------------------------------------------------------------------------------
 
-  getHomeEntries(deviceId: string, catalogId: string): HomeEntry[] {
-    return this.all("SELECT item_id, added_at FROM home_entries WHERE device_id = ? AND catalog_id = ? ORDER BY position", deviceId, catalogId).map(
-      (r) => ({ itemId: str(r.item_id), addedAt: numOrNull(r.added_at) }),
-    );
+  /** The device's home list, with when each item was put there (epoch ms; null for rows not written by the store). */
+  getHomeEntries(deviceId: string, catalogId: string): Array<{ itemId: string; addedAt: number | null }> {
+    return this.many("SELECT item_id, added_at FROM home_entries WHERE device_id = ? AND catalog_id = ? ORDER BY position", [deviceId, catalogId]);
   }
 
   /**
@@ -393,37 +370,21 @@ export class Store {
   // --- progress & cursor ---------------------------------------------------------------------------------------
 
   getProgress(deviceId: string, catalogId: string, episodeId: string): Progress | null {
-    const r = this.get("SELECT * FROM progress WHERE device_id = ? AND catalog_id = ? AND episode_id = ?", deviceId, catalogId, episodeId);
-    return r ? toProgress(r) : null;
+    const sql = "SELECT * FROM progress WHERE device_id = ? AND catalog_id = ? AND episode_id = ?";
+    return this.one(sql, [deviceId, catalogId, episodeId], "device_id");
   }
 
-  listProgress(deviceId: string, catalogId: string, itemId?: string): Progress[] {
-    return itemId === undefined
-      ? this.all("SELECT * FROM progress WHERE device_id = ? AND catalog_id = ? ORDER BY updated_at DESC", deviceId, catalogId).map(toProgress)
-      : this.all(
-          "SELECT * FROM progress WHERE device_id = ? AND catalog_id = ? AND item_id = ? ORDER BY updated_at DESC",
-          deviceId,
-          catalogId,
-          itemId,
-        ).map(toProgress);
+  listProgress(deviceId: string, catalogId: string, itemId: string | null = null): Progress[] {
+    return this.many(
+      `SELECT * FROM progress WHERE device_id = ? AND catalog_id = ? AND (? IS NULL OR item_id = ?)
+       ORDER BY updated_at DESC`,
+      [deviceId, catalogId, itemId, itemId],
+      "device_id",
+    );
   }
 
   upsertProgress(deviceId: string, p: Progress): void {
-    this.run(
-      `INSERT INTO progress (device_id, catalog_id, episode_id, item_id, position_ms, duration_ms, status, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (device_id, catalog_id, episode_id) DO UPDATE SET
-         item_id = excluded.item_id, position_ms = excluded.position_ms, duration_ms = excluded.duration_ms,
-         status = excluded.status, updated_at = excluded.updated_at`,
-      deviceId,
-      p.catalogId,
-      p.episodeId,
-      p.itemId,
-      p.positionMs,
-      p.durationMs,
-      p.status,
-      p.updatedAt,
-    );
+    this.insert("progress", { deviceId, ...p }, "device_id, catalog_id, episode_id");
   }
 
   deleteProgress(deviceId: string, catalogId: string, episodeId: string): void {
@@ -432,52 +393,36 @@ export class Store {
 
   /** When the device last reported progress on any episode of the item (epoch ms), or null. */
   lastProgressAt(deviceId: string, catalogId: string, itemId: string): number | null {
-    const r = this.get("SELECT MAX(updated_at) AS at FROM progress WHERE device_id = ? AND catalog_id = ? AND item_id = ?", deviceId, catalogId, itemId);
-    return numOrNull(r?.at);
+    return this.one<{ at: number | null }>(
+      "SELECT MAX(updated_at) AS at FROM progress WHERE device_id = ? AND catalog_id = ? AND item_id = ?",
+      [deviceId, catalogId, itemId],
+    )!.at;
   }
 
   getCursor(deviceId: string, catalogId: string, itemId: string): Cursor | null {
-    const r = this.get("SELECT * FROM item_cursor WHERE device_id = ? AND catalog_id = ? AND item_id = ?", deviceId, catalogId, itemId);
-    return r ? toCursor(r) : null;
+    const sql = "SELECT * FROM item_cursor WHERE device_id = ? AND catalog_id = ? AND item_id = ?";
+    return this.one(sql, [deviceId, catalogId, itemId], "device_id");
   }
 
   listCursors(deviceId: string, catalogId: string): Cursor[] {
-    return this.all("SELECT * FROM item_cursor WHERE device_id = ? AND catalog_id = ? ORDER BY updated_at DESC", deviceId, catalogId).map(toCursor);
+    return this.many("SELECT * FROM item_cursor WHERE device_id = ? AND catalog_id = ? ORDER BY updated_at DESC", [deviceId, catalogId], "device_id");
   }
 
   /** Upserts the item's cursor. `wrapped` defaults to false: only the wrap after the last episode sets it. */
   setCursor(deviceId: string, c: Omit<Cursor, "wrapped"> & { wrapped?: boolean }): void {
-    this.run(
-      `INSERT INTO item_cursor (device_id, catalog_id, item_id, episode_id, updated_at, wrapped) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT (device_id, catalog_id, item_id) DO UPDATE SET episode_id = excluded.episode_id, updated_at = excluded.updated_at,
-         wrapped = excluded.wrapped`,
-      deviceId,
-      c.catalogId,
-      c.itemId,
-      c.episodeId,
-      c.updatedAt,
-      c.wrapped ? 1 : 0,
-    );
+    this.insert("item_cursor", { deviceId, ...c, wrapped: c.wrapped ?? false }, "device_id, catalog_id, item_id");
   }
 
   // --- commands ------------------------------------------------------------------------------------------------
 
   insertCommand(deviceId: string, type: CommandType, payload: Record<string, unknown>, now: number): Command {
-    const r = this.get(
-      "INSERT INTO commands (device_id, type, payload_json, created_at) VALUES (?, ?, ?, ?) RETURNING *",
-      deviceId,
-      type,
-      JSON.stringify(payload),
-      now,
-    );
-    return toCommand(r!);
+    const row = { deviceId, type, payloadJson: JSON.stringify(payload), createdAt: now };
+    return fromRow(this.insert("commands", row, undefined, " RETURNING *")!);
   }
 
   /** Unacknowledged commands created after `since`, oldest first. */
   pendingCommands(deviceId: string, since: number): Command[] {
-    return this.all("SELECT * FROM commands WHERE device_id = ? AND acked_at IS NULL AND created_at > ? ORDER BY id", deviceId, since).map(
-      toCommand,
-    );
+    return this.many("SELECT * FROM commands WHERE device_id = ? AND acked_at IS NULL AND created_at > ? ORDER BY id", [deviceId, since]);
   }
 
   ackCommand(deviceId: string, id: number, now: number): boolean {
@@ -493,42 +438,25 @@ export class Store {
   /** Stores a problem and keeps only the device's newest `keep` (by time, then insertion order). */
   insertProblem(p: Omit<Problem, "id">, keep: number): Problem {
     return this.transaction(() => {
-      const r = this.get(
-        `INSERT INTO problems (device_id, at, origin, kind, code, catalog_id, item_id, episode_id, source_id, position_ms, http_status, detail, app_version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
-        p.deviceId,
-        p.at,
-        p.origin,
-        p.kind,
-        p.code,
-        p.catalogId,
-        p.itemId,
-        p.episodeId,
-        p.sourceId,
-        p.positionMs,
-        p.httpStatus,
-        p.detail,
-        p.appVersion,
-      );
+      const r = this.insert("problems", p, undefined, " RETURNING *")!;
       this.run(
         "DELETE FROM problems WHERE device_id = ? AND id NOT IN (SELECT id FROM problems WHERE device_id = ? ORDER BY at DESC, id DESC LIMIT ?)",
         p.deviceId,
         p.deviceId,
         keep,
       );
-      return toProblem(r!);
+      return fromRow(r);
     });
   }
 
   /** The device's problems, newest first. */
   listProblems(deviceId: string, limit: number): Problem[] {
-    return this.all("SELECT * FROM problems WHERE device_id = ? ORDER BY at DESC, id DESC LIMIT ?", deviceId, limit).map(toProblem);
+    return this.many("SELECT * FROM problems WHERE device_id = ? ORDER BY at DESC, id DESC LIMIT ?", [deviceId, limit]);
   }
 
   /** How many problems happened since `since`, and when the latest one did (null: none stored). */
   problemStats(deviceId: string, since: number): { recent: number; lastAt: number | null } {
-    const r = this.get("SELECT COUNT(CASE WHEN at >= ? THEN 1 END) AS recent, MAX(at) AS last_at FROM problems WHERE device_id = ?", since, deviceId)!;
-    return { recent: num(r.recent), lastAt: numOrNull(r.last_at) };
+    return this.one("SELECT COUNT(CASE WHEN at >= ? THEN 1 END) AS recent, MAX(at) AS last_at FROM problems WHERE device_id = ?", [since, deviceId])!;
   }
 
   clearProblems(deviceId: string): number {
@@ -543,39 +471,22 @@ export class Store {
 
   /** Upserts the device's now-playing row and returns its sequence number, bumped on every write. */
   setNowPlaying(deviceId: string, n: Omit<NowPlaying, "seq">): number {
-    const r = this.get(
-      `INSERT INTO now_playing (device_id, catalog_id, item_id, episode_id, source_id, position_ms, duration_ms, state, updated_at, playing, anchor_at, seq)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-       ON CONFLICT (device_id) DO UPDATE SET catalog_id = excluded.catalog_id, item_id = excluded.item_id,
-         episode_id = excluded.episode_id, source_id = excluded.source_id, position_ms = excluded.position_ms,
-         duration_ms = excluded.duration_ms, state = excluded.state, updated_at = excluded.updated_at,
-         playing = excluded.playing, anchor_at = excluded.anchor_at, seq = now_playing.seq + 1
-       RETURNING seq`,
-      deviceId,
-      n.catalogId,
-      n.itemId,
-      n.episodeId,
-      n.sourceId,
-      n.positionMs,
-      n.durationMs,
-      n.state,
-      n.updatedAt,
-      n.playing ? 1 : 0,
-      n.anchorAt,
-    );
-    return num(r!.seq);
+    return this.transaction(() => {
+      const seq = (this.getNowPlaying(deviceId)?.seq ?? 0) + 1;
+      this.insert("now_playing", { deviceId, ...n, seq }, "device_id");
+      return seq;
+    });
   }
 
   getNowPlaying(deviceId: string): NowPlaying | null {
-    const r = this.get("SELECT * FROM now_playing WHERE device_id = ?", deviceId);
-    return r ? toNowPlaying(r) : null;
+    return this.one("SELECT * FROM now_playing WHERE device_id = ?", [deviceId], "device_id");
   }
 
   // --- catalog history -----------------------------------------------------------------------------------------
 
   /** Every episode the catalog has ever carried, present or removed, ordered by item then episode id. */
   catalogSeen(catalogId: string): SeenEpisode[] {
-    return this.all("SELECT * FROM catalog_seen WHERE catalog_id = ? ORDER BY item_id, episode_id", catalogId).map(toSeenEpisode);
+    return this.many("SELECT * FROM catalog_seen WHERE catalog_id = ? ORDER BY item_id, episode_id", [catalogId], "catalog_id");
   }
 
   insertSeen(catalogId: string, buildId: string, firstSeenAt: number, episodes: ReadonlyArray<{ episodeId: string; itemId: string }>): void {
@@ -605,80 +516,46 @@ export class Store {
 
   /** The item's present episodes that first appeared after `sinceMs`, oldest first. Baseline episodes (0) never do. */
   episodesSeenAfter(catalogId: string, itemId: string, sinceMs: number): string[] {
-    return this.all(
+    return this.many<{ episodeId: string }>(
       `SELECT episode_id FROM catalog_seen WHERE catalog_id = ? AND item_id = ? AND removed_at IS NULL AND first_seen_at > ?
        ORDER BY first_seen_at, episode_id`,
-      catalogId,
-      itemId,
-      sinceMs,
-    ).map((r) => str(r.episode_id));
+      [catalogId, itemId, sinceMs],
+    ).map((e) => e.episodeId);
   }
 
   /** Stores a loaded build. A build id loaded again later (a rollback) replaces its row with the new load. */
   recordCatalogBuild(b: CatalogBuild, changes: CatalogChanges): void {
-    this.run(
-      `INSERT INTO catalog_builds (catalog_id, build_id, built_at, loaded_at, baseline, items, episodes,
-         items_added, items_removed, episodes_added, episodes_removed, changes_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (catalog_id, build_id) DO UPDATE SET built_at = excluded.built_at, loaded_at = excluded.loaded_at,
-         baseline = excluded.baseline, items = excluded.items, episodes = excluded.episodes,
-         items_added = excluded.items_added, items_removed = excluded.items_removed,
-         episodes_added = excluded.episodes_added, episodes_removed = excluded.episodes_removed, changes_json = excluded.changes_json`,
-      b.catalogId,
-      b.buildId,
-      b.builtAt,
-      b.loadedAt,
-      b.baseline ? 1 : 0,
-      b.items,
-      b.episodes,
-      b.itemsAdded,
-      b.itemsRemoved,
-      b.episodesAdded,
-      b.episodesRemoved,
-      JSON.stringify(changes),
-    );
+    this.insert("catalog_builds", { ...b, changesJson: JSON.stringify(changes) }, "catalog_id, build_id");
   }
 
   /** The catalog's builds, most recently loaded first (without their change lists). */
   listCatalogBuilds(catalogId: string, limit: number): CatalogBuild[] {
-    return this.all(
+    return this.many(
       `SELECT catalog_id, build_id, built_at, loaded_at, baseline, items, episodes, items_added, items_removed, episodes_added, episodes_removed
        FROM catalog_builds WHERE catalog_id = ? ORDER BY loaded_at DESC, rowid DESC LIMIT ?`,
-      catalogId,
-      limit,
-    ).map(toCatalogBuild);
+      [catalogId, limit],
+    );
   }
 
   getCatalogBuild(catalogId: string, buildId: string): { build: CatalogBuild; changes: CatalogChanges } | null {
-    const r = this.get("SELECT * FROM catalog_builds WHERE catalog_id = ? AND build_id = ?", catalogId, buildId);
-    return r ? { build: toCatalogBuild(r), changes: JSON.parse(str(r.changes_json)) as CatalogChanges } : null;
+    const sql = "SELECT * FROM catalog_builds WHERE catalog_id = ? AND build_id = ?";
+    const r = this.one<CatalogBuild & { changes: CatalogChanges }>(sql, [catalogId, buildId]);
+    if (!r) return null;
+    const { changes, ...build } = r;
+    return { build, changes };
   }
 
   // --- companion links -----------------------------------------------------------------------------------------
 
   getCompanionLink(catalogId: string, episodeId: string, sourceId: string): CompanionLink | null {
-    const r = this.get("SELECT * FROM companion_links WHERE catalog_id = ? AND episode_id = ? AND source_id = ?", catalogId, episodeId, sourceId);
-    return r ? toCompanionLink(r) : null;
+    return this.one("SELECT * FROM companion_links WHERE catalog_id = ? AND episode_id = ? AND source_id = ?", [catalogId, episodeId, sourceId]);
   }
 
   listCompanionLinks(catalogId: string, episodeId: string): CompanionLink[] {
-    return this.all("SELECT * FROM companion_links WHERE catalog_id = ? AND episode_id = ? ORDER BY source_id", catalogId, episodeId).map(toCompanionLink);
+    return this.many("SELECT * FROM companion_links WHERE catalog_id = ? AND episode_id = ? ORDER BY source_id", [catalogId, episodeId]);
   }
 
   putCompanionLink(l: CompanionLink): void {
-    this.run(
-      `INSERT INTO companion_links (catalog_id, item_id, episode_id, source_id, language, offset_ms, rate, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (catalog_id, episode_id, source_id) DO UPDATE SET item_id = excluded.item_id, language = excluded.language,
-         offset_ms = excluded.offset_ms, rate = excluded.rate, updated_at = excluded.updated_at`,
-      l.catalogId,
-      l.itemId,
-      l.episodeId,
-      l.sourceId,
-      l.language,
-      l.offsetMs,
-      l.rate,
-      l.updatedAt,
-    );
+    this.insert("companion_links", l, "catalog_id, episode_id, source_id");
   }
 }

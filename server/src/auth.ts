@@ -1,11 +1,10 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { ServerConfig } from "./config.ts";
-import { ConfigError } from "./config.ts";
+import { ConfigError, type ServerConfig } from "./config.ts";
 import type { Logger } from "./log.ts";
 
-export const MIN_ADMIN_TOKEN_LENGTH = 24;
+const MIN_ADMIN_TOKEN_LENGTH = 24;
 
 /** 32 random bytes, base64url (43 characters). */
 export function newToken(): string {
@@ -57,18 +56,16 @@ function writeTokenFile(file: string, token: string): void {
   writeFileSync(file, `${token}\n`, { mode: 0o600 });
 }
 
-export interface AdminTokenOptions {
-  /** Create the token file when neither IZLE_ADMIN_TOKEN nor the file exist (default true). */
-  create?: boolean;
-  /** Replace the token file with a new token. */
-  rotate?: boolean;
-}
-
 /**
  * Returns the admin token: IZLE_ADMIN_TOKEN if set, else the content of `admin.tokenFile`, creating the file with a
- * new random token on first start. Refuses tokens shorter than 24 characters. The token itself is never logged.
+ * new random token on first start (unless `create` is false). `rotate` replaces the file's token. Refuses tokens
+ * shorter than 24 characters. The token itself is never logged.
  */
-export function loadAdminToken(config: ServerConfig, log: Logger, opts: AdminTokenOptions = {}): { token: string; source: "env" | "file" } {
+export function loadAdminToken(
+  config: ServerConfig,
+  log: Logger,
+  opts: { create?: boolean; rotate?: boolean } = {},
+): { token: string; source: "env" | "file" } {
   const file = config.admin.tokenFile;
   if (opts.rotate) {
     const token = newToken();

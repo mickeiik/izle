@@ -8,24 +8,8 @@ const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40
 
 /** Words that, when they appear in a key (camelCase, snake_case or kebab-case), drop the whole value. */
 const SECRET_WORDS = new Set([
-  "url",
-  "urls",
-  "uri",
-  "href",
-  "header",
-  "headers",
-  "authorization",
-  "cookie",
-  "cookies",
-  "token",
-  "tokens",
-  "ref",
-  "refs",
-  "config",
-  "playlist",
-  "password",
-  "secret",
-  "body",
+  "url", "urls", "uri", "href", "header", "headers", "authorization", "cookie", "cookies", "token", "tokens",
+  "ref", "refs", "config", "playlist", "password", "secret", "body",
 ]);
 
 const URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi;
@@ -34,16 +18,9 @@ const MAX_DEPTH = 6;
 const MAX_STRING = 500;
 const MAX_ARRAY = 50;
 
-function keyWords(key: string): string[] {
-  return key
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .split(/[^A-Za-z0-9]+/)
-    .filter(Boolean)
-    .map((w) => w.toLowerCase());
-}
-
 export function isSecretKey(key: string): boolean {
-  return keyWords(key).some((w) => SECRET_WORDS.has(w));
+  const words = key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[^A-Za-z0-9]+/);
+  return words.some((w) => SECRET_WORDS.has(w.toLowerCase()));
 }
 
 function urlPlaceholder(match: string): string {
@@ -113,23 +90,16 @@ export function redact(value: unknown, depth = 0, seen = new WeakSet<object>()):
   return out;
 }
 
-export interface Logger {
-  debug(msg: string, fields?: Record<string, unknown>): void;
-  info(msg: string, fields?: Record<string, unknown>): void;
-  warn(msg: string, fields?: Record<string, unknown>): void;
-  error(msg: string, fields?: Record<string, unknown>): void;
+export interface Logger extends Record<Level, (msg: string, fields?: Record<string, unknown>) => void> {
   /** A logger whose lines all carry `fields`. */
   child(fields: Record<string, unknown>): Logger;
 }
 
-export interface LoggerOptions {
-  level?: Level;
-  /** Receives one JSON line (without the trailing newline). Defaults to stdout. */
-  write?: (line: string) => void;
-  now?: () => number;
-}
-
-export function createLogger(opts: LoggerOptions = {}, bound: Record<string, unknown> = {}): Logger {
+/** `write` receives one JSON line (without the trailing newline); stdout by default. */
+export function createLogger(
+  opts: { level?: Level; write?: (line: string) => void; now?: () => number } = {},
+  bound: Record<string, unknown> = {},
+): Logger {
   const level = opts.level ?? "info";
   const write = opts.write ?? ((line: string) => void process.stdout.write(`${line}\n`));
   const now = opts.now ?? Date.now;

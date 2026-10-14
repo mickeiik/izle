@@ -7,11 +7,8 @@ export class Waiters<K> {
 
   wait(key: K, timeoutMs: number, signal?: AbortSignal): Promise<void> {
     return new Promise<void>((resolve) => {
-      let set = this.waiting.get(key);
-      if (!set) {
-        set = new Set();
-        this.waiting.set(key, set);
-      }
+      const set = this.waiting.get(key) ?? new Set<() => void>();
+      this.waiting.set(key, set);
       const done = () => {
         clearTimeout(timer);
         signal?.removeEventListener("abort", done);

@@ -1,17 +1,16 @@
-// Problem reports: the owner is usually not in the room, so what went wrong on a TV is kept for the admin page.
-// TVs report their own problems (`POST /tv/problems`); the server records the ones it sees for a TV: resolves that
-// found nothing playable, sources that failed before another one played, and proxy sessions whose upstream
-// refused, broke or could not be reached. Companion ("Listen along") resolves and sessions are not recorded.
-// Free text from the TV is redacted before it is stored, and detail is never logged.
+// Problem reports, kept for the owner (usually not in the room): what a TV reports itself, and what the server sees
+// for a TV (resolves with nothing playable, sources it fell back past, proxy upstreams that refused, broke or could
+// not be reached; never "Listen along" ones). Free text from the TV is redacted before it is stored, and detail is
+// never logged.
 
-import type { CatalogService } from "./catalog.ts";
+import type { Services } from "./context.ts";
 import { tooManyRequests } from "./errors.ts";
-import { redactReportText, type Logger } from "./log.ts";
+import { redactReportText } from "./log.ts";
 import { iso } from "./presenters.ts";
 import type { ProxyProblem, ProxyProblemCode } from "./proxy.ts";
 import { RateLimiter } from "./ratelimit.ts";
-import { isCompanionScope, type PlaybackSessions, type Tried } from "./resolve.ts";
-import type { Device, Problem, ProblemOrigin, Store } from "./store.ts";
+import { isCompanionScope, type Tried } from "./resolve.ts";
+import type { Device, Problem, ProblemOrigin } from "./store.ts";
 
 /** Problem kinds a TV may report (`proxy` problems are only recorded by the server). */
 export const TV_PROBLEM_KINDS = ["playback", "resolve", "network", "other"] as const;
@@ -33,20 +32,20 @@ export interface ProblemReportBody {
 }
 
 /** Problems kept per device (older ones are deleted on insert). */
-export const PROBLEMS_KEPT = 100;
+const PROBLEMS_KEPT = 100;
 /** Problems older than this are purged by the housekeeping timer. */
-export const PROBLEM_RETENTION_MS = 30 * 24 * 60 * 60_000;
+const PROBLEM_RETENTION_MS = 30 * 24 * 60 * 60_000;
 /** `Device.problems.recent` counts the problems of this period. */
-export const RECENT_PROBLEMS_MS = 24 * 60 * 60_000;
+const RECENT_PROBLEMS_MS = 24 * 60 * 60_000;
 /** Reports a TV may send per window. */
-export const PROBLEM_REPORT_LIMIT = { max: 30, windowMs: 10 * 60_000 };
+const PROBLEM_REPORT_LIMIT = { max: 30, windowMs: 10 * 60_000 };
 /** Server-origin proxy problems: at most one per device and code in this period (a flapping CDN must not flood). */
-export const PROXY_PROBLEM_INTERVAL_MS = 60_000;
+const PROXY_PROBLEM_INTERVAL_MS = 60_000;
 export const PROBLEM_LIST_DEFAULT = 50;
 export const PROBLEM_LIST_MAX = 100;
 const MAX_DETAIL = 500;
 
-export interface ServerProblem {
+interface ServerProblem {
   kind: "resolve" | "proxy";
   code: "no_playable_source" | "source_failed" | ProxyProblemCode;
   episodeId?: string | null;
@@ -55,14 +54,7 @@ export interface ServerProblem {
   detail?: string | null;
 }
 
-export interface ProblemServiceOptions {
-  store: Store;
-  catalog: CatalogService;
-  log: Logger;
-  now: () => number;
-  /** A report that names one of its TV's playback sessions gets the episode and source from it. */
-  sessions: PlaybackSessions;
-}
+type ProblemDeps = Pick<Services, "store" | "catalog" | "log" | "now" | "sessions">;
 
 const cap = (text: string) => (text.length > MAX_DETAIL ? `${text.slice(0, MAX_DETAIL - 1)}…` : text);
 
@@ -82,11 +74,11 @@ export function noPlayableDetail(tried: readonly Tried[], exclude: readonly stri
 }
 
 export class ProblemService {
-  private readonly o: ProblemServiceOptions;
+  private readonly o: ProblemDeps;
   private readonly reports: RateLimiter;
   private readonly proxyProblems: RateLimiter;
 
-  constructor(opts: ProblemServiceOptions) {
+  constructor(opts: ProblemDeps) {
     this.o = opts;
     this.reports = new RateLimiter(PROBLEM_REPORT_LIMIT.max, PROBLEM_REPORT_LIMIT.windowMs, opts.now);
     this.proxyProblems = new RateLimiter(1, PROXY_PROBLEM_INTERVAL_MS, opts.now);
@@ -108,12 +100,11 @@ export class ProblemService {
   report(device: Device, body: ProblemReportBody): Problem {
     const rate = this.reports.hit(device.id);
     if (!rate.ok) throw tooManyRequests("too_many_problems", "too many problem reports from this TV", rate.retryAfterSec);
-    const t = this.o.now();
     // Only the TV's own session, and only for the episode it played.
     const session = this.o.sessions.owned(body.sessionId, device.id, body.episodeId);
     const text = (value: string | undefined) => (value === undefined || value.trim() === "" ? null : redactReportText(value));
     const problem = this.insert(device.id, "tv", {
-      at: t - (body.ageMs ?? 0),
+      at: this.o.now() - (body.ageMs ?? 0),
       kind: body.kind,
       code: redactReportText(body.code),
       episodeId: body.episodeId ?? session?.episodeId ?? null,

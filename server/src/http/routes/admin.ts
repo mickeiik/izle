@@ -1,19 +1,22 @@
-// The admin API for TVs: pairing approval, the device list and a TV's page (settings, home list, "continue from",
-// what it has watched and is playing), remote commands and its problem reports.
+// The admin API: pairing approval, the TVs (list, page, settings, deletion, home list, "continue from", what each
+// has watched and is playing, remote commands, problem reports) and the catalog (what is loaded and its builds,
+// search, an item's details, the "test this episode" diagnostics, the reload). "Listen along" is in companion.ts.
 
 import type { Hono } from "hono";
+import { buildJson, catalogInfo, catalogItemJson, reloadCatalog, searchHitJson } from "../../catalog-admin.ts";
 import type { AppContext } from "../../context.ts";
+import { diagnoseEpisode } from "../../diagnostics.ts";
 import { HttpError } from "../../errors.ts";
+import { requireItem } from "../../lookup.ts";
 import { PROBLEM_LIST_DEFAULT, PROBLEM_LIST_MAX } from "../../problems.ts";
 import { iso } from "../../presenters.ts";
 import { HOME_MAX_ITEMS, MAX_NOW_WAIT_MS } from "../../tv.ts";
-import { approveBody, commandBody, cursorBody, devicePatchBody, homeBody, parseBody } from "../../validation.ts";
+import { approveBody, commandBody, cursorBody, devicePatchBody, diagnosticsBody, homeBody, isId, parseBody } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
 import { parseWait, requireDevice } from "../params.ts";
 
-/** Pairing approval and the devices: list, page, settings, deletion, home list, cursor, progress, now playing. */
-export function registerAdminDevices(app: Hono<Env>, ctx: AppContext): void {
-  const { store, tv, pairing, devices } = ctx;
+export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
+  const { store, tv, pairing, devices, catalog } = ctx;
 
   app.post("/api/v1/admin/pair/approve", async (c) => {
     const body = await parseBody(c, approveBody);
@@ -67,17 +70,12 @@ export function registerAdminDevices(app: Hono<Env>, ctx: AppContext): void {
     const n = await tv.waitNow(d.id, seq, waitSec * 1000, c.req.raw.signal);
     return c.json(devices.now(d, n));
   });
-}
-
-/** Remote commands to a TV and the TV's problem reports. */
-export function registerAdminCommands(app: Hono<Env>, ctx: AppContext): void {
-  const { store, events } = ctx;
 
   app.post("/api/v1/admin/devices/:id/commands", async (c) => {
     const d = requireDevice(store, c.req.param("id"));
     const body = await parseBody(c, commandBody);
     const cmd = ctx.commands.send(d.id, body);
-    return c.json({ id: cmd.id, online: events.isOnline(d.id) }, 202);
+    return c.json({ id: cmd.id, online: ctx.events.isOnline(d.id) }, 202);
   });
 
   app.get("/api/v1/admin/devices/:id/problems", (c) => {
@@ -87,8 +85,40 @@ export function registerAdminCommands(app: Hono<Env>, ctx: AppContext): void {
   });
 
   app.delete("/api/v1/admin/devices/:id/problems", (c) => {
-    const d = requireDevice(store, c.req.param("id"));
-    ctx.problems.clear(d.id);
+    ctx.problems.clear(requireDevice(store, c.req.param("id")).id);
     return c.body(null, 204);
+  });
+
+  app.get("/api/v1/admin/catalog", (c) => c.json(catalogInfo(ctx)));
+
+  app.get("/api/v1/admin/catalog/search", (c) => {
+    const q = (c.req.query("q") ?? "").slice(0, 200);
+    const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 50) || 50, 1), 200);
+    return c.json({ items: catalog.search(q, limit).map((item) => searchHitJson(catalog, item)) });
+  });
+
+  app.get("/api/v1/admin/catalog/builds/:buildId", (c) => {
+    const found = store.getCatalogBuild(catalog.catalogId, c.req.param("buildId"));
+    if (!found) throw new HttpError(404, "unknown_build");
+    return c.json({ build: buildJson(found.build), changes: found.changes });
+  });
+
+  app.get("/api/v1/admin/catalog/items/:id", (c) => {
+    const id = c.req.param("id");
+    if (!isId(id)) throw new HttpError(404, "unknown_item");
+    return c.json({ item: catalogItemJson(catalog, requireItem(catalog, id, 404, "unknown_item")) });
+  });
+
+  app.post("/api/v1/admin/diagnostics/resolve", async (c) => {
+    const body = await parseBody(c, diagnosticsBody);
+    return c.json(await diagnoseEpisode(ctx, body, c.req.raw.signal));
+  });
+
+  app.post("/api/v1/admin/catalog/reload", async (c) => {
+    const r = await reloadCatalog(ctx);
+    if (!r.ok) {
+      return c.json({ error: "invalid_catalog", issues: r.issues.map((i) => ({ severity: i.severity, file: i.file, path: i.path, message: i.message })) }, 422);
+    }
+    return c.json({ catalog: catalogInfo(ctx) });
   });
 }

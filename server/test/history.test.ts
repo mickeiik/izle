@@ -1,12 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { CatalogService, type CatalogLoadedHook } from "../src/catalog.ts";
 import { CatalogHistory, CHANGES_CAP } from "../src/history.ts";
 import { createLogger } from "../src/log.ts";
 import { Store } from "../src/store.ts";
-import { fakeClock, fixtureItems, fixtureManifest, startTestServer, tempDir, writeBundle, type Json } from "./helpers.ts";
+import { fakeClock, fixtureItems, publishBuild, tempDir, writeBundle, type Json } from "./helpers.ts";
 
 const CATALOG = "fixture";
 
@@ -22,11 +21,7 @@ async function setup(t: { after(fn: () => unknown): void }) {
   /** A catalog service on the test bundle whose loads are recorded (a new one = a server restart). */
   const service = (onLoaded: CatalogLoadedHook = (next, previous) => void history.record(next, previous)) =>
     new CatalogService(bundleDir, log, clock.now, null, { onLoaded });
-  /** Rewrites the test bundle as a new build. */
-  const publish = (buildId: string, edit: (items: Json[]) => Json[] = (items) => items, manifest: Json = {}) => {
-    const items = fixtureItems();
-    return writeBundle(bundleDir, { ...fixtureManifest(), buildId, ...manifest }, { items: edit(items.items) });
-  };
+  const publish = publishBuild.bind(null, bundleDir);
   const builds = (catalogId = CATALOG) => store.listCatalogBuilds(catalogId, 50);
   const seenAt = (episodeId: string, catalogId = CATALOG) => store.catalogSeen(catalogId).find((e) => e.episodeId === episodeId);
   return { store, clock, logs, service, publish, builds, seenAt };
@@ -207,20 +202,4 @@ test("a failing load hook is logged and the catalog still loads and reloads", as
   assert.equal(r.ok, true);
   assert.equal(catalog.current.manifest.buildId, "fixture-2");
   assert.equal(logs.filter((l) => JSON.parse(l).msg === "catalog load hook failed").length, 2);
-});
-
-test("the server records its first load and every successful reload", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
-  const { store } = s.srv.ctx;
-  assert.deepEqual(store.listCatalogBuilds(CATALOG, 10).map((b) => [b.buildId, b.baseline]), [["fixture-1", true]]);
-
-  const itemsFile = path.join(s.bundleDir, "items.json");
-  const items = JSON.parse(await readFile(itemsFile, "utf8"));
-  await writeFile(itemsFile, JSON.stringify({ items: items.items.filter((i: Json) => i.id !== "film") }));
-  await writeFile(path.join(s.bundleDir, "bundle.json"), JSON.stringify({ ...fixtureManifest(), buildId: "fixture-2" }));
-  assert.equal((await s.admin("POST", "/catalog/reload")).status, 200);
-  const builds = store.listCatalogBuilds(CATALOG, 10);
-  assert.deepEqual(builds.map((b) => [b.buildId, b.baseline, b.itemsRemoved]), [["fixture-2", false, 1], ["fixture-1", true, 0]]);
-  assert.deepEqual(store.getCatalogBuild(CATALOG, "fixture-2")?.changes.items.removed, [{ id: "film", title: "Film" }]);
 });

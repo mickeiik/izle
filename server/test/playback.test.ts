@@ -10,30 +10,27 @@ import {
   firstAllowedIndex,
   isPlayable,
   orderSources,
-  type ProgressLike,
 } from "../src/playback.ts";
 import { fixtureItems } from "./helpers.ts";
 
 const items = fixtureItems().items as CatalogItem[];
 const show = items.find((i) => i.id === "show")!;
 const locked = items.find((i) => i.id === "locked")!;
-const progress = (entries: Array<[string, ProgressLike["status"]]>) =>
-  new Map(entries.map(([episodeId, status]) => [episodeId, { episodeId, positionMs: 0, durationMs: null, status }]));
+/** Saved positions with these episodes finished. */
+const finished = (...ids: string[]) =>
+  new Map(ids.map((id) => [id, { episodeId: id, positionMs: 0, durationMs: null, status: "finished" as const }]));
+const watched = finished("show.e1", "show.e2", "show.e4", "show.e5");
 
-test("cursor: first allowed unfinished episode without a cursor, wrapping to the first when all are finished", () => {
+test("cursor: without one, the first allowed unfinished episode (else the first); a given one wins or moves on", () => {
   assert.equal(cursorIndex(show, null, new Map()), 0);
-  assert.equal(cursorIndex(show, null, progress([["show.e1", "finished"]])), 1);
-  assert.equal(cursorIndex(show, null, progress([["show.e1", "finished"], ["show.e2", "finished"]])), 3, "skips the not-allowed e3");
-  const all = progress(["show.e1", "show.e2", "show.e4", "show.e5"].map((e) => [e, "finished"] as [string, "finished"]));
-  assert.equal(cursorIndex(show, null, all), 0);
+  assert.equal(cursorIndex(show, null, finished("show.e1")), 1);
+  assert.equal(cursorIndex(show, null, finished("show.e1", "show.e2")), 3, "skips the not-allowed e3");
+  assert.equal(cursorIndex(show, null, watched), 0);
   assert.equal(cursorIndex(locked, null, new Map()), -1);
   assert.equal(isPlayable(locked), false);
-});
-
-test("cursor: an explicit cursor wins; a cursor on a disallowed or vanished episode moves on", () => {
-  assert.equal(cursorIndex(show, "show.e4", progress([["show.e4", "finished"]])), 3);
+  assert.equal(cursorIndex(show, "show.e4", finished("show.e4")), 3);
   assert.equal(cursorIndex(show, "show.e3", new Map()), 3, "e3 is not allowed → next allowed e4");
-  assert.equal(cursorIndex(show, "gone", progress([["show.e1", "finished"]])), 1);
+  assert.equal(cursorIndex(show, "gone", finished("show.e1")), 1);
 });
 
 // The fixture's show as if a later build appended e6 (not allowed), e7 and e8, after it was watched to the end.
@@ -47,7 +44,6 @@ const grown: CatalogItem = {
   ],
 };
 const wrapped = { episodeId: "show.e1", wrapped: true };
-const watched = progress(["show.e1", "show.e2", "show.e4", "show.e5"].map((e) => [e, "finished"] as [string, "finished"]));
 
 test("cursor: a wrapped cursor plays the first appended episode with playbackAllowed in play order", () => {
   assert.equal(cursorIndex(grown, wrapped, watched, new Set(["show.e8", "show.e7"])), 6, "play order, not the set's order");
@@ -71,7 +67,7 @@ test("finishing an episode advances the cursor to the next allowed one and wraps
   assert.equal(firstAllowedIndex(show), 0);
 });
 
-test("cursor after a report: finished moves on (wrapping after the last), anything else stays on the episode", () => {
+test("cursor after a report: finished moves on (wrapping after the last), anything else stays; changes", () => {
   const at = (episodeId: string, wrapped = false) => ({ episodeId, wrapped });
   assert.deepEqual(cursorAfterReport(show, 0, "finished", at("show.e1")), { episodeId: "show.e2", wrapped: false, changed: true });
   assert.deepEqual(cursorAfterReport(show, 1, "finished", at("show.e2")), { episodeId: "show.e4", wrapped: false, changed: true }, "the disallowed e3 is skipped");
@@ -80,10 +76,7 @@ test("cursor after a report: finished moves on (wrapping after the last), anythi
   assert.deepEqual(cursorAfterReport(show, 0, "playing", at("show.e1")), { episodeId: "show.e1", wrapped: false, changed: false }, "a heartbeat changes nothing");
   assert.deepEqual(cursorAfterReport(show, 0, "paused", at("show.e1")), { episodeId: "show.e1", wrapped: false, changed: false });
   assert.deepEqual(cursorAfterReport(show, 0, "stopped", at("show.e1")), { episodeId: "show.e1", wrapped: false, changed: true }, "leaving the player is a change");
-});
-
-test("cursor after a report: a heartbeat changes the state only when the cursor moves or stops being wrapped", () => {
-  const at = (episodeId: string, wrapped = false) => ({ episodeId, wrapped });
+  // A heartbeat changes the state only when the cursor moves or stops being wrapped.
   assert.deepEqual(cursorAfterReport(show, 3, "playing", at("show.e1")), { episodeId: "show.e4", wrapped: false, changed: true }, "another episode");
   assert.deepEqual(cursorAfterReport(show, 0, "playing", null), { episodeId: "show.e1", wrapped: false, changed: true }, "no cursor yet");
   assert.deepEqual(cursorAfterReport(show, 0, "playing", at("show.e1", true)), { episodeId: "show.e1", wrapped: false, changed: true }, "wrapped becomes ordinary");

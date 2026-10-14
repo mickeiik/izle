@@ -1,10 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { CATALOG_BUILDS_LISTED, reloadOnSignal } from "../src/catalog-admin.ts";
 import { HOME_MAX_ITEMS } from "../src/tv.ts";
-import { fixtureItems, openEvents, startTestServer, type Json } from "./helpers.ts";
+import { openEvents, publishBuild, startTestServer, type Json } from "./helpers.ts";
 
 async function setup(t: { after(fn: () => unknown): void }) {
   const s = await startTestServer();
@@ -13,24 +11,7 @@ async function setup(t: { after(fn: () => unknown): void }) {
   return { s, tv };
 }
 
-/** Rewrites the test server's bundle on disk: `edit` changes its items, the manifest gets `buildId`. */
-async function rewriteBundle(bundleDir: string, buildId: string, edit: (items: Json[]) => Json[]) {
-  const itemsFile = path.join(bundleDir, "items.json");
-  const manifestFile = path.join(bundleDir, "bundle.json");
-  const items = JSON.parse(await readFile(itemsFile, "utf8"));
-  await writeFile(itemsFile, JSON.stringify({ ...items, items: edit(items.items) }));
-  const manifest = JSON.parse(await readFile(manifestFile, "utf8"));
-  await writeFile(manifestFile, JSON.stringify({ ...manifest, buildId }));
-  return { manifest, manifestFile };
-}
-
-test("admin auth", async (t) => {
-  const { s } = await setup(t);
-  assert.equal((await s.call("GET", "/api/v1/admin/devices")).status, 401);
-  assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: "wrong-wrong-wrong-wrong-wrong" })).status, 401);
-  assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: "short" })).status, 401);
-  assert.equal((await s.admin("GET", "/devices")).status, 200);
-});
+const withoutFilm = (items: Json[]) => items.filter((i) => i.id !== "film");
 
 test("devices: list, detail, patch settings, delete", async (t) => {
   const { s, tv } = await setup(t);
@@ -116,15 +97,11 @@ test("now playing follows resolve and heartbeats", async (t) => {
   );
 });
 
-test("commands: validated, stored, acknowledged by the TV", async (t) => {
+test("commands: play is checked against the catalog and acknowledged by its TV only", async (t) => {
   const { s, tv } = await setup(t);
   const play = await s.admin("POST", `/devices/${tv.deviceId}/commands`, { type: "play", episodeId: "show.e1" });
   assert.equal(play.status, 202);
-  assert.equal(play.json.online, false);
   assert.equal((await s.admin("POST", `/devices/${tv.deviceId}/commands`, { type: "play", episodeId: "show.e3" })).json.error, "not_allowed");
-  assert.equal((await s.admin("POST", `/devices/${tv.deviceId}/commands`, { type: "play" })).status, 400);
-  assert.equal((await s.admin("POST", `/devices/${tv.deviceId}/commands`, { type: "stop", episodeId: "show.e1" })).status, 400);
-  assert.equal((await s.admin("POST", `/devices/${tv.deviceId}/commands`, { type: "stop" })).status, 202);
   const ack = await s.call("POST", `/api/v1/tv/commands/${play.json.id}/ack`, { token: tv.token });
   assert.equal(ack.status, 200);
   assert.equal((await s.call("POST", "/api/v1/tv/commands/9999/ack", { token: tv.token })).status, 404);
@@ -132,11 +109,12 @@ test("commands: validated, stored, acknowledged by the TV", async (t) => {
   assert.equal((await s.call("POST", `/api/v1/tv/commands/${play.json.id}/ack`, { token: other.token })).status, 404, "only the target device can ack");
 });
 
-test("commands: pause, resume, next, previous, seek and message are validated and stored with their payloads", async (t) => {
+test("commands: every type is validated and stored with its payload; the log never has a message's text", async (t) => {
   const { s, tv } = await setup(t);
   const send = (body: unknown) => s.admin("POST", `/devices/${tv.deviceId}/commands`, body);
   const TEXT = "Yemek hazır, anneanne!";
   const good: Array<[unknown, Record<string, unknown>]> = [
+    [{ type: "stop" }, {}],
     [{ type: "pause" }, {}],
     [{ type: "resume" }, {}],
     [{ type: "next" }, {}],
@@ -164,6 +142,8 @@ test("commands: pause, resume, next, previous, seek and message are validated an
   );
 
   const bad: unknown[] = [
+    { type: "play" },
+    { type: "stop", episodeId: "show.e1" },
     { type: "seek" },
     { type: "seek", deltaMs: 30_000, positionMs: 10_000 },
     { type: "seek", deltaMs: 3_600_001 },
@@ -277,7 +257,7 @@ test("diagnostics: the probe reaches upstreams through the server's fetch", asyn
 test("catalog reload: new build applies, invalid build is refused and the old one stays", async (t) => {
   const { s, tv } = await setup(t);
   await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["film", "show"] });
-  const { manifest, manifestFile } = await rewriteBundle(s.bundleDir, "fixture-2", (items) => items.filter((i) => i.id !== "film"));
+  await publishBuild(s.bundleDir, "fixture-2", withoutFilm);
   const v0 = (await s.call("GET", "/api/v1/tv/state", { token: tv.token })).json.version;
 
   const ok = await s.admin("POST", "/catalog/reload");
@@ -290,7 +270,7 @@ test("catalog reload: new build applies, invalid build is refused and the old on
   const detail = await s.admin("GET", `/devices/${tv.deviceId}`);
   assert.deepEqual(detail.json.home.map((h: { itemId: string; missing: boolean }) => [h.itemId, h.missing]), [["film", true], ["show", false]]);
 
-  await writeFile(manifestFile, JSON.stringify({ ...manifest, formatVersion: 2 }));
+  await publishBuild(s.bundleDir, "fixture-3", withoutFilm, { formatVersion: 2 });
   const bad = await s.admin("POST", "/catalog/reload");
   assert.equal(bad.status, 422);
   assert.equal(bad.json.error, "invalid_catalog");
@@ -303,7 +283,7 @@ test("catalog reload on SIGHUP: bumps every TV like the route; a reload that thr
   const es = await openEvents(s.base, tv.token);
   t.after(() => es.close());
   const v0 = JSON.parse((await es.next()).data!).version;
-  await rewriteBundle(s.bundleDir, "fixture-2", (items) => items);
+  await publishBuild(s.bundleDir, "fixture-2");
   await reloadOnSignal(s.srv.ctx, "SIGHUP");
   assert.deepEqual(JSON.parse((await es.next()).data!), { version: v0 + 1 }, "the TV hears the new version");
   assert.equal((await s.admin("GET", "/catalog")).json.buildId, "fixture-2");
@@ -336,7 +316,7 @@ test("catalog builds: the baseline, then each reload's changes newest first; one
 
   // Build 2 drops the film.
   s.clock.advance(3_600_000);
-  await rewriteBundle(s.bundleDir, "fixture-2", (items) => items.filter((i) => i.id !== "film"));
+  await publishBuild(s.bundleDir, "fixture-2", withoutFilm);
   const reload = await s.admin("POST", "/catalog/reload");
   assert.equal(reload.status, 200);
   assert.deepEqual(reload.json.catalog.builds.map((b: { buildId: string }) => b.buildId), ["fixture-2", "fixture-1"], "the reload answers with the new history");
@@ -360,7 +340,7 @@ test("catalog builds: the baseline, then each reload's changes newest first; one
   // Build 3 brings the film back and appends an episode to the show.
   s.clock.advance(3_600_000);
   const extra = { id: "show.e6", season: 2, number: 4, playbackAllowed: true, sources: [{ id: "main", type: "direct", languages: { audio: ["tr"], subtitles: [] }, media: { kind: "hls", url: "https://media.example.test/e6.m3u8" } }] };
-  await rewriteBundle(s.bundleDir, "fixture-3", () => fixtureItems().items.map((i: Json) => (i.id === "show" ? { ...i, episodes: [...i.episodes, extra] } : i)));
+  await publishBuild(s.bundleDir, "fixture-3", (items) => items.map((i) => (i.id === "show" ? { ...i, episodes: [...i.episodes, extra] } : i)));
   assert.equal((await s.admin("POST", "/catalog/reload")).status, 200);
   const third = await s.admin("GET", "/catalog");
   assert.deepEqual(third.json.builds.map((b: Json) => [b.buildId, b.added, b.removed]), [

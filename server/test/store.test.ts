@@ -84,13 +84,8 @@ test("migration 2: now_playing gains its anchor and seq, companion links exist; 
   s.putCompanionLink({ ...link, sourceId: "t", language: null, offsetMs: 0, rate: 1 });
   s.putCompanionLink({ ...link, offsetMs: 500, updatedAt: 5 });
   assert.deepEqual(s.getCompanionLink("c", "e", "s"), { ...link, offsetMs: 500, updatedAt: 5 });
-  assert.deepEqual(
-    s.listCompanionLinks("c", "e").map((l) => [l.sourceId, l.language, l.offsetMs]),
-    [
-      ["s", "fr", 500],
-      ["t", null, 0],
-    ],
-  );
+  const links = s.listCompanionLinks("c", "e").map((l) => [l.sourceId, l.language, l.offsetMs]);
+  assert.deepEqual(links, [["s", "fr", 500], ["t", null, 0]]);
   assert.deepEqual(s.listCompanionLinks("c", "other"), []);
   s.close();
 });
@@ -146,17 +141,12 @@ test("migration 4: home entries keep the date they were added, cursors carry the
   const backfilled = s.getHomeEntries("d1", "c");
   const at = backfilled[0]!.addedAt!;
   assert.ok(at >= Math.floor(before / 1000) * 1000 && at <= Date.now(), "existing rows are backfilled to the migration time");
-  assert.deepEqual(backfilled, [
-    { itemId: "a", addedAt: at },
-    { itemId: "b", addedAt: at },
-  ]);
+  assert.deepEqual(backfilled, [{ itemId: "a", addedAt: at }, { itemId: "b", addedAt: at }]);
   assert.deepEqual(s.getCursor("d1", "c", "a"), { catalogId: "c", itemId: "a", episodeId: "a.2", updatedAt: 5, wrapped: false });
 
   s.setHome("d1", "c", ["b", "a"], at + 1000);
-  assert.deepEqual(s.getHomeEntries("d1", "c"), [
-    { itemId: "b", addedAt: at },
-    { itemId: "a", addedAt: at },
-  ], "a reorder changes no date");
+  const reordered = [{ itemId: "b", addedAt: at }, { itemId: "a", addedAt: at }];
+  assert.deepEqual(s.getHomeEntries("d1", "c"), reordered, "a reorder changes no date");
   s.setHome("d1", "c", ["b", "x", "a"], at + 2000);
   assert.deepEqual(s.getHomeEntries("d1", "c").map((e) => [e.itemId, e.addedAt]), [["b", at], ["x", at + 2000], ["a", at]]);
   s.setHome("d1", "c", ["x"], at + 3000);
@@ -180,10 +170,7 @@ test("migration 4: home entries keep the date they were added, cursors carry the
 
 test("catalog history rows: episodes seen after a date, removal and return, builds newest first", async () => {
   const s = new Store(path.join(await tempDir(), "izle.db"));
-  s.insertSeen("c", "b1", 0, [
-    { episodeId: "a.1", itemId: "a" },
-    { episodeId: "a.2", itemId: "a" },
-  ]);
+  s.insertSeen("c", "b1", 0, [{ episodeId: "a.1", itemId: "a" }, { episodeId: "a.2", itemId: "a" }]);
   s.insertSeen("c", "b2", 100, [{ episodeId: "a.3", itemId: "a" }]);
   s.insertSeen("other", "o1", 100, [{ episodeId: "a.4", itemId: "a" }]);
   assert.deepEqual(s.episodesSeenAfter("c", "a", 0), ["a.3"], "baseline episodes (0) never count");
@@ -205,19 +192,9 @@ test("catalog history rows: episodes seen after a date, removal and return, buil
     ["a.3", "b", 100, "b2", null],
   ]);
 
-  const build = (buildId: string, loadedAt: number) => ({
-    catalogId: "c",
-    buildId,
-    builtAt: "2026-10-14T00:00:00Z",
-    loadedAt,
-    baseline: false,
-    items: 2,
-    episodes: 3,
-    itemsAdded: 0,
-    itemsRemoved: 0,
-    episodesAdded: 1,
-    episodesRemoved: 0,
-  });
+  const counts = { items: 2, episodes: 3, itemsAdded: 0, itemsRemoved: 0, episodesAdded: 1, episodesRemoved: 0 };
+  const build = (buildId: string, loadedAt: number) =>
+    ({ catalogId: "c", buildId, builtAt: "2026-10-14T00:00:00Z", loadedAt, baseline: false, ...counts });
   const changes = { items: { added: [], removed: [] }, episodes: { added: [], removed: [{ id: "a.9", itemId: "a", itemTitle: null }] } };
   s.recordCatalogBuild({ ...build("b1", 10), baseline: true, episodesAdded: 0 }, { items: { added: [], removed: [] }, episodes: { added: [], removed: [] } });
   s.recordCatalogBuild(build("b2", 20), changes);
