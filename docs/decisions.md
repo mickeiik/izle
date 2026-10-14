@@ -955,7 +955,75 @@ the resolve answer's `expiresAt`, which the TV used to drop). Routine decisions:
 
 ## Design pass: server code structure (2026-10-14)
 
-_(server branch)_
+- **The HTTP layer is `server/src/http/`, registered on one Hono instance in the old order.** `createApp` is a list
+  of register calls: `middleware.ts` (security headers and the access log, the API's cache header and body limit,
+  error answers, the device-token check, and the admin-token check with its sign-in throttle), `static.ts`
+  (`/healthz`, `/`, posters, the admin page under its CSP), then `routes/proxy.ts`, `routes/pairing.ts` (the TV
+  side), `routes/tv.ts`, `routes/events.ts`, `routes/admin-devices.ts` (pairing approval, devices, home list,
+  cursor, progress, now playing), `routes/companion.ts`, the command and problem routes (a second register function
+  in admin-devices.ts, so they still come after the companion routes) and `routes/admin-catalog.ts`. No sub-apps,
+  `app.route()` or `basePath`: access logs name the route template. `http/params.ts` has `parseWait` and
+  `requireDevice`. `Env` is exported, so the running server's `app` is a `Hono<Env>`.
+- **What the routes computed themselves moved out.** `CommandService` (commands.ts) builds a command's payload,
+  stores, publishes and logs it, and replays and acknowledges commands; `DeviceService` (devices.ts) has the admin
+  device views (list, page, home rows, progress, now playing), the settings patch and deletion (store, event streams,
+  the device's and its companion's proxy sessions); `catalog-admin.ts` has the catalog info, the build, search-hit
+  and item views and the reload. `presenters.ts` holds only what both APIs show alike: `iso`, the episode summary,
+  the item card, the item details base and the episode-list base.
+- **Not merged, on purpose:** the three source projections (the TV's item view, the admin item view and the
+  companion candidates show different things), the problem list's episode fields (`episodeTitle`, not `title`), and
+  the history's added-episode entries: they are stored in `catalog_builds.changes_json`, so their shape is persistent.
+- **One notifier** (notifier.ts) does every state-version bump and its SSE event: one device, every device after a
+  reload, and commands. `Store.updateDevice` keeps its atomic bump in SQL and the notifier publishes the version it
+  returns. The SSE ids (`s<version>`, `c<commandId>`) come from `eventId()` in events.ts.
+- **One `reloadCatalog()`** for the admin route and SIGHUP. The SIGHUP handler dropped the reload's promise without a
+  `catch`, so a throw (the store already closed during shutdown) was an unhandled rejection that ended the process.
+  `reloadOnSignal()` now logs `catalog reload failed` with the signal and the error's class name, never its message.
+  Tested in-process against a closed server; the signal itself is exercised by `npm run smoke:server`.
+- **Shared pieces:** the `Services` bag is in context.ts with `AppContext` (re-exported from tv.ts and app.ts);
+  `Waiters<K>` (waiters.ts) serves the now-playing and pairing long-polls; a progress report's cursor rule is the pure
+  `cursorAfterReport()` in playback.ts. EventHub keeps its own map: its subscribers send and close, they are not
+  one-shot waiters.
+- **Lookups name their answer** (lookup.ts: `requireItem`, `requireEpisode`, `requireSource`, `requirePlayable`):
+  every call site passes its status and code. `notFound` and `badRequest` in errors.ts were unused and are gone.
+- **The answers stay as inconsistent as they were:** `not_allowed` is 403 from resolve (the TV's and the
+  companion's) but 400 from the cursor override and the play command; `unknown_episode` is 404 from resolve,
+  progress, diagnostics and the companion routes but 400 from the play command and from the cursor override (an
+  episode outside the item). Aligning them changes the API, so it waits for a version that may.
+- **One delivery plan** (`deliveryPlan()` in resolve.ts) says whether a stream can be served, and whether its media
+  and each subtitle track go direct or through the proxy; resolve and the diagnostics report both use it, and the
+  admin item view's `needsProxy` uses the same `hasHeaders`. `ResolveService.resolve` is `candidatesFor()` then
+  `tryCandidates()`, an upstream stream is built in one place, and playback sessions live in a `PlaybackSessions`
+  registry created before the problem service and the resolver, so the problem service no longer closes over a
+  resolver declared after it.
+- **Types:** string unions for `Command.type` and the SSE command type, `NowPlaying.state` (`starting`, then a
+  report's status), `Problem.kind`, the proxy's problem codes and `StreamSummary.kind`. The command vocabulary moved
+  to commands.ts and the problem report body to problems.ts, so the domain no longer imports the validation layer.
+  The id pattern is `ID_PATTERN` from `@izle/contract` (the JSON-schema `pattern` strings are unchanged: the compiled
+  request schemas compare equal), the language-tag pattern is defined once in config.ts (the config file's tags keep
+  having no `maxLength`), the pair-code pattern once in pairing.ts, and an adapter's inline playlist is checked with
+  hls.ts's `isPlaylistText` (the same test, byte for byte).
+- **Hardening:** the diagnostics probe fetches through `StartOptions.fetch` (default: the global fetch; the proxy gets
+  the same one), the adapter-failure log line names its fields instead of spreading the attempt, and `redactString`
+  and `redactReportText` share one core.
+- **CLI:** one stderr logger and one `out`, one error branch for configuration, resolver and backup errors, and
+  `localServerUrl` (now in config.ts, still exported from shell.ts) also builds the running server's URL. The two
+  versions differed only for an empty listen host, which the config schema refuses.
+- **Contract:** `checkSemantics` became a pure `checkItems()` walk (returning the referenced posters and the
+  adapters used), `checkAdapters()`, `checkPosters()` and `checkAssets()`, with an `issue()` helper. Issues come in
+  the same order; `contract/test` is unchanged.
+- **Store:** the migrations are in `store/migrations.ts` and the row mappers in `store/rows.ts` (with a new
+  `toNowPlaying`); `Store`, `MIGRATIONS`, `SCHEMA_VERSION` and the types are still imported from store.ts.
+- **No behaviour change, checked by a scratch script outside the repository** (never committed). It drives a fixture
+  server and a proxy server (test resolver, local upstream) through every route: pairing, state, items, resolve
+  (direct, proxied, refused, failing), progress, every command type and invalid ones, problems, companion, catalog,
+  builds, items, diagnostics with probes, reloads, SSE with replays, deletion, auth failures and the lockout. It
+  records each status, selected headers, the JSON body and the redacted log lines, with random ids, tokens and
+  timings normalised. Its output on the base commit (a temporary worktree) and after every item was identical, as
+  were the compiled request schemas and the validator's issues and stats on 17 bundles, most of them broken.
+- **Tests:** contract 31 (unchanged), server 137 (was 129): the SIGHUP reload, the probe's fetch, the cursor rule
+  (2), and `deliveryPlan` and `PlaybackSessions` (4, in the new `server/test/resolve.test.ts`).
+- **CHANGELOG:** one Fixed entry, for the SIGHUP crash.
 
 ## Design pass: admin page (2026-10-14)
 
