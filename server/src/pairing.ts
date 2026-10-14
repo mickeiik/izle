@@ -56,7 +56,7 @@ export class PairingService {
     if (!code) throw new HttpError(503, "busy", "no free pairing code");
     const pairToken = newToken();
     const expiresAt = t + PAIR_CODE_TTL_MS;
-    this.store.insertPairCode({ code, pairTokenHash: sha256(pairToken), now: t, expiresAt });
+    this.store.insertPairCode({ code, pairTokenHash: sha256(pairToken), createdAt: t, expiresAt });
     this.log.info("pairing started", { expiresInSec: Math.round(PAIR_CODE_TTL_MS / 1000) });
     return { code, pairToken, expiresAt };
   }
