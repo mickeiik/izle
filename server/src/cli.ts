@@ -5,7 +5,7 @@ import { BundleValidationError, formatIssue, loadBundle } from "@izle/contract";
 import { loadAdminToken } from "./auth.ts";
 import { BackupError, backupDatabase } from "./backup.ts";
 import { reloadOnSignal } from "./catalog-admin.ts";
-import { ConfigError, loadConfig, localServerUrl, SAMPLE_CATALOG_DIR, type ServerConfig } from "./config.ts";
+import { ConfigError, databaseFile, loadConfig, localServerUrl, SAMPLE_CATALOG_DIR, type ServerConfig } from "./config.ts";
 import { createLogger } from "./log.ts";
 import { PAIR_CODE } from "./pairing.ts";
 import { healthcheckAll, loadResolver, ResolverLoadError } from "./resolver.ts";
@@ -39,12 +39,21 @@ const out = (line: string) => void process.stdout.write(`${line}\n`);
 /** For the commands' own log lines (redacted, like the server's), so stdout stays what the command prints. */
 const stderrLog = createLogger({ write: (l) => void process.stderr.write(`${l}\n`) });
 
+/** A problem the command ran into, on stderr; exit status 1. */
+function fail(line: string): number {
+  process.stderr.write(`izle-server: ${line}\n`);
+  return 1;
+}
+
+/** A command line that cannot be run: why, then the usage, on stderr; exit status 2. */
+function usage(message: string): number {
+  process.stderr.write(`${message}\n${USAGE}\n`);
+  return 2;
+}
+
 /** Loads the resolver module like the server does, then runs the healthchecks. Exit status 1 on any problem. */
 async function checkResolver(config: ServerConfig): Promise<number> {
-  if (!config.resolver) {
-    process.stderr.write("izle-server: no resolver module is configured (resolver.module in the config file)\n");
-    return 1;
-  }
+  if (!config.resolver) return fail("no resolver module is configured (resolver.module in the config file)");
   // The module's own log lines (redacted) go to stderr so stdout stays a readable report.
   const resolver = await loadResolver({ module: config.resolver.module, config: config.resolver.config, dataDir: config.dataDir, log: stderrLog });
   out(`resolver module ${resolver.file}`);
@@ -76,15 +85,8 @@ async function checkResolver(config: ServerConfig): Promise<number> {
 
 /** `pair pending` / `pair approve <code> [name…]` against the running server's admin API. Exit status 1 on any problem. */
 async function pair(config: ServerConfig, args: string[], serverUrl: string | undefined): Promise<number> {
-  const fail = (line: string) => {
-    process.stderr.write(`izle-server: ${line}\n`);
-    return 1;
-  };
   const [sub, ...rest] = args;
-  if (sub !== "pending" && sub !== "approve") {
-    process.stderr.write(`pair needs "pending" or "approve <code> [name…]"\n${USAGE}\n`);
-    return 2;
-  }
+  if (sub !== "pending" && sub !== "approve") return usage(`pair needs "pending" or "approve <code> [name…]"`);
   const server = serverUrl ?? localServerUrl(config);
   const { token } = loadAdminToken(config, stderrLog, { create: false });
   try {
@@ -125,7 +127,7 @@ const size = (bytes: number) => (bytes < 1024 ? `${bytes} bytes` : bytes < 1024 
 /** `backup <file>`: a consistent copy of the database, taken while the server keeps running (BackupError → exit 1). */
 function backup(config: ServerConfig, file: string, force: boolean): number {
   const target = path.resolve(invocationDir(), file);
-  const { bytes } = backupDatabase(path.join(config.dataDir, "izle.db"), target, { force });
+  const { bytes } = backupDatabase(databaseFile(config), target, { force });
   const separately = [
     `the admin token (${config.admin.token ? "IZLE_ADMIN_TOKEN" : config.admin.tokenFile})`,
     config.configPath ? `the config file (${config.configPath})` : null,
@@ -133,7 +135,8 @@ function backup(config: ServerConfig, file: string, force: boolean): number {
     config.resolver ? `the resolver module (${config.resolver.module})` : null,
   ].filter((x) => x !== null);
   const list = separately.length > 1 ? `${separately.slice(0, -1).join(", ")} and ${separately.at(-1)}` : separately[0];
-  process.stdout.write(`backup written to ${target} (${size(bytes)})\nnot in the backup: ${list}; back them up separately\n`);
+  out(`backup written to ${target} (${size(bytes)})`);
+  out(`not in the backup: ${list}; back them up separately`);
   return 0;
 }
 
@@ -166,40 +169,29 @@ export async function main(argv: string[]): Promise<number> {
       },
     }));
   } catch (err) {
-    process.stderr.write(`${(err as Error).message}\n${USAGE}\n`);
-    return 2;
+    return usage((err as Error).message);
   }
   const maxPositionals = command === "pair" ? Infinity : command === "backup" ? 1 : 0;
-  if (positionals.length > maxPositionals) {
-    process.stderr.write(`unexpected argument "${positionals[maxPositionals]}"\n${USAGE}\n`);
-    return 2;
-  }
+  if (positionals.length > maxPositionals) return usage(`unexpected argument "${positionals[maxPositionals]}"`);
   for (const [flag, owner] of [["rotate", "admin-token"], ["link", "admin-token"], ["base", "admin-token"], ["server", "pair"], ["force", "backup"]] as const) {
-    if (values[flag] !== undefined && command !== owner) {
-      process.stderr.write(`--${flag} belongs to the ${owner} command\n${USAGE}\n`);
+    if (values[flag] !== undefined && command !== owner) return usage(`--${flag} belongs to the ${owner} command`);
+  }
+  for (const flag of ["base", "server"] as const) {
+    const url = values[flag];
+    if (url !== undefined && !/^https?:\/\/\S+$/.test(url)) {
+      process.stderr.write(`--${flag} must be an http(s) URL\n`);
       return 2;
     }
   }
-  if (values.base !== undefined && !/^https?:\/\/\S+$/.test(values.base)) {
-    process.stderr.write(`--base must be an http(s) URL\n`);
-    return 2;
-  }
-  if (values.server !== undefined && !/^https?:\/\/\S+$/.test(values.server)) {
-    process.stderr.write(`--server must be an http(s) URL\n`);
-    return 2;
-  }
   if (values.help) {
-    process.stdout.write(`${USAGE}\n`);
+    out(USAGE);
     return 0;
   }
   if (values.version) {
-    process.stdout.write(`${VERSION}\n`);
+    out(VERSION);
     return 0;
   }
-  if (command === "backup" && positionals.length === 0) {
-    process.stderr.write(`backup needs the file to write the copy to\n${USAGE}\n`);
-    return 2;
-  }
+  if (command === "backup" && positionals.length === 0) return usage("backup needs the file to write the copy to");
 
   try {
     const config = loadConfig({ path: values.config ?? null, cwd: invocationDir() });
@@ -212,23 +204,20 @@ export async function main(argv: string[]): Promise<number> {
       const { token, source } = loadAdminToken(config, stderrLog, { rotate: values.rotate ?? false });
       if (source === "env" && !values.rotate) process.stderr.write("note: IZLE_ADMIN_TOKEN is set and overrides the token file\n");
       if (!values.link) {
-        process.stdout.write(`${token}\n`);
+        out(token);
         return 0;
       }
       // The link carries the token, like the plain print does; the QR code is the same link for a phone's camera.
       const base = values.base !== undefined ? { url: values.base, source: "--base" } : linkBase(config);
       const link = signInLink(base.url, token);
-      process.stdout.write(`${link}\n\n${qrCode(link)}\n`);
+      out(`${link}\n\n${qrCode(link)}`);
       if (base.source === "interface" || base.source === "loopback") {
         process.stderr.write(`note: the link uses ${base.source === "loopback" ? "the loopback address" : "this host's first address"}; set publicUrl in the config or pass --base <url> for the address your phone reaches\n`);
       }
       return 0;
     }
     if (command === "pair") return await pair(config, positionals, values.server);
-    if (command !== undefined) {
-      process.stderr.write(`unknown command "${command}"\n${USAGE}\n`);
-      return 2;
-    }
+    if (command !== undefined) return usage(`unknown command "${command}"`);
 
     const server = await startServer({ config, log });
     const shutdown = (signal: string) => {
@@ -240,19 +229,12 @@ export async function main(argv: string[]): Promise<number> {
     process.on("SIGHUP", () => void reloadOnSignal(server.ctx, "SIGHUP"));
     return -1; // keep running
   } catch (err) {
-    if (err instanceof ConfigError || err instanceof ResolverLoadError || err instanceof BackupError) {
-      process.stderr.write(`izle-server: ${err.message}\n`);
-      return 1;
-    }
+    if (err instanceof ConfigError || err instanceof ResolverLoadError || err instanceof BackupError) return fail(err.message);
     if (err instanceof BundleValidationError) {
-      process.stderr.write(`izle-server: the catalog bundle is invalid:\n`);
-      for (const i of err.issues.filter((x) => x.severity === "error")) process.stderr.write(`  ✖ ${formatIssue(i)}\n`);
-      return 1;
+      const errors = err.issues.filter((x) => x.severity === "error").map((i) => `\n  ✖ ${formatIssue(i)}`);
+      return fail(`the catalog bundle is invalid:${errors.join("")}`);
     }
-    if ((err as NodeJS.ErrnoException).code === "EADDRINUSE") {
-      process.stderr.write(`izle-server: the port is already in use\n`);
-      return 1;
-    }
+    if ((err as NodeJS.ErrnoException).code === "EADDRINUSE") return fail("the port is already in use");
     throw err;
   }
 }

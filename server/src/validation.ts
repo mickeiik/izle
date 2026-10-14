@@ -2,15 +2,21 @@ import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
 import { ID_PATTERN, simplifySchemaErrors } from "@izle/contract";
 import type { Context } from "hono";
 import { MAX_SEEK_DELTA_MS, MESSAGE_DURATION_SEC, MESSAGE_MAX_CHARS, PLAIN_COMMANDS, type CommandBody } from "./commands.ts";
+import type { CompanionResolveInput, LinkInput } from "./companion.ts";
 import { LANGUAGE_TAG_PATTERN } from "./config.ts";
+import type { DiagnosticsInput } from "./diagnostics.ts";
 import { HttpError } from "./errors.ts";
 import { PAIR_CODE } from "./pairing.ts";
+import { PROGRESS_REPORT_STATUSES } from "./playback.ts";
 import { TV_PROBLEM_KINDS, type ProblemReportBody } from "./problems.ts";
+import type { ResolveInput } from "./resolve.ts";
+import type { ProgressInput } from "./tv.ts";
 
 const ajv = new Ajv2020({ strict: true, allErrors: true });
 
 const ID = { type: "string", pattern: ID_PATTERN.source };
 const LANGUAGE_TAG = { type: "string", pattern: LANGUAGE_TAG_PATTERN, maxLength: 35 };
+const LANGUAGE_TAG_OR_NULL = { anyOf: [LANGUAGE_TAG, { type: "null" }] };
 const NAME = { type: "string", minLength: 1, maxLength: 60, pattern: "\\S" };
 const MS = { type: "integer", minimum: 0, maximum: 1e12 };
 
@@ -37,8 +43,8 @@ export const devicePatchBody = compile<{
   properties: {
     name: NAME,
     uiLanguage: { anyOf: [{ enum: ["tr", "en"] }, { type: "null" }] },
-    preferredAudioLanguage: { anyOf: [LANGUAGE_TAG, { type: "null" }] },
-    subtitlesLanguage: { anyOf: [LANGUAGE_TAG, { type: "null" }] },
+    preferredAudioLanguage: LANGUAGE_TAG_OR_NULL,
+    subtitlesLanguage: LANGUAGE_TAG_OR_NULL,
     autoplayOnStart: { type: "boolean" },
   },
   additionalProperties: false,
@@ -88,29 +94,21 @@ export const commandBody = compile<CommandBody>({
   ],
 });
 
-export const resolveBody = compile<{ episodeId: string; sourceId?: string; exclude?: string[] }>({
+export const resolveBody = compile<ResolveInput>({
   type: "object",
   required: ["episodeId"],
   properties: { episodeId: ID, sourceId: ID, exclude: { type: "array", items: ID, maxItems: 64 } },
   additionalProperties: false,
 });
 
-export const diagnosticsBody = compile<{ episodeId: string; sourceId?: string; preferredAudioLanguage?: string | null; probe?: boolean }>({
+export const diagnosticsBody = compile<DiagnosticsInput>({
   type: "object",
   required: ["episodeId"],
-  properties: { episodeId: ID, sourceId: ID, preferredAudioLanguage: { anyOf: [LANGUAGE_TAG, { type: "null" }] }, probe: { type: "boolean" } },
+  properties: { episodeId: ID, sourceId: ID, preferredAudioLanguage: LANGUAGE_TAG_OR_NULL, probe: { type: "boolean" } },
   additionalProperties: false,
 });
 
-export const progressBody = compile<{
-  sessionId?: string | null;
-  episodeId: string;
-  positionMs: number;
-  durationMs?: number | null;
-  status: "playing" | "paused" | "stopped" | "finished";
-  playing?: boolean;
-  ageMs?: number;
-}>({
+export const progressBody = compile<ProgressInput>({
   type: "object",
   required: ["episodeId", "positionMs", "status"],
   properties: {
@@ -118,7 +116,7 @@ export const progressBody = compile<{
     episodeId: ID,
     positionMs: MS,
     durationMs: { anyOf: [MS, { type: "null" }] },
-    status: { enum: ["playing", "paused", "stopped", "finished"] },
+    status: { enum: PROGRESS_REPORT_STATUSES },
     // Listen along: whether the player was actually advancing, and how old the sample is (queue delays).
     playing: { type: "boolean" },
     ageMs: { type: "integer", minimum: 0, maximum: 60_000 },
@@ -148,17 +146,17 @@ export const problemBody = compile<ProblemReportBody>({
 const OFFSET_MS = { type: "integer", minimum: -21_600_000, maximum: 21_600_000 };
 const RATE = { type: "number", minimum: 0.5, maximum: 2 };
 
-export const companionLinkBody = compile<{ offsetMs: number; rate: number; language?: string | null }>({
+export const companionLinkBody = compile<LinkInput>({
   type: "object",
   required: ["offsetMs", "rate"],
-  properties: { offsetMs: OFFSET_MS, rate: RATE, language: { anyOf: [LANGUAGE_TAG, { type: "null" }] } },
+  properties: { offsetMs: OFFSET_MS, rate: RATE, language: LANGUAGE_TAG_OR_NULL },
   additionalProperties: false,
 });
 
-export const companionResolveBody = compile<{ episodeId: string; sourceId: string; language?: string | null }>({
+export const companionResolveBody = compile<CompanionResolveInput>({
   type: "object",
   required: ["episodeId", "sourceId"],
-  properties: { episodeId: ID, sourceId: ID, language: { anyOf: [LANGUAGE_TAG, { type: "null" }] } },
+  properties: { episodeId: ID, sourceId: ID, language: LANGUAGE_TAG_OR_NULL },
   additionalProperties: false,
 });
 

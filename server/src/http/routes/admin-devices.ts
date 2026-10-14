@@ -89,7 +89,6 @@ export function registerAdminCommands(app: Hono<Env>, ctx: AppContext): void {
   app.delete("/api/v1/admin/devices/:id/problems", (c) => {
     const d = requireDevice(store, c.req.param("id"));
     ctx.problems.clear(d.id);
-    ctx.log.info("problems cleared", { deviceId: d.id });
     return c.body(null, 204);
   });
 }

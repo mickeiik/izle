@@ -42,3 +42,15 @@ test("playback sessions: open, look up, expire after their lifetime", () => {
   clock.advance(1);
   assert.equal(sessions.get(s.id), undefined);
 });
+
+test("playback sessions: a report names only its TV's own session, and the episode it played when it says which", () => {
+  const sessions = new PlaybackSessions(fakeClock().now);
+  const s = sessions.open({ deviceId: "tv", catalogId: "c", itemId: "i", episodeId: "e", sourceId: "s" });
+  assert.equal(sessions.owned(s.id, "tv"), s, "no episode given: any episode");
+  assert.equal(sessions.owned(s.id, "tv", "e"), s);
+  assert.equal(sessions.owned(s.id, "tv", "other"), undefined, "another episode");
+  assert.equal(sessions.owned(s.id, "other-tv"), undefined, "another TV's session");
+  assert.equal(sessions.owned("nope", "tv"), undefined);
+  assert.equal(sessions.owned(null, "tv"), undefined);
+  assert.equal(sessions.owned("", "tv"), undefined);
+});

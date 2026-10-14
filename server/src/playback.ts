@@ -84,7 +84,9 @@ export function cursorAfterFinished(item: CatalogItem, finishedIndex: number): n
 }
 
 /** What a progress report says the player is doing. */
-export type ProgressReportStatus = "playing" | "paused" | "stopped" | "finished";
+export const PROGRESS_REPORT_STATUSES = ["playing", "paused", "stopped", "finished"] as const;
+
+export type ProgressReportStatus = (typeof PROGRESS_REPORT_STATUSES)[number];
 
 /** Where an item's cursor goes after a progress report, and whether the TV must be told. */
 export interface CursorAfterReport {

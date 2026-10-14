@@ -10,7 +10,7 @@ import { redactReportText, type Logger } from "./log.ts";
 import { iso } from "./presenters.ts";
 import type { ProxyProblem, ProxyProblemCode } from "./proxy.ts";
 import { RateLimiter } from "./ratelimit.ts";
-import { isCompanionScope, type PlaybackSession, type Tried } from "./resolve.ts";
+import { isCompanionScope, type PlaybackSessions, type Tried } from "./resolve.ts";
 import type { Device, Problem, ProblemOrigin, Store } from "./store.ts";
 
 /** Problem kinds a TV may report (`proxy` problems are only recorded by the server). */
@@ -60,8 +60,8 @@ export interface ProblemServiceOptions {
   catalog: CatalogService;
   log: Logger;
   now: () => number;
-  /** A playback session by id: a report that names one of its TV's sessions gets the episode and source from it. */
-  session?: (id: string) => PlaybackSession | undefined;
+  /** A report that names one of its TV's playback sessions gets the episode and source from it. */
+  sessions: PlaybackSessions;
 }
 
 const cap = (text: string) => (text.length > MAX_DETAIL ? `${text.slice(0, MAX_DETAIL - 1)}…` : text);
@@ -109,9 +109,8 @@ export class ProblemService {
     const rate = this.reports.hit(device.id);
     if (!rate.ok) throw tooManyRequests("too_many_problems", "too many problem reports from this TV", rate.retryAfterSec);
     const t = this.o.now();
-    const found = body.sessionId ? this.o.session?.(body.sessionId) : undefined;
     // Only the TV's own session, and only for the episode it played.
-    const session = found && found.deviceId === device.id && (body.episodeId === undefined || body.episodeId === found.episodeId) ? found : undefined;
+    const session = this.o.sessions.owned(body.sessionId, device.id, body.episodeId);
     const text = (value: string | undefined) => (value === undefined || value.trim() === "" ? null : redactReportText(value));
     const problem = this.insert(device.id, "tv", {
       at: t - (body.ageMs ?? 0),
@@ -193,6 +192,7 @@ export class ProblemService {
 
   clear(deviceId: string): void {
     this.o.store.clearProblems(deviceId);
+    this.o.log.info("problems cleared", { deviceId });
   }
 
   /** Housekeeping: drops problems older than the retention period. */

@@ -1,5 +1,5 @@
 import { commandEvent, type EventHub } from "./events.ts";
-import type { Command, Store } from "./store.ts";
+import type { Command, Device, Store } from "./store.ts";
 
 /**
  * Tells TVs what changed, on their open event streams: a new state version (the TV re-reads its state) or a
@@ -12,6 +12,11 @@ export class Notifier {
   constructor(store: Store, events: EventHub) {
     this.store = store;
     this.events = events;
+  }
+
+  /** The device's state version as stored now; the one `device` was read with when the device is gone. */
+  version(device: Device): number {
+    return this.store.getDevice(device.id)?.stateVersion ?? device.stateVersion;
   }
 
   /** Bumps the device's state version and tells its streams; returns the new version. */

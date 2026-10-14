@@ -5,7 +5,7 @@
 
 import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
-import { requireEpisode, requireSource } from "./lookup.ts";
+import { requireEpisodeSource } from "./lookup.ts";
 import { iso } from "./presenters.ts";
 import type { CompanionLink, Device } from "./store.ts";
 
@@ -50,8 +50,7 @@ export class CompanionService {
    * the same episode), not to a TV, so they are keyed by catalog, episode and source only.
    */
   putLink(episodeId: string, sourceId: string, input: LinkInput) {
-    const ref = requireEpisode(this.s.catalog, episodeId, 404, "unknown_episode");
-    requireSource(ref.episode, sourceId, 404, "unknown_source");
+    const { ref } = requireEpisodeSource(this.s.catalog, episodeId, sourceId);
     this.s.store.putCompanionLink({
       catalogId: this.s.catalog.catalogId,
       itemId: ref.item.id,
@@ -67,8 +66,7 @@ export class CompanionService {
 
   /** Copies an episode's stored link to every other episode of its item that has a source with the same id. */
   copyToItem(episodeId: string, sourceId: string) {
-    const ref = requireEpisode(this.s.catalog, episodeId, 404, "unknown_episode");
-    requireSource(ref.episode, sourceId, 404, "unknown_source");
+    const { ref } = requireEpisodeSource(this.s.catalog, episodeId, sourceId);
     const from = this.s.store.getCompanionLink(this.s.catalog.catalogId, ref.episode.id, sourceId);
     if (!from) throw new HttpError(404, "no_link", "this episode has no stored link for that source");
     const t = this.s.now();
@@ -123,8 +121,7 @@ export class CompanionService {
    * proxied, without touching the TV's now-playing row or playback session.
    */
   async resolve(device: Device, input: CompanionResolveInput, signal?: AbortSignal) {
-    const ref = requireEpisode(this.s.catalog, input.episodeId, 404, "unknown_episode");
-    requireSource(ref.episode, input.sourceId, 404, "unknown_source");
+    const { ref } = requireEpisodeSource(this.s.catalog, input.episodeId, input.sourceId);
     const r = await this.s.resolver.resolve(
       device.id,
       input.language ?? null,

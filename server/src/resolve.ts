@@ -180,6 +180,15 @@ export class PlaybackSessions {
     return s;
   }
 
+  /**
+   * The session `id` names, if it belongs to the device and, when `episodeId` is given, plays that episode: a
+   * report names only its TV's own sessions.
+   */
+  owned(id: string | null | undefined, deviceId: string, episodeId?: string): PlaybackSession | undefined {
+    const s = id ? this.get(id) : undefined;
+    return s && s.deviceId === deviceId && (episodeId === undefined || s.episodeId === episodeId) ? s : undefined;
+  }
+
   private prune(t: number): void {
     if (this.sessions.size < 1000) return;
     for (const [id, s] of this.sessions) if (t - s.createdAt > PLAYBACK_SESSION_TTL_MS) this.sessions.delete(id);
@@ -231,10 +240,6 @@ export class ResolveService {
       if (at !== undefined && t - at < FAILURE_PENALTY_MS) out.add(s.id);
     }
     return out;
-  }
-
-  session(id: string): PlaybackSession | undefined {
-    return this.o.sessions.get(id);
   }
 
   /** Whether a source can be tried at all (known before resolving it). */

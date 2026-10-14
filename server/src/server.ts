@@ -1,6 +1,5 @@
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { createApp } from "./app.ts";
@@ -8,13 +7,13 @@ import { loadAdminToken } from "./auth.ts";
 import { CatalogService } from "./catalog.ts";
 import { CommandService } from "./commands.ts";
 import { CompanionService } from "./companion.ts";
-import { DEFAULT_RESOLVE_BUDGET_MS, DEFAULT_RESOLVE_DEADLINE_MS, localServerUrl, type ServerConfig } from "./config.ts";
+import { databaseFile, DEFAULT_RESOLVE_BUDGET_MS, DEFAULT_RESOLVE_DEADLINE_MS, localServerUrl, type ServerConfig } from "./config.ts";
 import type { AppContext } from "./context.ts";
 import { DeviceService } from "./devices.ts";
 import { EventHub } from "./events.ts";
 import { CatalogHistory } from "./history.ts";
 import { createLogger, type Logger } from "./log.ts";
-import { PairingService, type PairingOptions } from "./pairing.ts";
+import { PAIR_CODE_PURGE_GRACE_MS, PairingService, type PairingOptions } from "./pairing.ts";
 import { ProblemService } from "./problems.ts";
 import { ProxyService } from "./proxy.ts";
 import { PlaybackSessions, ResolveService } from "./resolve.ts";
@@ -57,7 +56,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     ? await loadResolver({ module: config.resolver.module, config: config.resolver.config, dataDir: config.dataDir, log })
     : null;
   // The store comes first so that the catalog history records the first load too (it is the baseline).
-  const store = new Store(path.join(config.dataDir, "izle.db"));
+  const store = new Store(databaseFile(config));
   const history = new CatalogHistory(store, log);
   const catalog = new CatalogService(config.catalog.dir, log, now, resolverModule ? new Set(resolverModule.adapters.keys()) : null, {
     onLoaded: (next, previous) => void history.record(next, previous),
@@ -71,7 +70,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const events = new EventHub();
   // Resolve opens playback sessions; problem reports name the episode and source of a TV's session.
   const sessions = new PlaybackSessions(now);
-  const problems = new ProblemService({ store, catalog, log, now, session: (id) => sessions.get(id) });
+  const problems = new ProblemService({ store, catalog, log, now, sessions });
   const proxy = new ProxyService({
     log,
     now,
@@ -91,7 +90,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     deadlineMs: config.resolver?.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,
     budgetMs: config.resolver?.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
   });
-  const services = { config, store, catalog, events, notifier: new Notifier(store, events), resolver, problems, log, now };
+  const services = { config, store, catalog, events, notifier: new Notifier(store, events), resolver, sessions, problems, log, now };
   const tv = new TvService(services);
   const ctx: AppContext = {
     ...services,
@@ -126,7 +125,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
   const housekeeping = setInterval(() => {
     const t = now();
-    store.purgePairCodes(t, 60 * 60_000);
+    store.purgePairCodes(t, PAIR_CODE_PURGE_GRACE_MS);
     store.purgeCommands(t - 7 * 24 * 60 * 60_000);
     problems.purge();
   }, 10 * 60_000);

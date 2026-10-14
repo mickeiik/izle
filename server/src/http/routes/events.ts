@@ -8,7 +8,7 @@ import { commandEvent, eventId, type ServerEvent } from "../../events.ts";
 import type { Env } from "../middleware.ts";
 
 export function registerEvents(app: Hono<Env>, ctx: AppContext): void {
-  const { store, events } = ctx;
+  const { events, notifier } = ctx;
 
   app.get("/api/v1/tv/events", (c) => {
     const device = c.get("device");
@@ -20,9 +20,7 @@ export function registerEvents(app: Hono<Env>, ctx: AppContext): void {
       const write = (ev: ServerEvent) => stream.writeSSE(message(ev)).catch(() => stream.abort());
       const unsubscribe = events.subscribe(device.id, { send: (ev) => void write(ev), close: () => stream.abort() });
       try {
-        const current = store.getDevice(device.id);
-        const version = current?.stateVersion ?? device.stateVersion;
-        await stream.writeSSE({ ...message({ type: "state", data: { version } }), retry: 5000 });
+        await stream.writeSSE({ ...message({ type: "state", data: { version: notifier.version(device) } }), retry: 5000 });
         for (const cmd of ctx.commands.replayable(device.id)) await write(commandEvent(cmd));
         ping = setInterval(() => void stream.write(": ping\n\n").catch(() => stream.abort()), ctx.pingMs);
         await closed;

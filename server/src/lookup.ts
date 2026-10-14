@@ -1,6 +1,6 @@
 // Catalog lookups that answer the request with an error when they find nothing. Routes differ in that answer (404 for
 // an id in the path, 400 for one in a request body, 403 or 400 for an episode that may not be played), so every
-// caller names its status and code.
+// caller names its status and code; only the "Listen along" routes' episode-and-source pair has its own function.
 
 import type { CatalogItem, Episode, Source } from "@izle/contract";
 import type { CatalogService, EpisodeRef } from "./catalog.ts";
@@ -27,6 +27,12 @@ export function requireSource(episode: Episode, sourceId: string, status: Lookup
   const source = episode.sources.find((s) => s.id === sourceId);
   if (!source) throw new HttpError(status, code);
   return source;
+}
+
+/** The episode (404 `unknown_episode`) and its source (404 `unknown_source`) that a "Listen along" route names. */
+export function requireEpisodeSource(catalog: CatalogService, episodeId: string, sourceId: string): { ref: EpisodeRef; source: Source } {
+  const ref = requireEpisode(catalog, episodeId, 404, "unknown_episode");
+  return { ref, source: requireSource(ref.episode, sourceId, 404, "unknown_source") };
 }
 
 /** Throws unless the episode has playbackAllowed. */

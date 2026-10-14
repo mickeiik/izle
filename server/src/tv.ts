@@ -202,8 +202,7 @@ export class TvService {
   recordProgress(device: Device, input: ProgressInput): { version: number } {
     const { item, episode, index } = requireEpisode(this.s.catalog, input.episodeId, 404, "unknown_episode");
     const catalogId = this.s.catalog.catalogId;
-    const session = input.sessionId ? this.s.resolver.session(input.sessionId) : undefined;
-    const sourceId = session && session.deviceId === device.id && session.episodeId === episode.id ? session.sourceId : null;
+    const sourceId = this.s.sessions.owned(input.sessionId, device.id, episode.id)?.sourceId ?? null;
     const t = this.s.now();
     const durationMs = input.durationMs ?? null;
     const playing = input.playing ?? input.status === "playing";
@@ -238,7 +237,7 @@ export class TvService {
     });
     this.nowWaiters.wake(device.id);
 
-    return { version: changed ? this.s.notifier.bump(device.id) : (this.s.store.getDevice(device.id)?.stateVersion ?? device.stateVersion) };
+    return { version: changed ? this.s.notifier.bump(device.id) : this.s.notifier.version(device) };
   }
 
   /**

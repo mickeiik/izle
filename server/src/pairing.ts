@@ -9,6 +9,8 @@ import { Waiters } from "./waiters.ts";
 export const PAIR_CODE_TTL_MS = 10 * 60_000;
 export const MAX_OPEN_PAIR_CODES = 5;
 export const MAX_PAIR_WAIT_MS = 25_000;
+/** Expired and delivered pair codes (and the devices never collected) are deleted this long afterwards. */
+export const PAIR_CODE_PURGE_GRACE_MS = 60 * 60_000;
 /** The 6-digit code a TV shows while it waits to be paired. */
 export const PAIR_CODE = /^[0-9]{6}$/;
 
@@ -42,7 +44,7 @@ export class PairingService {
     const rate = this.limiter.hit(clientKey);
     if (!rate.ok) throw tooManyRequests("rate_limited", "too many pairing attempts", rate.retryAfterSec);
     const t = this.now();
-    this.store.purgePairCodes(t, 60 * 60_000);
+    this.store.purgePairCodes(t, PAIR_CODE_PURGE_GRACE_MS);
     if (this.store.listOpenPairCodes(t).length >= MAX_OPEN_PAIR_CODES) {
       throw new HttpError(429, "too_many_pending", "too many pairing codes are waiting for approval");
     }

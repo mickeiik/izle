@@ -134,14 +134,24 @@ export interface LoadConfigOptions {
   cwd?: string;
 }
 
+/** Whether a listen host binds every interface (`0.0.0.0`, `::`, or an empty host, which the config file refuses). */
+export function isWildcardHost(host: string): boolean {
+  return host === "" || host === "0.0.0.0" || host === "::";
+}
+
 /**
  * Where this host's own server answers: the listen address, with a wildcard host turned into loopback. `port`
  * defaults to the configured one; the running server passes the port it bound.
  */
 export function localServerUrl(config: Pick<ServerConfig, "listen">, port = config.listen.port): string {
   const host = config.listen.host;
-  const h = host === "" || host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host.includes(":") ? `[${host}]` : host;
+  const h = isWildcardHost(host) ? "127.0.0.1" : host.includes(":") ? `[${host}]` : host;
   return `http://${h}:${port}`;
+}
+
+/** The server's SQLite database, in the data directory. */
+export function databaseFile(config: Pick<ServerConfig, "dataDir">): string {
+  return path.join(config.dataDir, "izle.db");
 }
 
 export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {

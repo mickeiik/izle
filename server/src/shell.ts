@@ -1,6 +1,6 @@
 import { networkInterfaces } from "node:os";
 import { renderUnicodeCompact } from "uqr";
-import { localServerUrl, type ServerConfig } from "./config.ts";
+import { isWildcardHost, localServerUrl, type ServerConfig } from "./config.ts";
 
 /**
  * Helpers for the owner's shell commands (`izle-server pair …`, `izle-server admin-token --link`): where the running
@@ -23,7 +23,7 @@ const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 export function linkBase(config: ServerConfig, interfaces: () => ReturnType<typeof networkInterfaces> = networkInterfaces): LinkBase {
   if (config.publicUrl) return { url: config.publicUrl, source: "publicUrl" };
   const host = config.listen.host;
-  if (host !== "" && host !== "0.0.0.0" && host !== "::" && !LOOPBACK_HOSTS.has(host)) return { url: localServerUrl(config), source: "listen.host" };
+  if (!isWildcardHost(host) && !LOOPBACK_HOSTS.has(host)) return { url: localServerUrl(config), source: "listen.host" };
   for (const addresses of Object.values(interfaces())) {
     const a = addresses?.find((x) => x.family === "IPv4" && !x.internal);
     if (a) return { url: `http://${a.address}:${config.listen.port}`, source: "interface" };

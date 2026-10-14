@@ -106,6 +106,16 @@ async function probe(stream: UpstreamStream, signal: AbortSignal | undefined, fe
   }
 }
 
+/** What the admin asks to test (`POST /admin/diagnostics/resolve`, validated in validation.ts). */
+export interface DiagnosticsInput {
+  episodeId: string;
+  /** Only this source; every source of the episode otherwise. */
+  sourceId?: string;
+  preferredAudioLanguage?: string | null;
+  /** Whether to probe the upstream of each stream found (default true). */
+  probe?: boolean;
+}
+
 export interface DiagnosticsDeps {
   catalog: CatalogService;
   resolver: ResolveService;
@@ -113,11 +123,7 @@ export interface DiagnosticsDeps {
   fetch: typeof fetch;
 }
 
-export async function diagnoseEpisode(
-  deps: DiagnosticsDeps,
-  input: { episodeId: string; sourceId?: string | undefined; preferredAudioLanguage?: string | null | undefined; probe?: boolean | undefined },
-  signal?: AbortSignal,
-) {
+export async function diagnoseEpisode(deps: DiagnosticsDeps, input: DiagnosticsInput, signal?: AbortSignal) {
   const ref = requireEpisode(deps.catalog, input.episodeId, 404, "unknown_episode");
   // Source ids are unique within an episode (the bundle validator refuses duplicates).
   const sources = input.sourceId === undefined ? ref.episode.sources : [requireSource(ref.episode, input.sourceId, 404, "unknown_source")];

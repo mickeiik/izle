@@ -9,7 +9,7 @@ import type { Notifier } from "./notifier.ts";
 import type { PairingService } from "./pairing.ts";
 import type { ProblemService } from "./problems.ts";
 import type { ProxyService } from "./proxy.ts";
-import type { ResolveService } from "./resolve.ts";
+import type { PlaybackSessions, ResolveService } from "./resolve.ts";
 import type { LoadedResolver } from "./resolver.ts";
 import type { Store } from "./store.ts";
 import type { TvService } from "./tv.ts";
@@ -22,6 +22,8 @@ export interface Services {
   events: EventHub;
   notifier: Notifier;
   resolver: ResolveService;
+  /** The playback sessions resolve opens; progress and problem reports name them. */
+  sessions: PlaybackSessions;
   problems: ProblemService;
   log: Logger;
   now: () => number;
