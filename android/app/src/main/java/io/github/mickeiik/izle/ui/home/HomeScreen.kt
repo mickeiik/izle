@@ -40,6 +40,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -230,6 +231,9 @@ private fun Tile(entry: HomeEntry, posterUrl: String?, modifier: Modifier, onFoc
                         ProgressBar(progress, height = 6.dp)
                     }
                 }
+                if (entry.newEpisodes > 0) {
+                    NewEpisodesChip(entry.newEpisodes, Modifier.align(Alignment.TopEnd).padding(10.dp))
+                }
             }
         }
         Spacer(Modifier.height(14.dp))
@@ -243,17 +247,28 @@ private fun Tile(entry: HomeEntry, posterUrl: String?, modifier: Modifier, onFoc
     }
 }
 
+/** What OK does, at the bottom of the poster. */
 @Composable
 private fun BadgeChip(badge: TileBadge) {
-    val text = tileBadgeText(badge)
     val (background, foreground) = when (badge) {
         TileBadge.New -> IzleColors.New to IzleColors.OnNew
         TileBadge.Continue -> IzleColors.Accent to IzleColors.OnAccent
         TileBadge.WatchAgain -> IzleColors.SurfaceHigh to IzleColors.OnSurface
         is TileBadge.Episode -> if (badge.resume) IzleColors.Accent to IzleColors.OnAccent else IzleColors.SurfaceHigh to IzleColors.OnSurface
     }
+    Chip(tileBadgeText(badge), background, foreground)
+}
+
+/** "2 new episodes", at the top of the poster: it only informs; OK still does what the bottom chip says. */
+@Composable
+private fun NewEpisodesChip(count: Int, modifier: Modifier) {
+    Chip(pluralStringResource(R.plurals.badge_new_episodes, count, count), IzleColors.New, IzleColors.OnNew, modifier)
+}
+
+@Composable
+private fun Chip(text: String, background: Color, foreground: Color, modifier: Modifier = Modifier) {
     Box(
-        Modifier.border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(8.dp))
+        modifier.border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(8.dp))
             .background(background, RoundedCornerShape(8.dp))
             .padding(horizontal = 10.dp, vertical = 2.dp),
     ) {

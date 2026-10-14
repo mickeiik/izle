@@ -37,10 +37,15 @@ data class DeviceInfo(
 @Serializable
 data class CatalogInfo(val id: String, val buildId: String, val name: String)
 
+/**
+ * `newEpisodes`: playable episodes added to the catalog since the viewer last watched this show (0 when none, and
+ * from servers that do not send it). It only labels the tile; what OK plays is [playNext].
+ */
 @Serializable
 data class HomeEntry(
     val item: ItemCard,
     @SerialName("continue") val playNext: ContinueInfo,
+    val newEpisodes: Int = 0,
 )
 
 @Serializable

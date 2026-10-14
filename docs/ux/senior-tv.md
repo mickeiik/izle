@@ -31,6 +31,9 @@ in [`docs/verification/tv-controls/`](../verification/tv-controls/README.md).
 - The focused tile scales to 110 % with a 4 dp white border; the others are dimmed.
 - Under the poster: the title (24 sp bold, up to 2 lines). On the poster: a chip saying what OK will do, and a
   progress bar when it will resume.
+- When episodes were added to a show since the viewer last watched it (or since it was put on Home), a second chip
+  at the poster's top right counts them ("2 new episodes", the server's `newEpisodes`). It only informs: it takes
+  no focus and never changes what OK plays; it goes away once an episode of the show has been played.
 - Top right: a clock (24-hour or 12-hour following the TV's setting, or the TV's own language when that is unset). Bottom: the hint "OK: Play · Back: Home".
 - The tile played last gets the focus back; after a live reorder the focus stays on the same show.
 - No shows: "Nothing here yet" in large type.
@@ -144,6 +147,7 @@ every other key cancel it and do nothing else.
 | Empty home | Nothing here yet | Henüz içerik yok |
 | Chip: new / continue / watch again | New / Continue / Watch again | Yeni / Devam et / Tekrar izle |
 | Chip: episode | Episode 5 · Season 2, Episode 5 · Continue · Episode 5 | Bölüm 5 · Sezon 2, Bölüm 5 · Devam et · Bölüm 5 |
+| Chip: new episodes | 1 new episode · 3 new episodes | 1 yeni bölüm · 3 yeni bölüm |
 | Offline | No connection · Trying again… | Bağlantı yok · Yeniden deneniyor… |
 | Loading | Loading… | Yükleniyor… |
 | Paused | Paused | Duraklatıldı |

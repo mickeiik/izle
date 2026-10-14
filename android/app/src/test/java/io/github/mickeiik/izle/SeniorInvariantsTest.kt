@@ -10,8 +10,10 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isFocusable
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -66,6 +68,10 @@ class SeniorInvariantsTest {
 
     @Volatile
     private var version = 1L
+
+    /** Home entries that are not the default unstarted film ("Show X" playing `x.film`), by show id: the whole object. */
+    @Volatile
+    private var entries = emptyMap<String, String>()
 
     @Before
     fun setUp() {
@@ -141,6 +147,41 @@ class SeniorInvariantsTest {
         assertEquals(listOf("""{"episodeId":"a.film"}"""), resolveRequests())
         // Nothing is playable on this server: the player shows its own error screen.
         waitUntil("the player's error screen") { exists(string(R.string.cannot_play)) }
+    }
+
+    @Test
+    fun aNewEpisodeChipNeverChangesWhatOkPlays() {
+        // B is a series that gained two episodes since it was last watched; OK on it plays its cursor, b.e7. A's entry
+        // carries no count (an older server), C's says 0.
+        entries = mapOf(
+            "b" to """{"item":{"id":"b","kind":"series","title":"Show B"},"newEpisodes":2,""" +
+                """"continue":{"episodeId":"b.e7","season":1,"number":7,"index":6,"count":8,"status":"new"}}""",
+            "c" to """{"item":{"id":"c","kind":"movie","title":"Show C"},"newEpisodes":0,"continue":{"episodeId":"c.film","status":"new"}}""",
+        )
+        onTv { tv ->
+            awaitTiles("Show A", "Show B", "Show C")
+            val chip = quantity(R.plurals.badge_new_episodes, 2)
+            compose.onNode(hasClickAction() and hasText(chip)).assertIsDisplayed().assert(hasText("Show B"))
+            // Added to B's tile next to the chip saying what OK does, which is unchanged; no chip where the count is 0.
+            assertEquals(setOf("Show B", string(R.string.episode_number, 7), chip), tileTexts("Show B"))
+            assertEquals(setOf("Show A", string(R.string.badge_new)), tileTexts("Show A"))
+            assertEquals(setOf("Show C", string(R.string.badge_new)), tileTexts("Show C"))
+
+            // It never takes the focus: the only focusable element holding it is B's tile, and the remote moves from
+            // tile to tile as before.
+            compose.onAllNodes(isFocusable() and hasAnyDescendant(hasText(chip)), useUnmergedTree = true).assertCountEquals(1)
+            tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
+            assertFocusedTile("Show B")
+            tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
+            assertFocusedTile("Show C")
+            tv.press(KeyEvent.KEYCODE_DPAD_LEFT)
+            assertFocusedTile("Show B")
+
+            tv.press(KeyEvent.KEYCODE_DPAD_CENTER)
+            assertEquals(Screen.Player, tv.vm.screen.value)
+            waitUntil("the resolve request") { resolveRequests().isNotEmpty() }
+            assertEquals(listOf("""{"episodeId":"b.e7"}"""), resolveRequests())
+        }
     }
 
     @Test
@@ -241,6 +282,10 @@ class SeniorInvariantsTest {
             .sortedWith(compareBy<SemanticsNode>({ it.boundsInRoot.top }, { it.boundsInRoot.left }))
             .mapNotNull { node -> node.texts().firstOrNull { it.startsWith("Show ") } }
 
+    /** Every text on the tile of this show (its chips included). */
+    private fun tileTexts(title: String): Set<String> =
+        compose.onNode(hasClickAction() and hasText(title)).fetchSemanticsNode().texts().toSet()
+
     private fun assertFocusedTile(title: String) {
         compose.onNode(isFocused() and hasClickAction()).assert(hasText(title))
     }
@@ -284,12 +329,17 @@ class SeniorInvariantsTest {
         MockResponse.Builder().code(code).addHeader("Content-Type", "application/json").body(body).build()
 
     private fun stateJson(): String {
-        val entries = home.joinToString(",") { id ->
-            """{"item":{"id":"$id","kind":"movie","title":"Show ${id.uppercase()}"},"continue":{"episodeId":"$id.film","status":"new"}}"""
+        val list = home.joinToString(",") { id ->
+            entries[id] ?: """{"item":{"id":"$id","kind":"movie","title":"Show ${id.uppercase()}"},"continue":{"episodeId":"$id.film","status":"new"}}"""
         }
         return """{"version":$version,"device":{"id":"tv-1","name":"Living room","uiLanguage":"en"},""" +
-            """"catalog":{"id":"sample","buildId":"b1","name":"Sample"},"home":[$entries]}"""
+            """"catalog":{"id":"sample","buildId":"b1","name":"Sample"},"home":[$list]}"""
     }
 
     private fun string(id: Int): String = ApplicationProvider.getApplicationContext<Context>().getString(id)
+
+    private fun string(id: Int, vararg args: Any): String = ApplicationProvider.getApplicationContext<Context>().getString(id, *args)
+
+    private fun quantity(id: Int, count: Int): String =
+        ApplicationProvider.getApplicationContext<Context>().resources.getQuantityString(id, count, count)
 }

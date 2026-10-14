@@ -31,6 +31,10 @@
     <string name="badge_continue_episode">Devam et · %1$s</string>
     <string name="episode_number">Bölüm %1$d</string>
     <string name="episode_season_number">Sezon %1$d, Bölüm %2$d</string>
+    <plurals name="badge_new_episodes">
+        <item quantity="one">%1$d yeni bölüm</item>
+        <item quantity="other">%1$d yeni bölüm</item>
+    </plurals>
 
     <!-- Player -->
     <string name="paused">Duraklatıldı</string>

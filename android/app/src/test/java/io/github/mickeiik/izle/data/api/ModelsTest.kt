@@ -62,6 +62,15 @@ class ModelsTest {
         assertEquals("caminandes.s01e02", entry.playNext.episodeId)
         assertEquals(1, entry.playNext.index)
         assertEquals("new", entry.playNext.status)
+        assertEquals("a server without new-episode counts means none", 0, entry.newEpisodes)
+
+        fun withCount(value: String) =
+            ApiJson.decodeFromString(TvState.serializer(), STATE.replace("\"continue\": {", "\"newEpisodes\": $value, \"continue\": {")).home.single()
+        val counted = withCount("3")
+        assertEquals(3, counted.newEpisodes)
+        assertEquals("caminandes.s01e02", counted.playNext.episodeId)
+        assertEquals(0, withCount("0").newEpisodes)
+        assertEquals(0, withCount("null").newEpisodes)
     }
 
     @Test
