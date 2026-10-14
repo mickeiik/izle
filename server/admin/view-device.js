@@ -353,36 +353,23 @@ function historyCard(ctx) {
   const list = rebuiltOnChange();
   const refresh = async () => {
     const rows = (await ctx.scope.read(`${ctx.path}/progress`)).progress.slice(0, 30);
-    shown.show(
-      list.content(rows, (time) =>
-        rows.length === 0
-          ? h("p", { class: "muted" }, "Nothing watched yet.")
-          : h(
-              "div",
-              { class: "table-wrap", tabindex: "0", role: "region", "aria-label": "History" },
-              h(
-                "table",
-                null,
-                h("caption", null, "The last 30 episodes this TV played, the latest first."),
-                h("thead", null, h("tr", null, ["Show", "Episode", "Where", "When"].map(th))),
-                h(
-                  "tbody",
-                  null,
-                  rows.map((/** @type {any} */ r) =>
-                    h(
-                      "tr",
-                      null,
-                      h("td", null, r.itemTitle ?? r.itemId),
-                      h("td", null, r.missing ? "(no longer in the catalog)" : episodeName({ season: r.season, number: r.number, title: r.episodeTitle }, r.kind)),
-                      h("td", null, r.status === "finished" ? "watched" : `${formatClock(r.positionMs)} / ${formatClock(r.durationMs)}`),
-                      time(h("td", { class: "muted" }), () => formatRelative(r.updatedAt)),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-      ),
-    );
+    const content = list.content(rows, (time) => {
+      if (rows.length === 0) return h("p", { class: "muted" }, "Nothing watched yet.");
+      const tr = (/** @type {any} */ r) =>
+        h(
+          "tr",
+          null,
+          h("td", null, r.itemTitle ?? r.itemId),
+          h("td", null, r.missing ? "(no longer in the catalog)" : episodeName({ season: r.season, number: r.number, title: r.episodeTitle }, r.kind)),
+          h("td", null, r.status === "finished" ? "watched" : `${formatClock(r.positionMs)} / ${formatClock(r.durationMs)}`),
+          time(h("td", { class: "muted" }), () => formatRelative(r.updatedAt)),
+        );
+      const caption = h("caption", null, "The last 30 episodes this TV played, the latest first.");
+      const head = h("thead", null, h("tr", null, ["Show", "Episode", "Where", "When"].map(th)));
+      const table = h("table", null, caption, head, h("tbody", null, rows.map(tr)));
+      return h("div", { class: "table-wrap", tabindex: "0", role: "region", "aria-label": "History" }, table);
+    });
+    shown.show(content);
   };
   const element = card("History", shown.element);
   return { element, refresh, fail: (err, retry) => shown.fail(err, retry, "Could not load the history.") };
@@ -400,33 +387,24 @@ function problemsCard(ctx) {
   const refresh = async () => {
     const { problems } = await ctx.scope.read(`${ctx.path}/problems?limit=50`);
     clear.hidden = problems.length === 0;
-    shown.show(
-      list.content(problems, (time) =>
-        problems.length === 0
-          ? h("p", { class: "muted" }, "No problems recorded.")
-          : h(
-              "ul",
-              { class: "list problems" },
-              problems.map((/** @type {any} */ p) => {
-                const context = problemContext(p);
-                const at = new Date(p.at).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
-                return h(
-                  "li",
-                  null,
-                  h(
-                    "div",
-                    { class: "row" },
-                    chip(originLabel(p.origin), p.origin === "server" ? "server" : ""),
-                    h("strong", { class: "grow" }, `${p.kind} · ${p.code}`),
-                    time(h("time", { class: "muted", datetime: p.at }), () => `${formatRelative(p.at)} · ${at}`),
-                  ),
-                  context ? h("div", null, context) : null,
-                  p.detail ? h("div", { class: "muted detail" }, p.detail) : null,
-                );
-              }),
-            ),
-      ),
-    );
+    const content = list.content(problems, (time) => {
+      if (problems.length === 0) return h("p", { class: "muted" }, "No problems recorded.");
+      const li = (/** @type {any} */ p) => {
+        const context = problemContext(p);
+        const at = new Date(p.at).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
+        const when = time(h("time", { class: "muted", datetime: p.at }), () => `${formatRelative(p.at)} · ${at}`);
+        const origin = chip(originLabel(p.origin), p.origin === "server" ? "server" : "");
+        return h(
+          "li",
+          null,
+          h("div", { class: "row" }, origin, h("strong", { class: "grow" }, `${p.kind} · ${p.code}`), when),
+          context ? h("div", null, context) : null,
+          p.detail ? h("div", { class: "muted detail" }, p.detail) : null,
+        );
+      };
+      return h("ul", { class: "list problems" }, problems.map(li));
+    });
+    shown.show(content);
   };
   const element = card(
     { title: "Problems", aside: clear, intro: "What went wrong on this TV: its own reports, and what the server ran into while finding or relaying its streams." },
