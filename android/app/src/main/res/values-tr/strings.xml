@@ -37,6 +37,7 @@
     <string name="up_next">Sıradaki</string>
     <string name="up_next_countdown">%1$d sn içinde başlıyor</string>
     <string name="play_now">Şimdi oynat</string>
+    <string name="not_now">Şimdi değil</string>
     <string name="finished">Bitti</string>
     <string name="cannot_play">Şu anda oynatılamıyor</string>
     <string name="try_again">Tekrar dene</string>

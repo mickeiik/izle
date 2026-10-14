@@ -49,6 +49,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import io.github.mickeiik.izle.R
 import io.github.mickeiik.izle.domain.EpisodeName
+import io.github.mickeiik.izle.domain.TileBadge
 import io.github.mickeiik.izle.ui.theme.IzleColors
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
@@ -86,6 +87,18 @@ fun episodeNameText(name: EpisodeName): String? = when (name) {
     is EpisodeName.Numbered ->
         if (name.season != null) stringResource(R.string.episode_season_number, name.season, name.number)
         else stringResource(R.string.episode_number, name.number)
+}
+
+/** What a home tile's chip says: New / Continue / Watch again, or the episode OK plays ("Continue · Episode 2"). */
+@Composable
+fun tileBadgeText(badge: TileBadge): String = when (badge) {
+    TileBadge.New -> stringResource(R.string.badge_new)
+    TileBadge.Continue -> stringResource(R.string.badge_continue)
+    TileBadge.WatchAgain -> stringResource(R.string.badge_watch_again)
+    is TileBadge.Episode -> {
+        val name = episodeNameText(badge.name).orEmpty()
+        if (badge.resume) stringResource(R.string.badge_continue_episode, name) else name
+    }
 }
 
 /** 1:05:09 or 5:09. */

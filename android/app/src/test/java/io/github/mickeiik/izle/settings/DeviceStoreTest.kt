@@ -61,6 +61,25 @@ class DeviceStoreTest {
     }
 
     @Test
+    fun theShowPlayedLastBelongsToThisPairing() = runBlocking {
+        store.setServer("http://10.0.2.2:8787/")
+        store.savePairing("abcdefabcdef", "token")
+        assertNull(store.current().lastPlayedItemId)
+        store.setLastPlayedItem("caminandes")
+        store.setLastPlayedItem("sintel")
+        assertEquals("sintel", store.current().lastPlayedItemId)
+
+        store.setServer("http://10.0.2.2:8787/")
+        assertEquals("the same server keeps it", "sintel", store.current().lastPlayedItemId)
+        store.forgetPairing()
+        assertNull(store.current().lastPlayedItemId)
+
+        store.setLastPlayedItem("tears")
+        store.setServer("http://192.168.1.10:8787/")
+        assertNull("another server's catalog", store.current().lastPlayedItemId)
+    }
+
+    @Test
     fun languageOverride() = runBlocking {
         assertNull(store.current().uiLanguageOverride)
         store.setUiLanguageOverride("tr")

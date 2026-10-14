@@ -40,6 +40,10 @@ class ServerRepository(
         val offlinePollMs: Long = 10_000,
         val minBackoffMs: Long = 1_000,
         val maxBackoffMs: Long = 30_000,
+        /** An outage at least this long is announced on [outages] once the server answers again. */
+        val outageReportMs: Long = 5 * 60_000,
+        /** A monotonic clock in milliseconds (outage lengths). */
+        val clock: () -> Long = { System.nanoTime() / 1_000_000 },
     )
 
     private val _state = MutableStateFlow<TvState?>(null)
@@ -50,6 +54,21 @@ class ServerRepository(
 
     private val _commands = MutableSharedFlow<ServerEvent.Command>(extraBufferCapacity = 16)
     val commands: SharedFlow<ServerEvent.Command> = _commands.asSharedFlow()
+
+    /** Every state actually fetched from the server (never the offline cache). */
+    private val _fetched = MutableSharedFlow<TvState>(extraBufferCapacity = 4)
+    val fetched: SharedFlow<TvState> = _fetched.asSharedFlow()
+
+    /**
+     * The length of an outage of at least [Timing.outageReportMs] while started, announced once the server answers
+     * again. Time in the background does not count: the TV was not trying then.
+     */
+    private val _outages = MutableSharedFlow<Long>(extraBufferCapacity = 4)
+    val outages: SharedFlow<Long> = _outages.asSharedFlow()
+
+    /** Since when the server has been unreachable while started (monotonic clock), or null. */
+    @Volatile
+    private var offlineSince: Long? = null
 
     /** The server no longer knows this device (deleted by the owner): it has to pair again. */
     private val _unauthorized = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
@@ -75,6 +94,8 @@ class ServerRepository(
     fun start() {
         val api = api ?: return
         if (connection?.isActive == true) return
+        // Already known to be unreachable: the outage (as far as this TV can tell) starts now.
+        if (!_online.value) offlineSince = timing.clock()
         connection = scope.launch {
             launch { pollLoop(api) }
             launch { eventsLoop(api) }
@@ -84,6 +105,7 @@ class ServerRepository(
     fun stop() {
         connection?.cancel()
         connection = null
+        offlineSince = null
     }
 
     /** Re-reads the state now, e.g. when the TV returns to Home after playback. */
@@ -97,19 +119,33 @@ class ServerRepository(
             val state = api.state()
             if (this.api !== api) return false
             _state.value = state
-            _online.value = true
+            setOnline(true)
+            _fetched.tryEmit(state)
             store.saveCachedState(json.encodeToString(TvState.serializer(), state))
             true
         } catch (e: ApiException) {
             if (this.api === api) {
                 if (e.status == 401) _unauthorized.tryEmit(Unit)
-                if (isUnreachable(e)) _online.value = false
+                if (isUnreachable(e)) setOnline(false)
             }
             false
         } catch (e: IOException) {
-            if (this.api === api) _online.value = false
+            if (this.api === api) setOnline(false)
             false
         }
+    }
+
+    /** Updates [online] and measures outages; only time while started counts (see [outages]). */
+    private fun setOnline(online: Boolean) {
+        _online.value = online
+        val now = timing.clock()
+        if (!online) {
+            if (offlineSince == null && connection?.isActive == true) offlineSince = now
+            return
+        }
+        val since = offlineSince ?: return
+        offlineSince = null
+        if (now - since >= timing.outageReportMs) _outages.tryEmit(now - since)
     }
 
     private suspend fun loadCached() {

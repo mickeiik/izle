@@ -2,6 +2,7 @@ package io.github.mickeiik.izle.data.api
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.json.Json
 
 // DTOs mirroring docs/spec/server-api-v1.md. The server may add response fields within v1, so decoding ignores
@@ -22,6 +23,7 @@ data class TvState(
     val home: List<HomeEntry> = emptyList(),
 )
 
+/** `autoplayOnStart`: when the TV comes on and shows Home, start the last show after a countdown (owner setting). */
 @Serializable
 data class DeviceInfo(
     val id: String,
@@ -29,6 +31,7 @@ data class DeviceInfo(
     val uiLanguage: String = "en",
     val preferredAudioLanguage: String? = null,
     val subtitlesLanguage: String? = null,
+    val autoplayOnStart: Boolean = false,
 )
 
 @Serializable
@@ -119,6 +122,11 @@ data class ResolveRequest(
     val exclude: List<String>? = null,
 )
 
+/**
+ * What to play. `expiresAt` (ISO 8601) is the stream's validity hint, or null; the TV resolves the same source again
+ * shortly before it. [serverDateMs] is not part of the body: it is the answer's `Date` header (the server's clock),
+ * filled in by [ApiClient.resolve] so the expiry can be scheduled without trusting the TV's clock.
+ */
 @Serializable
 data class ResolveResponse(
     val sessionId: String,
@@ -131,6 +139,8 @@ data class ResolveResponse(
     val item: ItemCard,
     val episode: EpisodeRef,
     val resume: Resume? = null,
+    val expiresAt: String? = null,
+    @Transient val serverDateMs: Long? = null,
 )
 
 /** `kind` is `hls`, `dash` or `mp4`; `url` may be relative to the server (proxied media). */
@@ -182,6 +192,25 @@ data class ProgressReport(
 
 @Serializable
 data class ProgressAck(val ok: Boolean = true, val version: Long = 0)
+
+/**
+ * `POST /tv/problems`: something went wrong on this TV, for the owner's admin page. `kind`: `playback`, `resolve`,
+ * `network` or `other`; `code` matches `[A-Za-z0-9_.:-]{1,64}`; `ageMs` is how long ago it happened. Never carries
+ * URLs, headers, tokens or exception messages (see [io.github.mickeiik.izle.domain.Problems]).
+ */
+@Serializable
+data class ProblemReport(
+    val kind: String,
+    val code: String,
+    val ageMs: Long? = null,
+    val episodeId: String? = null,
+    val sourceId: String? = null,
+    val sessionId: String? = null,
+    val positionMs: Long? = null,
+    val httpStatus: Int? = null,
+    val detail: String? = null,
+    val appVersion: String? = null,
+)
 
 @Serializable
 data class PairStart(val code: String, val pairToken: String, val expiresAt: String? = null)

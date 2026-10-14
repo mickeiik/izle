@@ -39,6 +39,7 @@
     <string name="up_next">Up next</string>
     <string name="up_next_countdown">Starts in %1$d s</string>
     <string name="play_now">Play now</string>
+    <string name="not_now">Not now</string>
     <string name="finished">The end</string>
     <string name="cannot_play">Can\'t play right now</string>
     <string name="try_again">Try again</string>

@@ -13,6 +13,9 @@ import io.github.mickeiik.izle.data.api.ItemDetailsResponse
 import io.github.mickeiik.izle.data.api.ServerEvent
 import io.github.mickeiik.izle.data.api.ServerUrls
 import io.github.mickeiik.izle.data.api.TvState
+import io.github.mickeiik.izle.domain.AutoplayPlan
+import io.github.mickeiik.izle.domain.Problems
+import io.github.mickeiik.izle.domain.RemoteCommand
 import io.github.mickeiik.izle.player.PlaybackController
 import io.github.mickeiik.izle.player.PlayerPhase
 import io.github.mickeiik.izle.player.TrackOption
@@ -78,6 +81,9 @@ data class MenuUi(val pages: List<MenuPage>, val item: ItemCard?, val fromPlayer
 
 data class AboutInfo(val appVersion: String, val server: String?, val deviceName: String?, val catalogName: String?, val catalogBuild: String?)
 
+/** "Autoplay on start": the show about to start over Home, and the seconds left before it does. */
+data class AutoplayUi(val entry: HomeEntry, val secondsLeft: Int)
+
 class AppViewModel(private val graph: AppGraph) : ViewModel() {
     private val store = graph.deviceStore
     private val repository = graph.repository
@@ -96,6 +102,14 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     private val _homeMessage = MutableStateFlow<HomeMessage?>(null)
     val homeMessage: StateFlow<HomeMessage?> = _homeMessage.asStateFlow()
+
+    /** The autoplay-on-start countdown over Home, or null. */
+    private val _autoplay = MutableStateFlow<AutoplayUi?>(null)
+    val autoplay: StateFlow<AutoplayUi?> = _autoplay.asStateFlow()
+
+    /** The owner's message banner (Home and player), or null. */
+    private val _banner = MutableStateFlow<String?>(null)
+    val banner: StateFlow<String?> = _banner.asStateFlow()
 
     val state: StateFlow<TvState?> = repository.state
     val online: StateFlow<Boolean> = repository.online
@@ -116,10 +130,13 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         reportScope = graph.appScope,
         mediaHttp = graph.http,
         repository = repository,
+        problems = graph.problems,
         userAgent = graph.userAgent,
+        appVersion = BuildConfig.VERSION_NAME,
         // The emulator decodes H.264 in software; real TVs, debug build or not, get full resolution.
         capVideoTo720p = BuildConfig.DEBUG && isEmulator(),
         onExit = ::onPlayerExit,
+        onPlaybackStarted = ::onPlaybackStarted,
     )
 
     /** The tile that should take focus when Home appears (the last one played, else the last focused). */
@@ -132,7 +149,18 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     private var pendingLaunchServer: String? = null
     private var pairingJob: Job? = null
     private var messageJob: Job? = null
+    private var bannerJob: Job? = null
+    private var autoplayJob: Job? = null
     private var resumeAfterMenu = false
+
+    /**
+     * Autoplay on start is armed when the app comes to the foreground on Home (or starts): the first state fetched
+     * from the server afterwards decides. Anything the viewer does first — a key, the menu, playing — disarms it.
+     */
+    private var autoplayArmed = false
+
+    /** Key presses so far, to notice one that happens while autoplay reads the last played show. */
+    private var keyPresses = 0L
 
     init {
         viewModelScope.launch {
@@ -142,7 +170,10 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             val token = settings.deviceToken
             val url = serverUrl
             when {
-                url == null -> _screen.value = Screen.Setup(canGoBack = false)
+                url == null -> {
+                    clearAutoplay()
+                    _screen.value = Screen.Setup(canGoBack = false)
+                }
                 token == null -> showPairing()
                 else -> {
                     repository.use(graph.apiClient(url, token))
@@ -154,12 +185,21 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         }
         viewModelScope.launch { repository.commands.collect(::onCommand) }
         viewModelScope.launch { repository.unauthorized.collect { onUnauthorized() } }
+        viewModelScope.launch { repository.fetched.collect(::onFreshState) }
+        viewModelScope.launch {
+            repository.outages.collect { lengthMs ->
+                // Sent now that the server answers again; it happened when the outage began.
+                graph.problems.send(Problems.serverUnreachable(lengthMs, BuildConfig.VERSION_NAME), happenedAt = graph.problems.now() - lengthMs)
+            }
+        }
     }
 
     // --- lifecycle -----------------------------------------------------------------------------------------------
 
     fun onForeground() {
         foreground = true
+        // Autoplay on start: the app starts, or comes back from the launcher / standby, on Home.
+        autoplayArmed = _screen.value == Screen.Home || _screen.value == Screen.Starting
         when (_screen.value) {
             // On the server address screen too: Back from there returns to a live Home.
             Screen.Home, Screen.Player, is Screen.Setup -> repository.start()
@@ -171,6 +211,8 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     /** HOME was pressed or the TV went to standby: save progress, release the player; we come back on Home. */
     fun onBackground() {
         foreground = false
+        clearAutoplay()
+        clearBanner()
         if (_screen.value == Screen.Player || player.isActive) {
             player.stop()
             _screen.value = Screen.Home
@@ -193,8 +235,24 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     // --- keys ----------------------------------------------------------------------------------------------------
 
+    /** Every key press (DOWN) reaching the app: the viewer is doing something, so autoplay on start stands down. */
+    fun onKeyDown() {
+        keyPresses++
+        autoplayArmed = false
+    }
+
+    /** CH+/CH− and |◀◀ ▶▶|: switch episodes while video is showing; everywhere else they do nothing (but are consumed). */
+    fun onEpisodeKey(direction: Int) {
+        if (_screen.value == Screen.Player && _menu.value == null) player.stepEpisode(direction)
+    }
+
     /** Back: closes the menu, leaves the player, steps back from pairing. Never leaves the app from Home. */
     fun onBack() {
+        autoplayArmed = false
+        if (_autoplay.value != null) {
+            cancelAutoplay()
+            return
+        }
         val menu = _menu.value
         if (menu != null) {
             if (menu.pages.size > 1) _menu.value = menu.copy(pages = menu.pages.dropLast(1)) else closeMenu(resume = true)
@@ -217,10 +275,13 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         get() = _screen.value == Screen.Player && _menu.value == null &&
             player.ui.value.phase.let { it == PlayerPhase.Playing || it == PlayerPhase.Loading }
 
-    /** Whether a long press / Menu key may open the hidden menu here. */
+    /** Whether a long press / Menu key may open the hidden menu here (not during the autoplay countdown). */
     val menuAvailable: Boolean
-        get() = _menu.value == null && (_screen.value == Screen.Home ||
+        get() = _menu.value == null && _autoplay.value == null && (_screen.value == Screen.Home ||
             (_screen.value == Screen.Player && player.ui.value.phase == PlayerPhase.Playing))
+
+    /** The autoplay countdown is showing: OK presses its button, Back and any other key cancel it. */
+    val autoplayShowing: Boolean get() = _autoplay.value != null
 
     // --- setup and pairing ---------------------------------------------------------------------------------------
 
@@ -261,6 +322,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     private suspend fun useServer(url: HttpUrl) {
         player.stop()
+        clearAutoplay()
         _menu.value = null
         store.setServer(url.toString())
         serverUrl = url
@@ -283,6 +345,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     private fun showPairing() {
+        clearAutoplay()
         _screen.value = Screen.Pairing
         _pairing.value = PairingUi(adminUrl = serverUrl?.let(ServerUrls::adminPage).orEmpty())
         startPairing()
@@ -373,12 +436,97 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         return home.firstOrNull { it.item.id == homeFocusItemId } ?: home.firstOrNull()
     }
 
+    // --- autoplay on start ---------------------------------------------------------------------------------------
+
+    /** A state fetched from the server (never the offline cache): the first one after coming to the front decides. */
+    private fun onFreshState(state: TvState) {
+        if (!autoplayArmed) return
+        autoplayArmed = false
+        if (!canOfferAutoplay()) return
+        val pressesBefore = keyPresses
+        viewModelScope.launch {
+            val entry = AutoplayPlan.offer(state, store.current().lastPlayedItemId) ?: return@launch
+            // The viewer may have pressed something while the last played show was read.
+            if (keyPresses != pressesBefore || !canOfferAutoplay()) return@launch
+            startAutoplay(entry)
+        }
+    }
+
+    /** Home is showing with nothing on top and nothing playing. */
+    private fun canOfferAutoplay(): Boolean =
+        foreground && _screen.value == Screen.Home && _menu.value == null && !player.isActive && _autoplay.value == null
+
+    private fun startAutoplay(offered: HomeEntry) {
+        val itemId = offered.item.id
+        homeFocusItemId = itemId
+        autoplayJob?.cancel()
+        autoplayJob = viewModelScope.launch {
+            for (left in AutoplayPlan.COUNTDOWN_SEC downTo 1) {
+                // The latest state's entry: a live update may have moved its `continue` or removed the show.
+                val entry = state.value?.home?.firstOrNull { it.item.id == itemId }
+                if (entry == null) {
+                    _autoplay.value = null
+                    return@launch
+                }
+                _autoplay.value = AutoplayUi(entry, left)
+                delay(1_000)
+            }
+            onAutoplayPlayNow()
+        }
+    }
+
+    /** "Play now", or the end of the countdown: the show's `continue` episode under the normal resume rules. */
+    fun onAutoplayPlayNow() {
+        val shown = _autoplay.value ?: return
+        autoplayJob?.cancel()
+        _autoplay.value = null
+        val entry = state.value?.home?.firstOrNull { it.item.id == shown.entry.item.id } ?: return
+        onTileClicked(entry)
+    }
+
+    /** Back, "Not now" or any other key: the viewer stays on Home, with the focus on the offered show. */
+    fun cancelAutoplay() {
+        val shown = _autoplay.value ?: return
+        autoplayJob?.cancel()
+        _autoplay.value = null
+        homeFocusItemId = shown.entry.item.id
+    }
+
+    /** Leaving Home some other way (playing, pairing, server address, the background): no autoplay this time. */
+    private fun clearAutoplay() {
+        autoplayArmed = false
+        autoplayJob?.cancel()
+        _autoplay.value = null
+    }
+
+    // --- the owner's message banner ------------------------------------------------------------------------------
+
+    private fun showBanner(message: RemoteCommand.Message) {
+        bannerJob?.cancel()
+        _banner.value = message.text
+        bannerJob = viewModelScope.launch {
+            delay(message.durationSec * 1_000L)
+            _banner.value = null
+        }
+    }
+
+    private fun clearBanner() {
+        bannerJob?.cancel()
+        _banner.value = null
+    }
+
     // --- player --------------------------------------------------------------------------------------------------
 
     private fun startPlayback(episodeId: String, startAtMs: Long?, hint: ItemCard?) {
+        clearAutoplay()
         _menu.value = null
         _screen.value = Screen.Player
         player.play(episodeId, startAtMs, hint)
+    }
+
+    /** Remembered for "autoplay on start" (outlives the screen: the application scope). */
+    private fun onPlaybackStarted(item: ItemCard) {
+        graph.appScope.launch { store.setLastPlayedItem(item.id) }
     }
 
     private fun onPlayerExit() {
@@ -387,17 +535,41 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         repository.refreshSoon()
     }
 
+    /**
+     * The owner's commands, acted on only on Home and in the player (the repository acknowledges every command,
+     * unknown types included). Playback commands need video showing (paused or not) and win over the hidden menu:
+     * resume, next and previous close it; pause makes sure closing it later does not resume.
+     */
     private fun onCommand(command: ServerEvent.Command) {
         val screen = _screen.value
         if (screen != Screen.Home && screen != Screen.Player) return
-        when (command.type) {
-            "play" -> {
-                val episodeId = command.episodeId ?: return
-                command.itemId?.let { homeFocusItemId = it }
-                val hint = state.value?.home?.firstOrNull { it.item.id == command.itemId }?.item
-                startPlayback(episodeId, startAtMs = null, hint = hint)
+        val video = screen == Screen.Player && player.ui.value.phase == PlayerPhase.Playing
+        when (val c = RemoteCommand.of(command)) {
+            is RemoteCommand.Play -> {
+                c.itemId?.let { homeFocusItemId = it }
+                val hint = state.value?.home?.firstOrNull { it.item.id == c.itemId }?.item
+                startPlayback(c.episodeId, startAtMs = null, hint = hint)
             }
-            "stop" -> if (screen == Screen.Player) player.exit()
+            RemoteCommand.Stop -> if (screen == Screen.Player) player.exit()
+            RemoteCommand.Pause -> if (video) {
+                resumeAfterMenu = false
+                player.pause()
+            }
+            RemoteCommand.Resume -> if (video) {
+                closeMenu(resume = false)
+                player.resume()
+            }
+            is RemoteCommand.Seek -> if (video) player.seekRemote(c)
+            RemoteCommand.Next -> if (video) {
+                closeMenu(resume = true)
+                player.stepEpisode(1)
+            }
+            RemoteCommand.Previous -> if (video) {
+                closeMenu(resume = true)
+                player.stepEpisode(-1)
+            }
+            is RemoteCommand.Message -> showBanner(c)
+            is RemoteCommand.Ignored -> Unit // a newer server's command, or an unusable one: acknowledged, nothing else
         }
     }
 
@@ -405,6 +577,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     fun openMenu() {
         if (!menuAvailable) return
+        autoplayArmed = false
         val fromPlayer = _screen.value == Screen.Player
         val item = if (fromPlayer) player.ui.value.item else focusedEntry()?.item
         val entries = buildList {
@@ -501,6 +674,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             SettingsEntry.ServerAddress -> {
                 closeMenu(resume = false)
                 player.stop()
+                clearAutoplay()
                 _setup.update { it.copy(address = serverUrl?.let(ServerUrls::display) ?: it.address, busy = false, error = null) }
                 _screen.value = Screen.Setup(canGoBack = true)
             }

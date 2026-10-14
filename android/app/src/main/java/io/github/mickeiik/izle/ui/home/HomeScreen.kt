@@ -59,7 +59,7 @@ import io.github.mickeiik.izle.ui.HomeMessage
 import io.github.mickeiik.izle.ui.common.Clock
 import io.github.mickeiik.izle.ui.common.FullScreenMessage
 import io.github.mickeiik.izle.ui.common.ProgressBar
-import io.github.mickeiik.izle.ui.common.episodeNameText
+import io.github.mickeiik.izle.ui.common.tileBadgeText
 import io.github.mickeiik.izle.ui.theme.IzleColors
 
 private val TileWidth = 190.dp
@@ -75,7 +75,7 @@ fun HomeScreen(
     online: Boolean,
     message: HomeMessage?,
     initialFocusItemId: String?,
-    /** False while the hidden menu is open on top: Home must not take the focus back then. */
+    /** False while the hidden menu or the autoplay countdown is on top: Home must not take the focus back then. */
     active: Boolean,
     posterUrl: (String?) -> String?,
     onFocused: (String) -> Unit,
@@ -245,15 +245,12 @@ private fun Tile(entry: HomeEntry, posterUrl: String?, modifier: Modifier, onFoc
 
 @Composable
 private fun BadgeChip(badge: TileBadge) {
-    val (text, background, foreground) = when (badge) {
-        TileBadge.New -> Triple(stringResource(R.string.badge_new), IzleColors.New, IzleColors.OnNew)
-        TileBadge.Continue -> Triple(stringResource(R.string.badge_continue), IzleColors.Accent, IzleColors.OnAccent)
-        TileBadge.WatchAgain -> Triple(stringResource(R.string.badge_watch_again), IzleColors.SurfaceHigh, IzleColors.OnSurface)
-        is TileBadge.Episode -> {
-            val name = episodeNameText(badge.name).orEmpty()
-            if (badge.resume) Triple(stringResource(R.string.badge_continue_episode, name), IzleColors.Accent, IzleColors.OnAccent)
-            else Triple(name, IzleColors.SurfaceHigh, IzleColors.OnSurface)
-        }
+    val text = tileBadgeText(badge)
+    val (background, foreground) = when (badge) {
+        TileBadge.New -> IzleColors.New to IzleColors.OnNew
+        TileBadge.Continue -> IzleColors.Accent to IzleColors.OnAccent
+        TileBadge.WatchAgain -> IzleColors.SurfaceHigh to IzleColors.OnSurface
+        is TileBadge.Episode -> if (badge.resume) IzleColors.Accent to IzleColors.OnAccent else IzleColors.SurfaceHigh to IzleColors.OnSurface
     }
     Box(
         Modifier.border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(8.dp))

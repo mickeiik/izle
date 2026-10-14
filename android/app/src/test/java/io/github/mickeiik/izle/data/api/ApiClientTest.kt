@@ -143,6 +143,37 @@ class ApiClientTest {
     }
 
     @Test
+    fun resolveCarriesTheServersClock() = runBlocking {
+        val body = """{"sessionId":"s","sourceId":"a","media":{"kind":"hls","url":"/p/x/index.m3u8"},"item":{"id":"m","kind":"movie","title":"M"},
+                      "episode":{"id":"m.film"},"expiresAt":"2026-10-14T12:01:40.000Z"}"""
+        server.enqueue(json(body).newBuilder().addHeader("Date", "Wed, 14 Oct 2026 12:00:00 GMT").build())
+        server.enqueue(json(body))
+        val r = client().resolve(ResolveRequest("m.film"))
+        assertEquals("2026-10-14T12:01:40.000Z", r.expiresAt)
+        assertEquals(1_791_979_200_000L, r.serverDateMs)
+        assertNull("no Date header: the TV's own clock is used", client().resolve(ResolveRequest("m.film")).serverDateMs)
+    }
+
+    @Test
+    fun problemReportsArePostedWithTheDeviceToken() = runBlocking {
+        server.enqueue(json("""{"ok":true}""", code = 202))
+        server.enqueue(json("""{"error":"invalid_request"}""", code = 400))
+        val report = ProblemReport(kind = "playback", code = "gave_up", episodeId = "e", detail = "tried 2 sources", appVersion = "0.2.0")
+        client().reportProblem(report)
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/v1/tv/problems", request.url.encodedPath)
+        assertEquals("Bearer device-token", request.headers["Authorization"])
+        assertEquals("""{"kind":"playback","code":"gave_up","episodeId":"e","detail":"tried 2 sources","appVersion":"0.2.0"}""", request.body?.utf8())
+        try {
+            client().reportProblem(report)
+            fail("expected ApiException")
+        } catch (e: ApiException) {
+            assertEquals(400, e.status) // an older server: the reporter ignores it
+        }
+    }
+
+    @Test
     fun unreachableServerIsAnIOException() = runBlocking {
         val api = client()
         server.close()

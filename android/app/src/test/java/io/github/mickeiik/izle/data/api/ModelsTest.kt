@@ -1,11 +1,54 @@
 package io.github.mickeiik.izle.data.api
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** The DTOs against documents shaped like docs/spec/server-api-v1.md, including fields the TV does not know. */
 class ModelsTest {
+    @Test
+    fun autoplayOnStartIsOffUnlessTheServerSaysSo() {
+        assertFalse(ApiJson.decodeFromString(TvState.serializer(), STATE).device.autoplayOnStart)
+        val on = ApiJson.decodeFromString(TvState.serializer(), STATE.replace("\"newField\": 1", "\"autoplayOnStart\": true"))
+        assertTrue(on.device.autoplayOnStart)
+    }
+
+    @Test
+    fun resolveKeepsTheExpiryHint() {
+        assertNull(ApiJson.decodeFromString(ResolveResponse.serializer(), RESOLVE).expiresAt)
+        val r = ApiJson.decodeFromString(ResolveResponse.serializer(), RESOLVE.replace("\"resume\":", "\"expiresAt\": \"2026-10-14T12:01:40.000Z\", \"resume\":"))
+        assertEquals("2026-10-14T12:01:40.000Z", r.expiresAt)
+        assertNull("the Date header is not part of the body", r.serverDateMs)
+        val explicitNull = ApiJson.decodeFromString(ResolveResponse.serializer(), RESOLVE.replace("\"resume\":", "\"expiresAt\": null, \"resume\":"))
+        assertNull(explicitNull.expiresAt)
+    }
+
+    @Test
+    fun problemReportsLeaveOutUnsetFields() {
+        assertEquals(
+            """{"kind":"network","code":"server_unreachable","ageMs":420000,"detail":"unreachable for 7 min 0 s","appVersion":"0.2.0"}""",
+            ApiJson.encodeToString(
+                ProblemReport.serializer(),
+                ProblemReport(kind = "network", code = "server_unreachable", ageMs = 420_000, detail = "unreachable for 7 min 0 s", appVersion = "0.2.0"),
+            ),
+        )
+    }
+
+    @Test
+    fun parsesTheNewCommandPayloads() {
+        assertEquals(ServerEvent.Command(30, "seek", deltaMs = 30_000), ServerEvent.parse("command", """{"id":30,"type":"seek","payload":{"deltaMs":30000}}"""))
+        assertEquals(ServerEvent.Command(31, "seek", positionMs = 0), ServerEvent.parse("command", """{"id":31,"type":"seek","payload":{"positionMs":0}}"""))
+        assertEquals(
+            ServerEvent.Command(32, "message", text = "Dinner is ready", durationSec = 20),
+            ServerEvent.parse("command", """{"id":32,"type":"message","payload":{"text":"Dinner is ready","durationSec":20}}"""),
+        )
+        assertEquals(ServerEvent.Command(33, "pause"), ServerEvent.parse("command", """{"id":33,"type":"pause","payload":{}}"""))
+        // An envelope without an id cannot be acknowledged: ignored like before.
+        assertNull(ServerEvent.parse("command", """{"type":"pause","payload":{}}"""))
+    }
+
     @Test
     fun decodesTheHomeState() {
         val state = ApiJson.decodeFromString(TvState.serializer(), STATE)

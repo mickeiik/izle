@@ -12,6 +12,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.runBlocking
@@ -34,6 +35,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicLong
 
 class ServerRepositoryTest {
     @get:Rule
@@ -61,6 +63,7 @@ class ServerRepositoryTest {
                     path == "/api/v1/tv/state" ->
                         if (stateCode == 200) MockResponse.Builder().body(STATE).build()
                         else MockResponse.Builder().code(stateCode).body("""{"error":"unauthorized"}""").build()
+                    path == "/api/v1/tv/events" && stateCode >= 500 -> MockResponse.Builder().code(stateCode).body("down").build()
                     path == "/api/v1/tv/events" ->
                         MockResponse.Builder().addHeader("Content-Type", "text/event-stream").body(eventsBody).build()
                     path.endsWith("/ack") -> MockResponse.Builder().body("""{"ok":true}""").build()
@@ -79,9 +82,9 @@ class ServerRepositoryTest {
         server.close()
     }
 
-    private fun repository() = ServerRepository(
+    private fun repository(clock: () -> Long = { System.nanoTime() / 1_000_000 }) = ServerRepository(
         scope, store, EventsClient(http),
-        timing = ServerRepository.Timing(pollMs = 60_000, offlinePollMs = 60_000, minBackoffMs = 50, maxBackoffMs = 100),
+        timing = ServerRepository.Timing(pollMs = 60_000, offlinePollMs = 60_000, minBackoffMs = 50, maxBackoffMs = 100, clock = clock),
     )
 
     private fun api() = ApiClient(server.url("/"), "device-token", http)
@@ -141,6 +144,88 @@ class ServerRepositoryTest {
         repo.stop()
         assertTrue(paths.count { it == "/api/v1/tv/events" } >= 2)
         assertTrue(paths.contains("/api/v1/tv/commands/7/ack"))
+    }
+
+    @Test
+    fun commandsOfUnknownTypesAreAcknowledgedToo() = runBlocking {
+        // A newer server's command (odd payload included): handed on (the app ignores it) and acknowledged, so it
+        // is not replayed on every reconnect.
+        eventsBody = "event: command\ndata: {\"id\":9,\"type\":\"dance\",\"payload\":{\"style\":[1,2]}}\n\n"
+        val repo = repository()
+        repo.use(api())
+        val first = async { withTimeout(5_000) { repo.commands.first() } }
+        delay(50)
+        repo.start()
+        assertEquals(ServerEvent.Command(9, "dance"), first.await())
+        withTimeout(5_000) { while (!paths.contains("/api/v1/tv/commands/9/ack")) delay(20) }
+        repo.stop()
+    }
+
+    @Test
+    fun onlyStatesFromTheServerAreFresh() = runBlocking {
+        val api = api()
+        val first = repository()
+        first.use(api)
+        assertTrue(first.refresh(api)) // caches it
+
+        val repo = repository()
+        val fromCache = async { withTimeoutOrNull(500) { repo.fetched.first() } }
+        delay(50)
+        repo.use(api)
+        assertEquals("the cached home shows at once", 5L, repo.state.value?.version)
+        assertNull("but it is not a fresh state", fromCache.await())
+
+        val fresh = async { withTimeout(5_000) { repo.fetched.first() } }
+        delay(50)
+        assertTrue(repo.refresh(api))
+        assertEquals(5L, fresh.await().version)
+    }
+
+    @Test
+    fun aLongOutageIsAnnouncedOnceTheServerAnswersAgain() = runBlocking {
+        val now = AtomicLong(1_000_000L)
+        val repo = repository(clock = { now.get() })
+        val api = api()
+        repo.use(api)
+        val outages = CopyOnWriteArrayList<Long>()
+        val collector = scope.launch { repo.outages.collect { outages += it } }
+        delay(50)
+        repo.start()
+        withTimeout(5_000) { while (repo.state.value == null) delay(20) }
+
+        // Two minutes down: too short to report. (The clock moves before the server comes back, so a refresh
+        // from the background loops measures the same length as this one.)
+        stateCode = 503
+        assertFalse(repo.refresh(api))
+        now.addAndGet(2 * 60_000L)
+        stateCode = 200
+        assertTrue(repo.refresh(api))
+        delay(100)
+        assertEquals(emptyList<Long>(), outages.toList())
+
+        // Seven minutes down: reported once, with its length.
+        stateCode = 503
+        assertFalse(repo.refresh(api))
+        now.addAndGet(7 * 60_000L)
+        stateCode = 200
+        assertTrue(repo.refresh(api))
+        withTimeout(5_000) { while (outages.isEmpty()) delay(20) }
+        delay(100)
+        assertEquals(listOf(7 * 60_000L), outages.toList())
+
+        // Time in the background does not count: stopped while down, started again much later, back soon after.
+        stateCode = 503
+        assertFalse(repo.refresh(api))
+        repo.stop()
+        now.addAndGet(60 * 60_000L)
+        repo.start()
+        now.addAndGet(60_000L)
+        stateCode = 200
+        assertTrue(repo.refresh(api))
+        delay(100)
+        assertEquals(listOf(7 * 60_000L), outages.toList())
+        repo.stop()
+        collector.cancel()
     }
 
     private companion object {

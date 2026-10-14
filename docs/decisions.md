@@ -758,3 +758,74 @@ server and the admin page. Routine decisions:
   the desktop app's browser (TV list chip, remote buttons enabled while playing and disabled after a stop, a message
   reaching the TV's event stream, autoplay toggle, the problems card and Clear, no horizontal scroll at 375 px). The
   TV side is not part of this change.
+
+## TV: channel keys, autoplay on start, expiry refresh, problem reports, more commands (2026-10-14)
+
+The TV side of a batch of approved improvements (the server side was done separately against the same contract:
+`device.autoplayOnStart`, the `pause`/`resume`/`seek`/`next`/`previous`/`message` commands, `POST /tv/problems`, and
+the resolve answer's `expiresAt`, which the TV used to drop). Routine decisions:
+
+- **Channel keys:** CH+/CH− and the remote's |◀◀ ▶▶| keys (`MEDIA_NEXT`/`MEDIA_PREVIOUS`) are consumed in
+  `MainActivity` before anything else on every screen, setup and pairing included, and act only on the first key
+  down in the player with video showing (phase Playing, paused or not, no hidden menu). The target comes from the
+  item's episode list (`GET /tv/items/:itemId`), fetched on the first press and kept until the viewer leaves the
+  player; presses while it loads are ignored, a failed fetch shows only the information like an end. The first and
+  last episodes (the resolve answer's `index`/`count`) and films need no list. The loading screen names the target
+  episode at once. Switching from a paused player starts playing.
+- **Autoplay on start is armed in `onForeground`** when the screen is Home, or still Starting (process start),
+  and decided by the first state *fetched from the server* afterwards (a new `fetched` flow of the repository; the
+  cached state never counts), even if that fetch only succeeds later because the server was down. Any key down,
+  Back, the hidden menu, playing, the pairing and server screens and going to the background disarm it; a setting
+  switched on while the TV is in use waits for the next time the app comes to the front. A key pressed while the
+  last played show is being read also stops it.
+- **"Played last"** is stored in DataStore when a playback reaches its first frame, whatever started it (tile,
+  command, menu, auto-next, channel keys), and forgotten with the pairing and when the server address changes.
+- **The countdown overlay** is opaque like "Up next", re-reads the show's entry every second (a live update may move
+  its `continue`; a show taken off Home ends the countdown) and plays through the tile's click path (offline: the
+  "No connection" message). OK presses the focused button; Back cancels through the back handler (on API 36 Back
+  never reaches `dispatchKeyEvent`); every other key, Menu included, cancels on key down and is consumed, so ←/→ do
+  not move to **Not now**: it is there to show that the countdown can be stopped, and any key does the same. Holding
+  OK does nothing while it shows (the menu is blocked, as during "Up next"). The tile chip's text is now one
+  function, shared by the tile and the overlay.
+- **Expiry is measured on the server's clock:** the resolve answer's `Date` header (kept as a transient
+  `serverDateMs`) gives the validity left, which is then scheduled on `elapsedRealtime`; without the header the TV's
+  clock is used. Cheap TV boxes often have a wrong clock. `expiresAt` is parsed by a small ISO 8601 parser for the
+  contract's pattern (`java.time` needs API 26, the app supports 24 without desugaring), tested against `java.time`.
+- **Refresh scheduling** lives in `ExpiryPlan`: ≥ 90 s left → at `expiresAt` − 60 s, but at least 60 s after the
+  previous refresh attempt; the one retry 30 s after a network or 5xx failure (only if the URL is still valid then)
+  is the only exception to that spacing; a 4xx answer is not retried. A refresh runs while playing, paused or still
+  loading; the watch is cancelled by the end of the episode, an error relaunch, an episode change and leaving.
+- **After a refresh** progress goes to the new `sessionId` and one report is sent at once: a resolve resets the
+  server's "now playing" to the saved position with `playing: false`, which Listen along would otherwise follow for
+  up to 15 s. A changed URL swaps the media at the same position (`setMediaItem` + `prepare`, `playWhenReady` and the
+  viewer's audio/subtitle choice kept, the "played since" time kept so Back during the short rebuffer still reports
+  `stopped`); the same URL changes nothing else. Reports use the last known duration while the new media does not
+  know it yet.
+- **Problem report bodies** (`Problems`): player errors carry Media3's `errorCodeName`, the HTTP status and up to
+  four exception class names of the cause chain (`ExoPlaybackException < InvalidResponseCodeException`), never a
+  message, although the server's spec example shows one. Codes are forced into the server's syntax (Media3 names an
+  unknown code "invalid error code"). `gave_up` says `tried N sources`, with `, then resolve failed: <code>` or
+  `, then the media address was unusable` when that ended it. Failed refresh resolves are reported too (with the
+  pinned source); a 401 is not (the device is gone). `ageMs` is computed when the report is sent.
+- **`server_unreachable`** is measured only while the repository runs (the app in front), from the first failed
+  check, or from `start()` when it was already offline; time in the background does not count. Its `ageMs` is the
+  outage's length (the server then stores when it began) and `detail` its length in words (`unreachable for 7 min
+  5 s`).
+- **Reporting is one attempt from the application scope** to the server the problem belongs to, every failure
+  ignored; there is no TV-side rate limit (the server answers 429 beyond 30 reports in 10 minutes).
+- **Command payloads are decoded tolerantly** (the payload as a JSON object, each field null when absent or of
+  another type), so a command of an unknown type or with an unexpected payload still reaches the dispatcher and is
+  acknowledged rather than replayed for two minutes; only an envelope without `id`/`type` is dropped, as before.
+  `seek` with both fields uses `positionMs`; both kinds are clamped to the episode. A message is trimmed, cut at 200
+  characters, shown 3–120 s (15 s when absent, the server's default) and ignored when blank.
+- **Owner commands win over the hidden menu:** `resume`, `next` and `previous` close it (so the viewer is not left
+  in a menu over a changed picture), `pause` makes sure closing it later does not resume, `seek` happens under it.
+  Transport commands act only with video showing (paused or not), as in the brief.
+- **The message banner** is drawn above everything at the top on Home and in the player (hidden menu and overlays
+  included), 30 sp bold, dark on the warm accent, at most 864 dp wide and three lines; it is cleared when the app
+  goes to the background.
+- **Tests:** 37 JVM tests were added (90 in all; the brief's "52" was one short, the previous commit added one):
+  episode steps, expiry scheduling and the ISO parser, problem bodies with a hostile `PlaybackException` (a real
+  one: its protected constructor only stores fields, so it works without Robolectric), command decoding including
+  unknown types and odd payloads, autoplay target selection, DTO fields, `Date` header and problem POST, outage
+  detection, fresh-versus-cached states and the reporter. The emulator runs are in `docs/verification/tv-controls/`.

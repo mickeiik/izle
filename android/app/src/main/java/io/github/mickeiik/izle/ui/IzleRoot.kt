@@ -7,11 +7,14 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.mickeiik.izle.ui.common.LocalizedContent
+import io.github.mickeiik.izle.ui.common.MessageBanner
 import io.github.mickeiik.izle.ui.hidden.HiddenMenu
 import io.github.mickeiik.izle.ui.hidden.MenuActions
+import io.github.mickeiik.izle.ui.home.AutoplayOverlay
 import io.github.mickeiik.izle.ui.home.HomeScreen
 import io.github.mickeiik.izle.ui.pairing.PairingScreen
 import io.github.mickeiik.izle.ui.player.PlayerScreen
@@ -43,16 +46,20 @@ fun IzleRoot(vm: AppViewModel) {
                     Screen.Home -> {
                         val online by vm.online.collectAsStateWithLifecycle()
                         val message by vm.homeMessage.collectAsStateWithLifecycle()
+                        val autoplay by vm.autoplay.collectAsStateWithLifecycle()
                         HomeScreen(
                             state = state,
                             online = online,
                             message = message,
                             initialFocusItemId = vm.homeFocusItemId,
-                            active = menu == null,
+                            active = menu == null && autoplay == null,
                             posterUrl = vm::absoluteUrl,
                             onFocused = vm::onTileFocused,
                             onPlay = vm::onTileClicked,
                         )
+                        autoplay?.let { a ->
+                            AutoplayOverlay(a, vm.absoluteUrl(a.entry.item.posterUrl), onPlayNow = vm::onAutoplayPlayNow, onNotNow = vm::cancelAutoplay)
+                        }
                     }
                     Screen.Player -> {
                         val ui by vm.player.ui.collectAsStateWithLifecycle()
@@ -72,6 +79,11 @@ fun IzleRoot(vm: AppViewModel) {
                         about = vm.aboutInfo(),
                         actions = actions,
                     )
+                }
+                // The owner's message, on Home and over the video (playback goes on); not on the other screens.
+                val banner by vm.banner.collectAsStateWithLifecycle()
+                if (screen == Screen.Home || screen == Screen.Player) {
+                    banner?.let { MessageBanner(it, Modifier.align(Alignment.TopCenter)) }
                 }
             }
         }

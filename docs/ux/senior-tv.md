@@ -4,7 +4,9 @@ How the izle TV app behaves for its viewer: someone who knows classic TV (switch
 and should never need to read small text, browse or configure anything. Everything else is the owner's job,
 done remotely from the browser admin page (`/admin/` on the server) or, on the TV itself, behind a hidden menu.
 
-Screenshots of every screen below are in [`docs/verification/phase3/`](../verification/phase3/README.md).
+Screenshots of every screen below are in [`docs/verification/phase3/`](../verification/phase3/README.md); the
+channel keys, autoplay on start, the owner's messages and remote controls, the stream refresh and problem reports
+in [`docs/verification/tv-controls/`](../verification/tv-controls/README.md).
 
 ## Principles
 
@@ -16,7 +18,9 @@ Screenshots of every screen below are in [`docs/verification/phase3/`](../verifi
 4. **Nothing small.** No text below 24 sp on the 960×540 dp TV canvas; high contrast; one focused element with a
    thick white border, everything else dimmed.
 5. **Owner-controlled.** Which shows appear, their order, "continue from episode X", UI language, audio and
-   subtitle languages and play/stop all come from the server and apply live.
+   subtitle languages, autoplay on start, play/stop/pause/resume/seek/next/previous and short messages all come
+   from the server and apply live. When something goes wrong the TV tells the owner (problem reports), not the
+   viewer.
 
 ## Screens
 
@@ -32,6 +36,18 @@ Screenshots of every screen below are in [`docs/verification/phase3/`](../verifi
 - No shows: "Nothing here yet" in large type.
 - Server unreachable: the last home screen stays (cached), a red "No connection" chip appears top left, the TV
   retries every 10 s, and OK shows "No connection · Trying again…" for 5 s instead of trying to play.
+- **Autoplay on start** (per TV, owner setting, off by default): when the app comes to the front on Home — the TV
+  is switched on, the app starts, or the viewer comes back from the launcher — and the first home state fetched
+  from the server in that moment says so, the show played last on this TV (else the first tile) is offered over
+  Home like "Up next": its poster, title, what OK on its tile would play ("Episode 2", "Continue · Episode 2"),
+  "Starts in 10 s", **Play now** focused and **Not now** next to it. At 0 its tile's episode plays under the
+  normal resume rules. Back, Not now or any other key cancels it and leaves the focus on that show; the viewer
+  just started doing something. It never appears after in-app steps (Back from the player, "The end", the error
+  screen, closing the hidden menu), from the offline cache, or once a key was pressed; the hidden menu and the
+  tiles wait while it shows.
+- **Messages from the owner** appear as a banner across the top (30 sp bold, dark on yellow, up to 3 lines) for
+  the time the owner chose, on Home and over the playing video (playback goes on). A new message replaces the
+  current one; the banner takes no focus and has no buttons. Other screens ignore messages.
 
 ### Player
 
@@ -43,6 +59,16 @@ Screenshots of every screen below are in [`docs/verification/phase3/`](../verifi
 - At the end of the last episode (or an auto-advance boundary): "The end" for 8 s, then Home.
 - Nothing playable: "Can't play right now" with the poster, **Try again** focused and **Home**; Home after 30 s.
 - Subtitles (off unless the owner chose a language) are drawn large, white on a dark box, above the bottom edge.
+- **CH+ / CH−** (and the remote's **|◀◀ / ▶▶|** keys) switch to the next / previous episode of the show, like
+  changing channels: the episode playing ends exactly as with Back (its place is saved), the nearest playable
+  episode starts in the same player (its name shows while it loads) under the normal resume rules. At the first
+  or last episode nothing happens except the information appearing for 4 s; there is no wrap-around. Holding
+  the key steps once.
+- Stream addresses that expire (signed URLs) are renewed a minute before they run out, in the background: at
+  most a short spinner while the new stream buffers at the same place, paused or not.
+- The owner can pause, resume, jump (and show the information as if a key had been pressed), switch episodes
+  like CH+/CH−, stop, and show a message, all from the admin page. These act only while video shows; resume,
+  next and previous close the hidden menu if it is open.
 
 ### Hidden menu
 
@@ -80,11 +106,17 @@ closes it.
 | Play/Pause, Play, Pause | — | pause / resume | — | — |
 | Rewind / Fast forward | — | like ← / → | — | — |
 | Stop | — | save, Home | — | — |
+| CH+ / CH−, ▶▶\| / \|◀◀ | nothing | next / previous episode (first press only; the ends: information only) | nothing | nothing |
 | Back | nothing | save, Home | Home | one level up / close |
 | HOME (system) | leaves the app; it reopens on Home | saves the position, releases the player | | |
 
 A short OK is delivered on release; a release without a press (the OK that launched the app from the TV
 launcher) is ignored so the app never starts playing by accident.
+
+Channel keys never reach the system, also where they do nothing (pairing and the server address screen included):
+on many Android TV devices an unhandled channel key opens the TV's own live-TV app, and the viewer would be out of
+izle. While the **autoplay countdown** shows over Home, OK presses its focused button (Play now / Not now); Back and
+every other key cancel it and do nothing else.
 
 ## Playback rules
 
@@ -97,6 +129,11 @@ launcher) is ignored so the app never starts playing by accident.
 | "The end" | 8 s, then Home |
 | Error screen | Home after 30 s |
 | Source errors | try the server's next alternative from the same position; HTTP 403/410 after more than 5 min of playback re-resolves the same source first (an expired signed URL) |
+| Stream refresh | when a resolve answer's `expiresAt` is ≥ 90 s away (measured on the server's clock): resolve the same source again at `expiresAt` − 60 s, playing or paused; new media only when the URL changed, at the same position; at most one refresh per 60 s; a network or server failure is retried once after 30 s while the URL is still valid, else the 403/410 rule above applies |
+| Episode keys (CH+/CH−, ▶▶\|/\|◀◀, next/previous commands) | the nearest `playbackAllowed` episode after / before the current one in play order; no wrap-around; the current one is reported like Back (stopped, or finished within the end threshold) |
+| Autoplay on start | owner setting, off by default; 10 s countdown; the show played last on this TV if it is on Home, else the first tile; only when the app comes to the front on Home, from a state fetched from the server, before any key |
+| Owner's message | up to 200 characters, 3–120 s (the server's default: 15 s); a new one replaces the current one |
+| Problem reports (to the owner) | one attempt in the background, never retried, failures ignored: player errors (Media3 error code, HTTP status, exception class names — never messages or URLs), failed resolves (the server's error code or `network`), "Can't play right now" (`gave_up`), the server unreachable for ≥ 5 min (`server_unreachable`, sent once it answers again) |
 | Languages | audio: the owner's preferred language (and its primary subtag), else the stream default; subtitles: off unless the owner set a language |
 
 ## Copy (en / tr)
@@ -111,6 +148,7 @@ launcher) is ignored so the app never starts playing by accident.
 | Loading | Loading… | Yükleniyor… |
 | Paused | Paused | Duraklatıldı |
 | Up next | Up next · Starts in 10 s · Play now · Home | Sıradaki · 10 sn içinde başlıyor · Şimdi oynat · Ana ekran |
+| Autoplay on start | Starts in 10 s · Play now · Not now (with the tile's chip text) | 10 sn içinde başlıyor · Şimdi oynat · Şimdi değil |
 | End | The end | Bitti |
 | Error | Can't play right now · Try again · Home | Şu anda oynatılamıyor · Tekrar dene · Ana ekran |
 | Pairing | Pair this TV · Open http://… /admin on your phone or computer and approve this code · Waiting for approval… | Bu televizyonu eşleştirin · Telefonunuzda veya bilgisayarınızda http://… /admin adresini açın ve bu kodu onaylayın · Onay bekleniyor… |

@@ -7,6 +7,11 @@ import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -23,8 +28,21 @@ sealed interface ServerEvent {
     /** The device's state version changed; re-fetch `/tv/state` when it differs from the one shown. */
     data class State(val version: Long) : ServerEvent
 
-    /** An owner command; the TV acknowledges it once handled. */
-    data class Command(val id: Long, val type: String, val itemId: String?, val episodeId: String?) : ServerEvent
+    /**
+     * An owner command; the TV acknowledges it once handled. The payload fields of every known type are flattened
+     * here (null when absent or of the wrong JSON type), so a command of a type this TV does not know, or with an
+     * unexpected payload, still arrives and is acknowledged instead of being replayed for two minutes.
+     */
+    data class Command(
+        val id: Long,
+        val type: String,
+        val itemId: String? = null,
+        val episodeId: String? = null,
+        val deltaMs: Long? = null,
+        val positionMs: Long? = null,
+        val text: String? = null,
+        val durationSec: Int? = null,
+    ) : ServerEvent
 
     companion object {
         /** Maps one SSE message to an event; unknown event types and malformed data are ignored (null). */
@@ -32,7 +50,17 @@ sealed interface ServerEvent {
             when (type) {
                 "state" -> State(json.decodeFromString(StateData.serializer(), data).version)
                 "command" -> json.decodeFromString(CommandData.serializer(), data).let {
-                    Command(it.id, it.type, it.payload.itemId, it.payload.episodeId)
+                    val payload = it.payload as? JsonObject ?: JsonObject(emptyMap())
+                    Command(
+                        id = it.id,
+                        type = it.type,
+                        itemId = payload.string("itemId"),
+                        episodeId = payload.string("episodeId"),
+                        deltaMs = payload.number("deltaMs")?.longOrNull,
+                        positionMs = payload.number("positionMs")?.longOrNull,
+                        text = payload.string("text"),
+                        durationSec = payload.number("durationSec")?.intOrNull,
+                    )
                 }
                 else -> null
             }
@@ -46,10 +74,11 @@ sealed interface ServerEvent {
 private data class StateData(val version: Long)
 
 @Serializable
-private data class CommandData(val id: Long, val type: String, val payload: CommandPayload = CommandPayload())
+private data class CommandData(val id: Long, val type: String, val payload: JsonElement? = null)
 
-@Serializable
-private data class CommandPayload(val itemId: String? = null, val episodeId: String? = null)
+private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+
+private fun JsonObject.number(key: String): JsonPrimitive? = (this[key] as? JsonPrimitive)?.takeIf { !it.isString }
 
 /**
  * Server-sent events as a cold [Flow]. The flow fails with [ApiException] (401 = the device was removed) or

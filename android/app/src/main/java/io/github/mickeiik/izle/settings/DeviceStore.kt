@@ -15,13 +15,15 @@ data class DeviceSettings(
     val deviceToken: String? = null,
     /** `tr`/`en` set from the hidden menu, or null to follow the server. */
     val uiLanguageOverride: String? = null,
+    /** The show played last on this TV: what "autoplay on start" offers. */
+    val lastPlayedItemId: String? = null,
 ) {
     val isPaired: Boolean get() = serverUrl != null && deviceToken != null
 }
 
 /**
- * DataStore-backed settings: server address, pairing result, the local UI language override and the last home
- * state (shown while the server is unreachable). Lives in app-private storage.
+ * DataStore-backed settings: server address, pairing result, the local UI language override, the show played last
+ * and the last home state (shown while the server is unreachable). Lives in app-private storage.
  */
 class DeviceStore(private val dataStore: DataStore<Preferences>) {
     val settings: Flow<DeviceSettings> = dataStore.data.map { p ->
@@ -30,6 +32,7 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
             deviceId = p[DEVICE_ID],
             deviceToken = p[DEVICE_TOKEN],
             uiLanguageOverride = p[UI_LANGUAGE],
+            lastPlayedItemId = p[LAST_PLAYED_ITEM],
         )
     }
 
@@ -42,6 +45,7 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
                 p.remove(DEVICE_ID)
                 p.remove(DEVICE_TOKEN)
                 p.remove(CACHED_STATE)
+                p.remove(LAST_PLAYED_ITEM)
             }
             p[SERVER_URL] = url
         }
@@ -60,7 +64,12 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
             p.remove(DEVICE_ID)
             p.remove(DEVICE_TOKEN)
             p.remove(CACHED_STATE)
+            p.remove(LAST_PLAYED_ITEM)
         }
+    }
+
+    suspend fun setLastPlayedItem(itemId: String) {
+        dataStore.edit { p -> if (p[LAST_PLAYED_ITEM] != itemId) p[LAST_PLAYED_ITEM] = itemId }
     }
 
     suspend fun setUiLanguageOverride(language: String?) {
@@ -79,5 +88,6 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
         val DEVICE_TOKEN = stringPreferencesKey("device_token")
         val UI_LANGUAGE = stringPreferencesKey("ui_language")
         val CACHED_STATE = stringPreferencesKey("cached_state")
+        val LAST_PLAYED_ITEM = stringPreferencesKey("last_played_item")
     }
 }

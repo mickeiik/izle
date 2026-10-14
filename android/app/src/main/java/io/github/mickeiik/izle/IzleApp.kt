@@ -2,12 +2,14 @@ package io.github.mickeiik.izle
 
 import android.app.Application
 import android.content.Context
+import android.os.SystemClock
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.preferencesDataStoreFile
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import io.github.mickeiik.izle.data.ProblemReporter
 import io.github.mickeiik.izle.data.ServerRepository
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.EventsClient
@@ -38,6 +40,9 @@ class AppGraph(val context: Context) {
     val deviceStore = DeviceStore(PreferenceDataStoreFactory.create { context.preferencesDataStoreFile("izle") })
 
     val repository = ServerRepository(appScope, deviceStore, EventsClient(sseHttp))
+
+    /** Problem reports for the owner, sent from the application scope so they outlive the screen. */
+    val problems = ProblemReporter(appScope, { repository.api }, SystemClock::elapsedRealtime)
 
     fun apiClient(baseUrl: HttpUrl, deviceToken: String?): ApiClient = ApiClient(baseUrl, deviceToken, http, longPollHttp)
 
