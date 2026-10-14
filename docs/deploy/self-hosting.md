@@ -1,11 +1,11 @@
 # Self-hosting izle
 
-izle has two parts: **izle-server**, which runs on a machine that is always on (a home server, NAS, mini PC,
-Raspberry Pi 4/5 or a small VPS), and the **Android TV app**, which talks only to that server. This guide sets up
-the server as a systemd service, optionally behind Caddy for HTTPS, and installs the app on a TV.
+izle has two parts: **izle-server**, on a machine that is always on (a home server, NAS, mini PC, Raspberry Pi 4/5
+or a small VPS), and the **Android TV app**, which talks only to that server. This guide sets up the server as a
+systemd service, optionally behind Caddy for HTTPS, and installs the app on a TV.
 
-Commands assume a Debian/Ubuntu-like Linux with systemd; adapt package names elsewhere. Throughout,
-`izle-server-X.Y.Z.tgz` is the server package and `PKG=/opt/izle/lib/node_modules/@izle/server` is where it ends up.
+Commands assume a Debian/Ubuntu-like Linux with systemd; adapt package names elsewhere. `izle-server-X.Y.Z.tgz` is
+the server package and `PKG=/opt/izle/lib/node_modules/@izle/server` is where it ends up.
 
 ## 1. Choose a setup
 
@@ -17,27 +17,21 @@ Commands assume a Debian/Ubuntu-like Linux with systemd; adapt package names els
 | Admin page | from the LAN | from anywhere (or LAN/VPN only, see §6) |
 | Extra parts | none | a domain name, ports 80 and 443 forwarded to the server, Caddy |
 
-On a LAN, plain HTTP is acceptable. Never expose port 8787 to the internet: without TLS the admin token and the
-TVs' device tokens travel in clear text.
+Plain HTTP is acceptable on a LAN. Never expose port 8787 to the internet: without TLS the admin token and the TVs'
+device tokens travel in clear text.
 
 ## 2. Install the server
 
-**Node.js 22.13 or newer**, installed system-wide (`/usr/bin/node` or `/usr/local/bin/node`). A Node installed by
+**Node.js 22.13 or newer**, installed system-wide (`/usr/bin/node` or `/usr/local/bin/node`): a Node installed by
 a version manager inside a home directory (nvm, mise, fnm) is invisible to the service. Use your distribution's
-package if it is recent enough (`node --version`), otherwise the [nodejs.org](https://nodejs.org/en/download)
-binaries or the NodeSource packages. Node 24 LTS is a good choice.
+package if it is recent enough (`node --version`), else the [nodejs.org](https://nodejs.org/en/download) binaries
+or the NodeSource packages. Node 24 LTS is a good choice.
 
-**The package:** download `izle-server-X.Y.Z.tgz` and `SHA256SUMS` from the GitHub release and check it:
-
-```bash
-sha256sum --check --ignore-missing SHA256SUMS
-```
-
-(From a checkout instead: `npm ci && npm run pack:server` writes the same file to `dist/`.)
-
-The package has no dependencies: the server and its libraries are bundled in one file, so installing downloads
-nothing else and needs no build tools. It contains the server, the admin page, the sample catalog and the example
-files used below (`deploy/`).
+**The package:** download `izle-server-X.Y.Z.tgz` and `SHA256SUMS` from the GitHub release and check it with
+`sha256sum --check --ignore-missing SHA256SUMS` (from a checkout, `npm ci && npm run pack:server` writes the same
+file to `dist/`). It has no dependencies (the server and its libraries are bundled in one file), so installing
+downloads nothing else and needs no build tools. It contains the server, the admin page, the sample catalog and the
+example files used below (`deploy/`).
 
 ```bash
 sudo useradd --system --user-group --home-dir /var/lib/izle --shell /usr/sbin/nologin izle
@@ -60,23 +54,23 @@ The example ([`izle.example.json`](izle.example.json)) is set up for HTTPS behin
 |---|---|---|
 | `listen` | `127.0.0.1:8787` | use `"host": "0.0.0.0"` for the LAN-only setup |
 | `publicUrl` | `https://izle.example.org` | the address izle is reached at; `izle-server admin-token --link` builds the admin sign-in link on it |
-| `trustedProxies` | `127.0.0.1`, `::1` | reverse proxies whose `X-Forwarded-For` names the real client (addresses or CIDR ranges), so the pairing rate limit and the admin sign-in throttle count each client separately. Leave it empty (`[]`) when nothing sits in front of the server |
+| `trustedProxies` | `127.0.0.1`, `::1` | reverse proxies whose `X-Forwarded-For` names the real client (addresses or CIDR ranges), so the pairing rate limit and the admin sign-in throttle count each client separately. `[]` when nothing sits in front of the server |
 | `dataDir` | `/var/lib/izle` | database, admin token, the resolver module's directory |
 | `catalog.dir` | (absent) | absent = the sample catalog in the package; see below for your own |
 | `resolver` | `null` | your resolver module, see below |
 | `defaults` | `en` / `en` | menu and audio language for TVs without their own setting (`tr` for Turkish) |
 
-The full reference is in [server-api-v1.md § Configuration](../spec/server-api-v1.md#configuration). Unknown keys
-are errors, and relative paths resolve against the config file's directory. The file is readable by the `izle`
-group only because a resolver module's `config` may contain keys.
+Full reference: [server-api-v1.md § Configuration](../spec/server-api-v1.md#configuration). Unknown keys are errors,
+and relative paths resolve against the config file's directory. Only the `izle` group can read the file because a
+resolver module's `config` may contain keys.
 
 ### Your own catalog
 
 A catalog bundle is a directory (`bundle.json`, `items.json`, `assets/`; see
 [catalog-bundle-v1.md](../spec/catalog-bundle-v1.md)). Keep it outside the package, under `/srv/izle`, readable by
-everyone. The server only reads it.
-
-The recommended layout keeps every build in its own directory and a symlink, `current`, on the active one:
+everyone; the server only reads it. The recommended layout keeps every build in its own directory and a relative
+symlink, `current`, on the active one (relative, so it also resolves inside a container, §9). Any directory names
+work; the bundle's `buildId` is a convenient one.
 
 ```
 /srv/izle/catalog/
@@ -84,9 +78,6 @@ The recommended layout keeps every build in its own directory and a symlink, `cu
   builds/20261014-7a8b9c0d1e2f/
   current -> builds/20261014-7a8b9c0d1e2f
 ```
-
-Any directory names work; the bundle's `buildId` (in `bundle.json`) is a convenient one. Keep the link relative
-(`builds/…`), so it also resolves inside a container (§9).
 
 ```bash
 B=20261014-7a8b9c0d1e2f
@@ -98,7 +89,8 @@ sudo ln -s builds/$B /srv/izle/catalog/current
 
 Then add `"catalog": { "dir": "/srv/izle/catalog/current" }` to the config.
 
-**To publish a new build**, put it next to the others, validate it, swap the link, and reload:
+**To publish a new build**, put it next to the others, validate it, swap the link and reload (or press **Reload
+from disk** on the admin page's Catalog tab instead of the last line):
 
 ```bash
 B=20261015-3c4d5e6f7a8b
@@ -109,30 +101,27 @@ sudo mv -T /srv/izle/catalog/current.new /srv/izle/catalog/current
 sudo systemctl reload izle
 ```
 
-Instead of the last line you can press **Reload from disk** on the admin page's Catalog tab. `mv -T` replaces the
-link in one step, so the server never sees a half-copied build. The server keeps `catalog.dir` as configured (it
-does not resolve the link), so each reload reads whichever build `current` points at.
+`mv -T` replaces the link in one step, so the server never sees a half-copied build. The server keeps `catalog.dir`
+as configured (it does not resolve the link), so each reload reads whichever build `current` points at.
 
 - **An invalid bundle is refused** on reload and the previous build stays active. `systemctl reload` does not tell
   you: check `journalctl -u izle -n 5`, or use the admin page's button, which lists the problems. Then point
   `current` back at the previous build: the server reads posters through the link, and a restart would load
   whatever it points at.
-- **To roll back**, point `current` at an older build and reload.
-- **Old builds** can be deleted once you no longer want to go back to them; the server reads only the one behind
-  `current`.
+- **To roll back**, point `current` at an older build and reload. **Old builds** can be deleted once you no longer
+  want to go back to them; the server reads only the one behind `current`.
 
 Progress and home lists survive new builds because catalog ids are durable. Coming from a single directory at
 `/srv/izle/catalog`: move it to `/srv/izle/catalog/builds/<buildId>`, create the link, change `catalog.dir`, and
 restart. A single directory still works (copy the new build next to it, validate it, swap the directories, reload),
-but it leaves no simple way back.
+but leaves no simple way back.
 
 ### A resolver module
 
 Catalogs whose streams are resolved at play time need the owner's resolver module
-([resolver-module-v1.md](../spec/resolver-module-v1.md),
-[example](../../server/examples/resolver-example/README.md)). It is plain JavaScript (an ES module; the package
-does not run TypeScript) loaded from a local path. The server never downloads code. Put it in
-`/srv/izle/resolver/`, owned by root, and configure it:
+([resolver-module-v1.md](../spec/resolver-module-v1.md), [example](../../server/examples/resolver-example/README.md)):
+plain JavaScript (an ES module; the package does not run TypeScript) loaded from a local path. The server never
+downloads code. Put it in `/srv/izle/resolver/`, owned by root, and configure it:
 
 ```json
 "resolver": { "module": "/srv/izle/resolver/index.js", "config": { } }
@@ -145,16 +134,16 @@ provides every adapter the catalog needs:
 sudo -u izle /opt/izle/bin/izle-server check-resolver --config /etc/izle/izle.json
 ```
 
-The server loads the module once, when it starts. **A new module file needs `sudo systemctl restart izle`**;
+The server loads the module once, at start: **a new module file needs `sudo systemctl restart izle`**;
 `systemctl reload izle` re-reads the catalog only. A catalog build that needs an adapter the running module does
 not provide is refused on reload, so install the new module first, check it, and restart.
 
 ### Letting a job on the host publish builds
 
-When a script or timer on the same machine produces the catalog builds, it can publish them itself, without sudo:
-give it its own system user that owns `/srv/izle/catalog` and a copy of the admin token, and let it ask the server
-to reload through the admin API. Set this up once the service runs (§4) and has created its admin token (§5). The
-user is called `izle-publish` here; any name works.
+A script or timer on the same machine that produces catalog builds can publish them itself, without sudo: give it
+its own system user that owns `/srv/izle/catalog` and a copy of the admin token, and let it ask the server to reload
+through the admin API. Set this up once the service runs (§4) and has created its admin token (§5). The user is
+called `izle-publish` here; any name works.
 
 ```bash
 sudo useradd --system --user-group --create-home --home-dir /var/lib/izle-publish --shell /usr/sbin/nologin izle-publish
@@ -162,9 +151,8 @@ sudo chown -R izle-publish:izle-publish /srv/izle/catalog
 sudo install -m 0600 -o izle-publish -g izle-publish /var/lib/izle/admin.token /var/lib/izle-publish/admin.token
 ```
 
-- **Permissions:** the job creates directories with mode 0755 and files with 0644 (a umask of 022, the default),
-  so the `izle` service can read every build. The service itself stays read-only on `/srv` (`ProtectSystem=strict`
-  in the unit).
+- **Permissions:** with the default umask of 022 the job creates directories with mode 0755 and files with 0644,
+  so the `izle` service can read every build. The service itself stays read-only on `/srv` (`ProtectSystem=strict`).
 - **The token copy** is readable by `izle-publish` only. After `izle-server admin-token --rotate` (§5), copy it
   again with the last command above.
 - **Publishing** is the sequence from [Your own catalog](#your-own-catalog), run as `izle-publish` without `sudo`,
@@ -211,19 +199,17 @@ systemctl status izle
 curl -s http://127.0.0.1:8787/healthz          # {"ok":true}
 ```
 
-The unit ([`izle.service`](izle.service)) runs the server as `izle` with a tight sandbox (`systemd-analyze security
-izle` rates it around 1.4, "OK"): the whole file system is read-only except `/var/lib/izle`, home directories are hidden,
-and there are no capabilities and no privileged system calls. Keep the catalog and resolver module outside
-`/home` for that reason. If `node` is not on systemd's default `PATH`, give its full path:
-`ExecStart=/usr/local/bin/node /opt/izle/bin/izle-server --config /etc/izle/izle.json` (`sudo systemctl edit
---full izle`).
+The unit ([`izle.service`](izle.service)) runs the server as `izle` in a tight sandbox (`systemd-analyze security
+izle` rates it around 1.4, "OK"): the whole file system is read-only except `/var/lib/izle`, home directories are
+hidden (so keep the catalog and resolver module outside `/home`), and there are no capabilities and no privileged
+system calls. If `node` is not on systemd's default `PATH`, give its full path with `sudo systemctl edit --full izle`:
+`ExecStart=/usr/local/bin/node /opt/izle/bin/izle-server --config /etc/izle/izle.json`.
 
 - **Logs:** one JSON object per line: `journalctl -u izle -f`, or only problems:
   `journalctl -u izle -o cat | jq -c 'select(.level != "info")'`. The log never contains stream URLs, upstream
   headers or tokens. On Node 22 a single "SQLite is an experimental feature" warning at start is expected.
-- **Catalog reload:** `sudo systemctl reload izle` (SIGHUP) re-reads the catalog only.
-- **Restart after a config change or a new resolver module:** `sudo systemctl restart izle`. TVs reconnect on
-  their own.
+- **`sudo systemctl reload izle`** (SIGHUP) re-reads the catalog only; **`sudo systemctl restart izle`** after a
+  config change or a new resolver module. TVs reconnect on their own.
 
 ## 5. The admin token and the admin page
 
@@ -237,20 +223,15 @@ Open `http://<server>:8787/admin/` (or `https://izle.example.org/admin/`) and si
 password: it controls every TV. The page keeps it in the browser's local storage, so use **Sign out** on shared
 computers.
 
-**From a phone**, skip the typing: `--link` prints a sign-in link and the same link as a QR code to scan with the
-phone's camera. The link uses `publicUrl` from the config (or `--base <url>` for another address); the token sits in
-the URL fragment, which browsers never send anywhere, and the page removes it from the address bar as soon as it is
-signed in. The link is as secret as the token itself. The QR code is drawn for a dark terminal; on a light one it
-appears inverted, which phone cameras usually read anyway.
+**From a phone**, add `--link`: it prints a sign-in link and the same link as a QR code to scan with the phone's
+camera. The link uses `publicUrl` from the config (or `--base <url>`); the token sits in the URL fragment, which
+browsers never send anywhere, and the page removes it from the address bar once signed in. The link is as secret as
+the token. The QR code is drawn for a dark terminal; on a light one it appears inverted, which phone cameras usually
+read anyway.
 
-```bash
-sudo -u izle /opt/izle/bin/izle-server admin-token --config /etc/izle/izle.json --link
-```
-
-**A passphrase instead of the random token:** the server accepts any token of 24 characters or more without spaces,
-so a memorable one such as `correct-horse-battery-staple-9` works for typing on a phone. Put it in the token file
-(`IZLE_ADMIN_TOKEN` in the unit's environment works too, but then the shell commands below need it as well) and
-restart:
+**A passphrase instead of the random token:** any token of 24 characters or more without spaces is accepted, so a
+memorable one such as `correct-horse-battery-staple-9` works for typing on a phone. Put it in the token file
+(`IZLE_ADMIN_TOKEN` in the unit's environment works too, but then the shell commands need it as well) and restart:
 
 ```bash
 echo 'correct-horse-battery-staple-9' | sudo -u izle tee /var/lib/izle/admin.token > /dev/null
@@ -258,7 +239,7 @@ sudo systemctl restart izle
 ```
 
 Guessing is throttled: after 10 wrong tokens from one address within 10 minutes, the server refuses every admin
-request from that address, even one with the right token, until the 10 minutes are over. Each wrong token is logged as
+request from that address, even with the right token, until the 10 minutes are over. Each wrong token is logged as
 a warning ("admin auth failed") with the address it came from.
 
 To replace the token with a new random one (every signed-in browser has to sign in again):
@@ -296,14 +277,14 @@ What the [Caddyfile](Caddyfile) does and why:
 - No access log and no `encode`: request paths contain media-proxy session tokens and pairing codes, and
   compression would buffer the event stream.
 - The commented `@admin_outside` block answers the admin page and admin API only from private addresses (your LAN,
-  or a VPN such as WireGuard/Tailscale). TVs never use those routes, so this does not affect them.
+  or a VPN such as WireGuard/Tailscale). TVs never use those routes.
 
-Another reverse proxy works too if it does the same: no response buffering for `/api/v1/tv/events` (nginx:
+Another reverse proxy works if it does the same: no response buffering for `/api/v1/tv/events` (nginx:
 `proxy_buffering off;`), read timeouts above 60 s (the server sends an event-stream ping every 20 s), and the
 client address in `X-Forwarded-For`.
 
-Older TVs: Android 7.0 does not know Let's Encrypt's root certificates. The app carries them itself, so a TV on
-7.0 works with a Caddy certificate too.
+Android 7.0 does not know Let's Encrypt's root certificates; the app carries them itself, so a TV on 7.0 works with
+a Caddy certificate too.
 
 ## 7. Firewall
 
@@ -322,12 +303,11 @@ The release has two APKs:
 
 - **`izle-tv-X.Y.Z.apk`**, signed with the project's release key (present when the release workflow has one; see
   [releasing.md](../releasing.md)). Use this one on a TV: every later release installs over it and keeps the
-  pairing.
+  pairing. Without a release key, build a signed APK yourself
+  ([releasing.md](../releasing.md#android-release-signing)).
 - **`izle-tv-X.Y.Z-debug.apk`**, for trying izle and for the emulator. It is signed with a throwaway key, so a later
   APK cannot be installed over it: uninstall it first, and the TV has to be paired again (as a new TV). Its server
   address field starts with the emulator's `http://10.0.2.2:8787`.
-
-If there is no release key, build a signed APK yourself as described in [releasing.md](../releasing.md#android-release-signing).
 
 **With adb over the network** (any Android TV / Google TV):
 
@@ -349,7 +329,7 @@ asked. A USB stick and any file manager work the same way.
 **First start:** the app asks for the server address (`http://192.168.1.10:8787` or `https://izle.example.org`),
 then shows a 6-digit pairing code and the admin page's address. On the admin page (**TVs**), approve the waiting
 code (a name is optional; the TV is called "TV" otherwise and can be renamed later), then add shows to that TV's
-home screen. The tiles appear on the TV right away. From the server's shell the same approval is
+home screen; the tiles appear on the TV right away. From the server's shell the same approval is
 `sudo -u izle /opt/izle/bin/izle-server pair approve 483920 Living room --config /etc/izle/izle.json`
 (`pair pending` lists the waiting codes). Put izle first in the TV launcher's favourites so it is the first thing
 on screen.
@@ -377,18 +357,18 @@ docker run -d --name izle --restart unless-stopped -p 8787:8787 \
 
 with `"listen": { "host": "0.0.0.0", "port": 8787 }`, `"dataDir": "/var/lib/izle"` and
 `"catalog": { "dir": "/srv/izle/catalog/current" }` in that file (the layout of §3; mount the whole
-`/srv/izle/catalog` so the relative `current` link resolves in the container). `docker kill -s HUP izle` reloads the
-catalog only; a new resolver module (mounted the same way) needs `docker restart izle`. Behind a
-reverse proxy in another container, publish no port (or bind it to `127.0.0.1:8787:8787`) and set
-`trustedProxies` to the Docker network's range, e.g. `["172.16.0.0/12"]`. To update, rebuild the image from the
-new release's sources and recreate the container. The volume keeps the data.
+`/srv/izle/catalog` so the relative `current` link resolves). `docker kill -s HUP izle` reloads the catalog only; a
+new resolver module (mounted the same way) needs `docker restart izle`. Behind a reverse proxy in another container,
+publish no port (or bind it to `127.0.0.1:8787:8787`) and set `trustedProxies` to the Docker network's range, e.g.
+`["172.16.0.0/12"]`. To update, rebuild the image from the new release's sources and recreate the container; the
+volume keeps the data.
 
 ## 10. Updates and backups
 
-**Back up** the database, the admin token (`/var/lib/izle/admin.token`), `/etc/izle` and `/srv/izle`. The database
-changes all the time; copy it with `izle-server backup`, which takes a consistent snapshot while the service keeps
-running (copying `izle.db` by hand is not enough: recent changes sit in `izle.db-wal` next to it). The copy is a
-single file, readable by the `izle` user only:
+**Back up** the database, the admin token (`/var/lib/izle/admin.token`), `/etc/izle` and `/srv/izle`. Copy the
+database with `izle-server backup`, which takes a consistent snapshot while the service keeps running (copying
+`izle.db` by hand is not enough: recent changes sit in `izle.db-wal` next to it). The copy is a single file,
+readable by the `izle` user only:
 
 ```bash
 sudo -u izle mkdir -p /var/lib/izle/backups
@@ -410,8 +390,8 @@ sudo systemctl start izle-backup && ls -l /var/lib/izle/backups      # a first c
 **With Docker:** `docker exec izle izle-server backup --force --config /etc/izle/izle.json /var/lib/izle/backup.db &&
 docker cp izle:/var/lib/izle/backup.db ./izle-$(date +%F).db`.
 
-**Restore** a copy with the service stopped. Remove the write-ahead files of the database being replaced, so they are
-not applied to the restored one. TVs paired after the copy was taken have to pair again.
+**Restore** a copy with the service stopped, removing the write-ahead files of the database being replaced so they
+are not applied to the restored one. TVs paired after the copy was taken have to pair again.
 
 ```bash
 sudo systemctl stop izle
@@ -429,14 +409,13 @@ sudo systemctl restart izle
 journalctl -u izle -n 5 -o cat                  # "listening" with the new version
 ```
 
-The database is migrated on start. An older server refuses a database a newer one has migrated, so to go back,
+The database is migrated on start, and an older server refuses a database a newer one has migrated: to go back,
 install the older package **and** restore the copy taken before the update (`before-X.Y.Z.db`). The admin page's
 Catalog tab shows the running server version. Update the server before the TVs: a newer app may report fields an
 older server rejects (the app then falls back, but the first report after each start is lost).
 
-**Update the catalog or the resolver module:** a new catalog build needs only a reload ([§3](#your-own-catalog));
-`systemctl reload izle` re-reads the catalog and nothing else. A new resolver module file needs
-`sudo systemctl restart izle`; check it first with `check-resolver` ([§3](#a-resolver-module)).
+A new catalog build needs only a reload ([§3](#your-own-catalog)); a new resolver module needs a restart
+([§3](#a-resolver-module)).
 
 ## 11. Troubleshooting
 
@@ -448,5 +427,5 @@ older server rejects (the app then falls back, but the first report after each s
 | A reload refuses a build for an adapter the new resolver module provides | the module is loaded at start only: `sudo systemctl restart izle` |
 | The TV shows "No connection" behind a proxy | buffering or a short timeout on `/api/v1/tv/events`; `curl -N https://<domain>/api/v1/tv/events` should answer `401` at once, not hang |
 | The TV's pairing screen says to wait, and the log shows `429` on `/api/v1/pair/start` | many pairing attempts from one address; behind a proxy, check `trustedProxies` |
-| `429` on admin routes after wrong tokens ("Too many wrong admin tokens" on the admin page) | 10 wrong tokens from one address within 10 minutes lock it out, even with the right token: wait 10 minutes. Behind a proxy, check `trustedProxies` (otherwise every client shares the proxy's address). The log's warnings (§4) show where the attempts came from |
+| `429` on admin routes after wrong tokens ("Too many wrong admin tokens" on the admin page) | 10 wrong tokens from one address within 10 minutes lock it out, even with the right token: wait 10 minutes. Behind a proxy, check `trustedProxies` (otherwise every client shares the proxy's address). The log's warnings (§5) show where the attempts came from |
 | An Android 7 TV cannot reach an HTTPS server | a certificate from a CA other than the TV's or Let's Encrypt's roots; use Caddy's default issuer |
