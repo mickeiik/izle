@@ -1,67 +1,23 @@
-/* izle admin page. Tokens first (colours for light and dark, then the spacing, type and radius scales and the layout
-   constants); the rules below take their colours, spacing, type sizes and radii from them, and spell out only
-   one-off sizes: border and outline widths, a few widths and heights, em offsets and the breakpoints. Served under
-   `style-src 'self'`: there are no inline styles, progress widths are set through CSSOM. */
+/* izle admin page. Tokens first; the rules take their colours, spacing, type sizes and radii from them and spell out
+   only one-off sizes. Served under `style-src 'self'`: no inline styles, progress widths are set through CSSOM. */
 
 :root {
   /* Colours. Text pairs reach WCAG AA (4.5:1); --line-strong (control borders) and --focus reach 3:1 against
      --surface and --bg. */
-  --bg: #f4f5f7;
-  --surface: #ffffff;
-  --hover: #eceff3;
-  --text: #1b1e24;
-  --muted: #576070;
-  --line: #dde1e7;
-  --line-strong: #868d99;
-  --accent: #1d4e89;
-  --accent-hover: #163d6c;
-  --accent-text: #ffffff;
-  --accent-soft: #e2eaf5;
-  --focus: var(--accent);
-  --ok: #146639;
-  --ok-bg: #e0f3e8;
-  --warn: #7a4f00;
-  --warn-bg: #fdf0d5;
-  --info: #1d4e89;
-  --info-bg: var(--accent-soft);
-  --danger: #b3261e;
-  --danger-bg: #fbe4e2;
-  --on-danger: #ffffff;
+  --bg: #f4f5f7; --surface: #ffffff; --hover: #eceff3; --text: #1b1e24; --muted: #576070;
+  --line: #dde1e7; --line-strong: #868d99;
+  --accent: #1d4e89; --accent-hover: #163d6c; --accent-text: #ffffff; --accent-soft: #e2eaf5; --focus: var(--accent);
+  --ok: #146639; --ok-bg: #e0f3e8; --warn: #7a4f00; --warn-bg: #fdf0d5; --info: #1d4e89; --info-bg: var(--accent-soft);
+  --danger: #b3261e; --danger-bg: #fbe4e2; --on-danger: #ffffff;
   --shadow: 0 1px 2px rgb(0 0 0 / 6%), 0 2px 8px rgb(0 0 0 / 4%);
 
-  /* Spacing */
-  --space-0: 0.125rem;
-  --space-1: 0.25rem;
-  --space-2: 0.5rem;
-  --space-3: 0.75rem;
-  --space-4: 1rem;
-  --space-5: 1.5rem;
-  --space-6: 2rem;
+  --space-0: 0.125rem; --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem; --space-5: 1.5rem;
   --space-7: 3rem;
-
   /* Type: card titles (lg) stand above row titles (md, semibold) and secondary text (sm, xs) */
-  --text-xs: 0.8125rem;
-  --text-sm: 0.875rem;
-  --text-md: 1rem;
-  --text-lg: 1.1875rem;
-  --text-xl: 1.375rem;
-  --text-2xl: 1.75rem;
-  --leading: 1.45;
-  --leading-tight: 1.2;
-
-  /* Radius */
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 12px;
-  --radius-full: 999px;
-
-  /* Layout */
-  --header-h: 3.5rem;
-  --sections-h: 3.25rem;
-  --page-w: 60rem;
-  --measure: 30rem;
-  --poster-w: 3.5rem;
-  --control-h: 2.5rem;
+  --text-xs: 0.8125rem; --text-sm: 0.875rem; --text-md: 1rem; --text-lg: 1.1875rem; --text-2xl: 1.75rem;
+  --leading: 1.45; --leading-tight: 1.2;
+  --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px; --radius-full: 999px;
+  --header-h: 3.5rem; --sections-h: 3.25rem; --page-w: 60rem; --measure: 30rem; --poster-w: 3.5rem; --control-h: 2.5rem;
 
   color-scheme: light dark;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
@@ -71,31 +27,16 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #111318;
-    --surface: #1b1e25;
-    --hover: #262a33;
-    --text: #e8eaee;
-    --muted: #a3aab6;
-    --line: #2e333d;
-    --line-strong: #6f7785;
-    --accent: #79b0ef;
-    --accent-hover: #9cc4f4;
-    --accent-text: #0b1f3a;
-    --accent-soft: #1d3150;
-    --ok: #74d6a0;
-    --ok-bg: #173325;
-    --warn: #f2c46b;
-    --warn-bg: #3a2c10;
-    --info: #9cc4f2;
-    --danger: #f3a39c;
-    --danger-bg: #3d1a18;
-    --on-danger: #2a0b09;
+    --bg: #111318; --surface: #1b1e25; --hover: #262a33; --text: #e8eaee; --muted: #a3aab6;
+    --line: #2e333d; --line-strong: #6f7785;
+    --accent: #79b0ef; --accent-hover: #9cc4f4; --accent-text: #0b1f3a; --accent-soft: #1d3150;
+    --ok: #74d6a0; --ok-bg: #173325; --warn: #f2c46b; --warn-bg: #3a2c10; --info: #9cc4f2;
+    --danger: #f3a39c; --danger-bg: #3d1a18; --on-danger: #2a0b09;
     --shadow: none;
   }
 }
 
 /* --- base ------------------------------------------------------------------------------------------------------ */
-
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); }
 a { color: var(--accent); text-underline-offset: 0.15em; }
@@ -126,7 +67,6 @@ h1:focus-visible, h2:focus-visible { outline: 3px solid var(--focus); outline-of
 .error { color: var(--danger); }
 
 /* --- header ---------------------------------------------------------------------------------------------------- */
-
 header.top {
   display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
   height: var(--header-h); padding: 0 var(--space-4); background: var(--surface); border-bottom: 1px solid var(--line);
@@ -145,7 +85,6 @@ header.top {
 #nav #signout { color: var(--muted); }
 
 /* --- page ------------------------------------------------------------------------------------------------------ */
-
 main { max-width: var(--page-w); margin: 0 auto; padding: var(--space-4); }
 .back { margin: 0 0 var(--space-2); }
 .title { display: flex; align-items: center; gap: var(--space-2) var(--space-3); flex-wrap: wrap; margin: var(--space-1) 0 var(--space-4); }
@@ -176,7 +115,6 @@ input[type="search"] ~ * > .callout:first-child { margin-top: var(--space-3); }
 .callout ul { margin: var(--space-2) 0 0; padding-left: var(--space-5); }
 
 /* --- sticky section nav (a TV's page) -------------------------------------------------------------------------- */
-
 .sticky {
   position: sticky; top: var(--header-h); z-index: 4;
   margin: 0 calc(-1 * var(--space-4)) var(--space-4); padding: var(--space-2) var(--space-4);
@@ -192,7 +130,6 @@ input[type="search"] ~ * > .callout:first-child { margin-top: var(--space-3); }
 .sections-nav button[aria-current="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 
 /* --- controls -------------------------------------------------------------------------------------------------- */
-
 button {
   font: inherit; line-height: var(--leading-tight); cursor: pointer;
   border-radius: var(--radius-md); border: 1px solid var(--line-strong); background: var(--surface); color: var(--text);
@@ -238,7 +175,6 @@ label { display: block; font-weight: 600; margin: var(--space-4) 0 var(--space-1
 input[type="checkbox"] { width: 1.25rem; height: 1.25rem; min-height: 0; padding: 0; margin: 0; flex: none; accent-color: var(--accent); }
 
 /* --- lists and rows -------------------------------------------------------------------------------------------- */
-
 .list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .list > * { border-top: 1px solid var(--line); padding-block: var(--space-3); }
 .list > :first-child { border-top: none; padding-top: 0; }
@@ -278,12 +214,10 @@ input[type="checkbox"] { width: 1.25rem; height: 1.25rem; min-height: 0; padding
 .bar > span { display: block; height: 100%; width: 0; background: var(--accent); }
 
 /* --- TVs ------------------------------------------------------------------------------------------------------- */
-
 .pair .code { font-size: var(--text-2xl); font-weight: 700; letter-spacing: 0.08em; font-variant-numeric: tabular-nums; min-width: 7rem; }
 .pair .grow { display: flex; flex-direction: column; gap: var(--space-1); }
 
 /* --- a TV's page ----------------------------------------------------------------------------------------------- */
-
 .now-state { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-1); }
 .now > strong { display: block; font-size: var(--text-lg); font-weight: 600; }
 .remote { justify-content: flex-start; margin-top: var(--space-4); }
@@ -321,7 +255,6 @@ th { font-size: var(--text-sm); font-weight: 600; color: var(--muted); border-to
 .companion .status.synced { color: var(--ok); }
 
 /* --- catalog --------------------------------------------------------------------------------------------------- */
-
 .facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-2) var(--space-4); margin: 0; }
 .facts dt { color: var(--muted); }
 .facts dd { margin: 0; overflow-wrap: anywhere; }
@@ -343,7 +276,6 @@ summary { cursor: pointer; }
 .summary + .diag { margin-top: 0; }
 
 /* --- toasts ---------------------------------------------------------------------------------------------------- */
-
 #toasts {
   position: fixed; bottom: var(--space-4); left: 50%; transform: translateX(-50%); z-index: 10;
   display: flex; flex-direction: column; gap: var(--space-2); width: min(92vw, 34rem); pointer-events: none;
@@ -360,7 +292,6 @@ summary { cursor: pointer; }
 .toast .toast-close:focus-visible { outline-color: currentColor; }
 
 /* --- phones ---------------------------------------------------------------------------------------------------- */
-
 @media (max-width: 640px) {
   main { padding: var(--space-3); }
   header.top { padding: 0 var(--space-3); gap: var(--space-2); }
@@ -376,6 +307,4 @@ summary { cursor: pointer; }
   .facts dt:first-child { margin-top: 0; }
   .show-head .poster { width: 6rem; }
 }
-@media (max-width: 380px) {
-  .brand span { display: none; }
-}
+@media (max-width: 380px) { .brand span { display: none; } }
