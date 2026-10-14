@@ -15,7 +15,7 @@ coil = "3.6.3"
 junit = "4.13.2"
 robolectric = "4.17"
 # Robolectric's SDK 36 framework jar, as Robolectric 4.17 names it (DefaultSdkProvider): bump together with robolectric.
-robolectricAndroidAll = "16-robolectric-13921718-i7"
+robolectricAndroidAll = "17-robolectric-15733970-i7"
 androidxTestCore = "1.7.0"
 
 [libraries]
