@@ -29,7 +29,7 @@ class CommandPlanTest {
         for (menuOpen in listOf(false, true)) {
             assertEquals(listOf(Action.Play("show", "show.e2")), CommandPlan.actions(play, Screen.Home, PlayerPhase.Idle, menuOpen))
             assertEquals(listOf(Action.ShowMessage(message)), CommandPlan.actions(message, Screen.Home, PlayerPhase.Idle, menuOpen))
-            for (command in transport + RemoteCommand.Stop) {
+            for (command in transport + RemoteCommand.Stop + RemoteCommand.Ignored("play")) {
                 assertEquals("$command", emptyList<Action>(), CommandPlan.actions(command, Screen.Home, PlayerPhase.Idle, menuOpen))
             }
         }
@@ -50,6 +50,7 @@ class CommandPlanTest {
         assertEquals(listOf(Action.Exit), onVideo(RemoteCommand.Stop, menuOpen = true))
         assertEquals(listOf(Action.Play("show", "show.e2")), onVideo(play, menuOpen = true))
         assertEquals(listOf(Action.ShowMessage(message)), onVideo(message, menuOpen = true))
+        assertEquals("an unknown command does nothing", emptyList<Action>(), onVideo(RemoteCommand.Ignored("launch"), menuOpen = true))
     }
 
     @Test
@@ -72,11 +73,5 @@ class CommandPlanTest {
                 assertEquals("$command on $screen", emptyList<Action>(), CommandPlan.actions(command, screen, PlayerPhase.Idle, menuOpen = false))
             }
         }
-    }
-
-    @Test
-    fun anUnknownCommandDoesNothing() {
-        assertEquals(emptyList<Action>(), onVideo(RemoteCommand.Ignored("launch"), menuOpen = true))
-        assertEquals(emptyList<Action>(), CommandPlan.actions(RemoteCommand.Ignored("play"), Screen.Home, PlayerPhase.Idle, menuOpen = false))
     }
 }
