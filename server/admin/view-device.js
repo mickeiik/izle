@@ -160,16 +160,16 @@ function sectionNav(scope, sections) {
     queued = false;
     if (!nav.isConnected || nav.closest("[hidden]")) return;
     const line = nav.getBoundingClientRect().bottom + 32;
+    // The last section whose top passed under the bar; at the bottom of the page, where the last sections never
+    // reach the bar, the last one in view (if any is).
     let at = 0;
+    let inView = -1;
     sections.forEach(([, s], i) => {
-      if (s.getBoundingClientRect().top <= line) at = i;
+      const top = s.getBoundingClientRect().top;
+      if (top <= line) at = i;
+      if (top < window.innerHeight) inView = i;
     });
-    // At the bottom of the page the last sections never reach the top: the last one in view counts.
-    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4) {
-      sections.forEach(([, s], i) => {
-        if (s.getBoundingClientRect().top < window.innerHeight) at = i;
-      });
-    }
+    if (inView >= 0 && window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4) at = inView;
     if (at === current) return;
     current = at;
     buttons.forEach((b, i) => (i === at ? b.setAttribute("aria-current", "true") : b.removeAttribute("aria-current")));

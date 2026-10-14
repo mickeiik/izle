@@ -9,6 +9,51 @@ import { buildSummary, catalogSearchPath, errorText, formatRelative, groupEpisod
 /** Builds listed before the rest fold away. */
 const BUILDS_SHOWN = 5;
 
+/**
+ * What a build changed, for the detail under the build list: new and removed shows and episodes.
+ * @param {any} b the build (an entry of the catalog's `builds`)
+ * @param {any} changes its changes (GET /admin/catalog/builds/<id>)
+ */
+function buildDetail(b, changes) {
+  const head = h("h3", null, "Changes in build ", h("code", null, b.buildId));
+  if (b.baseline) {
+    return h("div", null, head, h("p", { class: "muted" }, "The first build this server loaded for this catalog: everything in it was already there, so nothing in it counts as new."));
+  }
+  // Shows that are new (or gone) are listed as shows; their episodes are not repeated under episodes.
+  const newShows = new Set(changes.items.added.map((/** @type {any} */ i) => i.id));
+  const goneShows = new Set(changes.items.removed.map((/** @type {any} */ i) => i.id));
+  const added = groupEpisodeChanges(changes.episodes.added);
+  const episodeCount = new Map(added.map((g) => [g.itemId, g.episodes.length]));
+  const groupLine = (/** @type {{ title: string, episodes: string[] }} */ g) => h("div", null, h("strong", null, g.title), ` — ${g.episodes.join(", ")}`);
+  /** @type {Array<[string, HTMLElement[]]>} */
+  const sections = [
+    ["New episodes", added.filter((g) => !newShows.has(g.itemId)).map(groupLine)],
+    [
+      "New shows",
+      changes.items.added.map((/** @type {any} */ i) =>
+        h("div", null, h("strong", null, i.title), i.kind === "series" && episodeCount.has(i.id) ? ` · ${plural(episodeCount.get(i.id) ?? 0, "episode")}` : null),
+      ),
+    ],
+    ["Removed shows", changes.items.removed.map((/** @type {any} */ i) => h("div", null, h("strong", null, i.title ?? i.id)))],
+    ["Removed episodes", groupEpisodeChanges(changes.episodes.removed).filter((g) => !goneShows.has(g.itemId)).map(groupLine)],
+  ];
+  const shown = sections.filter(([, lines]) => lines.length > 0);
+  const cut =
+    changes.items.added.length < b.added.items ||
+    changes.items.removed.length < b.removed.items ||
+    changes.episodes.added.length < b.added.episodes ||
+    changes.episodes.removed.length < b.removed.episodes;
+  return h(
+    "div",
+    null,
+    head,
+    shown.length
+      ? h("dl", { class: "facts" }, shown.flatMap(([title, lines]) => [h("dt", null, title), h("dd", null, lines)]))
+      : h("p", { class: "muted" }, "No show or episode was added or removed: this build changed something else, such as titles or sources."),
+    cut ? h("p", { class: "hint" }, "Long lists are cut short; the counts in the list above are exact.") : null,
+  );
+}
+
 /** @param {import("./router.js").Scope} scope */
 export function catalogView(scope) {
   const infoSlot = slot();
@@ -71,47 +116,6 @@ export function catalogView(scope) {
   let buildRows = new Map();
   const detail = h("div", { class: "build-detail", "aria-live": "polite" });
   let detailSeq = 0;
-
-  /** @param {any} b @param {any} changes */
-  const buildDetail = (b, changes) => {
-    const head = h("h3", null, "Changes in build ", h("code", null, b.buildId));
-    if (b.baseline) {
-      return h("div", null, head, h("p", { class: "muted" }, "The first build this server loaded for this catalog: everything in it was already there, so nothing in it counts as new."));
-    }
-    // Shows that are new (or gone) are listed as shows; their episodes are not repeated under episodes.
-    const newShows = new Set(changes.items.added.map((/** @type {any} */ i) => i.id));
-    const goneShows = new Set(changes.items.removed.map((/** @type {any} */ i) => i.id));
-    const added = groupEpisodeChanges(changes.episodes.added);
-    const episodeCount = new Map(added.map((g) => [g.itemId, g.episodes.length]));
-    const groupLine = (/** @type {{ title: string, episodes: string[] }} */ g) => h("div", null, h("strong", null, g.title), ` — ${g.episodes.join(", ")}`);
-    /** @type {Array<[string, HTMLElement[]]>} */
-    const sections = [
-      ["New episodes", added.filter((g) => !newShows.has(g.itemId)).map(groupLine)],
-      [
-        "New shows",
-        changes.items.added.map((/** @type {any} */ i) =>
-          h("div", null, h("strong", null, i.title), i.kind === "series" && episodeCount.has(i.id) ? ` · ${plural(episodeCount.get(i.id) ?? 0, "episode")}` : null),
-        ),
-      ],
-      ["Removed shows", changes.items.removed.map((/** @type {any} */ i) => h("div", null, h("strong", null, i.title ?? i.id)))],
-      ["Removed episodes", groupEpisodeChanges(changes.episodes.removed).filter((g) => !goneShows.has(g.itemId)).map(groupLine)],
-    ];
-    const shown = sections.filter(([, lines]) => lines.length > 0);
-    const cut =
-      changes.items.added.length < b.added.items ||
-      changes.items.removed.length < b.removed.items ||
-      changes.episodes.added.length < b.added.episodes ||
-      changes.episodes.removed.length < b.removed.episodes;
-    return h(
-      "div",
-      null,
-      head,
-      shown.length
-        ? h("dl", { class: "facts" }, shown.flatMap(([title, lines]) => [h("dt", null, title), h("dd", null, lines)]))
-        : h("p", { class: "muted" }, "No show or episode was added or removed: this build changed something else, such as titles or sources."),
-      cut ? h("p", { class: "hint" }, "Long lists are cut short; the counts in the list above are exact.") : null,
-    );
-  };
 
   const selectBuild = async (/** @type {string} */ buildId) => {
     for (const [id, row] of buildRows) {

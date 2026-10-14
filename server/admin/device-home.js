@@ -73,8 +73,15 @@ export function homeCard(ctx) {
     const up = actionButton("▲", { class: "icon", "data-control": "up" }, () => move(-1));
     const down = actionButton("▼", { class: "icon", "data-control": "down" }, () => move(1));
     const play = actionButton("Play", { "data-control": "play" }, () => (entry.continue ? ctx.send({ type: "play", episodeId: entry.continue.episodeId }, "Play") : Promise.resolve()));
-    const picker = h("div", { class: "picker", id: uid("episodes"), hidden: true });
-    const toggle = h("button", { type: "button", "data-control": "episodes", "aria-controls": picker.id, "aria-expanded": "false" }, "Episodes…");
+    // "Continue from here" closes the picker: the focus goes to its toggle.
+    const picker = episodePicker(ctx, itemId, async () => {
+      openPicker = null;
+      await keepFocus(async () => {
+        syncPickers();
+        await ctx.reload();
+      }, toggle);
+    });
+    const toggle = h("button", { type: "button", "data-control": "episodes", "aria-controls": picker.element.id, "aria-expanded": "false" }, "Episodes…");
     toggle.addEventListener("click", () => {
       openPicker = openPicker === itemId ? null : itemId;
       syncPickers();
@@ -84,71 +91,14 @@ export function homeCard(ctx) {
       "li",
       null,
       h("div", { class: "row" }, art, h("div", { class: "grow" }, title, line, barBox), h("div", { class: "buttons" }, up, down, play, toggle, remove)),
-      picker,
+      picker.element,
     );
 
-    let pickerKey = "";
-    let pickerSeq = 0;
-    const loadPicker = async () => {
-      const mine = ++pickerSeq;
-      if (!picker.firstChild) picker.replaceChildren(loading());
-      let states;
-      let kind;
-      try {
-        const [item, prog] = await Promise.all([ctx.scope.read(`/catalog/items/${encodeURIComponent(itemId)}`), ctx.scope.read(`${ctx.path}/progress`)]);
-        kind = item.item.kind;
-        const episodes = /** @type {Array<{ id: string, playbackAllowed: boolean }>} */ (item.item.episodes);
-        states = episodeStates(episodes, entry.continue?.episodeId ?? null, prog.progress.filter((/** @type {any} */ p) => p.itemId === itemId));
-      } catch (err) {
-        if (mine === pickerSeq && ctx.scope.alive()) picker.replaceChildren(loadError(err, loadPicker, "Could not load the episodes."));
-        return;
-      }
-      if (mine !== pickerSeq || picker.hidden) return;
-      const rows = states.map((s) => {
-        const e = /** @type {any} */ (s.episode);
-        const label = episodeName(e, kind);
-        return h(
-          "li",
-          { class: s.current ? "current" : "" },
-          h("span", { class: "grow" }, label),
-          chip(episodeStateLabel(s), s.current ? "ok" : ""),
-          e.playbackAllowed && !s.current
-            ? actionButton("Continue from here", { "data-focus": `continue:${e.id}`, "aria-label": `Continue from here: ${label}` }, async () => {
-                const r = await attempt(() => api("PUT", `${ctx.path}/cursor`, { itemId, episodeId: e.id }), `${name()} continues from ${label}.`);
-                if (!r.ok) return;
-                openPicker = null;
-                await keepFocus(async () => {
-                  syncPickers();
-                  await ctx.reload();
-                }, toggle);
-              })
-            : null,
-          e.playbackAllowed ? actionButton("Play now", { "data-focus": `now:${e.id}`, "aria-label": `Play now: ${label}` }, () => ctx.send({ type: "play", episodeId: e.id }, "Play")) : null,
-        );
-      });
-      await keepFocus(() =>
-        picker.replaceChildren(
-          h("p", { class: "muted" }, "OK on the TV plays the episode marked “next”. Choose where it continues; that episode starts from its beginning."),
-          h("ul", { class: "episodes" }, rows),
-        ),
-      );
-    };
-
-    /** Opens or closes the picker as `openPicker` says; an open one reloads when what OK plays changed. */
+    /** Opens or closes the picker as `openPicker` says. */
     const syncPicker = () => {
       const open = openPicker === itemId;
       toggle.setAttribute("aria-expanded", String(open));
-      const key = JSON.stringify([entry.continue?.episodeId, entry.continue?.status, entry.continue?.positionMs]);
-      if (!open) {
-        picker.hidden = true;
-        picker.replaceChildren();
-        pickerKey = "";
-        pickerSeq++;
-      } else if (picker.hidden || key !== pickerKey) {
-        picker.hidden = false;
-        pickerKey = key;
-        void loadPicker();
-      }
+      picker.sync(entry, open);
     };
 
     return {
@@ -271,4 +221,79 @@ export function homeCard(ctx) {
     resultsArea,
   );
   return { element, update };
+}
+
+/**
+ * The "continue from" picker of a series on the home list: its episodes with what the TV did with each, "Continue
+ * from here" and "Play now". `sync(entry, open)` shows or hides it for the row's current home entry; an open picker
+ * reloads when what OK plays changed.
+ * @param {import("./view-device.js").DeviceContext} ctx
+ * @param {string} itemId
+ * @param {() => Promise<void>} continued runs once "Continue from here" moved where OK continues
+ */
+function episodePicker(ctx, itemId, continued) {
+  const element = h("div", { class: "picker", id: uid("episodes"), hidden: true });
+  /** @type {any} the home entry as of the last `sync` */
+  let entry = null;
+  let key = "";
+  let seq = 0;
+
+  const load = async () => {
+    const mine = ++seq;
+    if (!element.firstChild) element.replaceChildren(loading());
+    let states;
+    let kind;
+    try {
+      const [item, prog] = await Promise.all([ctx.scope.read(`/catalog/items/${encodeURIComponent(itemId)}`), ctx.scope.read(`${ctx.path}/progress`)]);
+      kind = item.item.kind;
+      const episodes = /** @type {Array<{ id: string, playbackAllowed: boolean }>} */ (item.item.episodes);
+      states = episodeStates(episodes, entry.continue?.episodeId ?? null, prog.progress.filter((/** @type {any} */ p) => p.itemId === itemId));
+    } catch (err) {
+      if (mine === seq && ctx.scope.alive()) element.replaceChildren(loadError(err, load, "Could not load the episodes."));
+      return;
+    }
+    if (mine !== seq || element.hidden) return;
+    const rows = states.map((s) => {
+      const e = /** @type {any} */ (s.episode);
+      const label = episodeName(e, kind);
+      return h(
+        "li",
+        { class: s.current ? "current" : "" },
+        h("span", { class: "grow" }, label),
+        chip(episodeStateLabel(s), s.current ? "ok" : ""),
+        e.playbackAllowed && !s.current
+          ? actionButton("Continue from here", { "data-focus": `continue:${e.id}`, "aria-label": `Continue from here: ${label}` }, async () => {
+              const r = await attempt(() => api("PUT", `${ctx.path}/cursor`, { itemId, episodeId: e.id }), `${entry.title ?? itemId} continues from ${label}.`);
+              if (r.ok) await continued();
+            })
+          : null,
+        e.playbackAllowed ? actionButton("Play now", { "data-focus": `now:${e.id}`, "aria-label": `Play now: ${label}` }, () => ctx.send({ type: "play", episodeId: e.id }, "Play")) : null,
+      );
+    });
+    await keepFocus(() =>
+      element.replaceChildren(
+        h("p", { class: "muted" }, "OK on the TV plays the episode marked “next”. Choose where it continues; that episode starts from its beginning."),
+        h("ul", { class: "episodes" }, rows),
+      ),
+    );
+  };
+
+  return {
+    element,
+    /** @param {any} next the row's home entry @param {boolean} open */
+    sync(next, open) {
+      entry = next;
+      const k = JSON.stringify([entry.continue?.episodeId, entry.continue?.status, entry.continue?.positionMs]);
+      if (!open) {
+        element.hidden = true;
+        element.replaceChildren();
+        key = "";
+        seq++;
+      } else if (element.hidden || k !== key) {
+        element.hidden = false;
+        key = k;
+        void load();
+      }
+    },
+  };
 }
