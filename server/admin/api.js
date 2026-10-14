@@ -38,7 +38,7 @@ export function getToken() {
  * Keeps the admin token; returns whether the browser remembers it beyond this tab.
  * @param {string} token
  */
-export function setToken(token) {
+function setToken(token) {
   memoryToken = token;
   return writeStored(TOKEN_KEY, token);
 }

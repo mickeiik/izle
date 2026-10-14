@@ -261,7 +261,7 @@ export function toast(text, kind = "ok") {
 // --- buttons ------------------------------------------------------------------------------------------------------
 
 /** Whether a button is unavailable or busy (`aria-disabled`): its action does nothing. @param {Element} button */
-export const isInert = (button) => button.getAttribute("aria-disabled") === "true";
+const isInert = (button) => button.getAttribute("aria-disabled") === "true";
 
 /** @param {HTMLElement} b */
 function syncInert(b) {
@@ -275,7 +275,7 @@ function syncInert(b) {
  * @param {HTMLElement} button
  * @param {() => Promise<unknown>} fn
  */
-export async function busy(button, fn) {
+async function busy(button, fn) {
   if (button.getAttribute("aria-busy") === "true") return;
   button.setAttribute("aria-busy", "true");
   syncInert(button);
