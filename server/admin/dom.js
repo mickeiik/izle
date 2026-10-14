@@ -9,8 +9,8 @@ import { errorText, plural } from "./lib.js";
  */
 
 /**
- * Creates an element. `on*` props become listeners, `class` the class name, `value`/`checked`/`disabled`/`selected`
- * are set as properties, everything else as attributes (`true` as an empty attribute; null, undefined and false
+ * Creates an element. `on*` props become listeners, `class` the class name, `value`/`disabled`/`selected` are set
+ * as properties, everything else as attributes (`true` as an empty attribute; null, undefined and false
  * leave it out).
  * @template {keyof HTMLElementTagNameMap} K
  * @param {K} tag
@@ -24,7 +24,7 @@ export function h(tag, props, ...children) {
     if (v === undefined || v === null || v === false) continue;
     if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2).toLowerCase(), v);
     else if (k === "class") el.className = v;
-    else if (k === "value" || k === "checked" || k === "disabled" || k === "selected") /** @type {any} */ (el)[k] = v;
+    else if (k === "value" || k === "disabled" || k === "selected") /** @type {any} */ (el)[k] = v;
     else el.setAttribute(k, v === true ? "" : String(v));
   }
   for (const c of children.flat()) if (c !== null && c !== undefined && c !== false) el.append(c instanceof Node ? c : String(c));
@@ -47,7 +47,6 @@ export function setTitle(heading, text) {
 /**
  * @typedef {object} CardOptions
  * @property {string} title
- * @property {string} [id] the section's id (the device page's section nav scrolls to it)
  * @property {Child | Child[]} [aside] next to the title: a count, a button
  * @property {Child | Child[]} [intro] a muted paragraph under the title
  */
@@ -61,8 +60,8 @@ export function card(opts, ...children) {
   const o = typeof opts === "string" ? { title: opts } : opts;
   return h(
     "section",
-    { class: "card", id: o.id },
-    h("div", { class: "card-head" }, h("h2", { tabindex: "-1" }, o.title), o.aside ?? null),
+    { class: "card" },
+    h("div", { class: "card-head" }, h("h2", { tabindex: "-1" }, o.title), o.aside),
     o.intro ? h("p", { class: "intro muted" }, o.intro) : null,
     ...children,
   );
@@ -71,7 +70,7 @@ export function card(opts, ...children) {
 /** @param {string | null} url @param {string} [alt] */
 export const poster = (url, alt = "") => (url ? h("img", { class: "poster", src: url, alt, loading: "lazy" }) : h("div", { class: "poster empty", "aria-hidden": "true" }));
 
-/** @param {string} text @param {"ok" | "warn" | "danger" | "info" | ""} [tone] */
+/** @param {string} text @param {"ok" | "warn" | "info" | "server" | ""} [tone] */
 export const chip = (text, tone = "") => h("span", { class: tone ? `chip ${tone}` : "chip" }, text);
 
 /** @param {{ status: string, online: boolean }} device */
@@ -115,10 +114,10 @@ export const loading = () => h("p", { class: "muted loading" }, "Loading…");
 /**
  * What stands in for content that could not be loaded: the reason and, given `retry`, a Retry button.
  * @param {unknown} err
- * @param {(() => Promise<unknown>) | null} [retry]
- * @param {string} [what]
+ * @param {(() => Promise<unknown>) | null | undefined} retry
+ * @param {string} what
  */
-export function loadError(err, retry, what = "Could not load this.") {
+export function loadError(err, retry, what) {
   const button = retry ? actionButton("Retry", null, () => retry()) : null;
   return h("div", { class: "callout error", role: "alert" }, h("p", null, h("strong", null, what), " ", errorText(err)), button);
 }
@@ -127,7 +126,7 @@ export function loadError(err, retry, what = "Could not load this.") {
  * @typedef {object} Slot
  * @property {HTMLElement} element
  * @property {(...content: Node[]) => void} show replaces what is shown, unless it is already exactly that
- * @property {(err: unknown, retry?: (() => Promise<unknown>) | null, what?: string) => void} fail
+ * @property {(err: unknown, retry: (() => Promise<unknown>) | null | undefined, what: string) => void} fail
  *   before anything was shown: the error (and Retry); later failures keep the content, the page's "Not updated
  *   since" note covers them
  */
@@ -135,11 +134,10 @@ export function loadError(err, retry, what = "Could not load this.") {
 /**
  * A region that a load fills: "Loading…" first, then its content, or the error and Retry when the first load
  * failed.
- * @param {Record<string, any> | null} [props]
  * @returns {Slot}
  */
-export function slot(props) {
-  const element = h("div", props, loading());
+export function slot() {
+  const element = h("div", null, loading());
   let shown = false;
   /** @type {HTMLElement | null} */
   let failure = null;
@@ -396,7 +394,7 @@ export function keyedRows(parent, keyOf, create, fallback) {
  */
 export function showRow(item, o = {}) {
   /** @type {Array<Child | Child[]>} */
-  const body = [poster(item.posterUrl), h("div", { class: "grow" }, h("strong", null, item.title), o.meta ? h("div", { class: "muted" }, o.meta) : null), o.end ?? null];
+  const body = [poster(item.posterUrl), h("div", { class: "grow" }, h("strong", null, item.title), o.meta ? h("div", { class: "muted" }, o.meta) : null), o.end];
   return o.href ? h("a", { class: "row link", href: o.href }, ...body) : h("div", { class: "row" }, ...body);
 }
 

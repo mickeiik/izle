@@ -185,12 +185,11 @@ export function showMeta(item, o = {}) {
  * “pro”.`, `All 7 shows.`; at the server's cap, a hint to type more.
  * @param {number} count
  * @param {string} query
- * @param {number} [cap]
  */
-export function searchSummary(count, query, cap = SEARCH_MAX) {
+export function searchSummary(count, query) {
   const q = query.trim();
   if (count === 0) return q ? `No show matches “${q}”.` : "The catalog has no shows.";
-  if (count >= cap) return q ? `The first ${count} shows that match “${q}”; type more to narrow the list.` : `The first ${count} shows; type a title to narrow the list.`;
+  if (count >= SEARCH_MAX) return q ? `The first ${count} shows that match “${q}”; type more to narrow the list.` : `The first ${count} shows; type a title to narrow the list.`;
   if (!q) return count === 1 ? "The catalog's only show." : `All ${count} shows.`;
   return `${plural(count, "show")} ${count === 1 ? "matches" : "match"} “${q}”.`;
 }
@@ -224,7 +223,7 @@ export function isActive(n, online, now = Date.now()) {
  * @param {{ state: string } | null | undefined} n
  */
 export function canControlPlayback(n) {
-  return Boolean(n) && (n?.state === "playing" || n?.state === "paused");
+  return n?.state === "playing" || n?.state === "paused";
 }
 
 /**
@@ -263,7 +262,7 @@ export function playbackState(n, online, now = Date.now()) {
 
 /** @param {string} origin */
 export function originLabel(origin) {
-  return origin === "tv" ? "TV" : origin === "server" ? "server" : origin;
+  return origin === "tv" ? "TV" : origin;
 }
 
 /**

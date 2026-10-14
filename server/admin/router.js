@@ -32,7 +32,7 @@ import { errorText } from "./lib.js";
  * place of what never loaded) and, for a job that had worked before, in the scope's note. Anything started after
  * `end()` is a no-op.
  */
-export function createScope() {
+function createScope() {
   const controller = new AbortController();
   /** @type {Array<() => void>} */
   const cleanups = [];
@@ -118,7 +118,7 @@ export function createScope() {
   const scope = {
     signal: controller.signal,
     alive: () => !ended,
-    poll: (fn, ms, onError) => job(fn, ms, onError),
+    poll: job,
     load: (fn, onError) => job(fn, 0, onError),
     later(fn, ms) {
       if (ended) return;

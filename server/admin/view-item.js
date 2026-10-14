@@ -4,7 +4,7 @@
 // names only).
 
 import { ApiError, api, attempt } from "./api.js";
-import { actionButton, card, h, loadError, poster, setTitle, slot, srOnly } from "./dom.js";
+import { actionButton, card, h, poster, setTitle, slot, srOnly } from "./dom.js";
 import { episodeName, errorMessage, formatClock, plural, showMeta, sourceReport } from "./lib.js";
 
 /** @param {any} report the answer of POST /admin/diagnostics/resolve */

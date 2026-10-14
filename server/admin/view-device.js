@@ -26,7 +26,6 @@ import {
 /**
  * What the sections of a TV's page share.
  * @typedef {object} DeviceContext
- * @property {string} id
  * @property {string} path `/devices/<id>`
  * @property {import("./router.js").Scope} scope
  * @property {(path: string) => Promise<any>} read a GET below /api/v1/admin, cancelled when the page ends
@@ -48,7 +47,6 @@ export function deviceView(scope, id) {
 
   /** @type {DeviceContext} */
   const ctx = {
-    id,
     path,
     scope,
     read: (p) => api("GET", p, undefined, { signal: scope.signal }),
@@ -80,7 +78,7 @@ export function deviceView(scope, id) {
   sections.forEach(([label, el]) => (el.id = `sec-${label.toLowerCase().replace(/\s+/g, "-")}`));
   const nav = sectionNav(scope, sections);
   const top = h("div", { class: "sticky", hidden: true }, nav.element, scope.note);
-  const body = slot({ class: "sections" });
+  const body = slot();
 
   const loadDevice = async () => {
     let d;

@@ -50,8 +50,8 @@ export function onUnauthorized(fn) {
   unauthorized = fn;
 }
 
-/** `/devices/<id>` plus `rest`, the id encoded. @param {string} id @param {string} [rest] */
-export const devicePath = (id, rest = "") => `/devices/${encodeURIComponent(id)}${rest}`;
+/** `/devices/<id>`, the id encoded. @param {string} id */
+export const devicePath = (id) => `/devices/${encodeURIComponent(id)}`;
 
 /**
  * @typedef {object} CallOptions

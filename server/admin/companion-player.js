@@ -7,7 +7,7 @@
 import { sameLanguage } from "./lib.js";
 
 /** An error the owner sees as it is: its `code` is looked up in lib.js's error texts. */
-export class PlayerError extends Error {
+class PlayerError extends Error {
   /** @param {"hls_unsupported" | "hls_unavailable"} code */
   constructor(code) {
     super(code);
