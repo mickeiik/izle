@@ -1,22 +1,26 @@
 // @ts-check
 // "Listen along": this phone plays another source of the episode the TV is playing, in sync with the picture
-// (docs/spec/server-api-v1.md, "Listen along"). The maths live in lib.js; this module owns the audio element,
-// the long-poll that follows the TV and the 250 ms correction loop. Companion media is always proxied by the
-// server, so the audio element only ever loads same-origin URLs (CSP `media-src 'self'`).
+// (docs/spec/server-api-v1.md, "Listen along"). The maths live in lib.js and the audio element's stream in
+// companion-player.js; this module owns the card, the long-poll that follows the TV and the 250 ms correction loop.
 
+import { api, attempt, devicePath } from "./api.js";
+import { attach, nativeHlsBroken } from "./companion-player.js";
+import { busy, card, h, slot, toast } from "./dom.js";
 import {
   candidateOptions,
   clockOffset,
   companionTarget,
-  errorMessage,
+  errorText,
   formatDrift,
   formatPosition,
   isActive,
   parseCandidate,
+  plural,
   pushSample,
   syncDecision,
   tvPositionAt,
 } from "./lib.js";
+import { readStored, writeStored } from "./storage.js";
 
 const NUDGE_KEY = "izle.companion.nudgeMs";
 const TICK_MS = 250;
@@ -31,119 +35,13 @@ const SEEK_LEAD_MS = 150;
 const RE_RESOLVE_BEFORE_EXPIRY_MS = 60_000;
 const MAX_RECOVERIES = 3;
 
-/** @param {string} key @param {string} [value] */
-function stored(key, value) {
-  try {
-    if (value === undefined) return localStorage.getItem(key);
-    localStorage.setItem(key, value);
-  } catch {
-    // storage unavailable: the page still works, nothing is remembered
-  }
-  return null;
-}
-
-/** @type {Promise<any> | null} */
-let hlsLoading = null;
-
-/** Loads the vendored hls.js once (only browsers without native HLS need it). */
-function loadHls() {
-  const w = /** @type {any} */ (window);
-  if (w.Hls) return Promise.resolve(w.Hls);
-  hlsLoading ??= new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = "vendor/hls.min.js";
-    script.onload = () => (w.Hls ? resolve(w.Hls) : reject(new Error("hls.js did not load")));
-    script.onerror = () => reject(new Error("hls.js did not load"));
-    document.head.append(script);
-  });
-  return hlsLoading;
-}
-
-/** @param {string | null} wanted @param {string | null | undefined} actual */
-const sameLanguage = (wanted, actual) => Boolean(wanted && actual && wanted.split("-")[0]?.toLowerCase() === actual.split("-")[0]?.toLowerCase());
-
-/** Browsers that claim native HLS ("maybe") but then fail switch to hls.js for the rest of the page's life. */
-let nativeHlsFailed = false;
-
 /**
- * Loads a stream into the audio element: natively (MP4 everywhere, HLS where the browser plays it) or through
- * hls.js.
- * @param {HTMLAudioElement} audio
- * @param {{ kind: string, url: string }} media
- * @param {string | null} language audio language to pick inside the stream
- * @param {(what: string) => void} onFatal
- * @returns {Promise<{ transport: string, destroy(): void }>}
+ * The "Listen along" card of a TV's page. `refresh` re-reads what the TV plays (the page polls it), `fail` shows a
+ * first load that failed, `stop` ends listening (the page calls it when the owner leaves).
+ * @param {{ deviceId: string, signal: AbortSignal }} o `signal`: the page's, it cancels the card's reads
  */
-async function attach(audio, media, language, onFatal) {
-  const url = new URL(media.url, location.href).toString();
-  // Native HLS only when the browser claims it and, if a language is wanted, can switch audio tracks (Chromium
-  // answers "maybe" but has no audioTracks API, so a chosen language would be ignored there).
-  const nativeHls =
-    !nativeHlsFailed && audio.canPlayType("application/vnd.apple.mpegurl") !== "" && (!language || "audioTracks" in audio);
-  if (media.kind !== "hls" || nativeHls) {
-    const onMeta = () => {
-      const tracks = /** @type {any} */ (audio).audioTracks;
-      if (!tracks || !language) return;
-      for (let i = 0; i < tracks.length; i++) tracks[i].enabled = sameLanguage(language, tracks[i].language);
-    };
-    audio.addEventListener("loadedmetadata", onMeta);
-    audio.src = url;
-    audio.load();
-    return {
-      transport: media.kind === "hls" ? "native HLS" : "direct",
-      destroy() {
-        audio.removeEventListener("loadedmetadata", onMeta);
-      },
-    };
-  }
-  const Hls = await loadHls();
-  if (!Hls.isSupported()) throw new Error("This browser cannot play HLS.");
-  // No worker: the page's CSP has no worker-src. Level 0 only: the video is decoded and thrown away.
-  const hls = new Hls({ enableWorker: false, startLevel: 0, maxBufferLength: 30, backBufferLength: 10 });
-  hls.on(Hls.Events.MANIFEST_PARSED, () => {
-    hls.autoLevelCapping = 0;
-  });
-  hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => {
-    if (!language) return;
-    const i = hls.audioTracks.findIndex((/** @type {any} */ t) => sameLanguage(language, t.lang));
-    if (i >= 0) hls.audioTrack = i;
-  });
-  hls.on(Hls.Events.ERROR, (/** @type {any} */ _event, /** @type {any} */ data) => {
-    if (data?.fatal) onFatal(`${data.type}: ${data.details}`);
-  });
-  // play() needs the element to have its media source: wait until hls.js has attached it.
-  const attached = new Promise((resolve) => hls.once(Hls.Events.MEDIA_ATTACHED, resolve));
-  hls.loadSource(url);
-  hls.attachMedia(audio);
-  await attached;
-  return {
-    transport: "hls.js",
-    destroy() {
-      hls.destroy();
-    },
-  };
-}
-
-/** Owner-facing text for anything that went wrong: an API error code, else the error's own message. */
-function describe(/** @type {any} */ err) {
-  return typeof err?.code === "string" ? errorMessage(err.code) : err?.message ? String(err.message) : "Something went wrong.";
-}
-
-/**
- * @typedef {object} CardDeps
- * @property {string} deviceId
- * @property {(tag: any, props?: any, ...children: any[]) => any} h
- * @property {(method: string, path: string, body?: unknown, withToken?: string | null, signal?: AbortSignal) => Promise<any>} api
- * @property {(text: string, kind?: "ok" | "error" | "info") => void} toast
- * @property {(button: HTMLButtonElement, fn: () => Promise<unknown>) => Promise<void>} busy
- */
-
-/**
- * The "Listen along" card of a TV's page.
- * @param {CardDeps} deps
- */
-export function companionCard({ deviceId, h, api, toast, busy }) {
-  const devicePath = `/devices/${encodeURIComponent(deviceId)}`;
+export function companionCard({ deviceId, signal }) {
+  const base = devicePath(deviceId);
   const choiceKey = (/** @type {string} */ itemId) => `izle.companion.choice.${deviceId}.${itemId}`;
 
   // --- state ---------------------------------------------------------------------------------------------------
@@ -166,7 +64,7 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
   /** @type {number | null} */
   let offset = null;
   let bestRtt = Infinity;
-  let nudgeMs = Number(stored(NUDGE_KEY) ?? 0) || 0;
+  let nudgeMs = Number(readStored(NUDGE_KEY) ?? 0) || 0;
   let seekHoldUntil = 0;
   let recoveries = 0;
   let lastReResolveAt = 0;
@@ -182,7 +80,7 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
 
   // --- DOM -----------------------------------------------------------------------------------------------------
   const audio = /** @type {HTMLAudioElement} */ (h("audio", { preload: "auto", playsinline: true }));
-  const select = h("select", { id: "cp-source", "aria-label": "Companion audio" });
+  const select = h("select", { id: "cp-source" });
   const offsetInput = h("input", { type: "number", id: "cp-offset", step: "0.001", inputmode: "decimal" });
   const rateInput = h("input", { type: "number", id: "cp-rate", step: "0.0001", min: "0.5", max: "2", inputmode: "decimal" });
   const save = h("button", { type: "button" }, "Save timing");
@@ -191,13 +89,13 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
   const startAudio = h("button", { type: "button", class: "primary", hidden: true }, "Start audio");
   const nudgeText = h("span");
   const status = h("p", { class: "muted status" });
-  const error = h("p", { class: "error", hidden: true });
-  const body = h("div");
+  const error = h("p", { class: "error", role: "alert", hidden: true });
+  const body = slot();
   const nothing = h("p", { class: "muted" }, "The TV is not playing anything right now.");
 
   const nudge = (/** @type {number} */ delta) => {
     nudgeMs += delta;
-    stored(NUDGE_KEY, String(nudgeMs));
+    writeStored(NUDGE_KEY, String(nudgeMs));
     nudgeText.textContent = `nudge ${formatDrift(nudgeMs)}`;
   };
   nudge(0);
@@ -221,12 +119,9 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
     error,
     audio,
   );
-  const element = h(
-    "section",
-    { class: "card" },
-    h("h2", null, "Listen along"),
-    h("p", { class: "muted" }, "Hear another source of what the TV is playing, on this phone, in sync with the picture. Plug in earphones first."),
-    body,
+  const element = card(
+    { title: "Listen along", intro: "Hear another source of what the TV is playing, on this phone, in sync with the picture. Plug in earphones first." },
+    body.element,
   );
 
   const showError = (/** @type {string} */ text) => {
@@ -256,22 +151,22 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
   const renderCandidates = () => {
     const n = candidates?.nowPlaying;
     if (!n) {
-      body.replaceChildren(nothing);
+      body.show(nothing);
       return;
     }
     const options = candidateOptions(candidates.candidates);
-    const remembered = stored(choiceKey(n.itemId));
+    const remembered = readStored(choiceKey(n.itemId));
     const current = select.value || remembered || options.find((o) => !o.disabled && o.sourceId !== n.sourceId)?.value || options[0]?.value || "";
     select.replaceChildren(...options.map((o) => h("option", { value: o.value, disabled: o.disabled, selected: o.value === current }, o.label)));
     if (!select.value && options[0]) select.value = options[0].value;
     applyAll.hidden = n.itemKind !== "series";
     if (phase === "idle") fillTiming();
-    body.replaceChildren(form);
+    body.show(form);
   };
 
   /** Re-reads the candidates of what the TV plays; called by the page's poll and after the TV changes episode. */
   const refresh = async () => {
-    const r = await api("GET", `${devicePath}/companion`);
+    const r = await api("GET", `${base}/companion`, undefined, { signal });
     const key = JSON.stringify([r.nowPlaying?.episodeId, r.nowPlaying?.sourceId, r.candidates.map((/** @type {any} */ c) => [c.sourceId, c.link])]);
     if (key === candidatesKey) return;
     candidatesKey = key;
@@ -283,7 +178,7 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
 
   select.addEventListener("change", () => {
     const n = candidates?.nowPlaying;
-    if (n) stored(choiceKey(n.itemId), select.value);
+    if (n) writeStored(choiceKey(n.itemId), select.value);
     fillTiming();
     if (phase === "listening" && playing) {
       const { sourceId, language } = chosen();
@@ -303,14 +198,13 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
       const t = timingFromInputs();
       if (!n || !t) return toast("Offset or speed is not a valid number (speed 0.5–2).", "error");
       const { sourceId, language } = chosen();
-      try {
-        await api("PUT", `/companion/links/${encodeURIComponent(n.episodeId)}/${encodeURIComponent(sourceId)}`, { ...t, language });
-        toast("Timing saved for this episode.");
-        candidatesKey = "";
-        await refresh();
-      } catch (err) {
-        toast(describe(err), "error");
-      }
+      const r = await attempt(
+        () => api("PUT", `/companion/links/${encodeURIComponent(n.episodeId)}/${encodeURIComponent(sourceId)}`, { ...t, language }),
+        "Timing saved for this episode.",
+      );
+      if (!r.ok) return;
+      candidatesKey = "";
+      await refresh().catch(() => {});
     }),
   );
   applyAll.addEventListener("click", () =>
@@ -318,12 +212,8 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
       const n = candidates?.nowPlaying;
       if (!n) return;
       const { sourceId } = chosen();
-      try {
-        const r = await api("POST", `/companion/links/${encodeURIComponent(n.episodeId)}/${encodeURIComponent(sourceId)}/copy-to-item`);
-        toast(r.updated === 0 ? "No other episode has that source." : `Timing copied to ${r.updated} other episode${r.updated === 1 ? "" : "s"}.`);
-      } catch (err) {
-        toast(describe(err), "error");
-      }
+      const r = await attempt(() => api("POST", `/companion/links/${encodeURIComponent(n.episodeId)}/${encodeURIComponent(sourceId)}/copy-to-item`));
+      if (r.ok) toast(r.value.updated === 0 ? "No other episode has that source." : `Timing copied to ${plural(r.value.updated, "other episode")}.`);
     }),
   );
 
@@ -334,7 +224,7 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
   const readNow = async (/** @type {boolean} */ wait, /** @type {AbortSignal | undefined} */ signal) => {
     const sentAt = Date.now();
     const query = wait ? `?seq=${seq}&wait=${LONG_POLL_SEC}` : "?wait=0";
-    const r = await api("GET", `${devicePath}/now${query}`, undefined, undefined, signal);
+    const r = await api("GET", `${base}/now${query}`, undefined, { signal });
     const receivedAt = Date.now();
     const rtt = receivedAt - sentAt;
     if (!wait || rtt <= 1000) {
@@ -408,7 +298,7 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
     const gen = generation;
     const stale = () => my !== loadSeq || gen !== generation || phase === "idle";
     const { sourceId, language } = chosen();
-    const r = await api("POST", `${devicePath}/companion/resolve`, { episodeId, sourceId, language });
+    const r = await api("POST", `${base}/companion/resolve`, { episodeId, sourceId, language });
     if (stale()) return false;
     detach();
     const link = phase === "listening" && playing && playing.episodeId === episodeId ? playing.link : (timingFromInputs() ?? r.link);
@@ -448,13 +338,13 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
         showError("");
       }
     } catch (err) {
-      showError(describe(err));
+      showError(errorText(err));
       void recover();
     }
   };
   audio.addEventListener("error", () => {
     if (phase !== "listening") return;
-    if (playing?.transport === "native HLS") nativeHlsFailed = true; // next attempt goes through hls.js
+    if (playing?.transport === "native HLS") nativeHlsBroken(); // next attempt goes through hls.js
     showError("The phone could not play this stream.");
     void recover();
   });
@@ -479,7 +369,7 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
       if (await load(episodeId)) recoveries = 0;
     } catch (err) {
       stop();
-      toast(describe(err), "error");
+      toast(errorText(err), "error");
     }
   };
 
@@ -489,7 +379,7 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
       playing = null;
       await load(candidates.nowPlaying.episodeId);
     } catch (err) {
-      showError(describe(err));
+      showError(errorText(err));
     }
   };
 
@@ -536,6 +426,7 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
     phase = "starting";
     const gen = generation;
     listen.textContent = "Stop";
+    listen.className = "danger";
     showError("");
     status.textContent = "Starting…";
     recoveries = 0;
@@ -559,7 +450,7 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
     } catch (err) {
       if (gen !== generation) return;
       stop();
-      showError(describe(err));
+      showError(errorText(err));
     }
   };
 
@@ -573,6 +464,7 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
     detach();
     playing = null;
     listen.textContent = "Listen";
+    listen.className = "primary";
     startAudio.hidden = true;
     status.textContent = "";
     status.classList.remove("synced");
@@ -583,6 +475,11 @@ export function companionCard({ deviceId, h, api, toast, busy }) {
     else stop();
   });
 
-  body.replaceChildren(h("p", { class: "muted" }, "Loading…"));
-  return { element, refresh, stop };
+  return {
+    element,
+    refresh,
+    stop,
+    /** @param {unknown} err @param {() => Promise<void>} retry */
+    fail: (err, retry) => body.fail(err, retry, "Could not load what the TV plays."),
+  };
 }

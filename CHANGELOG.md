@@ -55,9 +55,25 @@ contract share one version number. How to update (back up, update the server, th
   `trustedProxies` so that each client is counted on its own.
 - **Streams with an expiry time are refreshed a minute before they expire**, instead of running into the expired
   link during playback.
+- **The admin page has a new look**: clearer buttons (one main action per card, red outlines on Stop, Remove,
+  Clear and Forget, a visible busy state that also stops a double click from sending twice), stronger borders and
+  contrast in light and dark mode, and a header that fits on a phone. Screen readers get named buttons per show,
+  labelled progress bars and announced search results.
+- **A TV's page has a section bar** under its name (Now playing, Home screen, Settings, Listen along, History,
+  Problems) that stays in view while you scroll. "Now playing" shows its state as a badge, with Stop next to the
+  remote control. **"Add shows" searches as you type**; with nothing typed it shows a hint and a "Show all" button
+  instead of the whole catalog. The history and problems sections are called History and Problems; a film's page
+  lists its sources without an "Episodes" heading.
 
 ### Fixed
 
+- **The admin page no longer loses your place**: refreshing a TV's page or the TV list keeps the keyboard focus
+  where it was, also while you reorder the home screen with ▲ and ▼, and a half-typed name or message stays.
+- **The admin page stops refreshing a page you left**, also when you left it before it finished loading; the page of
+  a TV that no longer exists no longer sends you to the TV list after you already went elsewhere.
+- **When the server cannot be reached**, the admin page says so with a Retry button instead of showing "Loading…"
+  for ever, and a page that was open says "Not updated since …" until the server answers again. A show page no
+  longer says "This show is not in the catalog" when the server was only unreachable.
 - **The clock follows the TV's own 12/24-hour convention** when the TV has no explicit setting; it used to follow the
   menu language (an English menu on a French TV showed "2:54 PM").
 - **Channel keys no longer leave izle.** Outside the player, CH+/CH− are consumed, so a press cannot throw the viewer

@@ -475,7 +475,7 @@ unchanged; the senior sees nothing.
 |---|---|
 | `GET /healthz` | `{"ok": true}` |
 | `GET /assets/<sha256>.<jpg\|png\|webp>` | catalog posters, `Cache-Control: public, max-age=31536000, immutable` |
-| `GET /admin/` | the admin UI: `index.html` plus an allow-list of files (`app.js`, `lib.js`, `companion.js`, `style.css`, `icon.svg`, and `vendor/hls.min.js`, the pinned hls.js build listed in `server/admin/vendor/README.md`), `Cache-Control: no-cache`, `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; …` |
+| `GET /admin/` | the admin UI: `index.html` plus an allow-list of files, `ADMIN_FILES` in `server/src/admin-files.ts` (its ES modules — `app.js`, the entry, and the modules it imports, all flat in `server/admin/` — `style.css`, `icon.svg`, and `vendor/hls.min.js`, the pinned hls.js build listed in `server/admin/vendor/README.md`); anything else under `/admin/` is `404`; `Cache-Control: no-cache`, `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; …` |
 | `GET /p/<token>/…` | media proxy (see [Media proxy](#media-proxy)) |
 
 ## Logging

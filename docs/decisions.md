@@ -1027,7 +1027,101 @@ the resolve answer's `expiresAt`, which the TV used to drop). Routine decisions:
 
 ## Design pass: admin page (2026-10-14)
 
-_(admin branch)_
+- **One module per concern, all flat in `server/admin/`:** `app.js` (the entry: boot only), `router.js` (routes and
+  the view scope), `api.js` (`ApiError`, the token, `api`, `attempt`, `devicePath`), `storage.js` (the one guarded
+  localStorage door), `dom.js` (`h`, cards, chips, progress bars, slots, toasts, buttons, focus helpers, `showRow`,
+  `liveSearch`), `lib.js` (pure, unit-tested), one `view-*.js` per view, `device-home.js` (the TV page's home screen
+  card, the largest section), `companion.js` (the Listen along card) and `companion-player.js` (its stream: native
+  or hls.js). Flat because the packaging script copies top-level files only, the server serves an allow-list of
+  names (no subdirectory routes but `vendor/`) and the admin tsconfig includes `*.js`; subdirectories would have
+  needed changes in all three for no gain at 15 files. `api.js` knows nothing about routes: the boot code registers
+  what a refused token does (`onUnauthorized`). The companion card imports its helpers instead of receiving them as
+  loosely typed deps; it takes `{ deviceId, signal }`.
+- **`attempt` returns `{ok: true, value} | {ok: false, error}`.** The old `undefined` sentinel could not tell a
+  failure from a `204` (whose value is `null`), which is why Clear and Forget compared with `undefined`.
+- **The view scope.** Each render gets a scope that owns everything the view starts: `poll(fn, ms)`, `load(fn)`
+  (once, `now()` for Retry), `later`, `onCleanup`, `go(hash)` and an `AbortSignal` the view's reads carry. A route
+  change ends the scope: polls and timers stop, reads in flight are aborted (they reject with the code `aborted`,
+  which nothing reports), and anything started after the end — a poll set up after an `await`, a redirect from a
+  late `unknown_device` — is a no-op. Writes do not carry the signal: a PUT already sent should still report how it
+  went. A job asked to run while it runs runs once more afterwards (the answer it was waiting for may predate the
+  action that asked).
+- **Polling keeps the focus by building controls once.** Lists that poll (pairing codes, TVs, home rows, search
+  results) are keyed rows (`keyedRows`): a row is created once per id, updated in place and only moved when the
+  order changed; a moved element that had the focus gets it back. When the focused row goes away the focus moves to
+  the row that took its place, onto the control of the same kind (`data-control`: ✕ on the row below), else to a
+  fallback (the search box). Rebuilds that remain (the episode picker, history, problems, the build detail) run
+  only when their data changed, and `keepFocus` puts the focus back on the same control (`data-focus` keys) or on a
+  named fallback ("Continue from here" → the row's Episodes… toggle; Clear → the card's heading). The now-playing
+  card, the remote control, the settings form and the message box are built once; the poll only sets text and
+  availability. Settings are filled at load and after a save, never by a poll, so edits in progress stay.
+- **Busy and unavailable buttons use `aria-disabled`, not `disabled`** (a deviation from the brief's "disabled +
+  aria-busy"): Chromium moves the focus off a button that becomes disabled, so the keyboard user who pressed ▲ would
+  lose their place on every press. `busy()` sets `aria-busy` and `aria-disabled`, shows a spinner in place of the
+  label and ignores further clicks, so a double click sends one request; `setOff()` marks ▲ on the first row, ▼ on
+  the last, the remote after Stop and Send for a TV that is not active, and they stay focusable and inert. Real
+  `disabled` is left for inputs. Home list edits are serialised: while one save runs, the others are ignored (each
+  is computed from the list it saw).
+- **First loads that fail and polls that keep failing.** A region is a slot: "Loading…", then its content, or —
+  when its first load fails — the reason and a Retry button (the focus stays in the region when Retry works).
+  Once a region showed content, failures keep it and the scope's note says `Not updated since 14:03:12. The server
+  cannot be reached. Retrying…`; it is an always-present `role="status"` paragraph (empty while fresh) so it is
+  announced when it fills. The TV page waits for the TV itself before it builds its sections and starts their
+  polls. The show page tells `unknown_item` (not in the catalog) from any other failure (Retry). Without site data
+  (a private window) the admin token is kept in memory for the tab, with an info toast, instead of a sign-in that
+  silently did not stick.
+- **Tokens.** Colours stay semantic (`--surface`, `--muted`, `--accent-soft`, `--ok`/`--ok-bg`, …) with
+  `--line-strong` for control and input borders (3.3:1 on the surface in light, 3.7:1 in dark), `--focus`, and
+  `--on-danger` for text on the danger fill (the dark-mode error toast was white on light red, 2.1:1; now dark on
+  light red, 9:1). Every text pair was checked: the lowest are the light `--line-strong` on `--bg` (3.06:1, a
+  border) and danger on danger-bg (5.4:1). `.chip.ok` reaches 6.1:1 (darker green, semibold). Spacing is a
+  0.125–3 rem scale (`--space-0`…`--space-7`), type a 13–28 px scale (`--text-xs`…`--text-2xl`), radius
+  `--radius-sm/md/lg/full`; widths stay layout constants (`--measure`, `--page-w`, `--poster-w`). Card titles
+  (19 px bold) now stand above row titles (16 px semibold).
+- **Button hierarchy.** At most one primary (filled) action per card: Sign in, Approve, Send, Save settings,
+  Listen. Everything else is a bordered secondary button ("Add" in search rows included); destructive ones (Stop,
+  ✕, Clear, Forget this TV, and Stop while listening) are outlined in red. Hover and active states on every button
+  and nav link; unavailable buttons are flat, dashed and muted, unlike any enabled style. Sign out is a quiet
+  nav-style link.
+- **The TV page's section nav is buttons, not `#anchor` links:** a hash change would re-run the router and rebuild
+  the page. A button scrolls its section under the sticky bar (`scroll-margin-top`; smooth unless reduced motion is
+  asked for) and moves the focus to the section's heading. The current section is computed on scroll (rAF, the
+  last section whose top passed under the bar; at the bottom of the page, the last one in view) and marked with
+  `aria-current`. The bar scrolls sideways on a phone and keeps the marked button in view. The page's order follows
+  the bar: Now playing, Home screen, Settings, Listen along, History, Problems, then Remove (not in the bar).
+- **"Add shows" searches as you type** (200 ms debounce, only the newest answer shown — `liveSearch`, shared with
+  the catalog's Shows). An empty box shows a hint and "Show all", which lists the catalog up to the server's cap of
+  200 (the summary says when the cap was reached). The catalog page still lists everything when its box is empty:
+  browsing is what it is for.
+- **Accessibility.** The focus moves to the new view's `h1` after a navigation (not on the first load; the sign-in
+  page focuses its field); a skip link, which focuses the heading instead of following `#app`; `aria-current="page"`
+  in the main nav; progress bars are `role="progressbar"` with a label and a value text ("1:30 of 10:00"); per-row
+  buttons are named after their show ("Move Proxy series up", "Add Proxy demo", "Test sources of S1 · E1 — …"),
+  with the visible text first; `aria-controls` on Episodes…; search summaries in a polite live region; toasts are
+  `role="status"` (errors `role="alert"`), dismissable (button or Escape) and wait while hovered or focused; the
+  Listen along select uses its visible label; its error is an alert; the history table has a caption and scrolls
+  inside its own region on a phone. Nothing lives only in a `title` tooltip any more: the problems chip says "in
+  24 h", the new-episodes chip says "2 new episodes", a problem shows its absolute time, the resolver's full hash
+  and the selected build's full id are shown.
+- **Duplicates removed:** one error-to-text helper (`errorText`, which also covers the companion player's
+  `PlayerError` codes), one guarded storage module, one `loading()`, one debounced search, one show row and show
+  line (`showRow`, `showMeta`), `plural` everywhere, one catalog issue line, one `devicePath`, one BCP 47 primary
+  subtag (`primarySubtag`/`sameLanguage`). Pure view texts moved to `lib.js` with tests: `playbackState`,
+  `episodeStateLabel`, `sourceReport`, `searchSummary`, `showMeta`, `shortId`, `issueLine`.
+- **Tests:** the innerHTML scan covers every top-level module (and rejects inline style writes); the served-files
+  test is driven by `ADMIN_FILES` (each entry served with its type and the CSP, every other file in the directory a
+  404); a new test resolves every relative `import`/`export … from` of the page's modules and requires the target
+  to exist and be allow-listed, and every module to be reached from `app.js`.
+- **Not done, on purpose:** no Playwright in CI (as in phase 5; the browser checks are scripted outside the repo
+  and described in `docs/verification/admin-design/`); no theme switch (the page follows the browser); the history
+  and problems lists are rebuilt when they change rather than keyed (they hold no controls); the Listen along
+  sync logic is untouched (moved, not changed). Two small behaviour changes there: the "Start audio" button still
+  shows the browser's own message when play() fails, and a failed hls.js load can be retried later in the page's
+  life instead of failing for ever.
+- **Verified** in headless Chromium against the example server (port 8788) with a fake TV driven over the TV API:
+  every view at 1280 and 390 px in both themes, a keyboard-only pass on a TV's page across the polls (▲/▼ reorder,
+  ✕, Add, the picker), leaving a page mid-load, the server stopped, the section nav and search, and Listen along in
+  sync through hls.js; see [docs/verification/admin-design/](verification/admin-design/README.md).
 
 ## Design pass: TV app logic (2026-10-14)
 

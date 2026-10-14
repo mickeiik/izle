@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import {
   SEARCH_MAX,
   buildSummary,
@@ -44,7 +44,12 @@ import {
   triedText,
   tvPositionAt,
 } from "../admin/lib.js";
+import { ADMIN_FILES, ADMIN_VENDOR_FILES } from "../src/admin-files.ts";
 import { startTestServer } from "./helpers.ts";
+
+const ADMIN_DIR = new URL("../admin/", import.meta.url);
+/** The admin page's top-level modules (vendor/ is third-party). */
+const adminScripts = async () => (await readdir(ADMIN_DIR)).filter((f) => f.endsWith(".js")).sort();
 
 const NOW = Date.parse("2026-10-10T12:00:00Z");
 const ago = (ms: number) => new Date(NOW - ms).toISOString();
@@ -325,26 +330,55 @@ test("the admin UI is served from an allow-list with a strict CSP and no inline 
   assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>/.test(html), "no inline scripts");
   assert.ok(!/\sstyle=|\son[a-z]+=/i.test(html), "no inline styles or handlers");
   assert.match(csp, /media-src 'self' blob:(;|$)/, "the Listen along audio element loads proxied media and hls.js object URLs only");
-  for (const [file, type] of [
-    ["app.js", "text/javascript; charset=utf-8"],
-    ["lib.js", "text/javascript; charset=utf-8"],
-    ["companion.js", "text/javascript; charset=utf-8"],
-    ["style.css", "text/css; charset=utf-8"],
-    ["icon.svg", "image/svg+xml"],
-    ["vendor/hls.min.js", "text/javascript; charset=utf-8"],
-  ]) {
+  // Every allow-listed file is served with its type and the CSP; nothing else in the directory is.
+  for (const [file, type] of [...Object.entries(ADMIN_FILES), ...Object.entries(ADMIN_VENDOR_FILES).map(([f, t]) => [`vendor/${f}`, t])]) {
     const res = await fetch(`${s.base}/admin/${file}`);
     assert.equal(res.status, 200, file);
-    assert.equal(res.headers.get("content-type"), type);
-    assert.equal(await res.text(), await readFile(new URL(`../admin/${file}`, import.meta.url), "utf8"));
+    assert.equal(res.headers.get("content-type"), type, file);
+    assert.equal(res.headers.get("content-security-policy"), csp, file);
+    assert.equal(await res.text(), await readFile(new URL(file, ADMIN_DIR), "utf8"), file);
   }
-  for (const bad of ["tsconfig.json", "index.html", "..%2Fpackage.json", "%2e%2e/src/app.ts", "constructor", "toString", "vendor/README.md", "vendor/LICENSE-hls.js", "vendor/..%2Fapp.js"]) {
+  const unlisted = [
+    ...(await readdir(ADMIN_DIR)).filter((f) => f !== "vendor" && !Object.hasOwn(ADMIN_FILES, f)),
+    ...(await readdir(new URL("vendor/", ADMIN_DIR))).filter((f) => !Object.hasOwn(ADMIN_VENDOR_FILES, f)).map((f) => `vendor/${f}`),
+  ];
+  assert.ok(unlisted.includes("index.html") && unlisted.includes("tsconfig.json") && unlisted.includes("vendor/README.md"));
+  for (const bad of [...unlisted, "..%2Fpackage.json", "%2e%2e/src/app.ts", "constructor", "toString", "vendor/..%2Fapp.js", "vendor/constructor"]) {
     assert.equal((await fetch(`${s.base}/admin/${bad}`)).status, 404, bad);
   }
-  for (const file of ["app.js", "companion.js"]) {
-    const js = await readFile(new URL(`../admin/${file}`, import.meta.url), "utf8");
-    assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/.test(js), `${file}: server text is never parsed as HTML`);
+});
+
+test("the admin UI's modules never parse text as HTML", async () => {
+  const files = await adminScripts();
+  assert.ok(files.length >= 10 && files.includes("app.js") && files.includes("companion.js"), "every top-level module is scanned");
+  for (const file of files) {
+    const js = await readFile(new URL(file, ADMIN_DIR), "utf8");
+    assert.ok(!/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function|\.style\s*=|setAttribute\(\s*["']style/.test(js), `${file}: server text is never parsed as HTML, and no inline style is set`);
   }
+});
+
+test("every module the admin UI imports exists and is allow-listed", async () => {
+  // A module missing from ADMIN_FILES is a 404 in production: a blank page while every other test stays green.
+  const html = await readFile(new URL("index.html", ADMIN_DIR), "utf8");
+  const fromHtml = [...html.matchAll(/(?:src|href)="([^"#:]+)"/g)].map((m) => m[1]!);
+  assert.deepEqual(fromHtml.sort(), ["app.js", "icon.svg", "icon.svg", "style.css"]);
+  for (const ref of fromHtml) assert.ok(Object.hasOwn(ADMIN_FILES, ref), `index.html: ${ref} is allow-listed`);
+  const reached = new Set(["app.js"]);
+  for (const file of await adminScripts()) {
+    const js = await readFile(new URL(file, ADMIN_DIR), "utf8");
+    const imports = [...js.matchAll(/(?:^|\n)\s*(?:import|export)\s[^;]*?\sfrom\s+"([^"]+)"|\bimport\(\s*"([^"]+)"\s*\)|import\("([^"]+)"\)\.\w+/g)].map((m) => m[1] ?? m[2] ?? m[3]!);
+    for (const spec of imports) {
+      assert.match(spec, /^\.\/[\w-]+\.js$/, `${file}: imports ${spec} as a flat relative module`);
+      const target = spec.slice(2);
+      assert.ok(Object.hasOwn(ADMIN_FILES, target), `${file}: ${target} is in ADMIN_FILES`);
+      await readFile(new URL(target, ADMIN_DIR)); // exists
+      reached.add(target);
+    }
+    for (const m of js.matchAll(/\.src\s*=\s*"([^"]+)"/g)) {
+      assert.ok(m[1]!.startsWith("vendor/") && Object.hasOwn(ADMIN_VENDOR_FILES, m[1]!.slice("vendor/".length)), `${file}: ${m[1]} is a vendored, allow-listed file`);
+    }
+  }
+  for (const file of await adminScripts()) assert.ok(reached.has(file), `${file} is imported by some module (or is the entry)`);
 });
 
 test("listen along helpers: TV position, companion target, sync decisions, clock offset, candidate options", () => {

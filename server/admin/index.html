@@ -10,17 +10,18 @@
   <script type="module" src="app.js"></script>
 </head>
 <body>
+  <a class="skip" href="#app">Skip to content</a>
   <header class="top">
     <a class="brand" href="#/devices"><img src="icon.svg" alt="" width="28" height="28"> izle <span>admin</span></a>
-    <nav id="nav" hidden>
+    <nav id="nav" aria-label="Main" hidden>
       <a href="#/devices">TVs</a>
       <a href="#/catalog">Catalog</a>
-      <button id="signout" type="button" class="link">Sign out</button>
+      <button id="signout" type="button">Sign out</button>
     </nav>
   </header>
   <main id="app">
     <noscript><p>The izle admin page needs JavaScript.</p></noscript>
   </main>
-  <div id="toasts" aria-live="polite"></div>
+  <div id="toasts" role="region" aria-label="Notifications"></div>
 </body>
 </html>
