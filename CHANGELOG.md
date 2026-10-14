@@ -9,37 +9,36 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Added
 
-- **Next and previous episode from the remote.** While playing, CH+/CH− and the media next/previous keys switch to
-  the next or previous episode.
-- **Autoplay when the TV starts** (a per-TV setting, off by default): the show watched last, or else the first
-  tile, starts after a 10-second countdown.
+- **Next and previous episode from the remote:** while playing, CH+/CH− and the media next/previous keys switch
+  episodes.
+- **Autoplay when the TV starts** (per TV, off by default): the show watched last, or else the first tile, starts
+  after a 10-second countdown.
 - **Problem reports.** The TV reports playback, resolve and network problems, and the server records its own resolve
   and proxy failures. The admin page shows a TV's recent problems on its page and a warning in the TV list.
 - **More remote control from the admin page:** pause, resume, seek, next and previous episode, and a message shown
   on the TV.
-- **`izle-server backup <file>`** writes a consistent copy of the database while the service runs. The
-  self-hosting guide's backup section uses it.
+- **`izle-server backup <file>`** writes a consistent copy of the database while the service runs; the self-hosting
+  guide's backup section uses it.
 - **New episodes on the TV's home tiles.** When a catalog reload adds episodes to a show on a TV's home screen, its
-  tile shows how many ("2 new") at the top of the poster, until the TV plays any episode of the show. The
-  count starts when the TV last played the show, or when the show was put on that TV's home screen. A TV's page on
-  the admin page shows the same count ("2 new"); in the API it is `newEpisodes` on each home entry.
+  tile shows how many ("2 new") at the top of the poster until the TV plays any episode of the show. The count
+  starts when the TV last played the show, or when the show was put on that TV's home screen. The TV's admin page
+  shows the same count; in the API it is `newEpisodes` on each home entry.
 - **OK resumes a finished show at its first new episode:** when a show was watched to the end and a later catalog
   adds episodes to it, OK plays the first new playable one instead of starting the show over.
 - **Catalog build history:** the server records every catalog build it loads, with the shows and episodes it added
-  and removed, and when each episode first appeared. The first load of a catalog is the starting point: nothing in it
-  counts as new. The admin page's Catalog tab lists the builds and what each one changed (new episodes by show, new
-  shows, removed shows and episodes). In the API, `GET /api/v1/admin/catalog` lists the builds (newest first, up to
-  50) with the latest build's changes, and `GET /api/v1/admin/catalog/builds/<buildId>` returns any one of them.
+  and removed, and when each episode first appeared; the first load of a catalog is the starting point (nothing in
+  it counts as new). The admin page's Catalog tab lists the builds and what each one changed (new episodes by show,
+  new shows, removed shows and episodes). In the API, `GET /api/v1/admin/catalog` lists the builds (newest first, up
+  to 50) with the latest build's changes, and `GET /api/v1/admin/catalog/builds/<buildId>` returns any one of them.
 - **Self-hosting guide: publishing catalog builds.** A versioned catalog layout (one directory per build and a
   `current` symlink on the active one) that makes publishing and rolling back a build one atomic swap and a reload,
-  and how to let a job on the host publish builds through the admin API, without sudo. The guide now also says
-  plainly that `systemctl reload izle` re-reads the catalog only: a new resolver module needs
-  `systemctl restart izle`.
+  and how to let a job on the host publish builds through the admin API, without sudo. The guide also says plainly
+  that `systemctl reload izle` re-reads the catalog only: a new resolver module needs `systemctl restart izle`.
 - **Pairing from the server's shell:** `izle-server pair pending` lists the codes waiting for approval and
   `izle-server pair approve <code> [name]` approves one.
 - **Sign-in link for a phone:** `izle-server admin-token --link` prints a sign-in link for the admin page and the
-  same link as a QR code, so a phone signs in by scanning it. The guide also shows how to use a passphrase of 24
-  characters or more as the admin token.
+  same link as a QR code to scan. The guide also shows how to use a passphrase of 24 characters or more as the
+  admin token.
 - Compose UI tests for the TV's senior-path rules (development only).
 - Repository: this changelog, a [security policy](SECURITY.md) with private vulnerability reporting, GitHub Actions
   pinned by commit SHA and Dependabot version updates. The TV app had its first run on a real Android TV box.
@@ -52,13 +51,13 @@ contract share one version number. How to update (back up, update the server, th
   server address. While no TV is waiting, the admin page shows the address to type on the TV.
 - **Failed admin sign-ins are throttled** per client address: 10 per 10 minutes. Behind a reverse proxy, set
   `trustedProxies` so that each client is counted on its own.
-- **Streams with an expiry time are refreshed a minute before they expire**, instead of running into the expired
+- **Streams with an expiry time are refreshed a minute before they expire** instead of running into the expired
   link during playback.
 - **The admin page has a new look**: clearer buttons (one main action per card, red outlines on Stop, Remove,
   Clear and Forget, a visible busy state that also stops a double click from sending twice), stronger borders and
   contrast in light and dark mode, and a header that fits on a phone. Screen readers get named buttons per show,
   labelled progress bars and announced search results.
-- **A TV's page has a section bar** under its name (Now playing, Home screen, Settings, Listen along, History,
+- **A TV's admin page has a section bar** under its name (Now playing, Home screen, Settings, Listen along, History,
   Problems) that stays in view while you scroll. "Now playing" shows its state as a badge, with Stop next to the
   remote control. **"Add shows" searches as you type**; with nothing typed it shows a hint and a "Show all" button
   instead of the whole catalog. The history and problems sections are called History and Problems; a film's page
@@ -70,9 +69,9 @@ contract share one version number. How to update (back up, update the server, th
 - **Countdown bars on the TV's Up next, autoplay and "Can't play right now" screens**, and "Can't play right now"
   now says when it goes back Home ("Home in 30 s"). The three screens and "The end" share one layout with the
   show's poster always in the same place; "The end" shows the poster and the show's title.
-- **The owner's message no longer covers the clock or the tiles on the TV's Home screen.** It takes its place at the
-  top, beside the clock, and the tiles move down while it shows; a long one gets the full width under the clock, so
-  all 200 characters fit. Over the video it still runs across the top.
+- **The owner's message no longer covers the clock or the tiles on the TV's Home screen.** It sits at the top,
+  beside the clock, and the tiles move down while it shows; a long one gets the full width under the clock, so all
+  200 characters fit. Over the video it still runs across the top.
 - **The TV's Home screen:** the chip saying what OK plays reads clearly on dark posters too, the new-episodes count is
   shorter ("2 new"), "No connection" is a solid red chip, a further row of shows fades out at the bottom edge and
   comes up whole, title included, when the viewer moves down to it, and the hint says just "OK: Play" (Back does
@@ -93,7 +92,7 @@ contract share one version number. How to update (back up, update the server, th
   into the TV's Live TV app.
 - **A catalog reload that runs into an error no longer ends the server.** When `systemctl reload izle` (SIGHUP)
   failed after reading the catalog, for example while the server was shutting down, the process ended with an
-  unhandled error. It now logs a warning (`catalog reload failed`) instead.
+  unhandled error; it now logs a warning (`catalog reload failed`).
 - **The TV's clock changes language at once** when the owner switches the menu language while Home shows; it kept
   "PM" for up to a minute after a switch to Turkish.
 
