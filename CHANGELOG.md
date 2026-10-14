@@ -64,6 +64,10 @@ contract share one version number. How to update (back up, update the server, th
   remote control. **"Add shows" searches as you type**; with nothing typed it shows a hint and a "Show all" button
   instead of the whole catalog. The history and problems sections are called History and Problems; a film's page
   lists its sources without an "Episodes" heading.
+- **The TV's look.** One set of colours, margins and shapes on every screen, and nothing that matters in the outer
+  5 % of the picture, which many TVs crop. Buttons share one style: the focused one is white with a white border,
+  so it is always clear which one OK presses. In the hidden menu the focused row has the same white border instead
+  of a grey fill, and the panel no longer reaches into the screen's edge.
 
 ### Fixed
 
@@ -81,6 +85,8 @@ contract share one version number. How to update (back up, update the server, th
 - **A catalog reload that runs into an error no longer ends the server.** When `systemctl reload izle` (SIGHUP)
   failed after reading the catalog, for example while the server was shutting down, the process ended with an
   unhandled error. It now logs a warning (`catalog reload failed`) instead.
+- **The TV's clock changes language at once** when the owner switches the menu language while Home shows; it kept
+  "PM" for up to a minute after a switch to Turkish.
 
 ### Compatibility
 

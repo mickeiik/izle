@@ -9,9 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -34,14 +32,18 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import io.github.mickeiik.izle.R
 import io.github.mickeiik.izle.ui.SetupError
 import io.github.mickeiik.izle.ui.SetupUi
+import io.github.mickeiik.izle.ui.common.ErrorText
 import io.github.mickeiik.izle.ui.common.Spinner
+import io.github.mickeiik.izle.ui.common.TvButton
+import io.github.mickeiik.izle.ui.theme.IzleBorders
 import io.github.mickeiik.izle.ui.theme.IzleColors
+import io.github.mickeiik.izle.ui.theme.IzleShapes
+import io.github.mickeiik.izle.ui.theme.IzleSpacing
 
 /** First run (and "Server address" in the hidden menu): the owner types the server address with the TV keyboard. */
 @Composable
@@ -51,8 +53,9 @@ fun SetupScreen(ui: SetupUi, onAddressChange: (String) -> Unit, onConnect: () ->
     var fieldFocused by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { fieldFocus.requestFocus() }
 
-    Box(Modifier.fillMaxSize().background(IzleColors.Background).padding(horizontal = 96.dp, vertical = 48.dp)) {
-        Column(verticalArrangement = Arrangement.spacedBy(24.dp), modifier = Modifier.align(Alignment.CenterStart)) {
+    Box(Modifier.fillMaxSize().background(IzleColors.Background).padding(IzleSpacing.Safe)) {
+        // Inset a little: the focused button grows by 10 % and must stay inside the safe margin.
+        Column(verticalArrangement = Arrangement.spacedBy(IzleSpacing.XLarge), modifier = Modifier.align(Alignment.CenterStart).padding(start = IzleSpacing.Medium)) {
             Text(stringResource(R.string.setup_title), style = MaterialTheme.typography.displaySmall, color = IzleColors.OnSurface)
             Text(stringResource(R.string.setup_hint), style = MaterialTheme.typography.bodyLarge, color = IzleColors.Dim)
             BasicTextField(
@@ -76,30 +79,24 @@ fun SetupScreen(ui: SetupUi, onAddressChange: (String) -> Unit, onConnect: () ->
                             false
                         }
                     }
-                    .background(IzleColors.Surface, RoundedCornerShape(12.dp))
-                    .border(4.dp, if (fieldFocused) IzleColors.Focus else IzleColors.SurfaceHigh, RoundedCornerShape(12.dp))
-                    .padding(horizontal = 24.dp, vertical = 16.dp),
-            )
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                Button(onClick = onConnect, enabled = !ui.busy) {
-                    Text(
-                        stringResource(if (ui.busy) R.string.setup_connecting else R.string.setup_connect),
-                        style = MaterialTheme.typography.titleLarge,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    .background(IzleColors.Surface, IzleShapes.Medium)
+                    // The focus style of the tiles: a white border, grey while something else has the focus.
+                    .border(
+                        if (fieldFocused) IzleBorders.FocusWidth else IzleBorders.OutlineWidth,
+                        if (fieldFocused) IzleColors.Focus else IzleColors.Outline,
+                        IzleShapes.Medium,
                     )
-                }
+                    .padding(horizontal = IzleSpacing.XLarge, vertical = IzleSpacing.Large),
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(IzleSpacing.XLarge)) {
+                TvButton(stringResource(if (ui.busy) R.string.setup_connecting else R.string.setup_connect), onConnect, enabled = !ui.busy)
                 if (ui.busy) Spinner(size = 48.dp)
             }
             when (ui.error) {
-                SetupError.Invalid -> ErrorLine(stringResource(R.string.setup_error_invalid))
-                SetupError.Unreachable -> ErrorLine(stringResource(R.string.setup_error_unreachable))
+                SetupError.Invalid -> ErrorText(stringResource(R.string.setup_error_invalid))
+                SetupError.Unreachable -> ErrorText(stringResource(R.string.setup_error_unreachable))
                 null -> Unit
             }
         }
     }
-}
-
-@Composable
-private fun ErrorLine(text: String) {
-    Text(text, style = MaterialTheme.typography.headlineSmall, color = IzleColors.Error, modifier = Modifier.width(800.dp))
 }

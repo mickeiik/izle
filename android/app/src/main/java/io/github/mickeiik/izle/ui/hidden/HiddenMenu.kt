@@ -23,11 +23,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ListItem
+import androidx.tv.material3.ListItemDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import io.github.mickeiik.izle.R
@@ -40,13 +42,21 @@ import io.github.mickeiik.izle.ui.MenuUi
 import io.github.mickeiik.izle.ui.RootEntry
 import io.github.mickeiik.izle.ui.SettingsEntry
 import io.github.mickeiik.izle.ui.common.CheckIcon
+import io.github.mickeiik.izle.ui.common.ErrorText
 import io.github.mickeiik.izle.ui.common.PlayIcon
 import io.github.mickeiik.izle.ui.common.Spinner
 import io.github.mickeiik.izle.ui.common.currentLocale
 import io.github.mickeiik.izle.ui.common.episodeNameText
 import io.github.mickeiik.izle.ui.common.languageLabel
 import io.github.mickeiik.izle.ui.common.languageName
+import io.github.mickeiik.izle.ui.theme.IzleBorders
 import io.github.mickeiik.izle.ui.theme.IzleColors
+import io.github.mickeiik.izle.ui.theme.IzleShapes
+import io.github.mickeiik.izle.ui.theme.IzleSpacing
+
+/** A little over half the screen, so the rows keep their width inside the safe margin. */
+private val PanelWidth = 520.dp
+private val IconSize = 28.dp
 
 class MenuActions(
     val onRoot: (RootEntry) -> Unit,
@@ -68,15 +78,16 @@ fun HiddenMenu(
     val page = menu.page
     Box(Modifier.fillMaxSize().background(IzleColors.Scrim)) {
         Column(
-            Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(480.dp)
+            Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(PanelWidth)
                 // D-pad focus must not wander to the screen underneath.
                 .focusProperties { onExit = { cancelFocusChange() } }
                 .focusGroup()
                 .background(IzleColors.Surface)
-                .padding(horizontal = 24.dp, vertical = 32.dp),
+                // The panel's right edge is the screen's: the rows end at the safe margin, out of the overscan.
+                .padding(start = IzleSpacing.XXLarge, end = IzleSpacing.SafeHorizontal, top = IzleSpacing.SafeVertical, bottom = IzleSpacing.SafeVertical),
         ) {
             Text(title(menu), style = MaterialTheme.typography.headlineMedium, color = IzleColors.OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(IzleSpacing.Large))
             Box(Modifier.weight(1f)) {
                 when (page) {
                     is MenuPage.Root -> MenuList(page.entries, initial = page.focused) { focus ->
@@ -116,7 +127,7 @@ fun HiddenMenu(
                     }
                 }
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(IzleSpacing.Medium))
             Text(stringResource(R.string.menu_back_hint), style = MaterialTheme.typography.bodySmall, color = IzleColors.Dim)
         }
     }
@@ -159,6 +170,10 @@ private fun MenuList(page: Any, initial: Int, content: LazyListScope.(focus: (In
     }
 }
 
+/**
+ * A row of the menu, without a fill of its own. Focused: the white border of the tiles and buttons on a lighter
+ * fill, the text staying white. Not scaled: the panel ends at the safe margin.
+ */
 @Composable
 private fun MenuRow(
     headline: String,
@@ -176,7 +191,32 @@ private fun MenuRow(
         headlineContent = { Text(headline, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis) },
         supportingContent = supporting?.let { { Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis) } },
         leadingContent = leading?.let { { it() } },
-        modifier = modifier.padding(vertical = 4.dp),
+        shape = ListItemDefaults.shape(IzleShapes.Medium),
+        colors = ListItemDefaults.colors(
+            containerColor = Color.Transparent,
+            contentColor = IzleColors.OnSurface,
+            selectedContainerColor = Color.Transparent,
+            selectedContentColor = IzleColors.OnSurface,
+            focusedContainerColor = IzleColors.SurfaceHigh,
+            focusedContentColor = IzleColors.OnSurface,
+            pressedContainerColor = IzleColors.SurfaceHigh,
+            pressedContentColor = IzleColors.OnSurface,
+            focusedSelectedContainerColor = IzleColors.SurfaceHigh,
+            focusedSelectedContentColor = IzleColors.OnSurface,
+            pressedSelectedContainerColor = IzleColors.SurfaceHigh,
+            pressedSelectedContentColor = IzleColors.OnSurface,
+            disabledContainerColor = Color.Transparent,
+            disabledContentColor = IzleColors.Dim,
+        ),
+        border = ListItemDefaults.border(
+            focusedBorder = IzleBorders.focus(IzleShapes.Medium),
+            pressedBorder = IzleBorders.focus(IzleShapes.Medium),
+            focusedSelectedBorder = IzleBorders.focus(IzleShapes.Medium),
+            focusedDisabledBorder = IzleBorders.focus(IzleShapes.Medium),
+            pressedSelectedBorder = IzleBorders.focus(IzleShapes.Medium),
+        ),
+        scale = ListItemDefaults.scale(focusedScale = 1f, pressedScale = 1f, focusedSelectedScale = 1f, focusedDisabledScale = 1f, pressedSelectedScale = 1f),
+        modifier = modifier.padding(vertical = IzleSpacing.XSmall),
     )
 }
 
@@ -184,8 +224,8 @@ private fun MenuRow(
 private fun EpisodesPage(menu: MenuUi, page: MenuPage.Episodes, actions: MenuActions) {
     val details = page.details
     when {
-        page.failed -> Text(stringResource(R.string.episodes_failed), style = MaterialTheme.typography.bodyLarge, color = IzleColors.Error)
-        details == null -> Spinner(Modifier.padding(24.dp), size = 48.dp)
+        page.failed -> ErrorText(stringResource(R.string.episodes_failed))
+        details == null -> Spinner(Modifier.padding(IzleSpacing.XLarge), size = 48.dp)
         else -> {
             val currentId = menu.playingEpisodeId ?: details.cursorEpisodeId
             val initial = details.episodes.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
@@ -206,9 +246,10 @@ private fun EpisodesPage(menu: MenuUi, page: MenuPage.Episodes, actions: MenuAct
                         MenuRow(
                             headline, supporting, modifier = focus(i), enabled = ep.playbackAllowed, selected = current,
                             leading = when {
-                                current -> ({ PlayIcon(Modifier.size(28.dp), color = IzleColors.Accent) })
-                                watched -> ({ CheckIcon(Modifier.size(28.dp), color = IzleColors.New) })
-                                else -> ({ Spacer(Modifier.size(28.dp)) })
+                                current -> ({ PlayIcon(Modifier.size(IconSize), color = IzleColors.Accent) })
+                                // Grey, not the mint of "New": a watched episode is done.
+                                watched -> ({ CheckIcon(Modifier.size(IconSize), color = IzleColors.Dim) })
+                                else -> ({ Spacer(Modifier.size(IconSize)) })
                             },
                         ) { actions.onEpisode(ep) }
                     }
@@ -238,5 +279,6 @@ private fun TrackPage(page: MenuPage, options: List<TrackOption>, automatic: Int
     }
 }
 
+/** The track in use: a white check. */
 private fun checkIf(on: Boolean): @Composable () -> Unit =
-    if (on) ({ CheckIcon(Modifier.size(28.dp), color = IzleColors.New) }) else ({ Spacer(Modifier.size(28.dp)) })
+    if (on) ({ CheckIcon(Modifier.size(IconSize), color = IzleColors.OnSurface) }) else ({ Spacer(Modifier.size(IconSize)) })

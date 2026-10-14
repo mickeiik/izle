@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -23,8 +22,11 @@ import androidx.tv.material3.Text
 import io.github.mickeiik.izle.R
 import io.github.mickeiik.izle.ui.PairingProblem
 import io.github.mickeiik.izle.ui.PairingUi
+import io.github.mickeiik.izle.ui.common.ErrorText
 import io.github.mickeiik.izle.ui.common.Spinner
 import io.github.mickeiik.izle.ui.theme.IzleColors
+import io.github.mickeiik.izle.ui.theme.IzleShapes
+import io.github.mickeiik.izle.ui.theme.IzleSpacing
 
 /**
  * The 6-digit code the owner approves from the admin page, with that page's address so the owner knows what to open
@@ -32,10 +34,10 @@ import io.github.mickeiik.izle.ui.theme.IzleColors
  */
 @Composable
 fun PairingScreen(ui: PairingUi) {
-    Box(Modifier.fillMaxSize().background(IzleColors.Background).padding(horizontal = 48.dp, vertical = 32.dp)) {
+    Box(Modifier.fillMaxSize().background(IzleColors.Background).padding(IzleSpacing.Safe)) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.align(Alignment.Center)) {
             Text(stringResource(R.string.pair_title), style = MaterialTheme.typography.displaySmall, color = IzleColors.OnSurface)
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(IzleSpacing.Medium))
             Text(
                 stringResource(R.string.pair_instructions, ui.adminUrl),
                 style = MaterialTheme.typography.bodyLarge,
@@ -44,7 +46,7 @@ fun PairingScreen(ui: PairingUi) {
             )
             Spacer(Modifier.height(28.dp))
             Box(
-                Modifier.background(IzleColors.Surface, RoundedCornerShape(24.dp)).padding(horizontal = 56.dp, vertical = 12.dp),
+                Modifier.background(IzleColors.Surface, IzleShapes.Large).padding(horizontal = 56.dp, vertical = IzleSpacing.Medium),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
@@ -54,13 +56,13 @@ fun PairingScreen(ui: PairingUi) {
                 )
             }
             Spacer(Modifier.height(28.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(IzleSpacing.Large)) {
                 when (ui.problem) {
-                    PairingProblem.Unreachable -> Text(
+                    PairingProblem.Unreachable -> ErrorText(
                         stringResource(R.string.setup_error_unreachable) + " " + stringResource(R.string.no_connection_detail),
-                        style = MaterialTheme.typography.headlineSmall, color = IzleColors.Error,
+                        textAlign = TextAlign.Center,
                     )
-                    PairingProblem.RateLimited -> Text(stringResource(R.string.pair_rate_limited), style = MaterialTheme.typography.headlineSmall, color = IzleColors.Error)
+                    PairingProblem.RateLimited -> ErrorText(stringResource(R.string.pair_rate_limited), textAlign = TextAlign.Center)
                     null -> {
                         Spinner(size = 36.dp)
                         Text(stringResource(R.string.pair_waiting), style = MaterialTheme.typography.headlineSmall, color = IzleColors.OnSurface)

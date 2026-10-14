@@ -51,6 +51,7 @@ import io.github.mickeiik.izle.R
 import io.github.mickeiik.izle.domain.EpisodeName
 import io.github.mickeiik.izle.domain.TileBadge
 import io.github.mickeiik.izle.ui.theme.IzleColors
+import io.github.mickeiik.izle.ui.theme.IzleSpacing
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -131,7 +132,9 @@ fun Clock(modifier: Modifier = Modifier) {
     // 12- or 24-hour follows the TV's setting and, when that is unset, the TV's own locale: the application
     // context keeps the system configuration, while LocalContext carries the app's (owner-chosen) language.
     val pattern = if (DateFormat.is24HourFormat(context.applicationContext)) "HH:mm" else "h:mm a"
-    val text = remember(now, pattern) { SimpleDateFormat(pattern, context.currentLocale()).format(Date(now)) }
+    // The locale is a key too: the owner may switch the menu language while Home shows ("PM" becomes "ÖS").
+    val locale = context.currentLocale()
+    val text = remember(now, pattern, locale) { SimpleDateFormat(pattern, locale).format(Date(now)) }
     Text(text, modifier = modifier, style = MaterialTheme.typography.headlineMedium, color = IzleColors.OnSurface)
 }
 
@@ -185,7 +188,7 @@ fun CheckIcon(modifier: Modifier = Modifier, color: Color = IzleColors.OnSurface
 /** A thin progress bar (tile progress, player position). */
 @Composable
 fun ProgressBar(fraction: Float, modifier: Modifier = Modifier, height: Dp = 6.dp, color: Color = IzleColors.Accent) {
-    Box(modifier.fillMaxWidth().height(height).background(Color(0x55FFFFFF), RoundedCornerShape(height / 2))) {
+    Box(modifier.fillMaxWidth().height(height).background(IzleColors.ProgressTrack, RoundedCornerShape(height / 2))) {
         Box(
             Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(height)
                 .background(color, RoundedCornerShape(height / 2)),
@@ -197,14 +200,20 @@ fun ProgressBar(fraction: Float, modifier: Modifier = Modifier, height: Dp = 6.d
 @Composable
 fun FullScreenMessage(title: String, detail: String? = null, modifier: Modifier = Modifier) {
     Box(modifier.fillMaxSize().background(IzleColors.Background), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(48.dp)) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(IzleSpacing.Safe)) {
             Text(title, style = MaterialTheme.typography.displaySmall, color = IzleColors.OnSurface, textAlign = TextAlign.Center)
             if (detail != null) {
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(IzleSpacing.Large))
                 Text(detail, style = MaterialTheme.typography.bodyLarge, color = IzleColors.Dim, textAlign = TextAlign.Center)
             }
         }
     }
+}
+
+/** A line saying what went wrong (server address, pairing, the episode list): one size and colour everywhere. */
+@Composable
+fun ErrorText(text: String, modifier: Modifier = Modifier, textAlign: TextAlign? = null) {
+    Text(text, modifier = modifier, style = MaterialTheme.typography.headlineSmall, color = IzleColors.Error, textAlign = textAlign)
 }
 
 @Composable
