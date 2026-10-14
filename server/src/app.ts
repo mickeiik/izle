@@ -7,6 +7,7 @@ import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import { routePath } from "hono/route";
 import { streamSSE } from "hono/streaming";
+import { ADMIN_FILES, ADMIN_VENDOR_FILES } from "./admin-files.ts";
 import { bearerToken, secretsEqual, sha256 } from "./auth.ts";
 import { clientAddress, compileTrustedProxies } from "./clientip.ts";
 import type { CompanionService } from "./companion.ts";
@@ -75,18 +76,6 @@ function parseWait(param: string | undefined, defaultSec: number, maxSec: number
 
 const CONTENT_TYPES: Record<string, string> = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" };
 
-/** The admin UI's static files (an allow-list: nothing else in the directory is served). */
-const ADMIN_FILES: Record<string, string> = {
-  "app.js": "text/javascript; charset=utf-8",
-  "lib.js": "text/javascript; charset=utf-8",
-  "companion.js": "text/javascript; charset=utf-8",
-  "style.css": "text/css; charset=utf-8",
-  "icon.svg": "image/svg+xml",
-};
-/** Third-party files vendored under `server/admin/vendor/` (pinned builds; see the README there). */
-const ADMIN_VENDOR_FILES: Record<string, string> = {
-  "hls.min.js": "text/javascript; charset=utf-8",
-};
 // media-src: the "Listen along" audio element plays companion streams through the same-origin proxy, and
 // blob: object URLs when hls.js feeds it through Media Source Extensions (page-local, nothing is fetched).
 const ADMIN_CSP =
