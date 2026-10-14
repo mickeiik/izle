@@ -1,7 +1,6 @@
 // @ts-check
-// The "Home screen" card of a TV's page: the shows on the TV's home screen, in order (▲ ▼ Play Episodes… ✕), the
-// "continue from" picker of a series, and "Add shows", which searches the catalog as the owner types. Every edit
-// saves the whole list at once (`PUT …/home`). Rows are kept per show, so moving one keeps the focus on its button.
+// The "Home screen" card of a TV's page: the shows in order (▲ ▼ Play Episodes… ✕), the "continue from" picker of
+// a series, and "Add shows". Every edit saves the whole list at once (`PUT …/home`).
 
 import { api, attempt } from "./api.js";
 import { actionButton, card, chip, h, keepFocus, keyedRows, liveSearch, loadError, loading, poster, progressBar, setOff, showRow, uid } from "./dom.js";
@@ -21,15 +20,12 @@ import {
   showMeta,
 } from "./lib.js";
 
-/**
- * @param {import("./view-device.js").DeviceContext} ctx
- * @returns {{ element: HTMLElement, update(home: any[]): void }}
- */
+/** @param {import("./view-device.js").DeviceContext} ctx */
 export function homeCard(ctx) {
   /** @type {any[]} */
   let entries = [];
   let saving = false;
-  /** Item id whose "continue from" picker is open. */
+  /** The item whose "continue from" picker is open. */
   let openPicker = /** @type {string | null} */ (null);
 
   const counter = h("span", { class: "muted count" });
@@ -54,7 +50,6 @@ export function homeCard(ctx) {
   };
   const ids = () => entries.map((e) => e.itemId);
 
-  // Rows --------------------------------------------------------------------------------------------------------
   /** @param {any} first */
   const homeRow = (first) => {
     const itemId = first.itemId;
@@ -94,11 +89,9 @@ export function homeCard(ctx) {
       picker.element,
     );
 
-    /** Opens or closes the picker as `openPicker` says. */
     const syncPicker = () => {
-      const open = openPicker === itemId;
-      toggle.setAttribute("aria-expanded", String(open));
-      picker.sync(entry, open);
+      toggle.setAttribute("aria-expanded", String(openPicker === itemId));
+      picker.sync(entry, openPicker === itemId);
     };
 
     return {
@@ -139,7 +132,7 @@ export function homeCard(ctx) {
     for (const r of rows.rows.values()) r.syncPicker();
   };
 
-  // Add shows ---------------------------------------------------------------------------------------------------
+  // Add shows: the catalog searched as the owner types.
   let showAll = false;
   /** @type {any[] | null} the last results shown, null while the hint shows */
   let results = null;
@@ -181,13 +174,8 @@ export function homeCard(ctx) {
     (items, query) => {
       results = items;
       hint.hidden = items !== null;
-      if (items === null) {
-        summary.textContent = "";
-        resultRows.set([]);
-      } else {
-        summary.textContent = searchSummary(items.length, query);
-        resultRows.set(items);
-      }
+      summary.textContent = items === null ? "" : searchSummary(items.length, query);
+      resultRows.set(items ?? []);
       resultsArea.replaceChildren(resultsList);
     },
     (err) => {
@@ -225,9 +213,9 @@ export function homeCard(ctx) {
 }
 
 /**
- * The "continue from" picker of a series on the home list: its episodes with what the TV did with each, "Continue
- * from here" and "Play now". `sync(entry, open)` shows or hides it for the row's current home entry; an open picker
- * reloads when what OK plays changed.
+ * The "continue from" picker of a series: its episodes with what the TV did with each, "Continue from here" and
+ * "Play now". `sync(entry, open)` shows or hides it for the row's home entry; an open picker reloads when what OK
+ * plays changed.
  * @param {import("./view-device.js").DeviceContext} ctx
  * @param {string} itemId
  * @param {() => Promise<void>} continued runs once "Continue from here" moved where OK continues
