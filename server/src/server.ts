@@ -4,11 +4,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import type { Hono } from "hono";
-import { createApp, type AppContext } from "./app.ts";
+import { createApp } from "./app.ts";
 import { loadAdminToken } from "./auth.ts";
 import { CatalogService } from "./catalog.ts";
+import { CommandService } from "./commands.ts";
 import { CompanionService } from "./companion.ts";
 import { DEFAULT_RESOLVE_BUDGET_MS, DEFAULT_RESOLVE_DEADLINE_MS, type ServerConfig } from "./config.ts";
+import type { AppContext } from "./context.ts";
+import { DeviceService } from "./devices.ts";
 import { EventHub } from "./events.ts";
 import { CatalogHistory } from "./history.ts";
 import { createLogger, type Logger } from "./log.ts";
@@ -85,12 +88,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     budgetMs: config.resolver?.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
   });
   const services = { config, store, catalog, events, resolver, problems, log, now };
+  const tv = new TvService(services);
   const ctx: AppContext = {
     ...services,
-    tv: new TvService(services),
+    tv,
     companion: new CompanionService(services),
     pairing: new PairingService(store, log, now, opts.pairing),
     proxy,
+    devices: new DeviceService({ ...services, tv, proxy }),
+    commands: new CommandService(services),
     resolverModule,
     adminToken,
     pingMs: opts.pingMs ?? 20_000,

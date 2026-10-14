@@ -6,6 +6,7 @@
 import type { Source } from "@izle/contract";
 import type { EpisodeRef } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
+import { iso } from "./presenters.ts";
 import type { CompanionLink, Device } from "./store.ts";
 import type { Services } from "./tv.ts";
 
@@ -30,7 +31,7 @@ function linkJson(l: CompanionLink | null) {
     offsetMs: l?.offsetMs ?? 0,
     rate: l?.rate ?? 1,
     language: l?.language ?? null,
-    updatedAt: l ? new Date(l.updatedAt).toISOString() : null,
+    updatedAt: l ? iso(l.updatedAt) : null,
   };
 }
 

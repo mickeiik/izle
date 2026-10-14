@@ -7,6 +7,7 @@
 import type { CatalogService } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
 import { redactReportText, type Logger } from "./log.ts";
+import { iso } from "./presenters.ts";
 import type { ProxyProblem } from "./proxy.ts";
 import { RateLimiter } from "./ratelimit.ts";
 import { isCompanionScope, type PlaybackSession, type Tried } from "./resolve.ts";
@@ -45,7 +46,6 @@ export interface ProblemServiceOptions {
   session?: (id: string) => PlaybackSession | undefined;
 }
 
-const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
 const cap = (text: string) => (text.length > MAX_DETAIL ? `${text.slice(0, MAX_DETAIL - 1)}…` : text);
 
 /** `timeout`, `error InvalidResult`, `timeout BudgetExhausted`: a failed source attempt in a few words. */

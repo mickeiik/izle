@@ -1,10 +1,11 @@
-import type { CatalogItem, Episode } from "@izle/contract";
+import type { CatalogItem } from "@izle/contract";
 import type { CatalogService } from "./catalog.ts";
 import type { ServerConfig } from "./config.ts";
 import { HttpError } from "./errors.ts";
 import type { EventHub } from "./events.ts";
 import type { Logger } from "./log.ts";
 import { autoNextIndex, cursorAfterFinished, cursorIndex, isPlayable, nextAllowedIndex, type ProgressLike } from "./playback.ts";
+import { episodeDetails, episodeSummary, iso, itemCard, itemDetails } from "./presenters.ts";
 import { noPlayableDetail, triedDetail, type ProblemService } from "./problems.ts";
 import type { ResolvedStream, ResolveInput, ResolveService, Tried } from "./resolve.ts";
 import type { Device, NowPlaying, Progress, Store } from "./store.ts";
@@ -45,12 +46,6 @@ export interface Services {
   problems: ProblemService;
   log: Logger;
   now: () => number;
-}
-
-const iso = (ms: number | null) => (ms === null ? null : new Date(ms).toISOString());
-
-function episodeSummary(episode: Episode) {
-  return { season: episode.season ?? null, number: episode.number ?? null, title: episode.title ?? null, label: episode.label ?? null };
 }
 
 /** What the TV sees: home state, item details, resolve and progress. Also used by the admin API. */
@@ -159,10 +154,6 @@ export class TvService {
     return added.filter((id) => allowed.has(id)).length;
   }
 
-  itemCard(item: CatalogItem) {
-    return { id: item.id, kind: item.kind, title: item.title, year: item.year ?? null, posterUrl: this.s.catalog.posterUrl(item) };
-  }
-
   state(device: Device) {
     const { manifest } = this.s.catalog.current;
     const home = [];
@@ -171,7 +162,7 @@ export class TvService {
       if (!item) continue; // gone after a catalog reload; the admin API flags it
       const cont = this.continueFor(device.id, item);
       if (!cont) continue; // nothing playable
-      home.push({ item: this.itemCard(item), continue: cont, newEpisodes: this.newEpisodesFor(device.id, item, addedAt) });
+      home.push({ item: itemCard(this.s.catalog, item), continue: cont, newEpisodes: this.newEpisodesFor(device.id, item, addedAt) });
     }
     return {
       version: device.stateVersion,
@@ -187,21 +178,12 @@ export class TvService {
     const progress = this.progressMap(device.id, item.id);
     const cont = this.continueFor(device.id, item);
     return {
-      item: {
-        ...this.itemCard(item),
-        originalTitle: item.originalTitle ?? null,
-        synopsis: item.synopsis ?? null,
-        genres: item.genres ?? [],
-      },
+      item: itemDetails(this.s.catalog, item),
       cursorEpisodeId: cont?.episodeId ?? null,
       episodes: item.episodes.map((episode, index) => {
         const p = progress.get(episode.id);
         return {
-          id: episode.id,
-          index,
-          ...episodeSummary(episode),
-          durationMs: episode.durationMs ?? null,
-          playbackAllowed: episode.playbackAllowed,
+          ...episodeDetails(episode, index),
           progress: p ? { positionMs: p.positionMs, durationMs: p.durationMs, status: p.status, updatedAt: iso(p.updatedAt) } : null,
           sources: episode.sources.map((s) => ({ id: s.id, label: s.label ?? null, languages: s.languages })),
         };
@@ -251,7 +233,7 @@ export class TvService {
       languages: r.languages,
       alternatives: r.alternatives,
       next: next ? { episodeId: next.id, ...episodeSummary(next) } : null,
-      item: this.itemCard(item),
+      item: itemCard(this.s.catalog, item),
       episode: { id: episode.id, index, count: item.episodes.length, ...episodeSummary(episode), durationMs: episode.durationMs ?? null },
       resume: progress?.status === "watching" ? { positionMs: progress.positionMs, durationMs: progress.durationMs } : null,
       expiresAt: r.expiresAt,
