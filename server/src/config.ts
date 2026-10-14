@@ -33,83 +33,47 @@ export class ConfigError extends Error {
 /** The sample catalog shipped in this repository, used when no catalog is configured. */
 export const SAMPLE_CATALOG_DIR = fileURLToPath(new URL("../../sample-catalog", import.meta.url));
 
-export const DEFAULT_PORT = 8787;
+const DEFAULT_PORT = 8787;
 export const DEFAULT_RESOLVE_DEADLINE_MS = 12_000;
 export const DEFAULT_RESOLVE_BUDGET_MS = 30_000;
 
 /** Simplified BCP 47 language tag, as in the catalog contract (`LanguageTag`). */
 export const LANGUAGE_TAG_PATTERN = "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$";
 
-// Unlike the API's, the config file's tags have no length limit.
-const LANGUAGE_TAG = { type: "string", pattern: LANGUAGE_TAG_PATTERN };
-
-const CONFIG_SCHEMA = {
+/** A JSON Schema object with these properties (the `required` ones too) and no others. */
+export const objectSchema = (properties: object, required: string[] = []) => ({
   type: "object",
-  properties: {
-    $schema: { type: "string" },
-    listen: {
-      type: "object",
-      properties: {
-        host: { type: "string", minLength: 1 },
-        port: { type: "integer", minimum: 0, maximum: 65535 },
-      },
-      additionalProperties: false,
-    },
-    publicUrl: { anyOf: [{ type: "string", pattern: "^https?://[^\\s]+$" }, { type: "null" }] },
-    trustedProxies: { type: "array", items: { type: "string", minLength: 1 }, maxItems: 64 },
-    dataDir: { type: "string", minLength: 1 },
-    catalog: {
-      type: "object",
-      required: ["dir"],
-      properties: { dir: { type: "string", minLength: 1 } },
-      additionalProperties: false,
-    },
-    resolver: {
-      anyOf: [
-        {
-          type: "object",
-          required: ["module"],
-          properties: {
-            module: { type: "string", minLength: 1 },
-            config: { type: "object" },
-            deadlineMs: { type: "integer", minimum: 100, maximum: 120_000 },
-            budgetMs: { type: "integer", minimum: 100, maximum: 120_000 },
-          },
-          additionalProperties: false,
-        },
-        { type: "null" },
-      ],
-    },
-    admin: {
-      type: "object",
-      properties: { tokenFile: { type: "string", minLength: 1 } },
-      additionalProperties: false,
-    },
-    proxy: {
-      type: "object",
-      properties: {
-        always: { type: "boolean" },
-        sessionTtlSec: { type: "integer", minimum: 60, maximum: 86400 },
-        alignTsSegments: { type: "boolean" },
-      },
-      additionalProperties: false,
-    },
-    defaults: {
-      type: "object",
-      properties: {
-        uiLanguage: { anyOf: [{ enum: ["tr", "en"] }, { type: "null" }] },
-        preferredAudioLanguage: { anyOf: [LANGUAGE_TAG, { type: "null" }] },
-      },
-      additionalProperties: false,
-    },
-    log: {
-      type: "object",
-      properties: { level: { enum: ["debug", "info", "warn", "error"] } },
-      additionalProperties: false,
-    },
-  },
+  ...(required.length > 0 ? { required } : {}),
+  properties,
   additionalProperties: false,
-} as const;
+});
+
+const NULL = { type: "null" };
+const NON_EMPTY = { type: "string", minLength: 1 };
+const MS = { type: "integer", minimum: 100, maximum: 120_000 };
+const RESOLVER = objectSchema({ module: NON_EMPTY, config: { type: "object" }, deadlineMs: MS, budgetMs: MS }, ["module"]);
+
+const CONFIG_SCHEMA = objectSchema({
+  $schema: { type: "string" },
+  listen: objectSchema({ host: NON_EMPTY, port: { type: "integer", minimum: 0, maximum: 65535 } }),
+  publicUrl: { anyOf: [{ type: "string", pattern: "^https?://[^\\s]+$" }, NULL] },
+  trustedProxies: { type: "array", items: NON_EMPTY, maxItems: 64 },
+  dataDir: NON_EMPTY,
+  catalog: objectSchema({ dir: NON_EMPTY }, ["dir"]),
+  resolver: { anyOf: [RESOLVER, NULL] },
+  admin: objectSchema({ tokenFile: NON_EMPTY }),
+  proxy: objectSchema({
+    always: { type: "boolean" },
+    sessionTtlSec: { type: "integer", minimum: 60, maximum: 86400 },
+    alignTsSegments: { type: "boolean" },
+  }),
+  // Unlike the API's, the config file's language tags have no length limit.
+  defaults: objectSchema({
+    uiLanguage: { anyOf: [{ enum: ["tr", "en"] }, NULL] },
+    preferredAudioLanguage: { anyOf: [{ type: "string", pattern: LANGUAGE_TAG_PATTERN }, NULL] },
+  }),
+  log: objectSchema({ level: { enum: ["debug", "info", "warn", "error"] } }),
+});
 
 const validateConfigFile = new Ajv2020({ strict: true, allErrors: true }).compile(CONFIG_SCHEMA);
 
@@ -156,17 +120,12 @@ export function databaseFile(config: Pick<ServerConfig, "dataDir">): string {
 
 /** Reads, parses and validates a config file; a ConfigError says what is wrong with it. */
 function readConfigFile(configPath: string): ConfigFile {
-  let text: string;
-  try {
-    text = readFileSync(configPath, "utf8");
-  } catch {
-    throw new ConfigError(`cannot read config file ${configPath}`);
-  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new ConfigError(`config file ${configPath} is not valid JSON`);
+    parsed = JSON.parse(readFileSync(configPath, "utf8"));
+  } catch (err) {
+    if (err instanceof SyntaxError) throw new ConfigError(`config file ${configPath} is not valid JSON`);
+    throw new ConfigError(`cannot read config file ${configPath}`);
   }
   if (!validateConfigFile(parsed)) {
     const details = (validateConfigFile.errors ?? [])
@@ -186,25 +145,14 @@ function readConfigFile(configPath: string): ConfigFile {
 }
 
 export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
-  const env = opts.env ?? process.env;
   const cwd = opts.cwd ?? process.cwd();
-  let file: ConfigFile = {};
-  let configPath: string | null = null;
-  let base = cwd;
-
-  if (opts.path) {
-    configPath = path.resolve(cwd, opts.path);
-    base = path.dirname(configPath);
-    file = readConfigFile(configPath);
-  }
-
-  const resolve = (p: string) => path.resolve(base, p);
+  const configPath = opts.path ? path.resolve(cwd, opts.path) : null;
+  const file: ConfigFile = configPath ? readConfigFile(configPath) : {};
+  const resolve = (p: string) => path.resolve(configPath ? path.dirname(configPath) : cwd, p);
   const dataDir = resolve(file.dataDir ?? "./data");
-  const envToken = env.IZLE_ADMIN_TOKEN?.trim() || null;
-
   return {
     configPath,
-    listen: { host: file.listen?.host ?? "0.0.0.0", port: file.listen?.port ?? DEFAULT_PORT },
+    listen: { host: "0.0.0.0", port: DEFAULT_PORT, ...file.listen },
     publicUrl: file.publicUrl ? file.publicUrl.replace(/\/+$/, "") : null,
     trustedProxies: file.trustedProxies ?? [],
     dataDir,
@@ -217,16 +165,12 @@ export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
           budgetMs: file.resolver.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
         }
       : null,
-    admin: { tokenFile: file.admin?.tokenFile ? resolve(file.admin.tokenFile) : path.join(dataDir, "admin.token"), token: envToken },
-    proxy: {
-      always: file.proxy?.always ?? false,
-      sessionTtlSec: file.proxy?.sessionTtlSec ?? 21600,
-      alignTsSegments: file.proxy?.alignTsSegments ?? false,
+    admin: {
+      tokenFile: file.admin?.tokenFile ? resolve(file.admin.tokenFile) : path.join(dataDir, "admin.token"),
+      token: (opts.env ?? process.env).IZLE_ADMIN_TOKEN?.trim() || null,
     },
-    defaults: {
-      uiLanguage: file.defaults?.uiLanguage ?? null,
-      preferredAudioLanguage: file.defaults?.preferredAudioLanguage ?? null,
-    },
-    log: { level: file.log?.level ?? "info" },
+    proxy: { always: false, sessionTtlSec: 21600, alignTsSegments: false, ...file.proxy },
+    defaults: { uiLanguage: null, preferredAudioLanguage: null, ...file.defaults },
+    log: { level: "info", ...file.log },
   };
 }

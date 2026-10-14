@@ -3,162 +3,116 @@ import { ID_PATTERN, simplifySchemaErrors } from "@izle/contract";
 import type { Context } from "hono";
 import { MAX_SEEK_DELTA_MS, MESSAGE_DURATION_SEC, MESSAGE_MAX_CHARS, PLAIN_COMMANDS, type CommandBody } from "./commands.ts";
 import type { CompanionResolveInput, LinkInput } from "./companion.ts";
-import { LANGUAGE_TAG_PATTERN } from "./config.ts";
+import { LANGUAGE_TAG_PATTERN, objectSchema as object } from "./config.ts";
 import type { DiagnosticsInput } from "./diagnostics.ts";
 import { HttpError } from "./errors.ts";
 import { PAIR_CODE } from "./pairing.ts";
 import { PROGRESS_REPORT_STATUSES } from "./playback.ts";
 import { TV_PROBLEM_KINDS, type ProblemReportBody } from "./problems.ts";
 import type { ResolveInput } from "./resolve.ts";
+import type { DevicePatch } from "./store.ts";
 import type { ProgressInput } from "./tv.ts";
 
 const ajv = new Ajv2020({ strict: true, allErrors: true });
 
 const ID = { type: "string", pattern: ID_PATTERN.source };
-const LANGUAGE_TAG = { type: "string", pattern: LANGUAGE_TAG_PATTERN, maxLength: 35 };
-const LANGUAGE_TAG_OR_NULL = { anyOf: [LANGUAGE_TAG, { type: "null" }] };
+const NULL = { type: "null" };
+const BOOLEAN = { type: "boolean" };
+const LANGUAGE_TAG_OR_NULL = { anyOf: [{ type: "string", pattern: LANGUAGE_TAG_PATTERN, maxLength: 35 }, NULL] };
 const NAME = { type: "string", minLength: 1, maxLength: 60, pattern: "\\S" };
 const MS = { type: "integer", minimum: 0, maximum: 1e12 };
 
-function compile<T>(schema: object): ValidateFunction<T> {
-  return ajv.compile<T>(schema);
-}
+export const approveBody = ajv.compile<{ code: string; name?: string }>(
+  object({ code: { type: "string", pattern: PAIR_CODE.source }, name: NAME }, ["code"]),
+);
 
-export const approveBody = compile<{ code: string; name?: string }>({
-  type: "object",
-  required: ["code"],
-  properties: { code: { type: "string", pattern: PAIR_CODE.source }, name: NAME },
-  additionalProperties: false,
-});
-
-export const devicePatchBody = compile<{
-  name?: string;
-  uiLanguage?: "tr" | "en" | null;
-  preferredAudioLanguage?: string | null;
-  subtitlesLanguage?: string | null;
-  autoplayOnStart?: boolean;
-}>({
-  type: "object",
-  minProperties: 1,
-  properties: {
+export const devicePatchBody = ajv.compile<DevicePatch>({
+  ...object({
     name: NAME,
-    uiLanguage: { anyOf: [{ enum: ["tr", "en"] }, { type: "null" }] },
+    uiLanguage: { anyOf: [{ enum: ["tr", "en"] }, NULL] },
     preferredAudioLanguage: LANGUAGE_TAG_OR_NULL,
     subtitlesLanguage: LANGUAGE_TAG_OR_NULL,
-    autoplayOnStart: { type: "boolean" },
-  },
-  additionalProperties: false,
+    autoplayOnStart: BOOLEAN,
+  }),
+  minProperties: 1,
 });
 
-export const homeBody = compile<{ itemIds: string[] }>({
-  type: "object",
-  required: ["itemIds"],
-  properties: { itemIds: { type: "array", items: ID, maxItems: 1000 } },
-  additionalProperties: false,
-});
+export const homeBody = ajv.compile<{ itemIds: string[] }>(
+  object({ itemIds: { type: "array", items: ID, maxItems: 1000 } }, ["itemIds"]),
+);
 
-export const cursorBody = compile<{ itemId: string; episodeId: string }>({
-  type: "object",
-  required: ["itemId", "episodeId"],
-  properties: { itemId: ID, episodeId: ID },
-  additionalProperties: false,
-});
+export const cursorBody = ajv.compile<{ itemId: string; episodeId: string }>(
+  object({ itemId: ID, episodeId: ID }, ["itemId", "episodeId"]),
+);
 
-export const commandBody = compile<CommandBody>({
+const SEEK_DELTA = { type: "integer", minimum: -MAX_SEEK_DELTA_MS, maximum: MAX_SEEK_DELTA_MS };
+const MESSAGE = { type: "string", minLength: 1, maxLength: MESSAGE_MAX_CHARS, pattern: "\\S" };
+const DURATION_SEC = { type: "integer", minimum: MESSAGE_DURATION_SEC.min, maximum: MESSAGE_DURATION_SEC.max };
+
+export const commandBody = ajv.compile<CommandBody>({
   oneOf: [
-    {
-      type: "object",
-      required: ["type", "episodeId"],
-      properties: { type: { const: "play" }, episodeId: ID },
-      additionalProperties: false,
-    },
-    { type: "object", required: ["type"], properties: { type: { enum: PLAIN_COMMANDS } }, additionalProperties: false },
+    object({ type: { const: "play" }, episodeId: ID }, ["type", "episodeId"]),
+    object({ type: { enum: PLAIN_COMMANDS } }, ["type"]),
     // A seek is relative (deltaMs) or absolute (positionMs), never both: each branch forbids the other field.
-    {
-      type: "object",
-      required: ["type", "deltaMs"],
-      properties: { type: { const: "seek" }, deltaMs: { type: "integer", minimum: -MAX_SEEK_DELTA_MS, maximum: MAX_SEEK_DELTA_MS } },
-      additionalProperties: false,
-    },
-    { type: "object", required: ["type", "positionMs"], properties: { type: { const: "seek" }, positionMs: MS }, additionalProperties: false },
-    {
-      type: "object",
-      required: ["type", "text"],
-      properties: {
-        type: { const: "message" },
-        text: { type: "string", minLength: 1, maxLength: MESSAGE_MAX_CHARS, pattern: "\\S" },
-        durationSec: { type: "integer", minimum: MESSAGE_DURATION_SEC.min, maximum: MESSAGE_DURATION_SEC.max },
-      },
-      additionalProperties: false,
-    },
+    object({ type: { const: "seek" }, deltaMs: SEEK_DELTA }, ["type", "deltaMs"]),
+    object({ type: { const: "seek" }, positionMs: MS }, ["type", "positionMs"]),
+    object({ type: { const: "message" }, text: MESSAGE, durationSec: DURATION_SEC }, ["type", "text"]),
   ],
 });
 
-export const resolveBody = compile<ResolveInput>({
-  type: "object",
-  required: ["episodeId"],
-  properties: { episodeId: ID, sourceId: ID, exclude: { type: "array", items: ID, maxItems: 64 } },
-  additionalProperties: false,
-});
+export const resolveBody = ajv.compile<ResolveInput>(
+  object({ episodeId: ID, sourceId: ID, exclude: { type: "array", items: ID, maxItems: 64 } }, ["episodeId"]),
+);
 
-export const diagnosticsBody = compile<DiagnosticsInput>({
-  type: "object",
-  required: ["episodeId"],
-  properties: { episodeId: ID, sourceId: ID, preferredAudioLanguage: LANGUAGE_TAG_OR_NULL, probe: { type: "boolean" } },
-  additionalProperties: false,
-});
+export const diagnosticsBody = ajv.compile<DiagnosticsInput>(
+  object({ episodeId: ID, sourceId: ID, preferredAudioLanguage: LANGUAGE_TAG_OR_NULL, probe: BOOLEAN }, ["episodeId"]),
+);
 
-export const progressBody = compile<ProgressInput>({
-  type: "object",
-  required: ["episodeId", "positionMs", "status"],
-  properties: {
-    sessionId: { anyOf: [{ type: "string", maxLength: 64 }, { type: "null" }] },
-    episodeId: ID,
-    positionMs: MS,
-    durationMs: { anyOf: [MS, { type: "null" }] },
-    status: { enum: PROGRESS_REPORT_STATUSES },
-    // Listen along: whether the player was actually advancing, and how old the sample is (queue delays).
-    playing: { type: "boolean" },
-    ageMs: { type: "integer", minimum: 0, maximum: 60_000 },
-  },
-  additionalProperties: false,
-});
+export const progressBody = ajv.compile<ProgressInput>(
+  object(
+    {
+      sessionId: { anyOf: [{ type: "string", maxLength: 64 }, NULL] },
+      episodeId: ID,
+      positionMs: MS,
+      durationMs: { anyOf: [MS, NULL] },
+      status: { enum: PROGRESS_REPORT_STATUSES },
+      // Listen along: whether the player was actually advancing, and how old the sample is (queue delays).
+      playing: BOOLEAN,
+      ageMs: { type: "integer", minimum: 0, maximum: 60_000 },
+    },
+    ["episodeId", "positionMs", "status"],
+  ),
+);
 
-export const problemBody = compile<ProblemReportBody>({
-  type: "object",
-  required: ["kind", "code"],
-  properties: {
-    kind: { enum: TV_PROBLEM_KINDS },
-    code: { type: "string", minLength: 1, maxLength: 64, pattern: "^[A-Za-z0-9_.:-]+$" },
-    // How long ago it happened: a report queued while the server was unreachable keeps its time.
-    ageMs: { type: "integer", minimum: 0, maximum: 86_400_000 },
-    episodeId: ID,
-    sourceId: ID,
-    sessionId: { type: "string", maxLength: 64 },
-    positionMs: MS,
-    httpStatus: { type: "integer", minimum: 100, maximum: 599 },
-    detail: { type: "string", maxLength: 500 },
-    appVersion: { type: "string", maxLength: 40 },
-  },
-  additionalProperties: false,
-});
+export const problemBody = ajv.compile<ProblemReportBody>(
+  object(
+    {
+      kind: { enum: TV_PROBLEM_KINDS },
+      code: { type: "string", minLength: 1, maxLength: 64, pattern: "^[A-Za-z0-9_.:-]+$" },
+      // How long ago it happened: a report queued while the server was unreachable keeps its time.
+      ageMs: { type: "integer", minimum: 0, maximum: 86_400_000 },
+      episodeId: ID,
+      sourceId: ID,
+      sessionId: { type: "string", maxLength: 64 },
+      positionMs: MS,
+      httpStatus: { type: "integer", minimum: 100, maximum: 599 },
+      detail: { type: "string", maxLength: 500 },
+      appVersion: { type: "string", maxLength: 40 },
+    },
+    ["kind", "code"],
+  ),
+);
 
 const OFFSET_MS = { type: "integer", minimum: -21_600_000, maximum: 21_600_000 };
 const RATE = { type: "number", minimum: 0.5, maximum: 2 };
 
-export const companionLinkBody = compile<LinkInput>({
-  type: "object",
-  required: ["offsetMs", "rate"],
-  properties: { offsetMs: OFFSET_MS, rate: RATE, language: LANGUAGE_TAG_OR_NULL },
-  additionalProperties: false,
-});
+export const companionLinkBody = ajv.compile<LinkInput>(
+  object({ offsetMs: OFFSET_MS, rate: RATE, language: LANGUAGE_TAG_OR_NULL }, ["offsetMs", "rate"]),
+);
 
-export const companionResolveBody = compile<CompanionResolveInput>({
-  type: "object",
-  required: ["episodeId", "sourceId"],
-  properties: { episodeId: ID, sourceId: ID, language: LANGUAGE_TAG_OR_NULL },
-  additionalProperties: false,
-});
+export const companionResolveBody = ajv.compile<CompanionResolveInput>(
+  object({ episodeId: ID, sourceId: ID, language: LANGUAGE_TAG_OR_NULL }, ["episodeId", "sourceId"]),
+);
 
 /** Parses and validates a JSON request body, answering 400 with readable details otherwise. */
 export async function parseBody<T>(c: Context, validate: ValidateFunction<T>): Promise<T> {
