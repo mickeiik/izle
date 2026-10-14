@@ -1,6 +1,7 @@
 import type { CatalogItem } from "@izle/contract";
 import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
+import { requireEpisode, requireItem, requirePlayable } from "./lookup.ts";
 import { autoNextIndex, cursorAfterReport, cursorIndex, isPlayable, type ProgressLike, type ProgressReportStatus } from "./playback.ts";
 import { episodeDetails, episodeSummary, iso, itemCard, itemDetails } from "./presenters.ts";
 import { noPlayableDetail, triedDetail } from "./problems.ts";
@@ -130,8 +131,7 @@ export class TvService {
   }
 
   item(device: Device, itemId: string) {
-    const item = this.s.catalog.item(itemId);
-    if (!item) throw new HttpError(404, "unknown_item");
+    const item = requireItem(this.s.catalog, itemId, 404, "unknown_item");
     const progress = this.progressMap(device.id, item.id);
     const cont = this.continueFor(device.id, item);
     return {
@@ -203,9 +203,7 @@ export class TvService {
    * stores a wrapped cursor; every other report makes it an ordinary one.
    */
   recordProgress(device: Device, input: ProgressInput): { version: number } {
-    const ref = this.s.catalog.episode(input.episodeId);
-    if (!ref) throw new HttpError(404, "unknown_episode");
-    const { item, episode, index } = ref;
+    const { item, episode, index } = requireEpisode(this.s.catalog, input.episodeId, 404, "unknown_episode");
     const catalogId = this.s.catalog.catalogId;
     const session = input.sessionId ? this.s.resolver.session(input.sessionId) : undefined;
     const sourceId = session && session.deviceId === device.id && session.episodeId === episode.id ? session.sourceId : null;
@@ -251,11 +249,10 @@ export class TvService {
    * after a wrap) and forgets X's saved position so it starts over.
    */
   setCursor(deviceId: string, itemId: string, episodeId: string): number {
-    const item = this.s.catalog.item(itemId);
-    if (!item) throw new HttpError(404, "unknown_item");
+    const item = requireItem(this.s.catalog, itemId, 404, "unknown_item");
     const episode = item.episodes.find((e) => e.id === episodeId);
     if (!episode) throw new HttpError(400, "unknown_episode", "the episode does not belong to this item");
-    if (!episode.playbackAllowed) throw new HttpError(400, "not_allowed", "playback of this episode is not allowed");
+    requirePlayable(episode, 400, "not_allowed");
     const catalogId = this.s.catalog.catalogId;
     this.s.store.transaction(() => {
       this.s.store.setCursor(deviceId, { catalogId, itemId, episodeId, updatedAt: this.s.now() });

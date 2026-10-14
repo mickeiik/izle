@@ -4,8 +4,8 @@
 
 import type { ResolveResult, Source } from "@izle/contract";
 import type { CatalogService } from "./catalog.ts";
-import { HttpError } from "./errors.ts";
 import { isPlaylistText, summarizePlaylist, type PlaylistSummary } from "./hls.ts";
+import { requireEpisode, requireSource } from "./lookup.ts";
 import { MAX_PLAYLIST_BYTES } from "./proxy.ts";
 import { servable, type ResolveService, type TriedCode, type UpstreamStream } from "./resolve.ts";
 import { errorName } from "./resolver.ts";
@@ -111,13 +111,9 @@ export async function diagnoseEpisode(
   input: { episodeId: string; sourceId?: string | undefined; preferredAudioLanguage?: string | null | undefined; probe?: boolean | undefined },
   signal?: AbortSignal,
 ) {
-  const ref = deps.catalog.episode(input.episodeId);
-  if (!ref) throw new HttpError(404, "unknown_episode");
-  let sources = ref.episode.sources;
-  if (input.sourceId !== undefined) {
-    sources = sources.filter((s) => s.id === input.sourceId);
-    if (sources.length === 0) throw new HttpError(404, "unknown_source");
-  }
+  const ref = requireEpisode(deps.catalog, input.episodeId, 404, "unknown_episode");
+  // Source ids are unique within an episode (the bundle validator refuses duplicates).
+  const sources = input.sourceId === undefined ? ref.episode.sources : [requireSource(ref.episode, input.sourceId, 404, "unknown_source")];
   const proxyAlways = deps.resolver.proxyAlways;
   const reports: SourceReport[] = [];
   for (const source of sources) {

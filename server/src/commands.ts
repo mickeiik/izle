@@ -2,7 +2,7 @@
 // when the TV (re)connects until the TV acknowledges it or it is too old to act on.
 
 import type { Services } from "./context.ts";
-import { HttpError } from "./errors.ts";
+import { requireEpisode, requirePlayable } from "./lookup.ts";
 import type { Command } from "./store.ts";
 import { MESSAGE_DURATION_SEC, type CommandBody } from "./validation.ts";
 
@@ -20,9 +20,8 @@ export class CommandService {
   private payload(body: CommandBody): Record<string, unknown> {
     switch (body.type) {
       case "play": {
-        const ref = this.s.catalog.episode(body.episodeId);
-        if (!ref) throw new HttpError(400, "unknown_episode");
-        if (!ref.episode.playbackAllowed) throw new HttpError(400, "not_allowed", "playback of this episode is not allowed");
+        const ref = requireEpisode(this.s.catalog, body.episodeId, 400, "unknown_episode");
+        requirePlayable(ref.episode, 400, "not_allowed");
         return { itemId: ref.item.id, episodeId: ref.episode.id };
       }
       case "seek":

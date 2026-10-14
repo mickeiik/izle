@@ -3,12 +3,11 @@
 // playing, keeps the owner's timing links (offset, speed, audio language) and resolves the companion stream under
 // its own proxy scope so the TV's sessions are never disturbed.
 
-import type { Source } from "@izle/contract";
-import type { EpisodeRef } from "./catalog.ts";
+import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
+import { requireEpisode, requireSource } from "./lookup.ts";
 import { iso } from "./presenters.ts";
 import type { CompanionLink, Device } from "./store.ts";
-import type { Services } from "./context.ts";
 
 export interface LinkInput {
   /** Companion position when the TV is at 0. */
@@ -42,18 +41,6 @@ export class CompanionService {
     this.s = services;
   }
 
-  private episodeRef(episodeId: string): EpisodeRef {
-    const ref = this.s.catalog.episode(episodeId);
-    if (!ref) throw new HttpError(404, "unknown_episode");
-    return ref;
-  }
-
-  private sourceOf(ref: EpisodeRef, sourceId: string): Source {
-    const source = ref.episode.sources.find((s) => s.id === sourceId);
-    if (!source) throw new HttpError(404, "unknown_source");
-    return source;
-  }
-
   link(episodeId: string, sourceId: string) {
     return linkJson(this.s.store.getCompanionLink(this.s.catalog.catalogId, episodeId, sourceId));
   }
@@ -63,8 +50,8 @@ export class CompanionService {
    * the same episode), not to a TV, so they are keyed by catalog, episode and source only.
    */
   putLink(episodeId: string, sourceId: string, input: LinkInput) {
-    const ref = this.episodeRef(episodeId);
-    this.sourceOf(ref, sourceId);
+    const ref = requireEpisode(this.s.catalog, episodeId, 404, "unknown_episode");
+    requireSource(ref.episode, sourceId, 404, "unknown_source");
     this.s.store.putCompanionLink({
       catalogId: this.s.catalog.catalogId,
       itemId: ref.item.id,
@@ -80,8 +67,8 @@ export class CompanionService {
 
   /** Copies an episode's stored link to every other episode of its item that has a source with the same id. */
   copyToItem(episodeId: string, sourceId: string) {
-    const ref = this.episodeRef(episodeId);
-    this.sourceOf(ref, sourceId);
+    const ref = requireEpisode(this.s.catalog, episodeId, 404, "unknown_episode");
+    requireSource(ref.episode, sourceId, 404, "unknown_source");
     const from = this.s.store.getCompanionLink(this.s.catalog.catalogId, ref.episode.id, sourceId);
     if (!from) throw new HttpError(404, "no_link", "this episode has no stored link for that source");
     const t = this.s.now();
@@ -136,8 +123,8 @@ export class CompanionService {
    * proxied, without touching the TV's now-playing row or playback session.
    */
   async resolve(device: Device, input: CompanionResolveInput, signal?: AbortSignal) {
-    const ref = this.episodeRef(input.episodeId);
-    this.sourceOf(ref, input.sourceId);
+    const ref = requireEpisode(this.s.catalog, input.episodeId, 404, "unknown_episode");
+    requireSource(ref.episode, input.sourceId, 404, "unknown_source");
     const r = await this.s.resolver.resolve(
       device.id,
       input.language ?? null,

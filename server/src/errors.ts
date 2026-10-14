@@ -22,6 +22,3 @@ export class HttpError extends Error {
     this.headers = headers;
   }
 }
-
-export const notFound = (code = "not_found", message?: string) => new HttpError(404, code, message);
-export const badRequest = (code: string, message?: string, extra?: Record<string, unknown>) => new HttpError(400, code, message, extra);

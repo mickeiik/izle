@@ -3,6 +3,7 @@ import { newId } from "./auth.ts";
 import type { CatalogService, EpisodeRef } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
 import type { Logger } from "./log.ts";
+import { requireEpisode, requirePlayable, requireSource } from "./lookup.ts";
 import { orderSources } from "./playback.ts";
 import { entryPath, subtitlePath, type ProxyService } from "./proxy.ts";
 import { runAdapter, type AdapterFailureCode } from "./resolver.ts";
@@ -281,10 +282,9 @@ export class ResolveService {
     signal?: AbortSignal,
     opts: ResolveOptions = {},
   ): Promise<ResolvedStream> {
-    const ref = this.catalog.episode(input.episodeId);
-    if (!ref) throw new HttpError(404, "unknown_episode");
+    const ref = requireEpisode(this.catalog, input.episodeId, 404, "unknown_episode");
     const { episode } = ref;
-    if (!episode.playbackAllowed) throw new HttpError(403, "not_allowed", "playback of this episode is not allowed");
+    requirePlayable(episode, 403, "not_allowed");
     const companion = opts.scope === "companion";
     const owner = companion ? companionScope(deviceId) : deviceId;
 
@@ -293,9 +293,7 @@ export class ResolveService {
 
     let candidates: Source[];
     if (input.sourceId !== undefined) {
-      const forced = episode.sources.find((s) => s.id === input.sourceId);
-      if (!forced) throw new HttpError(404, "unknown_source");
-      candidates = [forced];
+      candidates = [requireSource(episode, input.sourceId, 404, "unknown_source")];
     } else {
       candidates = orderSources(episode.sources, {
         preferredAudioLanguage,

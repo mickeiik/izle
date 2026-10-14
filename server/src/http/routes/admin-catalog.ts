@@ -6,6 +6,7 @@ import { buildJson, catalogInfo, catalogItemJson, reloadCatalog, searchHitJson }
 import type { AppContext } from "../../context.ts";
 import { diagnoseEpisode } from "../../diagnostics.ts";
 import { HttpError } from "../../errors.ts";
+import { requireItem } from "../../lookup.ts";
 import { diagnosticsBody, isId, parseBody } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
 
@@ -28,9 +29,8 @@ export function registerAdminCatalog(app: Hono<Env>, ctx: AppContext): void {
 
   app.get("/api/v1/admin/catalog/items/:id", (c) => {
     const id = c.req.param("id");
-    const item = isId(id) ? catalog.item(id) : undefined;
-    if (!item) throw new HttpError(404, "unknown_item");
-    return c.json({ item: catalogItemJson(catalog, item) });
+    if (!isId(id)) throw new HttpError(404, "unknown_item");
+    return c.json({ item: catalogItemJson(catalog, requireItem(catalog, id, 404, "unknown_item")) });
   });
 
   app.post("/api/v1/admin/diagnostics/resolve", async (c) => {
