@@ -68,6 +68,9 @@ contract share one version number. How to update (back up, update the server, th
   5 % of the picture, which many TVs crop. Buttons share one style: the focused one is white with a white border,
   so it is always clear which one OK presses. In the hidden menu the focused row has the same white border instead
   of a grey fill, and the panel no longer reaches into the screen's edge.
+- **Countdown bars on the TV's Up next, autoplay and "Can't play right now" screens**, and "Can't play right now"
+  now says when it goes back Home ("Home in 30 s"). The three screens and "The end" share one layout with the
+  show's poster always in the same place; "The end" shows the poster and the show's title.
 
 ### Fixed
 

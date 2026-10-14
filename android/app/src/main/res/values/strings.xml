@@ -47,6 +47,7 @@
     <string name="finished">The end</string>
     <string name="cannot_play">Can\'t play right now</string>
     <string name="try_again">Try again</string>
+    <string name="auto_home_countdown">Home in %1$d s</string>
 
     <!-- Hidden menu -->
     <string name="menu_title">Menu</string>

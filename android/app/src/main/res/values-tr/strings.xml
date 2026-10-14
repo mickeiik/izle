@@ -45,6 +45,7 @@
     <string name="finished">Bitti</string>
     <string name="cannot_play">Şu anda oynatılamıyor</string>
     <string name="try_again">Tekrar dene</string>
+    <string name="auto_home_countdown">%1$d sn sonra ana ekran</string>
 
     <!-- Hidden menu -->
     <string name="menu_title">Menü</string>

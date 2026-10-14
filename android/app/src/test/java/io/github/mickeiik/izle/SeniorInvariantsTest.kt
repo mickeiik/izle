@@ -185,6 +185,18 @@ class SeniorInvariantsTest {
     }
 
     @Test
+    fun theErrorScreenSaysWhenItGoesHomeWithTryAgainFocused() = onTv { tv ->
+        awaitTiles("Show A", "Show B", "Show C")
+        tv.press(KeyEvent.KEYCODE_DPAD_CENTER)
+        waitUntil("the player's error screen") { exists(string(R.string.cannot_play)) }
+        // Robolectric's clock stands still, so the countdown shows its first second; Home comes after 30 s.
+        compose.onNodeWithText(string(R.string.auto_home_countdown, 30)).assertIsDisplayed()
+        // The first button has the focus: OK tries again.
+        compose.onNode(isFocused()).assert(hasText(string(R.string.try_again)))
+        compose.onNodeWithText(string(R.string.go_home)).assertIsDisplayed()
+    }
+
+    @Test
     fun theMenuKeyOpensTheHiddenMenuAndBackReturnsToTheTiles() = onTv { tv ->
         awaitTiles("Show A", "Show B", "Show C")
         tv.press(KeyEvent.KEYCODE_MENU)
