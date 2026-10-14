@@ -9,16 +9,8 @@ package io.github.mickeiik.izle.ui.input
  * launched the app from the TV launcher — is swallowed too, so it cannot start playback by accident.
  */
 class OkPressDetector(private val thresholdMs: Long = 600) {
-    enum class Result {
-        /** Nothing for the UI (yet). */
-        Swallow,
-
-        /** A short press: deliver a click. */
-        Click,
-
-        /** A long press: open the hidden menu. */
-        LongPress,
-    }
+    /** [Swallow]: nothing for the UI (yet); [Click]: deliver a click; [LongPress]: open the hidden menu. */
+    enum class Result { Swallow, Click, LongPress }
 
     private var pressedAt = -1L
     private var fired = false
