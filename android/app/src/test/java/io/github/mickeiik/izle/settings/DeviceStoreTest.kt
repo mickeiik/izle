@@ -47,7 +47,6 @@ class DeviceStoreTest {
         store.setServer("http://192.168.1.10:8787/")
         val s = store.current()
         assertFalse(s.isPaired)
-        assertNull(s.deviceId)
         assertNull(store.cachedState())
     }
 

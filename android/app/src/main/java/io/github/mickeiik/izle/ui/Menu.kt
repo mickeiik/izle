@@ -22,7 +22,6 @@ sealed interface MenuPage {
 data class MenuUi(val pages: List<MenuPage>, val item: ItemCard?, val fromPlayer: Boolean, val playingEpisodeId: String? = null) {
     val page: MenuPage get() = pages.last()
 
-    /** [next] opened over the current page. */
     fun push(next: MenuPage): MenuUi = copy(pages = pages + next)
 
     /** One page back, or null when the root page is the one closing (the menu closes). */

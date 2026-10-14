@@ -36,10 +36,7 @@ object Problems {
         return names.joinToString(" < ")
     }
 
-    /**
-     * A Media3 player error. [errorCodeName] is `PlaybackException.errorCodeName` (`ERROR_CODE_IO_BAD_HTTP_STATUS`, …),
-     * [httpStatus] the upstream status when the error was an HTTP answer.
-     */
+    /** A Media3 player error: [errorCodeName] (`ERROR_CODE_IO_BAD_HTTP_STATUS`, …), [httpStatus] of an HTTP answer. */
     fun playbackError(
         error: Throwable,
         errorCodeName: String,
@@ -62,32 +59,24 @@ object Problems {
     )
 
     /**
-     * A resolve request that failed: the server's error code (`no_playable_source`, `not_allowed`, `http_502`, …) or
-     * `network`. Null for a 401: the device was removed, and the report would be refused the same way.
+     * A resolve request that failed: the server's error code (`no_playable_source`, `http_502`, …) or `network`. Null
+     * for a 401: the device was removed, and the report would be refused the same way.
      */
     fun resolveFailure(error: Exception, episodeId: String, sourceId: String?, appVersion: String): ProblemReport? {
-        val (code, status, detail) = when (error) {
-            is ApiException -> {
-                if (error.status == 401) return null
-                Triple(code(error.code), error.status.takeIf { it in 100..599 }, null)
-            }
-            else -> Triple("network", null, classChain(error).take(MAX_DETAIL_CHARS))
-        }
+        if (error is ApiException && error.status == 401) return null
+        val api = error as? ApiException
         return ProblemReport(
             kind = "resolve",
-            code = code,
+            code = if (api != null) code(api.code) else "network",
             episodeId = episodeId,
             sourceId = sourceId,
-            httpStatus = status,
-            detail = detail,
+            httpStatus = api?.status?.takeIf { it in 100..599 },
+            detail = if (api != null) null else classChain(error).take(MAX_DETAIL_CHARS),
             appVersion = appVersion.take(MAX_APP_VERSION_CHARS),
         )
     }
 
-    /**
-     * The viewer got "Can't play right now" after [sourcesTried] sources failed in the player; [reason] says what
-     * ended it when that was not a player error (`then resolve failed: no_playable_source`). Never a URL.
-     */
+    /** "Can't play right now" after [sourcesTried] sources; [reason]: what ended it when not a player error. */
     fun gaveUp(
         episodeId: String,
         sourceId: String?,

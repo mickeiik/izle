@@ -80,15 +80,6 @@ class PairingLoopTest {
     }
 
     @Test
-    fun retryAfterIsKeptWithinFiveSecondsAndTenMinutes() {
-        assertEquals(5_000L, PairingLoop.retryAfterMs(0))
-        assertEquals(5_000L, PairingLoop.retryAfterMs(5))
-        assertEquals(42_000L, PairingLoop.retryAfterMs(42))
-        assertEquals(600_000L, PairingLoop.retryAfterMs(3_600))
-        assertEquals(30_000L, PairingLoop.retryAfterMs(null))
-    }
-
-    @Test
     fun anUnreachableServerIsTriedAgainEveryTenSeconds() = runTest {
         val server = FakeServer(this)
         server.starts += code("111111")

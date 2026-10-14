@@ -39,7 +39,6 @@ sealed interface Screen {
 
     /** Server address entry (first run, or "Server address" from the hidden menu). */
     data class Setup(val canGoBack: Boolean) : Screen
-
     data object Pairing : Screen
     data object Home : Screen
     data object Player : Screen
@@ -75,11 +74,10 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     private val homeMessages = TimedValue<HomeMessage>(viewModelScope)
     val homeMessage: StateFlow<HomeMessage?> = homeMessages.value
 
-    /** The autoplay-on-start countdown over Home, or null. */
     private val _autoplay = MutableStateFlow<AutoplayUi?>(null)
     val autoplay: StateFlow<AutoplayUi?> = _autoplay.asStateFlow()
 
-    /** The owner's message banner (Home and player), or null. */
+    /** The owner's message banner (Home and player). */
     private val banners = TimedValue<String>(viewModelScope)
     val banner: StateFlow<String?> = banners.value
 
@@ -106,9 +104,10 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         userAgent = graph.userAgent,
         appVersion = BuildConfig.VERSION_NAME,
         // The emulator decodes H.264 in software; real TVs, debug build or not, get full resolution.
-        capVideoTo720p = BuildConfig.DEBUG && isEmulator(),
+        capVideoTo720p = BuildConfig.DEBUG && Build.HARDWARE in setOf("ranchu", "goldfish"),
         onExit = ::onPlayerExit,
-        onPlaybackStarted = ::onPlaybackStarted,
+        // Remembered for "autoplay on start" (outlives the screen: the application scope).
+        onPlaybackStarted = { item -> graph.appScope.launch { store.setLastPlayedItem(item.id) } },
     )
 
     /** The tile that should take focus when Home appears (the last one played, else the last focused). */
@@ -143,7 +142,9 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             pendingLaunchServer?.let { pendingLaunchServer = null; applyLaunchServer(it) }
         }
         viewModelScope.launch { repository.commands.collect(::onCommand) }
-        viewModelScope.launch { repository.unauthorized.collect { onUnauthorized() } }
+        viewModelScope.launch {
+            repository.unauthorized.collect { if (serverUrl != null && _screen.value != Screen.Pairing) pairAgain() }
+        }
         viewModelScope.launch { repository.fetched.collect(::onFreshState) }
         viewModelScope.launch {
             repository.outages.collect { lengthMs ->
@@ -152,8 +153,6 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             }
         }
     }
-
-    // --- lifecycle -----------------------------------------------------------------------------------------------
 
     fun onForeground() {
         foreground = true
@@ -188,11 +187,8 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     private suspend fun applyLaunchServer(address: String) {
         val url = ServerUrls.parse(address) ?: return
-        if (url == serverUrl && store.current().isPaired) return
-        useServer(url)
+        if (url != serverUrl || !store.current().isPaired) useServer(url)
     }
-
-    // --- keys ----------------------------------------------------------------------------------------------------
 
     /** Every key press (DOWN) reaching the app: the viewer is doing something, so autoplay on start stands down. */
     fun onKeyDown() {
@@ -208,10 +204,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     /** Back: closes the menu, leaves the player, steps back from pairing. Never leaves the app from Home. */
     fun onBack() {
         autoplayArmed = false
-        if (_autoplay.value != null) {
-            cancelAutoplay()
-            return
-        }
+        if (_autoplay.value != null) return cancelAutoplay()
         val menu = _menu.value
         if (menu != null) {
             val back = menu.pop()
@@ -242,33 +235,19 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     /** The autoplay countdown is showing: OK presses its button, Back and any other key cancel it. */
     val autoplayShowing: Boolean get() = _autoplay.value != null
 
-    // --- setup and pairing ---------------------------------------------------------------------------------------
-
-    fun onAddressChange(text: String) {
-        _setup.update { it.copy(address = text, error = null) }
-    }
+    fun onAddressChange(text: String) = _setup.update { it.copy(address = text, error = null) }
 
     fun onConnect() {
         if (_setup.value.busy) return
-        val url = ServerUrls.parse(_setup.value.address)
-        if (url == null) {
-            _setup.update { it.copy(error = SetupError.Invalid) }
-            return
-        }
+        val url = ServerUrls.parse(_setup.value.address) ?: return _setup.update { it.copy(error = SetupError.Invalid) }
         _setup.update { it.copy(busy = true, error = null) }
         viewModelScope.launch {
-            val reachable = orNullOnFailure { graph.apiClient(url, null).healthz() } != null
-            if (!reachable) {
+            if (orNullOnFailure { graph.apiClient(url, null).healthz() } == null) {
                 _setup.update { it.copy(busy = false, error = SetupError.Unreachable) }
                 return@launch
             }
             _setup.update { it.copy(busy = false, address = ServerUrls.display(url)) }
-            val settings = store.current()
-            if (url == serverUrl && settings.isPaired) {
-                showHome()
-            } else {
-                useServer(url)
-            }
+            if (url == serverUrl && store.current().isPaired) showHome() else useServer(url)
         }
     }
 
@@ -284,13 +263,8 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     /** With this device's token for [url]: its Home; without one: a pairing code. */
     private suspend fun enter(url: HttpUrl, token: String?) {
-        if (token != null) {
-            repository.use(graph.apiClient(url, token))
-            showHome()
-        } else {
-            repository.use(null)
-            showPairing()
-        }
+        repository.use(token?.let { graph.apiClient(url, it) })
+        if (token != null) showHome() else showPairing()
     }
 
     /** The server address screen; [canGoBack] to a working Home when the hidden menu opened it. */
@@ -327,11 +301,6 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
-    private suspend fun onUnauthorized() {
-        if (serverUrl == null || _screen.value == Screen.Pairing) return
-        pairAgain()
-    }
-
     /** The server no longer knows this TV, or the owner chose "Pair again": the token goes, a new code shows. */
     private suspend fun pairAgain() {
         closeMenu(resume = false)
@@ -341,15 +310,13 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         showPairing()
     }
 
-    // --- home ----------------------------------------------------------------------------------------------------
-
     fun onTileFocused(itemId: String) {
         homeFocusItemId = itemId
     }
 
     fun onTileClicked(entry: HomeEntry) {
         if (!online.value) {
-            showHomeMessage(HomeMessage.NoConnection)
+            homeMessages.show(HomeMessage.NoConnection, forMs = 5_000)
             repository.refreshSoon()
             return
         }
@@ -357,14 +324,10 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         startPlayback(entry.playNext.episodeId, startAtMs = null, hint = entry.item)
     }
 
-    private fun showHomeMessage(message: HomeMessage) = homeMessages.show(message, forMs = 5_000)
-
     /** The show [itemId] on Home in the latest state, if it is there. */
     private fun homeEntry(itemId: String?): HomeEntry? = state.value?.home?.firstOrNull { it.item.id == itemId }
 
     private fun focusedEntry(): HomeEntry? = homeEntry(homeFocusItemId) ?: state.value?.home?.firstOrNull()
-
-    // --- autoplay on start ---------------------------------------------------------------------------------------
 
     /** A state fetched from the server (never the offline cache): the first one after coming to the front decides. */
     private fun onFreshState(state: TvState) {
@@ -375,8 +338,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         viewModelScope.launch {
             val entry = AutoplayPlan.offer(state, store.current().lastPlayedItemId) ?: return@launch
             // The viewer may have pressed something while the last played show was read.
-            if (keyPresses != pressesBefore || !canOfferAutoplay()) return@launch
-            startAutoplay(entry)
+            if (keyPresses == pressesBefore && canOfferAutoplay()) startAutoplay(entry)
         }
     }
 
@@ -391,12 +353,8 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         autoplayJob = viewModelScope.launch {
             countDown(AutoplayPlan.COUNTDOWN_SEC) { left ->
                 // The latest state's entry: a live update may have moved its `continue` or removed the show.
-                val entry = homeEntry(itemId)
-                if (entry == null) {
-                    _autoplay.value = null
-                    return@launch
-                }
-                _autoplay.value = AutoplayUi(entry, left)
+                _autoplay.value = homeEntry(itemId)?.let { AutoplayUi(it, left) }
+                if (_autoplay.value == null) return@launch
             }
             onAutoplayPlayNow()
         }
@@ -405,8 +363,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     /** "Play now", or the end of the countdown: the show's `continue` episode under the normal resume rules. */
     fun onAutoplayPlayNow() {
         val itemId = endAutoplay() ?: return
-        val entry = homeEntry(itemId) ?: return
-        onTileClicked(entry)
+        onTileClicked(homeEntry(itemId) ?: return)
     }
 
     /** Back, "Not now" or any other key: the viewer stays on Home, with the focus on the offered show. */
@@ -429,18 +386,11 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         _autoplay.value = null
     }
 
-    // --- player --------------------------------------------------------------------------------------------------
-
     private fun startPlayback(episodeId: String, startAtMs: Long?, hint: ItemCard?) {
         clearAutoplay()
         _menu.value = null
         _screen.value = Screen.Player
         player.play(episodeId, startAtMs, hint)
-    }
-
-    /** Remembered for "autoplay on start" (outlives the screen: the application scope). */
-    private fun onPlaybackStarted(item: ItemCard) {
-        graph.appScope.launch { store.setLastPlayedItem(item.id) }
     }
 
     private fun onPlayerExit() {
@@ -449,7 +399,6 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         repository.refreshSoon()
     }
 
-    /** The owner's commands, as [CommandPlan] routes them. */
     private fun onCommand(command: ServerEvent.Command) {
         val actions = CommandPlan.actions(RemoteCommand.of(command), _screen.value, player.ui.value.phase, menuOpen = _menu.value != null)
         for (action in actions) {
@@ -469,8 +418,6 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             }
         }
     }
-
-    // --- hidden menu ---------------------------------------------------------------------------------------------
 
     fun openMenu() {
         if (!menuAvailable) return
@@ -493,9 +440,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         resumeAfterMenu = false
     }
 
-    private fun push(page: MenuPage) {
-        _menu.update { it?.push(page) }
-    }
+    private fun push(page: MenuPage) = _menu.update { it?.push(page) }
 
     fun onRootEntry(entry: RootEntry) {
         val menu = _menu.value ?: return
@@ -504,7 +449,12 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             RootEntry.Episodes -> {
                 val item = menu.item ?: return
                 push(MenuPage.Episodes(details = null))
-                loadEpisodes(item.id)
+                val api = repository.api
+                viewModelScope.launch {
+                    val page = orNullOnFailure { MenuPage.Episodes(api?.item(item.id), failed = api == null) }
+                        ?: MenuPage.Episodes(null, failed = true)
+                    _menu.update { m -> if (m == null || m.page !is MenuPage.Episodes) m else m.replaceTop(page) }
+                }
             }
             RootEntry.StartOver -> {
                 if (menu.fromPlayer) {
@@ -519,16 +469,6 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             RootEntry.Subtitles -> push(MenuPage.Subtitles(player.textTracks()))
             RootEntry.Settings -> push(MenuPage.Settings)
             RootEntry.About -> push(MenuPage.About)
-        }
-    }
-
-    private fun loadEpisodes(itemId: String) {
-        val api = repository.api
-        viewModelScope.launch {
-            val page = orNullOnFailure { MenuPage.Episodes(api?.item(itemId), failed = api == null) } ?: MenuPage.Episodes(null, failed = true)
-            _menu.update { m ->
-                if (m == null || m.page !is MenuPage.Episodes) m else m.replaceTop(page)
-            }
         }
     }
 
@@ -569,15 +509,9 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
-    fun aboutInfo(): AboutInfo {
-        val s = state.value
-        return AboutInfo(
-            appVersion = BuildConfig.VERSION_NAME,
-            server = serverUrl?.let(ServerUrls::display),
-            deviceName = s?.device?.name,
-            catalogName = s?.catalog?.name,
-            catalogBuild = s?.catalog?.buildId,
-        )
+    fun aboutInfo(): AboutInfo = state.value.let { s ->
+        val server = serverUrl?.let(ServerUrls::display)
+        AboutInfo(BuildConfig.VERSION_NAME, server, s?.device?.name, s?.catalog?.name, s?.catalog?.buildId)
     }
 
     /** Server-relative poster/media URLs made absolute for Coil. */
@@ -591,6 +525,3 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         repository.stop()
     }
 }
-
-/** The Android emulator's virtual board ("ranchu"; "goldfish" on old images). */
-private fun isEmulator(): Boolean = Build.HARDWARE == "ranchu" || Build.HARDWARE == "goldfish"

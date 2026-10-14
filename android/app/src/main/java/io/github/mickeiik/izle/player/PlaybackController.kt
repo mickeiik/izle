@@ -56,16 +56,13 @@ sealed interface PlayerPhase {
 
     /** Resolving or buffering before the first frame. */
     data object Loading : PlayerPhase
-
     data object Playing : PlayerPhase
-
-    /** The episode ended and the next one starts after the countdown. */
     data class UpNext(val next: NextEpisode, val secondsLeft: Int) : PlayerPhase
 
-    /** The item ended (or auto-advance stops here): "The end", then Home. */
+    /** "The end", then Home. */
     data object Finished : PlayerPhase
 
-    /** Nothing could be played: "Can't play right now" with Try again / Home, then Home on its own after [secondsLeft]. */
+    /** "Can't play right now" with Try again / Home, then Home on its own after [secondsLeft]. */
     data class Failed(val secondsLeft: Int) : PlayerPhase
 }
 
@@ -89,9 +86,8 @@ data class TrackOption(val groupIndex: Int, val trackIndex: Int, val language: S
 
 /**
  * Plays one episode at a time: resolve → play → heartbeat → auto-next, with source fallback on errors, a refresh of
- * expiring stream URLs and CH+/CH− episode steps. All methods run on the main thread. Progress reports go through
- * a [ProgressReporter] in [reportScope] (one ordered queue that outlives the screen). Problems (player errors, failed
- * resolves, giving up) are reported to the owner through [problems].
+ * expiring stream URLs and CH+/CH− episode steps. All methods run on the main thread. Progress reports go through one
+ * ordered queue in [reportScope], which outlives the screen.
  */
 @OptIn(UnstableApi::class)
 class PlaybackController(
@@ -105,8 +101,8 @@ class PlaybackController(
     private val appVersion: String,
     private val capVideoTo720p: Boolean,
     private val onExit: () -> Unit,
-    /** A playback reached its first frame (the item is the one being played). */
-    private val onPlaybackStarted: (ItemCard) -> Unit = {},
+    /** A playback reached its first frame. */
+    private val onPlaybackStarted: (ItemCard) -> Unit,
 ) {
     private val _ui = MutableStateFlow(PlayerUi())
     val ui: StateFlow<PlayerUi> = _ui.asStateFlow()
@@ -118,8 +114,6 @@ class PlaybackController(
 
     private var session: Session? = null
     private var episodeId: String? = null
-
-    /** The sources this episode went through, for the fallback after errors. */
     private val attempts = SourceAttempts()
     private var readyAt: Long? = null
     private var reported = false
@@ -132,18 +126,15 @@ class PlaybackController(
     private var overlayJob: Job? = null
     private var heartbeatJob: Job? = null
     private var infoJob: Job? = null
-
-    /** The refresh of the playing stream before its URL expires (one loop per resolved session). */
     private var expiryJob: Job? = null
+    private var stepJob: Job? = null
 
     /** When this playback last re-resolved its stream ahead of the expiry (elapsedRealtime), for the 60 s spacing. */
     private var lastRefreshAt: Long? = null
 
     /** CH+/CH−: the items' episode lists, fetched on first use and kept for this player visit. */
     private val episodeLists = mutableMapOf<String, List<EpisodeDetails>>()
-    private var stepJob: Job? = null
 
-    /** Progress reports, in order, from the application scope: they outlive the screen. */
     private val reporter = ProgressReporter(
         reportScope,
         send = { api, report -> api.progress(report) },
@@ -176,10 +167,7 @@ class PlaybackController(
             posterUrl = hint?.posterUrl?.let { api?.resolve(it)?.toString() } ?: keep.posterUrl,
             playWhenReady = true,
         )
-        if (api == null) {
-            showFailed()
-            return
-        }
+        if (api == null) return showFailed()
         resolveJob = scope.launch { resolveAndStart(api, episodeId, sourceId = null, startAtMs = startAtMs) }
     }
 
@@ -189,13 +177,17 @@ class PlaybackController(
         onExit()
     }
 
-    /** Like [exit] without navigating (the app went to the background). Ends the player visit. */
+    /** Like [exit] without navigating (the app went to the background). */
     fun stop() {
         resolveJob?.cancel()
         stepJob?.cancel()
         cancelOverlays()
         endSession()
-        releasePlayer()
+        _player.value?.let {
+            it.removeListener(listener)
+            it.release()
+        }
+        _player.value = null
         episodeId = null
         episodeLists.clear()
         _ui.value = PlayerUi()
@@ -213,23 +205,18 @@ class PlaybackController(
 
     fun togglePause() {
         val p = _player.value ?: return
-        if (_ui.value.phase != PlayerPhase.Playing) return
-        if (p.playWhenReady) pause() else resume()
+        if (_ui.value.phase == PlayerPhase.Playing) setPlaying(!p.playWhenReady)
     }
 
-    fun pause() {
-        val p = _player.value ?: return
-        if (!p.playWhenReady) return
-        p.pause()
-        reportCurrent(ProgressStatus.Paused)
-        showInfo()
-    }
+    fun pause() = setPlaying(false)
 
-    fun resume() {
+    fun resume() = setPlaying(true)
+
+    private fun setPlaying(play: Boolean) {
         val p = _player.value ?: return
-        if (p.playWhenReady) return
-        p.play()
-        reportCurrent(ProgressStatus.Playing)
+        if (p.playWhenReady == play) return
+        if (play) p.play() else p.pause()
+        reportCurrent(PlaybackPlan.liveStatus(play))
         showInfo()
     }
 
@@ -253,20 +240,17 @@ class PlaybackController(
 
     fun onSeekKeyUp() {
         val p = _player.value ?: return
-        val target = seek.commit() ?: return
-        seekNow(p, target)
+        seekNow(p, seek.commit() ?: return)
     }
 
-    /** The owner's seek command: relative or absolute, clamped to the episode, shown like a key press. */
+    /** The owner's seek command, shown like a key press. */
     fun seekRemote(command: RemoteCommand.Seek) {
         val p = _player.value ?: return
         if (_ui.value.phase != PlayerPhase.Playing) return
         seek.cancel()
-        val target = command.targetMs(p.currentPosition.coerceAtLeast(0), durationOf(p) ?: _ui.value.durationMs)
-        seekNow(p, target)
+        seekNow(p, command.targetMs(p.currentPosition.coerceAtLeast(0), durationOf(p) ?: _ui.value.durationMs))
     }
 
-    /** Jumps to [target] now, reported and shown like a key press. */
     private fun seekNow(p: ExoPlayer, target: Long) {
         p.seekTo(target)
         _ui.update { it.copy(seekPreviewMs = null, positionMs = target) }
@@ -275,10 +259,9 @@ class PlaybackController(
     }
 
     /**
-     * CH+/CH− (also |◀◀ ▶▶| and the owner's next/previous commands) while an episode is showing: ends it the way
-     * Back does (stopped/finished is reported) and plays the nearest playable episode after ([direction] > 0) or
-     * before it in the same player visit, under the normal resume rules. At either end only the info overlay
-     * appears. Further presses while the episode list is being fetched are ignored.
+     * CH+/CH− (also |◀◀ ▶▶| and the owner's next/previous): ends the episode as Back does and plays the nearest
+     * playable one after ([direction] > 0) or before it, under the normal resume rules. At either end only the info
+     * overlay appears. Presses while the episode list is being fetched are ignored.
      */
     fun stepEpisode(direction: Int) {
         if (_ui.value.phase != PlayerPhase.Playing || stepJob?.isActive == true) return
@@ -303,55 +286,38 @@ class PlaybackController(
         play(target.id, startAtMs = null, hint = item, episodeHint = hint)
     }
 
-    // --- tracks for the hidden menu ------------------------------------------------------------------------------
-
     fun audioTracks(): List<TrackOption> = tracksOf(C.TRACK_TYPE_AUDIO)
 
     fun textTracks(): List<TrackOption> = tracksOf(C.TRACK_TYPE_TEXT)
 
     /** null = automatic (the server's preferred audio language). */
-    fun selectAudio(option: TrackOption?) {
+    fun selectAudio(option: TrackOption?) = selectTrack(C.TRACK_TYPE_AUDIO, option)
+
+    /** null = subtitles off. */
+    fun selectText(option: TrackOption?) = selectTrack(C.TRACK_TYPE_TEXT, option)
+
+    private fun selectTrack(type: Int, option: TrackOption?) {
         val p = _player.value ?: return
-        val builder = p.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+        val builder = p.trackSelectionParameters.buildUpon().clearOverridesOfType(type)
         if (option != null) {
             val group = p.currentTracks.groups.getOrNull(option.groupIndex) ?: return
             builder.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, option.trackIndex))
         }
+        if (type == C.TRACK_TYPE_TEXT) builder.setTrackTypeDisabled(type, option == null)
         p.trackSelectionParameters = builder.build()
-    }
-
-    /** null = subtitles off. */
-    fun selectText(option: TrackOption?) {
-        val p = _player.value ?: return
-        val builder = p.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_TEXT)
-        if (option == null) {
-            builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-        } else {
-            val group = p.currentTracks.groups.getOrNull(option.groupIndex) ?: return
-            builder.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                .setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, option.trackIndex))
-        }
-        p.trackSelectionParameters = builder.build()
-        if (option == null) _ui.update { it.copy(cues = null) }
+        if (type == C.TRACK_TYPE_TEXT && option == null) _ui.update { it.copy(cues = null) }
     }
 
     private fun tracksOf(type: Int): List<TrackOption> {
         val p = _player.value ?: return emptyList()
-        val textDisabled = type == C.TRACK_TYPE_TEXT && C.TRACK_TYPE_TEXT in p.trackSelectionParameters.disabledTrackTypes
-        val out = mutableListOf<TrackOption>()
-        p.currentTracks.groups.forEachIndexed { g, group ->
-            if (group.type != type) return@forEachIndexed
-            for (t in 0 until group.length) {
-                if (!group.isTrackSupported(t)) continue
+        val textDisabled = type == C.TRACK_TYPE_TEXT && type in p.trackSelectionParameters.disabledTrackTypes
+        return p.currentTracks.groups.withIndex().filter { it.value.type == type }.flatMap { (g, group) ->
+            (0 until group.length).filter { group.isTrackSupported(it) }.map { t ->
                 val format = group.getTrackFormat(t)
-                out += TrackOption(g, t, format.language, format.label, selected = !textDisabled && group.isTrackSelected(t))
+                TrackOption(g, t, format.language, format.label, selected = !textDisabled && group.isTrackSelected(t))
             }
-        }
-        // Adaptive audio renditions repeat the same language: one entry per language/label is enough.
-        return out.distinctBy { it.language to it.label }
+        }.distinctBy { it.language to it.label } // adaptive audio renditions repeat the same language
     }
-
-    // --- internals -----------------------------------------------------------------------------------------------
 
     /**
      * Resolves and starts playback. [sourceId] pins one source (re-resolving an expired URL); when that fails the
@@ -379,30 +345,10 @@ class PlaybackController(
         }
         val receivedAt = SystemClock.elapsedRealtime()
         attempts.onResolved(sourceId, resolved.alternatives)
-        val item = mediaItemFor(api, resolved)
-        if (item == null) {
-            showFailed(reason = "then the media address was unusable")
-            return
-        }
-        val start = startAtMs ?: PlaybackPlan.resumePositionMs(
-            resolved.resume?.positionMs,
-            resolved.resume?.durationMs ?: resolved.episode.durationMs,
-        )
-        startSession(api, resolved, item, start, playWhenReady, receivedAt)
-    }
-
-    /**
-     * Plays a resolve answer from [start]: it becomes the session progress goes to, the screen shows its show and
-     * episode, the player gets its media, and the heartbeat and the refresh before its URL expires start.
-     */
-    private fun startSession(
-        api: ApiClient,
-        resolved: ResolveResponse,
-        item: MediaItem,
-        start: Long,
-        playWhenReady: Boolean,
-        receivedAt: Long,
-    ) {
+        val item = mediaItemFor(api, resolved) ?: return showFailed(reason = "then the media address was unusable")
+        val resume = resolved.resume
+        val start = startAtMs
+            ?: PlaybackPlan.resumePositionMs(resume?.positionMs, resume?.durationMs ?: resolved.episode.durationMs)
         session = Session(api, resolved)
         readyAt = null
         reported = false
@@ -426,15 +372,12 @@ class PlaybackController(
         watchExpiry(api, resolved, receivedAt)
     }
 
-    /**
-     * A resolve that failed: anything but a network failure or an error answer is thrown on; otherwise the owner gets
-     * a problem report (unless the viewer left meanwhile) and a 401 is noticed by the next state fetch.
-     */
+    /** Rethrows anything but a network failure or an error answer; else reports it (unless the viewer left). */
     private suspend fun onResolveFailure(e: Exception, api: ApiClient, episodeId: String, sourceId: String?) {
         if (e !is ApiException && e !is IOException) throw e
-        currentCoroutineContext().ensureActive() // the viewer left meanwhile: nothing to report
+        currentCoroutineContext().ensureActive()
         problems.send(Problems.resolveFailure(e, episodeId, sourceId, appVersion), api = api)
-        if (e is ApiException && e.status == 401) repository.refreshSoon()
+        if (e is ApiException && e.status == 401) repository.refreshSoon() // the next state fetch notices the removal
     }
 
     /** The media item for a resolve answer (server-relative URLs made absolute), or null when its URL is unusable. */
@@ -456,11 +399,9 @@ class PlaybackController(
             .build()
     }
 
-    // --- refreshing an expiring stream ---------------------------------------------------------------------------
-
     /**
-     * Re-resolves the playing source shortly before its URL expires (see [ExpiryPlan]) and keeps doing so after each
-     * refresh. One loop per resolved session: a new resolve, an episode change, the end or leaving cancels it.
+     * Re-resolves the playing source shortly before its URL expires (see [ExpiryPlan]), again after each refresh.
+     * One loop per resolved session: a new resolve, an episode change, the end or leaving cancels it.
      */
     private fun watchExpiry(api: ApiClient, resolved: ResolveResponse, receivedAt: Long) {
         expiryJob?.cancel()
@@ -482,16 +423,15 @@ class PlaybackController(
 
     /**
      * Resolves the same source again (pinned, no `exclude`) while playing or paused, with one retry 30 s after a
-     * network or server failure. Returns the new stream's expiry to schedule the next refresh from, or null to stop
-     * (the session changed, no expiry, or it failed for good: the 403/410 path takes over when the URL expires).
+     * network or server failure. Returns the new stream's expiry, or null to stop (the session changed, no expiry, or
+     * it failed for good: the 403/410 path takes over when the URL expires).
      */
     private suspend fun refreshBeforeExpiry(api: ApiClient, deadline: Long): Long? {
         var retried = false
         while (true) {
             val s = session ?: return null
             val episodeId = this.episodeId ?: return null
-            val phase = _ui.value.phase
-            if (phase != PlayerPhase.Playing && phase != PlayerPhase.Loading) return null
+            if (_ui.value.phase != PlayerPhase.Playing && _ui.value.phase != PlayerPhase.Loading) return null
             val sourceId = s.resolved.sourceId
             lastRefreshAt = SystemClock.elapsedRealtime()
             val resolved = try {
@@ -499,9 +439,8 @@ class PlaybackController(
             } catch (e: Exception) {
                 onResolveFailure(e, api, episodeId, sourceId)
                 if (session !== s) return null
-                val status = (e as? ApiException)?.status
-                val retry = ExpiryPlan.retryDelayMs(ExpiryPlan.isRetryable(status), retried, deadline - SystemClock.elapsedRealtime())
-                    ?: return null
+                val retryable = ExpiryPlan.isRetryable((e as? ApiException)?.status)
+                val retry = ExpiryPlan.retryDelayMs(retryable, retried, deadline - SystemClock.elapsedRealtime()) ?: return null
                 retried = true
                 delay(retry)
                 continue
@@ -514,17 +453,14 @@ class PlaybackController(
     }
 
     /**
-     * Continues with a re-resolved answer for the same source: progress goes to the new session; the media is swapped
-     * at the current position only when its URL changed (`playWhenReady` untouched: a paused player stays paused, a
-     * short spinner while it buffers). The fallback order of the last unpinned resolve stays (a pinned answer has no
-     * alternatives).
+     * Progress goes to the re-resolved session; the media is swapped at the current position only when its URL
+     * changed, `playWhenReady` untouched. The last unpinned resolve's fallback order stays.
      */
     private fun adoptRefreshed(api: ApiClient, old: Session, resolved: ResolveResponse) {
         session = Session(api, resolved)
         val p = _player.value ?: return
         if (resolved.media.url != old.resolved.media.url) {
-            val item = mediaItemFor(api, resolved)
-            if (item != null) {
+            mediaItemFor(api, resolved)?.let { item ->
                 val position = p.currentPosition.coerceAtLeast(0)
                 p.setMediaItem(item, position)
                 p.prepare()
@@ -554,19 +490,16 @@ class PlaybackController(
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-            _player.value?.let { syncFlags(it) }
+            _player.value?.let(::syncFlags)
         }
 
+        // A rebuffer stall, its end, a pause or a resume: the phone's "Listen along" follows this anchor, so report
+        // at once (a stall is status "playing" with playing=false).
         override fun onIsPlayingChanged(isPlaying: Boolean) {
-            // A rebuffer stall, its end, a pause or a resume: the phone's "Listen along" follows this anchor, so
-            // report at once (a stall is status "playing" with playing=false).
-            val p = _player.value ?: return
-            reportLive(p)
+            _player.value?.let(::reportLive)
         }
 
-        override fun onPlayerError(error: PlaybackException) {
-            onError(error)
-        }
+        override fun onPlayerError(error: PlaybackException) = onError(error)
 
         override fun onCues(cueGroup: CueGroup) {
             val text = cueGroup.cues.mapNotNull { it.text?.toString()?.trim() }.filter { it.isNotEmpty() }.joinToString("\n")
@@ -574,14 +507,12 @@ class PlaybackController(
         }
     }
 
-    private fun syncFlags(p: ExoPlayer) {
-        _ui.update {
-            it.copy(
-                playWhenReady = p.playWhenReady,
-                buffering = p.playbackState == Player.STATE_BUFFERING,
-                durationMs = durationOf(p) ?: it.durationMs,
-            )
-        }
+    private fun syncFlags(p: ExoPlayer) = _ui.update {
+        it.copy(
+            playWhenReady = p.playWhenReady,
+            buffering = p.playbackState == Player.STATE_BUFFERING,
+            durationMs = durationOf(p) ?: it.durationMs,
+        )
     }
 
     private fun onEnded(p: ExoPlayer) {
@@ -593,63 +524,56 @@ class PlaybackController(
         stopSessionLoops()
         lastPositionMs = 0
         val next = s.resolved.next
-        if (next != null) startUpNext(next) else showFinished()
+        if (next == null) {
+            _ui.update { it.copy(phase = PlayerPhase.Finished, showInfo = false, cues = null) }
+            launchOverlay {
+                delay(PlaybackPlan.FINISHED_MESSAGE_MS)
+                exit()
+            }
+        } else {
+            launchOverlay {
+                countDown(PlaybackPlan.AUTO_NEXT_COUNTDOWN_SEC) { left ->
+                    _ui.update { it.copy(phase = PlayerPhase.UpNext(next, left), showInfo = false, cues = null) }
+                }
+                play(next.episodeId)
+            }
+        }
     }
 
     private fun onError(error: PlaybackException) {
         val p = _player.value
-        val current = session
+        val s = session
         val position = p?.currentPosition?.coerceAtLeast(0) ?: lastPositionMs ?: 0
         val httpStatus = error.httpStatus()
         problems.send(
             Problems.playbackError(
-                error, error.errorCodeName, httpStatus, episodeId, current?.resolved?.sourceId,
-                current?.resolved?.sessionId, position, appVersion,
+                error, error.errorCodeName, httpStatus, episodeId, s?.resolved?.sourceId, s?.resolved?.sessionId,
+                position, appVersion,
             ),
-            api = current?.api,
+            api = s?.api,
         )
-        val s = current ?: return showFailed()
+        val episodeId = this.episodeId
+        if (s == null || episodeId == null) return showFailed()
         lastPositionMs = position
         val played = readyAt?.let { SystemClock.elapsedRealtime() - it } ?: 0
         val sourceId = s.resolved.sourceId
-        val episodeId = this.episodeId ?: return showFailed()
         when (attempts.afterPlaybackError(sourceId, httpStatus, played)) {
-            PlaybackPlan.Recovery.RetrySameSource -> relaunch(s.api, episodeId, sourceId = sourceId, position)
+            PlaybackPlan.Recovery.RetrySameSource -> relaunch(s.api, episodeId, sourceId, position)
             PlaybackPlan.Recovery.NextSource -> relaunch(s.api, episodeId, sourceId = null, position)
             PlaybackPlan.Recovery.GiveUp -> {
-                if (readyAt != null) report(s, ProgressStatus.Stopped, position, p?.let { durationOf(it) }, playing = false)
+                if (readyAt != null) report(s, ProgressStatus.Stopped, position, p?.let(::durationOf), playing = false)
                 reported = true
                 showFailed()
             }
         }
     }
 
-    /**
-     * Re-resolves silently and continues at [positionMs] (the screen keeps showing the last frame/spinner), paused
-     * if the viewer had paused.
-     */
+    /** Re-resolves silently (the last frame or the spinner stays) and goes on at [positionMs], paused if it was. */
     private fun relaunch(api: ApiClient, episodeId: String, sourceId: String?, positionMs: Long) {
         val playWhenReady = _player.value?.playWhenReady ?: true
         resolveJob?.cancel()
         expiryJob?.cancel()
         resolveJob = scope.launch { resolveAndStart(api, episodeId, sourceId, positionMs, playWhenReady) }
-    }
-
-    private fun startUpNext(next: NextEpisode) {
-        launchOverlay {
-            countDown(PlaybackPlan.AUTO_NEXT_COUNTDOWN_SEC) { left ->
-                _ui.update { it.copy(phase = PlayerPhase.UpNext(next, left), showInfo = false, cues = null) }
-            }
-            play(next.episodeId)
-        }
-    }
-
-    private fun showFinished() {
-        _ui.update { it.copy(phase = PlayerPhase.Finished, showInfo = false, cues = null) }
-        launchOverlay {
-            delay(PlaybackPlan.FINISHED_MESSAGE_MS)
-            exit()
-        }
     }
 
     /** "Can't play right now". [reason] completes the problem report's "tried N sources". */
@@ -668,17 +592,15 @@ class PlaybackController(
     }
 
     private fun showInfo() {
-        val p = _player.value
-        _ui.update { it.copy(showInfo = true, positionMs = p?.currentPosition ?: it.positionMs) }
+        _ui.update { it.copy(showInfo = true, positionMs = _player.value?.currentPosition ?: it.positionMs) }
         infoJob?.cancel()
         infoJob = scope.launch {
             var shownFor = 0L
             while (isActive) {
                 delay(250)
                 shownFor += 250
-                val player = _player.value
                 val hide = shownFor >= PlaybackPlan.INFO_OVERLAY_MS && seek.pendingTargetMs == null
-                _ui.update { it.copy(positionMs = player?.currentPosition ?: it.positionMs, showInfo = !hide) }
+                _ui.update { it.copy(positionMs = _player.value?.currentPosition ?: it.positionMs, showInfo = !hide) }
                 if (hide) break
             }
         }
@@ -689,8 +611,7 @@ class PlaybackController(
         heartbeatJob = scope.launch {
             while (isActive) {
                 delay(PlaybackPlan.HEARTBEAT_INTERVAL_MS)
-                val p = _player.value ?: continue
-                if (p.isPlaying) reportCurrent(ProgressStatus.Playing)
+                if (_player.value?.isPlaying == true) reportCurrent(ProgressStatus.Playing)
             }
         }
     }
@@ -730,7 +651,7 @@ class PlaybackController(
         overlayJob = scope.launch(block = block)
     }
 
-    /** The loops that belong to one resolved session: the heartbeat and the refresh before the stream expires. */
+    /** The heartbeat and the refresh before the stream expires belong to one resolved session. */
     private fun stopSessionLoops() {
         heartbeatJob?.cancel()
         expiryJob?.cancel()
@@ -741,29 +662,21 @@ class PlaybackController(
         infoJob?.cancel()
     }
 
-    private fun ensurePlayer(): ExoPlayer {
-        _player.value?.let { return it }
-        val http = OkHttpDataSource.Factory(mediaHttp).setUserAgent(userAgent)
-        val player = ExoPlayer.Builder(context)
-            .setRenderersFactory(DefaultRenderersFactory(context).setEnableDecoderFallback(true))
-            .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(context, http)))
-            .setAudioAttributes(
-                AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),
-                /* handleAudioFocus = */ true,
-            )
-            .setHandleAudioBecomingNoisy(true)
-            .build()
-        player.addListener(listener)
-        _player.value = player
-        return player
-    }
-
-    private fun releasePlayer() {
-        val p = _player.value ?: return
-        p.removeListener(listener)
-        p.release()
-        _player.value = null
-    }
+    private fun ensurePlayer(): ExoPlayer = _player.value ?: ExoPlayer.Builder(context)
+        .setRenderersFactory(DefaultRenderersFactory(context).setEnableDecoderFallback(true))
+        .setMediaSourceFactory(
+            DefaultMediaSourceFactory(
+                DefaultDataSource.Factory(context, OkHttpDataSource.Factory(mediaHttp).setUserAgent(userAgent)),
+            ),
+        )
+        .setAudioAttributes(
+            AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),
+            /* handleAudioFocus = */ true,
+        )
+        .setHandleAudioBecomingNoisy(true)
+        .build()
+        .apply { addListener(listener) }
+        .also { _player.value = it }
 
     /** Preferred audio from the server (owner-controlled); subtitles off unless the owner chose a language. */
     private fun applyTrackPreferences(p: ExoPlayer) {

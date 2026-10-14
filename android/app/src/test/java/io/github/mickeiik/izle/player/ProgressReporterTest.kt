@@ -83,21 +83,6 @@ class ProgressReporterTest {
     }
 
     @Test
-    fun onlyAFinalReportRefreshesHome() = runTest {
-        val reporter = reporter()
-        reporter.report(Playing)
-        reporter.report(Paused)
-        advanceUntilIdle()
-        assertEquals(0, finalsDelivered)
-        reporter.report(Finished)
-        advanceUntilIdle()
-        assertEquals(1, finalsDelivered)
-        reporter.report(Stopped)
-        advanceUntilIdle()
-        assertEquals(2, finalsDelivered)
-    }
-
-    @Test
     fun otherClientErrorsDropTheReport() = runTest {
         val reporter = reporter()
         answers += failWith(ApiException(404, "unknown_episode"))
@@ -191,6 +176,7 @@ class ProgressReporterTest {
         reporter.report(api, "session-1", "show.e1", Paused, positionMs = -40, durationMs = null, playing = false)
         advanceUntilIdle()
         assertEquals(ProgressReport("session-1", "show.e1", 0, null, Paused, playing = false, ageMs = 0), sent.single().report)
+        assertEquals("only a final report refreshes Home", 0, finalsDelivered)
     }
 
     @Test

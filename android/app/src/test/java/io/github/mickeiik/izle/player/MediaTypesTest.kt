@@ -11,25 +11,18 @@ class MediaTypesTest {
         assertArrayEquals(arrayOf("tr"), languagePreference("tr"))
         assertArrayEquals(arrayOf("EN", "en"), languagePreference("EN"))
         assertArrayEquals(arrayOf("zh-Hant-TW", "zh"), languagePreference("zh-Hant-TW"))
-    }
-
-    @Test
-    fun noLanguageMeansNoPreference() {
+        // No language means no preference.
         assertArrayEquals(emptyArray<String>(), languagePreference(null))
         assertArrayEquals(emptyArray<String>(), languagePreference(""))
         assertArrayEquals(emptyArray<String>(), languagePreference("  "))
     }
 
     @Test
-    fun mediaKindsMapToTheirMimeTypes() {
+    fun mediaKindsAndSubtitleFormatsMapToTheirMimeTypes() {
         assertEquals("application/x-mpegURL", mediaMimeType("hls"))
         assertEquals("application/dash+xml", mediaMimeType("dash"))
         assertEquals("video/mp4", mediaMimeType("mp4"))
         assertEquals("an unknown kind is played as MP4", "video/mp4", mediaMimeType("webm"))
-    }
-
-    @Test
-    fun subtitleFormatsMapToTheirMimeTypes() {
         assertEquals("application/x-subrip", subtitleMimeType("srt"))
         assertEquals("application/ttml+xml", subtitleMimeType("ttml"))
         assertEquals("text/vtt", subtitleMimeType("vtt"))

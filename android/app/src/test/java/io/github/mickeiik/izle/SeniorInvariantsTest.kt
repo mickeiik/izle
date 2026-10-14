@@ -397,9 +397,8 @@ class SeniorInvariantsTest {
     }
 
     private fun localized(language: String): Context {
-        val base = ApplicationProvider.getApplicationContext<Context>()
-        val config = Configuration(base.resources.configuration).apply { setLocale(Locale.forLanguageTag(language)) }
-        return base.createConfigurationContext(config)
+        val config = Configuration(app.resources.configuration).apply { setLocale(Locale.forLanguageTag(language)) }
+        return app.createConfigurationContext(config)
     }
 
     /** The first text of the focused element, if any. */
@@ -407,10 +406,7 @@ class SeniorInvariantsTest {
         compose.onAllNodes(isFocused()).fetchSemanticsNodes().singleOrNull()?.texts()?.firstOrNull()
 
     /** Every text shown anywhere on the screen. */
-    private fun allTexts(): List<String> {
-        fun collect(node: SemanticsNode): List<String> = node.texts() + node.children.flatMap(::collect)
-        return collect(compose.onRoot().fetchSemanticsNode())
-    }
+    private fun allTexts(): List<String> = nodes { true }.flatMap { it.texts() }
 
     private fun SemanticsNode.texts(): List<String> = config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text }
 
@@ -448,12 +444,9 @@ class SeniorInvariantsTest {
             """"catalog":{"id":"sample","buildId":"b1","name":"Sample"},"home":[$list]}"""
     }
 
-    private fun string(id: Int): String = ApplicationProvider.getApplicationContext<Context>().getString(id)
+    private fun string(id: Int, vararg args: Any): String = app.getString(id, *args)
 
-    private fun string(id: Int, vararg args: Any): String = ApplicationProvider.getApplicationContext<Context>().getString(id, *args)
-
-    private fun quantity(id: Int, count: Int): String =
-        ApplicationProvider.getApplicationContext<Context>().resources.getQuantityString(id, count, count)
+    private fun quantity(id: Int, count: Int): String = app.resources.getQuantityString(id, count, count)
 
     private companion object {
         /** The Home clock: "14:54" or "2:54 PM". */

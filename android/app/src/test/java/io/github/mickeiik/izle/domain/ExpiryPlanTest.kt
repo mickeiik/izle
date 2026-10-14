@@ -9,21 +9,14 @@ import java.time.OffsetDateTime
 
 class ExpiryPlanTest {
     @Test
-    fun refreshesAMinuteBeforeTheExpiry() {
+    fun refreshesAMinuteBeforeTheExpiryAtMostOnceAMinute() {
         assertEquals(40_000L, ExpiryPlan.refreshDelayMs(remainingMs = 100_000, sinceLastRefreshMs = null))
         assertEquals(30_000L, ExpiryPlan.refreshDelayMs(remainingMs = 90_000, sinceLastRefreshMs = null))
         assertEquals(6 * 3_600_000L - 60_000, ExpiryPlan.refreshDelayMs(remainingMs = 6 * 3_600_000L, sinceLastRefreshMs = null))
-    }
-
-    @Test
-    fun aStreamValidForLessThan90sIsLeftToThe410Path() {
+        // A stream valid for less than 90 s is left to the 403/410 path.
         assertNull(ExpiryPlan.refreshDelayMs(remainingMs = 89_999, sinceLastRefreshMs = null))
         assertNull(ExpiryPlan.refreshDelayMs(remainingMs = -5_000, sinceLastRefreshMs = null))
         assertNull(ExpiryPlan.refreshDelayMs(remainingMs = null, sinceLastRefreshMs = null))
-    }
-
-    @Test
-    fun neverMoreThanOneRefreshPerMinute() {
         // Just refreshed and the new URL again lives 100 s: wait for the minute to pass (40 s before the expiry).
         assertEquals(60_000L, ExpiryPlan.refreshDelayMs(remainingMs = 100_000, sinceLastRefreshMs = 0))
         assertEquals(40_000L, ExpiryPlan.refreshDelayMs(remainingMs = 100_000, sinceLastRefreshMs = 20_000))

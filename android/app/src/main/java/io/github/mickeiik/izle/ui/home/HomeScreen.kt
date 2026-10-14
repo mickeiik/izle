@@ -69,12 +69,16 @@ import androidx.tv.material3.Text
 import io.github.mickeiik.izle.R
 import io.github.mickeiik.izle.data.api.HomeEntry
 import io.github.mickeiik.izle.data.api.TvState
+import io.github.mickeiik.izle.domain.AutoplayPlan
 import io.github.mickeiik.izle.domain.EpisodeNames
 import io.github.mickeiik.izle.domain.TileBadge
+import io.github.mickeiik.izle.ui.AutoplayUi
 import io.github.mickeiik.izle.ui.HomeMessage
 import io.github.mickeiik.izle.ui.common.Clock
-import io.github.mickeiik.izle.ui.common.FullScreenMessage
 import io.github.mickeiik.izle.ui.common.MessageBanner
+import io.github.mickeiik.izle.ui.common.PanelButton
+import io.github.mickeiik.izle.ui.common.PanelCountdown
+import io.github.mickeiik.izle.ui.common.PosterPanel
 import io.github.mickeiik.izle.ui.common.PosterOrTitle
 import io.github.mickeiik.izle.ui.common.ProgressBar
 import io.github.mickeiik.izle.ui.common.requestFocusWithin
@@ -87,24 +91,20 @@ import io.github.mickeiik.izle.ui.theme.IzleSpacing
 private val TileWidth = 190.dp
 private val PosterHeight = 285.dp
 
-/** Above, below and beside the rows: the focused poster grows by 10 %, 14 dp up and down and 10 dp sideways. */
+/** Around the rows: the focused poster grows by 10 %, 14 dp up and down and 10 dp sideways. */
 private val GridPadding = 16.dp
 
-/** Between the poster and its title: the focused poster's 14 dp of growth, and air before the title. */
+/** The focused poster's 14 dp of growth, and air before the title. */
 private val TitleGap = 22.dp
 
-/** The top band holds the clock (34 sp): at least this tall, taller while the owner's message is in it. */
+/** The clock's (34 sp) height; the band grows while the owner's message is in it. */
 private val TopBandMinHeight = 42.dp
-
-/** How much of the grid's bottom edge fades out while more rows are below. */
 private val FadeHeight = 24.dp
 
 /**
- * The only screen the viewer navigates: big poster tiles, OK plays. The tile played last (or focused last) gets
- * the focus back when the screen appears.
- *
- * The top band holds the clock and, at its left, the "No connection" chip and the owner's [banner], so the message
- * never covers the clock or a tile; the band grows to fit it, and the hint at the bottom makes room meanwhile.
+ * The only screen the viewer navigates: big poster tiles, OK plays. The tile played last (or focused last) gets the
+ * focus back when the screen appears. The owner's [banner] sits in the top band, so it never covers the clock or a
+ * tile; the hint at the bottom makes room meanwhile.
  */
 @Composable
 fun HomeScreen(
@@ -125,9 +125,9 @@ fun HomeScreen(
             TopBand(online, banner)
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.TopCenter) {
                 when {
-                    state == null && !online -> FullScreenMessage(stringResource(R.string.no_connection), stringResource(R.string.no_connection_detail))
-                    state == null -> FullScreenMessage(stringResource(R.string.loading))
-                    state.home.isEmpty() -> FullScreenMessage(stringResource(R.string.home_empty), stringResource(R.string.home_empty_detail))
+                    state == null && !online -> Message(stringResource(R.string.no_connection), stringResource(R.string.no_connection_detail))
+                    state == null -> Message(stringResource(R.string.loading))
+                    state.home.isEmpty() -> Message(stringResource(R.string.home_empty), stringResource(R.string.home_empty_detail))
                     else -> TileGrid(state.home, initialFocusItemId, active, posterUrl, onFocused, onPlay)
                 }
             }
@@ -156,10 +156,20 @@ fun HomeScreen(
     }
 }
 
+@Composable
+private fun Message(title: String, detail: String? = null) {
+    Column(Modifier.fillMaxSize().padding(IzleSpacing.Safe), Arrangement.Center, Alignment.CenterHorizontally) {
+        Text(title, style = MaterialTheme.typography.displaySmall, color = IzleColors.OnSurface, textAlign = TextAlign.Center)
+        if (detail != null) {
+            Spacer(Modifier.height(IzleSpacing.Large))
+            Text(detail, style = MaterialTheme.typography.bodyLarge, color = IzleColors.Dim, textAlign = TextAlign.Center)
+        }
+    }
+}
+
 /**
  * The clock at the right; at the left the "No connection" chip and the owner's message. A message that does not fit
- * beside the clock in three lines (the longest ones, near the server's 200 characters) takes the band's full width
- * under it instead, so it is never cut and never covers the clock.
+ * beside the clock in three lines (near the server's 200 characters) takes the band's full width under it instead.
  */
 @Composable
 private fun TopBand(online: Boolean, banner: String?) {
@@ -183,7 +193,6 @@ private fun TopBand(online: Boolean, banner: String?) {
     }
 }
 
-/** Solid red with dark text: the TV cannot reach the server (it keeps retrying; OK says so instead of playing). */
 @Composable
 private fun OfflineChip() {
     Row(
@@ -197,9 +206,8 @@ private fun OfflineChip() {
 }
 
 /**
- * Brings a focused row to the top of the grid (just below [GridPadding]), the way a TV channel list moves: the
- * focused poster and its title are always fully in view, whichever way the viewer moved and however tall the
- * owner's message makes the top band; the row above leaves completely, and the next one peeks in below.
+ * Brings a focused row to the top of the grid (just below [GridPadding]), the way a TV channel list moves: the focused
+ * poster and its title are always fully in view, however tall the owner's message makes the top band.
  *
  * While Home is not [active] (the hidden menu or the autoplay countdown on top) the grid stays where it is: when the
  * tiles stop taking the focus, the focus passes through another tile for a moment, which would scroll it up.
@@ -352,10 +360,7 @@ private fun Tile(entry: HomeEntry, posterUrl: String?, modifier: Modifier, onFoc
     }
 }
 
-/**
- * What OK does, at the bottom of the poster, in a solid chip that reads on any poster: mint for "New", the warm
- * accent when OK resumes ("Continue · Episode 2", with the progress bar under it), light grey otherwise.
- */
+/** What OK does, in a solid chip that reads on any poster: mint for "New", the accent when OK resumes, else grey. */
 @Composable
 private fun ActionChip(badge: TileBadge) {
     val (background, foreground) = when (badge) {
@@ -382,15 +387,28 @@ private fun Modifier.posterChip(color: Color) = this
     .background(color, IzleShapes.Small)
     .padding(horizontal = IzleSpacing.Small)
 
-/**
- * "2 new" at the top of the poster when episodes were added: dark, regular weight and short, so it stays quieter than
- * the chip saying what OK does. It only informs: no focus, and OK still plays what the bottom chip says. Read out in
- * full ("2 new episodes").
- */
+/** "2 new" when episodes were added: quieter than the chip saying what OK does, no focus, read out in full. */
 @Composable
 private fun NewEpisodesChip(count: Int, modifier: Modifier) {
     val description = pluralStringResource(R.plurals.badge_new_episodes, count, count)
     Box(modifier.clearAndSetSemantics { contentDescription = description }.posterChip(IzleColors.ChipInfo)) {
         Text(pluralStringResource(R.plurals.badge_new_episodes_short, count, count), style = MaterialTheme.typography.labelSmall, color = IzleColors.OnChipInfo, maxLines = 1)
     }
+}
+
+/**
+ * "Autoplay on start", drawn over Home like the player's "Up next": what OK on the show's tile would play, the
+ * countdown, **Play now** (focused) and **Not now**. Back and any other key cancel it (see MainActivity).
+ */
+@Composable
+fun AutoplayOverlay(ui: AutoplayUi, posterUrl: String?, onPlayNow: () -> Unit, onNotNow: () -> Unit) {
+    val item = ui.entry.item
+    PosterPanel(
+        posterUrl = posterUrl,
+        showTitle = item.title,
+        title = item.title,
+        lines = listOf(tileBadgeText(EpisodeNames.badge(item.kind, ui.entry.playNext))),
+        countdown = PanelCountdown(stringResource(R.string.up_next_countdown, ui.secondsLeft), ui.secondsLeft, AutoplayPlan.COUNTDOWN_SEC),
+        buttons = listOf(PanelButton(stringResource(R.string.play_now), onPlayNow), PanelButton(stringResource(R.string.not_now), onNotNow)),
+    )
 }

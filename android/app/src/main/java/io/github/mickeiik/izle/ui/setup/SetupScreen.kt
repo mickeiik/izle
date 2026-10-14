@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.text.BasicTextField
@@ -28,12 +30,17 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import io.github.mickeiik.izle.R
+import io.github.mickeiik.izle.ui.PairingProblem
+import io.github.mickeiik.izle.ui.PairingUi
 import io.github.mickeiik.izle.ui.SetupError
 import io.github.mickeiik.izle.ui.SetupUi
 import io.github.mickeiik.izle.ui.common.ErrorText
@@ -73,11 +80,9 @@ fun SetupScreen(ui: SetupUi, onAddressChange: (String) -> Unit, onConnect: () ->
                     .onFocusChanged { fieldFocused = it.isFocused }
                     .onPreviewKeyEvent {
                         // A single-line field keeps D-pad Down by default; move on to the button instead.
-                        if (it.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_DOWN && it.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
-                            focusManager.moveFocus(FocusDirection.Down)
-                        } else {
-                            false
-                        }
+                        val e = it.nativeKeyEvent
+                        val down = e.keyCode == KeyEvent.KEYCODE_DPAD_DOWN && e.action == KeyEvent.ACTION_DOWN
+                        down && focusManager.moveFocus(FocusDirection.Down)
                     }
                     .background(IzleColors.Surface, IzleShapes.Medium)
                     // The focus style of the tiles: a white border, grey while something else has the focus.
@@ -98,5 +103,56 @@ fun SetupScreen(ui: SetupUi, onAddressChange: (String) -> Unit, onConnect: () ->
                 null -> Unit
             }
         }
+    }
+}
+
+/**
+ * The 6-digit code the owner approves from the admin page, with that page's address so the owner knows what to open
+ * on the phone; the TV long-polls until it gets its token.
+ */
+@Composable
+fun PairingScreen(ui: PairingUi) {
+    Box(Modifier.fullScreen()) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.align(Alignment.Center)) {
+            Text(stringResource(R.string.pair_title), style = MaterialTheme.typography.displaySmall, color = IzleColors.OnSurface)
+            Spacer(Modifier.height(IzleSpacing.Medium))
+            Text(
+                stringResource(R.string.pair_instructions, ui.adminUrl),
+                style = MaterialTheme.typography.bodyLarge,
+                color = IzleColors.Dim,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(28.dp))
+            Box(
+                Modifier.background(IzleColors.Surface, IzleShapes.Large).padding(horizontal = 56.dp, vertical = IzleSpacing.Medium),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = ui.code?.let { "${it.take(3)} ${it.drop(3)}" } ?: "––– –––",
+                    style = MaterialTheme.typography.displayLarge.copy(fontFamily = FontFamily.Monospace, letterSpacing = 8.sp),
+                    color = if (ui.code != null) IzleColors.Accent else IzleColors.Dim,
+                )
+            }
+            Spacer(Modifier.height(28.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(IzleSpacing.Large)) {
+                when (ui.problem) {
+                    PairingProblem.Unreachable -> ErrorText(
+                        stringResource(R.string.setup_error_unreachable) + " " + stringResource(R.string.no_connection_detail),
+                        textAlign = TextAlign.Center,
+                    )
+                    PairingProblem.RateLimited -> ErrorText(stringResource(R.string.pair_rate_limited), textAlign = TextAlign.Center)
+                    null -> {
+                        Spinner(size = 36.dp)
+                        Text(stringResource(R.string.pair_waiting), style = MaterialTheme.typography.headlineSmall, color = IzleColors.OnSurface)
+                    }
+                }
+            }
+        }
+        Text(
+            stringResource(R.string.pair_back_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = IzleColors.Dim,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
     }
 }

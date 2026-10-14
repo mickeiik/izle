@@ -1,6 +1,7 @@
 package io.github.mickeiik.izle.domain
 
 import io.github.mickeiik.izle.data.api.ContinueInfo
+import io.github.mickeiik.izle.data.api.EpisodeDetails
 
 /** How an episode is named on screen; the UI turns it into localized text. */
 sealed interface EpisodeName {
@@ -32,14 +33,12 @@ object EpisodeNames {
     /** Movies say New / Continue / Watch again; series name the episode OK plays, prefixed by Continue. */
     fun badge(kind: String, next: ContinueInfo): TileBadge {
         val resume = next.status == "watching" && PlaybackPlan.resumePositionMs(next.positionMs, next.durationMs) > 0
-        if (kind != "series") {
-            return when {
-                resume -> TileBadge.Continue
-                next.status == "finished" -> TileBadge.WatchAgain
-                else -> TileBadge.New
-            }
+        return when {
+            kind == "series" -> TileBadge.Episode(name(kind, next.season, next.number, next.label, next.index), resume)
+            resume -> TileBadge.Continue
+            next.status == "finished" -> TileBadge.WatchAgain
+            else -> TileBadge.New
         }
-        return TileBadge.Episode(name(kind, next.season, next.number, next.label, next.index), resume)
     }
 
     /** Fraction watched for the progress bar under a tile, or null when there is nothing to resume. */
@@ -48,5 +47,26 @@ object EpisodeNames {
         if (next.status != "watching" || duration <= 0) return null
         if (PlaybackPlan.resumePositionMs(next.positionMs, duration) <= 0) return null
         return (next.positionMs.toFloat() / duration).coerceIn(0f, 1f)
+    }
+}
+
+/** CH+/CH− (and the remote's |◀◀ ▶▶| keys, and the owner's next/previous commands) while an episode is playing. */
+object EpisodeSteps {
+    /**
+     * The nearest episode after ([direction] > 0) or before ([direction] < 0) [currentEpisodeId] in play order that
+     * may be played; null at either end (no wrap-around) or when the current episode is not in the list.
+     */
+    fun neighbour(episodes: List<EpisodeDetails>, currentEpisodeId: String, direction: Int): EpisodeDetails? {
+        val at = episodes.indexOfFirst { it.id == currentEpisodeId }
+        if (at < 0 || direction == 0) return null
+        val candidates = if (direction > 0) (at + 1 until episodes.size) else (at - 1 downTo 0)
+        return candidates.asSequence().map { episodes[it] }.firstOrNull { it.playbackAllowed }
+    }
+
+    /** Whether the playing episode ([index] of [count]) can have one in that direction: movies and the ends cannot. */
+    fun mayHaveNeighbour(index: Int, count: Int, direction: Int): Boolean = when {
+        direction > 0 -> index < count - 1
+        direction < 0 -> index > 0
+        else -> false
     }
 }
