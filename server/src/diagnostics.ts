@@ -2,7 +2,7 @@
 // validation) without creating sessions, and optionally probes the upstream. The report is safe to show in the
 // admin UI: hosts and header names only, never URLs, header values, refs or playlist text.
 
-import type { MediaKind, ResolveResult, Source } from "@izle/contract";
+import type { ResolveResult, Source } from "@izle/contract";
 import type { CatalogService } from "./catalog.ts";
 import { errorName } from "./errors.ts";
 import { isPlaylistText, summarizePlaylist, type PlaylistSummary } from "./hls.ts";
@@ -11,21 +11,9 @@ import { MAX_PLAYLIST_BYTES, readText } from "./proxy.ts";
 import { deliveryPlan, type ResolveService, type TriedCode, type UpstreamStream } from "./resolve.ts";
 import { stopwatch } from "./stopwatch.ts";
 
-export const PROBE_TIMEOUT_MS = 10_000;
+const PROBE_TIMEOUT_MS = 10_000;
 
-export interface StreamSummary {
-  kind: MediaKind;
-  inline: boolean;
-  host: string | null;
-  headerNames: string[];
-  delivery: "direct" | "proxy" | "unsupported";
-  languages: { audio: string[] | null; subtitles: string[] | null } | null;
-  subtitleTracks: number;
-  label: string | null;
-  expiresAt: string | null;
-}
-
-export interface ProbeReport {
+interface ProbeReport {
   ok: boolean;
   ms: number;
   status?: number;
@@ -35,7 +23,7 @@ export interface ProbeReport {
   name?: string;
 }
 
-export interface SourceReport {
+interface SourceReport {
   sourceId: string;
   type: Source["type"];
   adapterId?: string;
@@ -44,9 +32,9 @@ export interface SourceReport {
   name?: string;
   ms: number;
   /** Everything the adapter returned, in its order (adapter sources only). */
-  results?: StreamSummary[];
+  results?: ReturnType<typeof summarize>[];
   /** The stream the TV would get. */
-  stream?: StreamSummary;
+  stream?: ReturnType<typeof summarize>;
   probe?: ProbeReport;
 }
 
@@ -59,19 +47,14 @@ function hostOf(url: string): string | null {
 }
 
 /** An adapter's result, or the stream resolve picked from it. */
-type Summarized = Pick<UpstreamStream, "media"> & Partial<Pick<UpstreamStream, "headers" | "languages" | "subtitleTracks" | "label" | "expiresAt">>;
-
-function summarize(r: Summarized, proxyAlways: boolean): StreamSummary {
-  const inline = "playlist" in r.media;
-  const headerNames = Object.keys(r.headers ?? {}).sort();
+function summarize(r: ResolveResult | UpstreamStream, proxyAlways: boolean) {
   const plan = deliveryPlan(r, proxyAlways);
-  const delivery = !plan.servable ? "unsupported" : plan.proxyMain ? "proxy" : "direct";
   return {
     kind: r.media.kind,
-    inline,
+    inline: "playlist" in r.media,
     host: hostOf("playlist" in r.media ? r.media.baseUrl : r.media.url),
-    headerNames,
-    delivery,
+    headerNames: Object.keys(r.headers ?? {}).sort(),
+    delivery: !plan.servable ? "unsupported" : plan.proxyMain ? "proxy" : "direct",
     languages: r.languages ?? null,
     subtitleTracks: r.subtitleTracks?.length ?? 0,
     label: r.label ?? null,
@@ -80,10 +63,8 @@ function summarize(r: Summarized, proxyAlways: boolean): StreamSummary {
 }
 
 async function probe(stream: UpstreamStream, signal: AbortSignal | undefined, fetchUpstream: typeof fetch): Promise<ProbeReport> {
+  if ("playlist" in stream.media) return { ok: true, ms: 0, playlist: summarizePlaylist(stream.media.playlist) };
   const ms = stopwatch();
-  if ("playlist" in stream.media) {
-    return { ok: true, ms: 0, playlist: summarizePlaylist(stream.media.playlist) };
-  }
   const hls = stream.media.kind === "hls";
   const timeout = AbortSignal.timeout(PROBE_TIMEOUT_MS);
   try {
@@ -116,28 +97,21 @@ export interface DiagnosticsInput {
   probe?: boolean;
 }
 
-export interface DiagnosticsDeps {
-  catalog: CatalogService;
-  resolver: ResolveService;
-  /** How the probe reaches upstreams. */
-  fetch: typeof fetch;
-}
-
-export async function diagnoseEpisode(deps: DiagnosticsDeps, input: DiagnosticsInput, signal?: AbortSignal) {
+export async function diagnoseEpisode(
+  deps: { catalog: CatalogService; resolver: ResolveService; fetch: typeof fetch },
+  input: DiagnosticsInput,
+  signal?: AbortSignal,
+) {
   const ref = requireEpisode(deps.catalog, input.episodeId, 404, "unknown_episode");
-  // Source ids are unique within an episode (the bundle validator refuses duplicates).
   const sources = input.sourceId === undefined ? ref.episode.sources : [requireSource(ref.episode, input.sourceId, 404, "unknown_source")];
-  const proxyAlways = deps.resolver.proxyAlways;
+  const { proxyAlways, deadlineMs } = deps.resolver;
+  const attemptOpts = { preferredAudioLanguage: input.preferredAudioLanguage ?? null, deadlineMs, signal };
   const reports: SourceReport[] = [];
   for (const source of sources) {
-    const a = await deps.resolver.attempt(ref, source, {
-      preferredAudioLanguage: input.preferredAudioLanguage ?? null,
-      deadlineMs: deps.resolver.deadlineMs,
-      signal,
-    });
+    const a = await deps.resolver.attempt(ref, source, attemptOpts);
     const report: SourceReport = { sourceId: source.id, type: source.type, ok: a.ok, ms: a.ms };
     if (source.type === "adapter") report.adapterId = source.adapter;
-    if (a.results) report.results = a.results.map((r: ResolveResult) => summarize(r, proxyAlways));
+    if (a.results) report.results = a.results.map((r) => summarize(r, proxyAlways));
     if (!a.ok) {
       report.code = a.tried.code;
       if (a.tried.name) report.name = a.tried.name;
@@ -147,10 +121,6 @@ export async function diagnoseEpisode(deps: DiagnosticsDeps, input: DiagnosticsI
     }
     reports.push(report);
   }
-  return {
-    itemId: ref.item.id,
-    episodeId: ref.episode.id,
-    playbackAllowed: ref.episode.playbackAllowed,
-    sources: reports,
-  };
+  const { item, episode } = ref;
+  return { itemId: item.id, episodeId: episode.id, playbackAllowed: episode.playbackAllowed, sources: reports };
 }

@@ -25,14 +25,12 @@ export interface CompanionResolveInput {
 }
 
 /** A link as the admin API shows it: the stored values, or the defaults (no offset, same speed). */
-function linkJson(l: CompanionLink | null) {
-  return {
-    offsetMs: l?.offsetMs ?? 0,
-    rate: l?.rate ?? 1,
-    language: l?.language ?? null,
-    updatedAt: l ? iso(l.updatedAt) : null,
-  };
-}
+const linkJson = (l: CompanionLink | null) => ({
+  offsetMs: l?.offsetMs ?? 0,
+  rate: l?.rate ?? 1,
+  language: l?.language ?? null,
+  updatedAt: l ? iso(l.updatedAt) : null,
+});
 
 export class CompanionService {
   private readonly s: Services;
@@ -41,7 +39,7 @@ export class CompanionService {
     this.s = services;
   }
 
-  link(episodeId: string, sourceId: string) {
+  private link(episodeId: string, sourceId: string) {
     return linkJson(this.s.store.getCompanionLink(this.s.catalog.catalogId, episodeId, sourceId));
   }
 
@@ -51,16 +49,9 @@ export class CompanionService {
    */
   putLink(episodeId: string, sourceId: string, input: LinkInput) {
     const { ref } = requireEpisodeSource(this.s.catalog, episodeId, sourceId);
-    this.s.store.putCompanionLink({
-      catalogId: this.s.catalog.catalogId,
-      itemId: ref.item.id,
-      episodeId: ref.episode.id,
-      sourceId,
-      language: input.language ?? null,
-      offsetMs: input.offsetMs,
-      rate: input.rate,
-      updatedAt: this.s.now(),
-    });
+    const { offsetMs, rate, language = null } = input;
+    const ids = { catalogId: this.s.catalog.catalogId, itemId: ref.item.id, episodeId: ref.episode.id, sourceId };
+    this.s.store.putCompanionLink({ ...ids, language, offsetMs, rate, updatedAt: this.s.now() });
     return { episodeId: ref.episode.id, sourceId, ...this.link(ref.episode.id, sourceId) };
   }
 
@@ -70,13 +61,11 @@ export class CompanionService {
     const from = this.s.store.getCompanionLink(this.s.catalog.catalogId, ref.episode.id, sourceId);
     if (!from) throw new HttpError(404, "no_link", "this episode has no stored link for that source");
     const t = this.s.now();
-    const episodeIds: string[] = [];
+    const episodeIds = ref.item.episodes
+      .filter((e) => e.id !== ref.episode.id && e.sources.some((s) => s.id === sourceId))
+      .map((e) => e.id);
     this.s.store.transaction(() => {
-      for (const episode of ref.item.episodes) {
-        if (episode.id === ref.episode.id || !episode.sources.some((s) => s.id === sourceId)) continue;
-        this.s.store.putCompanionLink({ ...from, episodeId: episode.id, updatedAt: t });
-        episodeIds.push(episode.id);
-      }
+      for (const id of episodeIds) this.s.store.putCompanionLink({ ...from, episodeId: id, updatedAt: t });
     });
     return { updated: episodeIds.length, episodeIds };
   }
@@ -87,18 +76,19 @@ export class CompanionService {
     const ref = n ? this.s.catalog.episode(n.episodeId) : undefined;
     if (!n || !ref) return { nowPlaying: null, candidates: [] };
     const links = new Map(this.s.store.listCompanionLinks(this.s.catalog.catalogId, ref.episode.id).map((l) => [l.sourceId, l]));
+    const { item, episode } = ref;
     return {
       nowPlaying: {
-        itemId: ref.item.id,
-        itemKind: ref.item.kind,
-        episodeId: ref.episode.id,
+        itemId: item.id,
+        itemKind: item.kind,
+        episodeId: episode.id,
         sourceId: n.sourceId,
-        itemTitle: ref.item.title,
-        episodeTitle: ref.episode.title ?? null,
+        itemTitle: item.title,
+        episodeTitle: episode.title ?? null,
         state: n.state,
       },
       // Upstream URLs, headers and refs are deliberately not exposed (the admin item view has the same rule).
-      candidates: ref.episode.sources.map((s) => {
+      candidates: episode.sources.map((s) => {
         const kind = s.type === "direct" ? s.media.kind : null;
         const supported = kind !== "dash"; // an adapter that answers DASH is refused at resolve time
         return {
@@ -122,20 +112,10 @@ export class CompanionService {
    */
   async resolve(device: Device, input: CompanionResolveInput, signal?: AbortSignal) {
     const { ref } = requireEpisodeSource(this.s.catalog, input.episodeId, input.sourceId);
-    const r = await this.s.resolver.resolve(
-      device.id,
-      input.language ?? null,
-      { episodeId: ref.episode.id, sourceId: input.sourceId },
-      signal,
-      { scope: "companion" },
-    );
-    return {
-      episodeId: ref.episode.id,
-      sourceId: r.source.id,
-      media: r.media,
-      languages: r.languages,
-      expiresAt: r.expiresAt,
-      link: this.link(ref.episode.id, r.source.id),
-    };
+    const episodeId = ref.episode.id;
+    const forced = { episodeId, sourceId: input.sourceId };
+    const r = await this.s.resolver.resolve(device.id, input.language ?? null, forced, signal, { scope: "companion" });
+    const { source, media, languages, expiresAt } = r;
+    return { episodeId, sourceId: source.id, media, languages, expiresAt, link: this.link(episodeId, source.id) };
   }
 }
