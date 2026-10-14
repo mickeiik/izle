@@ -1532,3 +1532,48 @@ polling and Listen along sync.
   Settings → Server address keep the address as before.
 - **Tests:** 170 → 171 (the `orNullOnFailure` test in `ApiClientTest`), green after every commit; a non-incremental
   `compileDebugKotlin` and `compileDebugUnitTestKotlin` show no warnings, as before.
+
+## Integration of the simplification pass (2026-10-14)
+
+The owner asked for a simplification and refactoring pass after the design pass and chose the cleanups plus the
+splits that tests or the emulator can check (not the companion card's closure, a job holder, one bar for progress
+and countdowns, or trimmed TV models), and to remove the merged worktrees and branches.
+
+- **Housekeeping first.** The nine agent worktrees under `.claude/worktrees/` were clean and their commits were on
+  `main`; they were removed, and so were the branches `design-pass`, `catalog-history`, `listen-along` and the
+  `worktree-agent-*` ones. The cherry-picked branches were deleted only after their commits' diffs, leaving out
+  `CHANGELOG.md` and this log, matched the commits on `main` (one differed only in hunk offsets and an import's
+  context line).
+- **Three parallel branches from `c9e4139`** with separate files: server, contract and scripts; the admin page;
+  the TV app. Merged in that order on `simplify-pass` (the server branch fast-forwarded, the others were
+  cherry-picked); the only conflicts were the three sections appended to this log, all kept. No CHANGELOG entry:
+  nothing changes for the people who run izle.
+- **Verified on the merged branch:** `npm ci`, `npm test` (contract 31, server 142), `npm run typecheck`,
+  `npm run version:check`, `npm run pack:server`, `npm run smoke:server`; `./gradlew :app:assembleDebug
+  :app:testDebugUnitTest` (171, re-run with `--rerun` since the build cache held the branch's results). Then the debug
+  APK on the emulator against the merged server with a scratch copy of the sample catalog plus a show whose only
+  source is a closed local port: pairing (Back to the address screen shows the address as before; the code approved
+  from the admin page, the focus going to the other code's field), the home list built on the admin page (Show all,
+  then typing and clearing, and a quick type-and-delete, each back to the hint; Add moving the focus to the next
+  Add; ▲/▼ keeping the focus and marking ▼ unavailable on the last row; "Continue from here" closing the picker with
+  the focus on Episodes…), playback reaching READY, the admin remote (+30 s three times, Pause with the paused badge,
+  Resume; the remote's names unchanged), ← → seeks on the TV reported at once, Up next with its bar and the next
+  episode starting, "The end" with the poster then Home, the error screen ("Home in 29 s", Try again focused, Home on
+  its own after 30 s, both problem reports on the admin page, Try again failing again), History's times moving on
+  with the same rows, the hidden menu and its episode list with the focus on the first row and back on the tile
+  after Back, autoplay on start from the launcher with its bar and → cancelling it on the offered show, the settings
+  form ("Nothing changed.", then a rename), an empty and a real message (the banner in Home's top band), "No
+  connection" on the TV and "Not updated since …" on the admin page with the server stopped, Retry on the Catalog
+  page once it was back, Listen along in sync (drift down to tens of ms, following Pause and Resume), CH+ to the next
+  episode, Test sources (an MP4 and three HLS playlists summarised through the bounded read), and the admin page at
+  390 px wide without a horizontal scroll. The server log of the second half of the run holds no URL, host or token
+  (the first half's was lost to a restart of the scratch server).
+- **Seen and left as they were (already so on `c9e4139`):** after Retry in the Catalog's Shows, the focus falls back to
+  the page (the search region is rebuilt); the Builds card's failed first load has no Retry of its own (the Bundle
+  card's reloads both). A `force-stop` followed at once by `am start` can leave the app behind the launcher on the
+  emulator (the launcher's close transition wins), so autoplay on start was checked by leaving to the launcher and
+  coming back.
+- **Not exercised end to end:** the companion's idle ending after 2 min (`end()` is `stop()` and the same toast), a
+  source fallback after a player error, and the expiry refresh (it needs the example resolver module's short-lived
+  URLs); those paths moved without changing and are covered by the server's harness and the TV's unit tests only as
+  far as those reach.
