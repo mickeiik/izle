@@ -1,10 +1,31 @@
+import type { CatalogService } from "./catalog.ts";
 import type { CommandService } from "./commands.ts";
 import type { CompanionService } from "./companion.ts";
+import type { ServerConfig } from "./config.ts";
 import type { DeviceService } from "./devices.ts";
+import type { EventHub } from "./events.ts";
+import type { Logger } from "./log.ts";
+import type { Notifier } from "./notifier.ts";
 import type { PairingService } from "./pairing.ts";
+import type { ProblemService } from "./problems.ts";
 import type { ProxyService } from "./proxy.ts";
+import type { ResolveService } from "./resolve.ts";
 import type { LoadedResolver } from "./resolver.ts";
-import type { Services, TvService } from "./tv.ts";
+import type { Store } from "./store.ts";
+import type { TvService } from "./tv.ts";
+
+/** The services the TV, companion, device and command services are built on. */
+export interface Services {
+  config: ServerConfig;
+  store: Store;
+  catalog: CatalogService;
+  events: EventHub;
+  notifier: Notifier;
+  resolver: ResolveService;
+  problems: ProblemService;
+  log: Logger;
+  now: () => number;
+}
 
 /** Everything the HTTP layer works with: the services, and the settings of the running server. */
 export interface AppContext extends Services {

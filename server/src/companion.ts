@@ -8,7 +8,7 @@ import type { EpisodeRef } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
 import { iso } from "./presenters.ts";
 import type { CompanionLink, Device } from "./store.ts";
-import type { Services } from "./tv.ts";
+import type { Services } from "./context.ts";
 
 export interface LinkInput {
   /** Companion position when the TV is at 0. */

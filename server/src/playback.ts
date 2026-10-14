@@ -83,6 +83,37 @@ export function cursorAfterFinished(item: CatalogItem, finishedIndex: number): n
   return next >= 0 ? next : firstAllowedIndex(item);
 }
 
+/** What a progress report says the player is doing. */
+export type ProgressReportStatus = "playing" | "paused" | "stopped" | "finished";
+
+/** Where an item's cursor goes after a progress report, and whether the TV must be told. */
+export interface CursorAfterReport {
+  episodeId: string;
+  wrapped: boolean;
+  /** The state version must be bumped: the TV left the player, or what OK plays may have changed. */
+  changed: boolean;
+}
+
+/**
+ * The cursor after a progress report on the episode at `index`. `finished` moves it to the next allowed episode,
+ * wrapping to the first after the last; only that wrap gives a wrapped cursor. Every other report keeps it on the
+ * reported episode as an ordinary cursor. `stopped` and `finished` are always a change; any other report is one
+ * when the cursor moves, or stops being wrapped (OK may then play another episode).
+ */
+export function cursorAfterReport(
+  item: CatalogItem,
+  index: number,
+  status: ProgressReportStatus,
+  before: CursorLike | null,
+): CursorAfterReport {
+  const here = item.episodes[index]!;
+  const finished = status === "finished";
+  const episodeId = finished ? (item.episodes[cursorAfterFinished(item, index)] ?? here).id : here.id;
+  const wrapped = finished && nextAllowedIndex(item, index) < 0;
+  const changed = finished || status === "stopped" || before?.episodeId !== episodeId || (before?.wrapped ?? false) !== wrapped;
+  return { episodeId, wrapped, changed };
+}
+
 /** The episode auto-next would start after `index`, or -1 (end of the item, or an autoAdvance boundary). */
 export function autoNextIndex(item: CatalogItem, index: number): number {
   const episode = item.episodes[index];

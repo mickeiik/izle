@@ -1,11 +1,12 @@
 // The owner's side of the paired TVs (admin API): how a TV appears in the device list and on its page, what it has
 // watched and is playing, settings changes, and deletion.
 
+import type { Services } from "./context.ts";
 import { iso } from "./presenters.ts";
 import type { ProxyService } from "./proxy.ts";
 import { companionScope } from "./resolve.ts";
 import type { Device, DevicePatch, NowPlaying } from "./store.ts";
-import type { Services, TvService } from "./tv.ts";
+import type { TvService } from "./tv.ts";
 
 export interface DeviceServiceDeps extends Services {
   tv: TvService;

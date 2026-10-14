@@ -1,9 +1,9 @@
 // Remote control from the admin page: a command is stored, published to the TV's open event streams, and replayed
 // when the TV (re)connects until the TV acknowledges it or it is too old to act on.
 
+import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
 import type { Command } from "./store.ts";
-import type { Services } from "./tv.ts";
 import { MESSAGE_DURATION_SEC, type CommandBody } from "./validation.ts";
 
 /** Unacknowledged commands younger than this are replayed when a TV (re)connects to the event stream. */

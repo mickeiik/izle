@@ -1,23 +1,21 @@
 import type { CatalogItem } from "@izle/contract";
-import type { CatalogService } from "./catalog.ts";
-import type { ServerConfig } from "./config.ts";
+import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
-import type { EventHub } from "./events.ts";
-import type { Logger } from "./log.ts";
-import type { Notifier } from "./notifier.ts";
-import { autoNextIndex, cursorAfterFinished, cursorIndex, isPlayable, nextAllowedIndex, type ProgressLike } from "./playback.ts";
+import { autoNextIndex, cursorAfterReport, cursorIndex, isPlayable, type ProgressLike, type ProgressReportStatus } from "./playback.ts";
 import { episodeDetails, episodeSummary, iso, itemCard, itemDetails } from "./presenters.ts";
-import { noPlayableDetail, triedDetail, type ProblemService } from "./problems.ts";
-import type { ResolvedStream, ResolveInput, ResolveService, Tried } from "./resolve.ts";
-import type { Device, NowPlaying, Progress, Store } from "./store.ts";
+import { noPlayableDetail, triedDetail } from "./problems.ts";
+import type { ResolvedStream, ResolveInput, Tried } from "./resolve.ts";
+import type { Device, NowPlaying, Progress } from "./store.ts";
+import { Waiters } from "./waiters.ts";
+
+export type { Services } from "./context.ts";
+export type { ProgressReportStatus } from "./playback.ts";
 
 /** The server caps every device's home list (the TV shows a 4-column grid; ≤ 8 fits without scrolling). */
 export const HOME_MAX_ITEMS = 12;
 
 /** Longest an admin "now" long-poll waits for the next playback report. */
 export const MAX_NOW_WAIT_MS = 25_000;
-
-export type ProgressReportStatus = "playing" | "paused" | "stopped" | "finished";
 
 export interface ProgressInput {
   sessionId?: string | null;
@@ -38,30 +36,14 @@ export interface EffectiveSettings {
   autoplayOnStart: boolean;
 }
 
-export interface Services {
-  config: ServerConfig;
-  store: Store;
-  catalog: CatalogService;
-  events: EventHub;
-  notifier: Notifier;
-  resolver: ResolveService;
-  problems: ProblemService;
-  log: Logger;
-  now: () => number;
-}
-
 /** What the TV sees: home state, item details, resolve and progress. Also used by the admin API. */
 export class TvService {
   private readonly s: Services;
   /** Admin long-polls waiting for a device's next now-playing write. */
-  private readonly nowWaiters = new Map<string, Set<() => void>>();
+  private readonly nowWaiters = new Waiters<string>();
 
   constructor(services: Services) {
     this.s = services;
-  }
-
-  private wakeNow(deviceId: string): void {
-    for (const wake of this.nowWaiters.get(deviceId) ?? []) wake();
   }
 
   /**
@@ -71,23 +53,7 @@ export class TvService {
   async waitNow(deviceId: string, seq: number | null, waitMs: number, signal?: AbortSignal): Promise<NowPlaying | null> {
     const current = this.s.store.getNowPlaying(deviceId);
     if (seq === null || waitMs <= 0 || (current?.seq ?? 0) !== seq) return current;
-    await new Promise<void>((resolve) => {
-      let set = this.nowWaiters.get(deviceId);
-      if (!set) {
-        set = new Set();
-        this.nowWaiters.set(deviceId, set);
-      }
-      const done = () => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", done);
-        set.delete(done);
-        if (set.size === 0) this.nowWaiters.delete(deviceId);
-        resolve();
-      };
-      const timer = setTimeout(done, Math.min(waitMs, MAX_NOW_WAIT_MS));
-      signal?.addEventListener("abort", done, { once: true });
-      set.add(done);
-    });
+    await this.nowWaiters.wait(deviceId, Math.min(waitMs, MAX_NOW_WAIT_MS), signal);
     return this.s.store.getNowPlaying(deviceId);
   }
 
@@ -215,7 +181,7 @@ export class TvService {
       playing: false,
       anchorAt: this.s.now(),
     });
-    this.wakeNow(device.id);
+    this.nowWaiters.wake(device.id);
     return {
       sessionId: r.session.id,
       sourceId: r.source.id,
@@ -247,40 +213,20 @@ export class TvService {
     const durationMs = input.durationMs ?? null;
     const playing = input.playing ?? input.status === "playing";
     const anchorAt = t - (input.ageMs ?? 0);
-    let changed = false;
+    const finished = input.status === "finished";
 
-    this.s.store.transaction(() => {
-      const before = this.s.store.getCursor(device.id, catalogId, item.id);
-      let cursorEpisode = episode;
-      let wrapped = false;
-      if (input.status === "finished") {
-        this.s.store.upsertProgress(device.id, {
-          catalogId,
-          itemId: item.id,
-          episodeId: episode.id,
-          positionMs: durationMs ?? input.positionMs,
-          durationMs,
-          status: "finished",
-          updatedAt: t,
-        });
-        cursorEpisode = item.episodes[cursorAfterFinished(item, index)] ?? episode;
-        wrapped = nextAllowedIndex(item, index) < 0;
-        changed = true;
-      } else {
-        this.s.store.upsertProgress(device.id, {
-          catalogId,
-          itemId: item.id,
-          episodeId: episode.id,
-          positionMs: input.positionMs,
-          durationMs,
-          status: "watching",
-          updatedAt: t,
-        });
-        if (input.status === "stopped") changed = true;
-      }
-      // A wrapped cursor becoming an ordinary one on the same episode is a cursor change too (OK may play another).
-      if (before?.episodeId !== cursorEpisode.id || (before?.wrapped ?? false) !== wrapped) changed = true;
-      this.s.store.setCursor(device.id, { catalogId, itemId: item.id, episodeId: cursorEpisode.id, updatedAt: t, wrapped });
+    const changed = this.s.store.transaction(() => {
+      const cursor = cursorAfterReport(item, index, input.status, this.s.store.getCursor(device.id, catalogId, item.id));
+      this.s.store.upsertProgress(device.id, {
+        catalogId,
+        itemId: item.id,
+        episodeId: episode.id,
+        positionMs: finished ? (durationMs ?? input.positionMs) : input.positionMs,
+        durationMs,
+        status: finished ? "finished" : "watching",
+        updatedAt: t,
+      });
+      this.s.store.setCursor(device.id, { catalogId, itemId: item.id, episodeId: cursor.episodeId, updatedAt: t, wrapped: cursor.wrapped });
       this.s.store.setNowPlaying(device.id, {
         catalogId,
         itemId: item.id,
@@ -293,8 +239,9 @@ export class TvService {
         playing,
         anchorAt,
       });
+      return cursor.changed;
     });
-    this.wakeNow(device.id);
+    this.nowWaiters.wake(device.id);
 
     return { version: changed ? this.s.notifier.bump(device.id) : (this.s.store.getDevice(device.id)?.stateVersion ?? device.stateVersion) };
   }

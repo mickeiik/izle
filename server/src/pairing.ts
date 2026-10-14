@@ -4,6 +4,7 @@ import { HttpError } from "./errors.ts";
 import type { Logger } from "./log.ts";
 import { RateLimiter } from "./ratelimit.ts";
 import type { Store } from "./store.ts";
+import { Waiters } from "./waiters.ts";
 
 export const PAIR_CODE_TTL_MS = 10 * 60_000;
 export const MAX_OPEN_PAIR_CODES = 5;
@@ -29,7 +30,7 @@ function hashesEqual(aHex: string, bHex: string): boolean {
  * admin API; the next poll creates the device token, hands it over once, and only its hash is kept.
  */
 export class PairingService {
-  private readonly waiters = new Map<string, Set<() => void>>();
+  private readonly waiters = new Waiters<string>();
   private readonly limiter: RateLimiter;
   private readonly ttlMs: number;
   private readonly maxOpen: number;
@@ -87,7 +88,7 @@ export class PairingService {
       return { deviceId: id, name: deviceName };
     });
     this.log.info("pairing approved", { deviceId: device.deviceId });
-    for (const wake of this.waiters.get(code) ?? []) wake();
+    this.waiters.wake(code);
     return device;
   }
 
@@ -119,23 +120,7 @@ export class PairingService {
     if (first.status !== "pending" || waitMs <= 0) return first;
     const row = this.store.getPairCode(code)!;
     const timeout = Math.max(0, Math.min(waitMs, MAX_PAIR_WAIT_MS, row.expiresAt - this.now()));
-    await new Promise<void>((resolve) => {
-      let set = this.waiters.get(code);
-      if (!set) {
-        set = new Set();
-        this.waiters.set(code, set);
-      }
-      const done = () => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", done);
-        set.delete(done);
-        if (set.size === 0) this.waiters.delete(code);
-        resolve();
-      };
-      const timer = setTimeout(done, timeout);
-      signal?.addEventListener("abort", done, { once: true });
-      set.add(done);
-    });
+    await this.waiters.wait(code, timeout, signal);
     if (signal?.aborted) return { status: "pending" };
     return this.check(code, pairToken);
   }

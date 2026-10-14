@@ -5,6 +5,7 @@ import {
   audioRank,
   autoNextIndex,
   cursorAfterFinished,
+  cursorAfterReport,
   cursorIndex,
   firstAllowedIndex,
   isPlayable,
@@ -68,6 +69,26 @@ test("finishing an episode advances the cursor to the next allowed one and wraps
   assert.equal(cursorAfterFinished(show, 1), 3, "autoAdvance:false does not stop the cursor; e3 is skipped");
   assert.equal(cursorAfterFinished(show, 4), 0);
   assert.equal(firstAllowedIndex(show), 0);
+});
+
+test("cursor after a report: finished moves on (wrapping after the last), anything else stays on the episode", () => {
+  const at = (episodeId: string, wrapped = false) => ({ episodeId, wrapped });
+  assert.deepEqual(cursorAfterReport(show, 0, "finished", at("show.e1")), { episodeId: "show.e2", wrapped: false, changed: true });
+  assert.deepEqual(cursorAfterReport(show, 1, "finished", at("show.e2")), { episodeId: "show.e4", wrapped: false, changed: true }, "the disallowed e3 is skipped");
+  assert.deepEqual(cursorAfterReport(show, 4, "finished", at("show.e5")), { episodeId: "show.e1", wrapped: true, changed: true }, "after the last: wrapped to the first");
+  assert.deepEqual(cursorAfterReport(show, 3, "finished", null), { episodeId: "show.e5", wrapped: false, changed: true });
+  assert.deepEqual(cursorAfterReport(show, 0, "playing", at("show.e1")), { episodeId: "show.e1", wrapped: false, changed: false }, "a heartbeat changes nothing");
+  assert.deepEqual(cursorAfterReport(show, 0, "paused", at("show.e1")), { episodeId: "show.e1", wrapped: false, changed: false });
+  assert.deepEqual(cursorAfterReport(show, 0, "stopped", at("show.e1")), { episodeId: "show.e1", wrapped: false, changed: true }, "leaving the player is a change");
+});
+
+test("cursor after a report: a heartbeat changes the state only when the cursor moves or stops being wrapped", () => {
+  const at = (episodeId: string, wrapped = false) => ({ episodeId, wrapped });
+  assert.deepEqual(cursorAfterReport(show, 3, "playing", at("show.e1")), { episodeId: "show.e4", wrapped: false, changed: true }, "another episode");
+  assert.deepEqual(cursorAfterReport(show, 0, "playing", null), { episodeId: "show.e1", wrapped: false, changed: true }, "no cursor yet");
+  assert.deepEqual(cursorAfterReport(show, 0, "playing", at("show.e1", true)), { episodeId: "show.e1", wrapped: false, changed: true }, "wrapped becomes ordinary");
+  assert.deepEqual(cursorAfterReport(show, 4, "finished", at("show.e1", true)), { episodeId: "show.e1", wrapped: true, changed: true });
+  assert.deepEqual(cursorAfterReport(locked, 0, "finished", null), { episodeId: "locked.main", wrapped: true, changed: true }, "nothing allowed: the cursor stays");
 });
 
 test("auto-next respects play order, playbackAllowed and autoAdvance boundaries", () => {
