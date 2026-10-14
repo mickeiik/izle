@@ -1,17 +1,11 @@
 // @ts-check
-// Example izle resolver module (resolver module API v1, see docs/spec/resolver-module-v1.md).
+// Example izle resolver module (resolver module API v1, see docs/spec/resolver-module-v1.md and README.md).
 //
 // It resolves `adapter: "example"` catalog sources against the local example upstream (upstream.js), which behaves
 // like a typical streaming site: a JSON API behind an API key hands out signed, expiring stream URLs that only
 // play with the right Referer. A real module has the same shape: read its settings from `ctx.config`, call the
 // site with `ctx.fetch` and the request's `signal`, and return what to play plus the headers it needs. izle then
 // serves header-bound streams through its proxy, so the headers never reach the TV.
-//
-// Catalog source refs this adapter understands (the ref is opaque to izle; its shape is the module's business):
-//   { "video": "demo" }                      HLS by signed URL
-//   { "video": "demo", "inline": true }      the master playlist text instead of a URL
-//   { "video": "demo", "format": "mp4" }     progressive MP4 (byte ranges pass through the proxy)
-//   { "video": "demo", "junkBytes": 1000 }   segments prefixed with junk bytes (see proxy.alignTsSegments)
 //
 // Server configuration:
 //   "resolver": { "module": "./index.js", "config": { "apiBase": "http://127.0.0.1:8788/", "apiKey": "…" } }
@@ -45,10 +39,12 @@ export function createAdapters(ctx) {
   const { apiBase, apiKey: key } = ctx.config;
   if (typeof apiBase !== "string" || !/^https?:\/\//.test(apiBase)) throw new TypeError("config.apiBase must be an http(s) URL");
   if (typeof key !== "string" || key === "") throw new TypeError("config.apiKey is required");
-  const apiKey = key;
+  const apiKey = key; // narrowed for the functions below
   const base = apiBase.endsWith("/") ? apiBase : `${apiBase}/`;
 
   /**
+   * Refs (opaque to izle): `{ video }` HLS by signed URL; plus `inline: true` for the master playlist text instead
+   * of a URL, `format: "mp4"` for a progressive MP4, `junkBytes: <n>` for segments prefixed with junk bytes.
    * @param {ResolveRequest} req
    * @returns {Promise<ResolveResult[]>}
    */
