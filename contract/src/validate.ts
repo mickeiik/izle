@@ -63,6 +63,10 @@ export function formatIssue(issue: ValidationIssue): string {
   return `${where}: ${issue.message}`;
 }
 
+function issue(severity: ValidationIssue["severity"], file: string, pointer: string, message: string): ValidationIssue {
+  return { severity, file, path: pointer, message };
+}
+
 async function readJson(
   dir: string,
   file: string,
@@ -75,17 +79,17 @@ async function readJson(
     if (!st.isFile()) throw new Error("not a file");
     size = st.size;
   } catch {
-    issues.push({ severity: "error", file, path: "", message: "file is missing" });
+    issues.push(issue("error", file, "", "file is missing"));
     return { found: false };
   }
   if (size > MAX_JSON_BYTES) {
-    issues.push({ severity: "error", file, path: "", message: `file is larger than ${MAX_JSON_BYTES} bytes` });
+    issues.push(issue("error", file, "", `file is larger than ${MAX_JSON_BYTES} bytes`));
     return { found: false };
   }
   try {
     return { found: true, value: JSON.parse(await readFile(abs, "utf8")) };
   } catch (err) {
-    issues.push({ severity: "error", file, path: "", message: `invalid JSON (${(err as Error).name})` });
+    issues.push(issue("error", file, "", `invalid JSON (${(err as Error).name})`));
     return { found: false };
   }
 }
@@ -107,7 +111,7 @@ function checkUrl(url: string, file: string, pointer: string, issues: Validation
     const u = new URL(url);
     if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("protocol");
   } catch {
-    issues.push({ severity: "error", file, path: pointer, message: "not a valid http(s) URL" });
+    issues.push(issue("error", file, pointer, "not a valid http(s) URL"));
   }
 }
 
@@ -119,7 +123,7 @@ export async function validateBundle(dir: string): Promise<ValidationResult> {
   try {
     if (!(await stat(absDir)).isDirectory()) throw new Error("not a directory");
   } catch {
-    return { ok: false, issues: [{ severity: "error", file: ".", path: "", message: "bundle directory does not exist" }] };
+    return { ok: false, issues: [issue("error", ".", "", "bundle directory does not exist")] };
   }
 
   const manifestJson = await readJson(absDir, BUNDLE_MANIFEST_FILE, issues);
@@ -129,13 +133,9 @@ export async function validateBundle(dir: string): Promise<ValidationResult> {
   if (manifestJson.found) {
     if (validateManifestSchema(manifestJson.value)) {
       manifest = manifestJson.value;
-      if (!isValidDateTime(manifest.builtAt)) {
-        issues.push({ severity: "error", file: BUNDLE_MANIFEST_FILE, path: "/builtAt", message: "not a valid date-time" });
-      }
+      if (!isValidDateTime(manifest.builtAt)) issues.push(issue("error", BUNDLE_MANIFEST_FILE, "/builtAt", "not a valid date-time"));
     } else {
-      for (const e of simplifySchemaErrors(validateManifestSchema.errors)) {
-        issues.push({ severity: "error", file: BUNDLE_MANIFEST_FILE, path: e.path, message: e.message });
-      }
+      for (const e of simplifySchemaErrors(validateManifestSchema.errors)) issues.push(issue("error", BUNDLE_MANIFEST_FILE, e.path, e.message));
     }
   }
 
@@ -144,31 +144,38 @@ export async function validateBundle(dir: string): Promise<ValidationResult> {
     if (validateItemsSchema(itemsJson.value)) {
       items = (itemsJson.value as ItemsFile).items;
     } else {
-      for (const e of simplifySchemaErrors(validateItemsSchema.errors)) {
-        issues.push({ severity: "error", file: BUNDLE_ITEMS_FILE, path: e.path, message: e.message });
-      }
+      for (const e of simplifySchemaErrors(validateItemsSchema.errors)) issues.push(issue("error", BUNDLE_ITEMS_FILE, e.path, e.message));
     }
   }
 
   if (!manifest || !items) return { ok: false, issues };
 
-  const stats = await checkSemantics(absDir, manifest, items, issues);
+  const walk = checkItems(manifest, items, issues);
+  checkAdapters(manifest, walk.adapters, issues);
+  walk.stats.posters = await checkPosters(absDir, walk.posters, issues);
+  await checkAssets(absDir, walk.posters, issues);
   const ok = !issues.some((i) => i.severity === "error");
-  return ok ? { ok, issues, stats, bundle: { dir: absDir, manifest, items } } : { ok, issues, stats };
+  return ok ? { ok, issues, stats: walk.stats, bundle: { dir: absDir, manifest, items } } : { ok, issues, stats: walk.stats };
 }
 
-async function checkSemantics(
-  dir: string,
-  manifest: BundleManifest,
-  items: CatalogItem[],
-  issues: ValidationIssue[],
-): Promise<BundleStats> {
+/** What the walk over the items found besides its issues. */
+interface ItemsWalk {
+  /** Every count but `posters`, which only the poster check knows. */
+  stats: BundleStats;
+  /** Each poster path the items reference, with the JSON pointers that reference it. */
+  posters: Map<string, string[]>;
+  /** The adapter ids the sources use. */
+  adapters: Set<string>;
+}
+
+/** The semantic rules for items, episodes and sources (no I/O). */
+function checkItems(manifest: BundleManifest, items: CatalogItem[], issues: ValidationIssue[]): ItemsWalk {
   const F = BUNDLE_ITEMS_FILE;
   const stats: BundleStats = { items: items.length, movies: 0, series: 0, episodes: 0, playableEpisodes: 0, sources: 0, posters: 0 };
   const itemIds = new Map<string, number>();
   const episodeOwners = new Map<string, string>();
   const declaredAdapters = new Set(manifest.adapters);
-  const usedAdapters = new Set<string>();
+  const adapters = new Set<string>();
   const posters = new Map<string, string[]>();
 
   items.forEach((item, i) => {
@@ -177,19 +184,11 @@ async function checkSemantics(
     else stats.series++;
 
     const firstIndex = itemIds.get(item.id);
-    if (firstIndex !== undefined) {
-      issues.push({ severity: "error", file: F, path: `${ip}/id`, message: `duplicate item id "${item.id}" (also /items/${firstIndex})` });
-    } else {
-      itemIds.set(item.id, i);
-    }
+    if (firstIndex !== undefined) issues.push(issue("error", F, `${ip}/id`, `duplicate item id "${item.id}" (also /items/${firstIndex})`));
+    else itemIds.set(item.id, i);
 
     if (item.kind === "movie" && item.episodes.length !== 1) {
-      issues.push({
-        severity: "error",
-        file: F,
-        path: `${ip}/episodes`,
-        message: `a movie must have exactly one episode (found ${item.episodes.length})`,
-      });
+      issues.push(issue("error", F, `${ip}/episodes`, `a movie must have exactly one episode (found ${item.episodes.length})`));
     }
 
     if (item.poster) {
@@ -209,38 +208,26 @@ async function checkSemantics(
 
       const owner = episodeOwners.get(ep.id);
       if (owner !== undefined) {
-        issues.push({
-          severity: "error",
-          file: F,
-          path: `${ep_}/id`,
-          message: `duplicate episode id "${ep.id}" (episode ids must be unique in the bundle; also used in item "${owner}")`,
-        });
+        issues.push(
+          issue("error", F, `${ep_}/id`, `duplicate episode id "${ep.id}" (episode ids must be unique in the bundle; also used in item "${owner}")`),
+        );
       } else {
         episodeOwners.set(ep.id, item.id);
       }
 
-      if (ep.sources.length === 0 && ep.playbackAllowed) {
-        issues.push({ severity: "error", file: F, path: `${ep_}/playbackAllowed`, message: "must be false when sources is empty" });
-      }
+      if (ep.sources.length === 0 && ep.playbackAllowed) issues.push(issue("error", F, `${ep_}/playbackAllowed`, "must be false when sources is empty"));
 
       const sourceIds = new Set<string>();
       ep.sources.forEach((src, s) => {
         const sp = `${ep_}/sources/${s}`;
         stats.sources++;
-        if (sourceIds.has(src.id)) {
-          issues.push({ severity: "error", file: F, path: `${sp}/id`, message: `duplicate source id "${src.id}" within the episode` });
-        }
+        if (sourceIds.has(src.id)) issues.push(issue("error", F, `${sp}/id`, `duplicate source id "${src.id}" within the episode`));
         sourceIds.add(src.id);
 
         if (src.type === "adapter") {
-          usedAdapters.add(src.adapter);
+          adapters.add(src.adapter);
           if (!declaredAdapters.has(src.adapter)) {
-            issues.push({
-              severity: "error",
-              file: F,
-              path: `${sp}/adapter`,
-              message: `adapter "${src.adapter}" is not listed in ${BUNDLE_MANIFEST_FILE} "adapters"`,
-            });
+            issues.push(issue("error", F, `${sp}/adapter`, `adapter "${src.adapter}" is not listed in ${BUNDLE_MANIFEST_FILE} "adapters"`));
           }
         } else {
           checkUrl(src.media.url, F, `${sp}/media/url`, issues);
@@ -249,42 +236,42 @@ async function checkSemantics(
       });
     });
 
-    if (playable === 0) {
-      issues.push({ severity: "warning", file: F, path: ip, message: `item "${item.id}" has no episode with playbackAllowed: true` });
-    }
+    if (playable === 0) issues.push(issue("warning", F, ip, `item "${item.id}" has no episode with playbackAllowed: true`));
   });
 
-  for (const a of declaredAdapters) {
-    if (!usedAdapters.has(a)) {
-      issues.push({ severity: "warning", file: BUNDLE_MANIFEST_FILE, path: "/adapters", message: `adapter "${a}" is not used by any source` });
-    }
-  }
+  return { stats, posters, adapters };
+}
 
-  // Posters: present, content-addressed (sha256 of the bytes), and of the type their extension says.
+/** Adapters the manifest declares but no source uses. */
+function checkAdapters(manifest: BundleManifest, used: ReadonlySet<string>, issues: ValidationIssue[]): void {
+  for (const a of new Set(manifest.adapters)) {
+    if (!used.has(a)) issues.push(issue("warning", BUNDLE_MANIFEST_FILE, "/adapters", `adapter "${a}" is not used by any source`));
+  }
+}
+
+/** Posters: present, content-addressed (sha256 of the bytes), and of the type their extension says. Returns how many exist. */
+async function checkPosters(dir: string, posters: ReadonlyMap<string, string[]>, issues: ValidationIssue[]): Promise<number> {
+  let found = 0;
   for (const [rel, refs] of posters) {
-    const abs = path.join(dir, rel);
     let bytes: Buffer;
     try {
-      bytes = await readFile(abs);
+      bytes = await readFile(path.join(dir, rel));
     } catch {
-      for (const r of refs) issues.push({ severity: "error", file: F, path: r, message: `poster file ${rel} is missing` });
+      for (const r of refs) issues.push(issue("error", BUNDLE_ITEMS_FILE, r, `poster file ${rel} is missing`));
       continue;
     }
-    stats.posters++;
+    found++;
     const [, name = "", ext = ""] = /^assets\/([0-9a-f]{64})\.(\w+)$/.exec(rel) ?? [];
     const digest = createHash("sha256").update(bytes).digest("hex");
-    if (digest !== name) {
-      issues.push({ severity: "error", file: rel, path: "", message: `sha256 of the content is ${digest}, not the file name` });
-    }
-    if (!MAGIC[ext]?.(bytes)) {
-      issues.push({ severity: "error", file: rel, path: "", message: `content is not a ${ext} image` });
-    }
-    if (bytes.length > POSTER_WARN_BYTES) {
-      issues.push({ severity: "warning", file: rel, path: "", message: `poster is larger than ${POSTER_WARN_BYTES} bytes` });
-    }
+    if (digest !== name) issues.push(issue("error", rel, "", `sha256 of the content is ${digest}, not the file name`));
+    if (!MAGIC[ext]?.(bytes)) issues.push(issue("error", rel, "", `content is not a ${ext} image`));
+    if (bytes.length > POSTER_WARN_BYTES) issues.push(issue("warning", rel, "", `poster is larger than ${POSTER_WARN_BYTES} bytes`));
   }
+  return found;
+}
 
-  // Unreferenced assets are harmless but usually a sign of a stale build.
+/** Unreferenced assets are harmless but usually a sign of a stale build. */
+async function checkAssets(dir: string, posters: ReadonlyMap<string, string[]>, issues: ValidationIssue[]): Promise<void> {
   let assetFiles: string[] = [];
   try {
     assetFiles = await readdir(path.join(dir, BUNDLE_ASSETS_DIR));
@@ -293,12 +280,8 @@ async function checkSemantics(
   }
   for (const f of assetFiles) {
     const rel = `${BUNDLE_ASSETS_DIR}/${f}`;
-    if (!posters.has(rel) && !f.startsWith(".")) {
-      issues.push({ severity: "warning", file: rel, path: "", message: "asset is not referenced by any item" });
-    }
+    if (!posters.has(rel) && !f.startsWith(".")) issues.push(issue("warning", rel, "", "asset is not referenced by any item"));
   }
-
-  return stats;
 }
 
 /** Loads a bundle, throwing BundleValidationError when it has errors. Warnings are returned alongside. */
