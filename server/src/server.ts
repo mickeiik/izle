@@ -2,7 +2,7 @@ import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
-import { createApp } from "./app.ts";
+import { Hono } from "hono";
 import { loadAdminToken } from "./auth.ts";
 import { CatalogService } from "./catalog.ts";
 import { CommandService } from "./commands.ts";
@@ -10,20 +10,23 @@ import { CompanionService } from "./companion.ts";
 import { databaseFile, DEFAULT_RESOLVE_BUDGET_MS, DEFAULT_RESOLVE_DEADLINE_MS, localServerUrl, type ServerConfig } from "./config.ts";
 import type { AppContext } from "./context.ts";
 import { DeviceService } from "./devices.ts";
-import { EventHub } from "./events.ts";
+import { EventHub, Notifier } from "./events.ts";
 import { CatalogHistory } from "./history.ts";
+import { clientKeyFor, registerMiddleware, type Env } from "./http/middleware.ts";
+import { registerAdmin } from "./http/routes/admin.ts";
+import { registerCompanion } from "./http/routes/companion.ts";
+import { registerProxy } from "./http/routes/proxy.ts";
+import { registerTv } from "./http/routes/tv.ts";
+import { registerStatic } from "./http/static.ts";
 import { createLogger, type Logger } from "./log.ts";
 import { PairingService, type PairingOptions } from "./pairing.ts";
 import { ProblemService } from "./problems.ts";
 import { ProxyService } from "./proxy.ts";
 import { PlaybackSessions, ResolveService } from "./resolve.ts";
-import { Notifier } from "./notifier.ts";
-import { loadResolver, type LoadedResolver } from "./resolver.ts";
+import { loadResolver } from "./resolver.ts";
 import { Store } from "./store.ts";
 import { TvService } from "./tv.ts";
 import { VERSION } from "./version.ts";
-
-const ADMIN_UI_DIR = fileURLToPath(new URL("../admin", import.meta.url));
 
 export interface StartOptions {
   config: ServerConfig;
@@ -52,7 +55,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
   const { token: adminToken, source } = loadAdminToken(config, log);
   // The resolver module comes from a local path in the config; nothing is ever downloaded.
-  const resolverModule: LoadedResolver | null = config.resolver
+  const resolverModule = config.resolver
     ? await loadResolver({ module: config.resolver.module, config: config.resolver.config, dataDir: config.dataDir, log })
     : null;
   // The store comes first so that the catalog history records the first load too (it is the baseline).
@@ -68,7 +71,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     throw err;
   }
   const events = new EventHub();
-  // Resolve opens playback sessions; problem reports name the episode and source of a TV's session.
   const sessions = new PlaybackSessions(now);
   const problems = new ProblemService({ store, catalog, log, now, sessions });
   const proxy = new ProxyService({
@@ -104,9 +106,18 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     adminToken,
     pingMs: opts.pingMs ?? 20_000,
     fetch: fetchUpstream,
-    adminUiDir: ADMIN_UI_DIR,
+    adminUiDir: fileURLToPath(new URL("../admin", import.meta.url)),
   };
-  const app = createApp(ctx);
+
+  // One app with every area's routes, middleware first: access logs name the route template, so no sub-apps.
+  const app = new Hono<Env>();
+  const clientKey = clientKeyFor(config);
+  registerMiddleware(app, ctx, clientKey);
+  registerStatic(app, ctx);
+  registerProxy(app, ctx);
+  registerTv(app, ctx, clientKey);
+  registerAdmin(app, ctx);
+  registerCompanion(app, ctx);
 
   let server: Server;
   try {
@@ -120,7 +131,6 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     throw err;
   }
   const port = (server.address() as AddressInfo).port;
-  const url = localServerUrl(config, port);
   log.info("listening", { version: VERSION, host: config.listen.host, port, adminAuth: source, catalogDir: catalog.dir, dataDir: config.dataDir });
 
   const housekeeping = setInterval(() => {
@@ -132,7 +142,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
   let closing: Promise<void> | null = null;
   return {
-    url,
+    url: localServerUrl(config, port),
     ctx,
     close() {
       closing ??= (async () => {

@@ -27,20 +27,12 @@ export interface ProgressInput {
   ageMs?: number;
 }
 
-export interface EffectiveSettings {
-  uiLanguage: "tr" | "en";
-  preferredAudioLanguage: string | null;
-  subtitlesLanguage: string | null;
-  autoplayOnStart: boolean;
-}
-
 /**
  * What the TV sees and reports: home state, item details, resolve and progress. Also the owner's side of the same
  * state (the admin API): the home list, the "continue from" override, and the now-playing long-poll.
  */
 export class TvService {
   private readonly s: Services;
-  /** Admin long-polls waiting for a device's next now-playing write. */
   private readonly nowWaiters = new Waiters<string>();
 
   constructor(services: Services) {
@@ -58,11 +50,12 @@ export class TvService {
     return this.s.store.getNowPlaying(deviceId);
   }
 
-  settings(device: Device): EffectiveSettings {
+  /** The device's settings, falling back to the server's defaults, then to the catalog's hints. */
+  settings(device: Device) {
     const hints = this.s.catalog.current.manifest.defaults ?? {};
     const ui = device.uiLanguage ?? this.s.config.defaults.uiLanguage ?? hints.uiLanguage ?? "en";
     return {
-      uiLanguage: ui === "tr" ? "tr" : "en",
+      uiLanguage: ui === "tr" ? ("tr" as const) : ("en" as const),
       preferredAudioLanguage: device.preferredAudioLanguage ?? this.s.config.defaults.preferredAudioLanguage ?? hints.preferredAudioLanguage ?? null,
       subtitlesLanguage: device.subtitlesLanguage,
       autoplayOnStart: device.autoplayOnStart,
@@ -86,7 +79,7 @@ export class TvService {
     if (index < 0) return null;
     const episode = item.episodes[index]!;
     const p = progress.get(episode.id);
-    const status = !p ? "new" : p.status === "finished" ? "finished" : "watching";
+    const status = p?.status ?? "new";
     return {
       episodeId: episode.id,
       ...episodeSummary(episode),
@@ -116,10 +109,10 @@ export class TvService {
     const { manifest } = this.s.catalog.current;
     const home = [];
     for (const { itemId, addedAt } of this.s.store.getHomeEntries(device.id, manifest.catalogId)) {
+      // Items gone after a catalog reload are flagged on the admin page; unplayable ones are left out.
       const item = this.s.catalog.item(itemId);
-      if (!item) continue; // gone after a catalog reload; the admin API flags it
-      const cont = this.continueFor(device.id, item);
-      if (!cont) continue; // nothing playable
+      const cont = item && this.continueFor(device.id, item);
+      if (!item || !cont) continue;
       home.push({ item: itemCard(this.s.catalog, item), continue: cont, newEpisodes: this.newEpisodesFor(device.id, item, addedAt) });
     }
     return {
@@ -174,13 +167,16 @@ export class TvService {
     const { item, episode, index } = r.ref;
     const nextIndex = autoNextIndex(item, index);
     const next = nextIndex >= 0 ? item.episodes[nextIndex]! : null;
-    const progress = this.s.store.getProgress(device.id, this.s.catalog.catalogId, episode.id);
+    const catalogId = this.s.catalog.catalogId;
+    const progress = this.s.store.getProgress(device.id, catalogId, episode.id);
+    const resume =
+      progress?.status === "watching" ? { positionMs: progress.positionMs, durationMs: progress.durationMs } : null;
     this.s.store.setNowPlaying(device.id, {
-      catalogId: this.s.catalog.catalogId,
+      catalogId,
       itemId: item.id,
       episodeId: episode.id,
       sourceId: r.source.id,
-      positionMs: progress?.status === "watching" ? progress.positionMs : 0,
+      positionMs: resume?.positionMs ?? 0,
       durationMs: progress?.durationMs ?? episode.durationMs ?? null,
       state: "starting",
       updatedAt: this.s.now(),
@@ -198,7 +194,7 @@ export class TvService {
       next: next ? { episodeId: next.id, ...episodeSummary(next) } : null,
       item: itemCard(this.s.catalog, item),
       episode: { id: episode.id, index, count: item.episodes.length, ...episodeSummary(episode), durationMs: episode.durationMs ?? null },
-      resume: progress?.status === "watching" ? { positionMs: progress.positionMs, durationMs: progress.durationMs } : null,
+      resume,
       expiresAt: r.expiresAt,
     };
   }
@@ -214,10 +210,7 @@ export class TvService {
     const sourceId = this.s.sessions.owned(input.sessionId, device.id, episode.id)?.sourceId ?? null;
     const t = this.s.now();
     const durationMs = input.durationMs ?? null;
-    const playing = input.playing ?? input.status === "playing";
-    const anchorAt = t - (input.ageMs ?? 0);
     const finished = input.status === "finished";
-
     const changed = this.s.store.transaction(() => {
       const cursor = cursorAfterReport(item, index, input.status, this.s.store.getCursor(device.id, catalogId, item.id));
       this.s.store.upsertProgress(device.id, {
@@ -239,13 +232,12 @@ export class TvService {
         durationMs,
         state: input.status,
         updatedAt: t,
-        playing,
-        anchorAt,
+        playing: input.playing ?? input.status === "playing",
+        anchorAt: t - (input.ageMs ?? 0),
       });
       return cursor.changed;
     });
     this.nowWaiters.wake(device.id);
-
     return { version: changed ? this.s.notifier.bump(device.id) : this.s.notifier.version(device) };
   }
 
@@ -266,7 +258,6 @@ export class TvService {
     return this.s.notifier.bump(deviceId);
   }
 
-  /** Validates and stores a device's home list. */
   setHome(deviceId: string, itemIds: string[]): number {
     if (itemIds.length > HOME_MAX_ITEMS) {
       throw new HttpError(400, "too_many_items", `a home list holds at most ${HOME_MAX_ITEMS} items`, { max: HOME_MAX_ITEMS });

@@ -1,14 +1,36 @@
-// The TV's API (device token): home state, item details, resolve, playback progress, command acknowledgements and
-// problem reports. The event stream is in events.ts.
+// What the TV calls: pairing (unauthenticated; the owner's approval is an admin route), then with its device token
+// the home state, item details, resolve, playback progress, command acknowledgements, problem reports and the event
+// stream (SSE: the state version on connect, then state changes and commands; unacknowledged recent commands are
+// replayed on every (re)connect).
 
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
+import { streamSSE } from "hono/streaming";
+import { bearerToken } from "../../auth.ts";
 import type { AppContext } from "../../context.ts";
-import { HttpError } from "../../errors.ts";
+import { HttpError, unauthorized } from "../../errors.ts";
+import { commandEvent, eventId, type ServerEvent } from "../../events.ts";
+import { MAX_PAIR_WAIT_MS, PAIR_CODE } from "../../pairing.ts";
+import { iso } from "../../presenters.ts";
 import { isId, parseBody, problemBody, progressBody, resolveBody } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
+import { parseWait } from "../params.ts";
 
-export function registerTv(app: Hono<Env>, ctx: AppContext): void {
-  const { tv } = ctx;
+export function registerTv(app: Hono<Env>, ctx: AppContext, clientKey: (c: Context) => string): void {
+  const { tv, pairing, events, notifier } = ctx;
+
+  app.post("/api/v1/pair/start", (c) => {
+    const r = pairing.start(clientKey(c));
+    return c.json({ code: r.code, pairToken: r.pairToken, expiresAt: iso(r.expiresAt) });
+  });
+
+  app.get("/api/v1/pair/wait", async (c) => {
+    const code = c.req.query("code") ?? "";
+    if (!PAIR_CODE.test(code)) throw new HttpError(400, "invalid_request", "code must be 6 digits");
+    const pairToken = bearerToken(c.req.header("Authorization"));
+    if (!pairToken) throw unauthorized("izle-pair", "the pair token is required");
+    const waitSec = parseWait(c.req.query("wait"), MAX_PAIR_WAIT_MS / 1000, MAX_PAIR_WAIT_MS / 1000);
+    return c.json(await pairing.wait(code, pairToken, waitSec * 1000, c.req.raw.signal));
+  });
 
   app.get("/api/v1/tv/state", (c) => c.json(tv.state(c.get("device"))));
 
@@ -25,8 +47,7 @@ export function registerTv(app: Hono<Env>, ctx: AppContext): void {
 
   app.post("/api/v1/tv/progress", async (c) => {
     const body = await parseBody(c, progressBody);
-    const r = tv.recordProgress(c.get("device"), body);
-    return c.json({ ok: true, version: r.version });
+    return c.json({ ok: true, version: tv.recordProgress(c.get("device"), body).version });
   });
 
   app.post("/api/v1/tv/commands/:id/ack", (c) => {
@@ -42,5 +63,26 @@ export function registerTv(app: Hono<Env>, ctx: AppContext): void {
     const body = await parseBody(c, problemBody);
     ctx.problems.report(c.get("device"), body);
     return c.json({ ok: true }, 202);
+  });
+
+  app.get("/api/v1/tv/events", (c) => {
+    const device = c.get("device");
+    c.header("X-Accel-Buffering", "no");
+    return streamSSE(c, async (stream) => {
+      let ping: ReturnType<typeof setInterval> | undefined;
+      const closed = new Promise<void>((resolve) => stream.onAbort(resolve));
+      const message = (ev: ServerEvent) => ({ event: ev.type, data: JSON.stringify(ev.data), id: eventId(ev) });
+      const write = (ev: ServerEvent) => stream.writeSSE(message(ev)).catch(() => stream.abort());
+      const unsubscribe = events.subscribe(device.id, { send: (ev) => void write(ev), close: () => stream.abort() });
+      try {
+        await stream.writeSSE({ ...message({ type: "state", data: { version: notifier.version(device) } }), retry: 5000 });
+        for (const cmd of ctx.commands.replayable(device.id)) await write(commandEvent(cmd));
+        ping = setInterval(() => void stream.write(": ping\n\n").catch(() => stream.abort()), ctx.pingMs);
+        await closed;
+      } finally {
+        clearInterval(ping);
+        unsubscribe();
+      }
+    });
   });
 }
