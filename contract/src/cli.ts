@@ -9,29 +9,21 @@ Validates an izle catalog bundle (bundle.json, items.json, assets/) against cata
   --json    print the result as JSON
 Exit status: 0 valid, 1 invalid or unreachable URLs, 2 usage error.`;
 
-function hostOf(url: string): string {
-  try {
-    return new URL(url).host;
-  } catch {
-    return "?";
-  }
-}
+const OPTIONS = { probe: { type: "boolean" }, json: { type: "boolean" }, help: { type: "boolean", short: "h" } } as const;
+const hostOf = (url: string): string => URL.parse(url)?.host ?? "?";
+const out = (text: string) => void process.stdout.write(`${text}\n`);
 
 export async function main(argv: string[]): Promise<number> {
   let parsed;
   try {
-    parsed = parseArgs({
-      args: argv,
-      allowPositionals: true,
-      options: { probe: { type: "boolean" }, json: { type: "boolean" }, help: { type: "boolean", short: "h" } },
-    });
+    parsed = parseArgs({ args: argv, allowPositionals: true, options: OPTIONS });
   } catch (err) {
     process.stderr.write(`${(err as Error).message}\n${USAGE}\n`);
     return 2;
   }
   const { values, positionals } = parsed;
   if (values.help) {
-    process.stdout.write(`${USAGE}\n`);
+    out(USAGE);
     return 0;
   }
   if (positionals.length !== 1) {
@@ -45,57 +37,42 @@ export async function main(argv: string[]): Promise<number> {
   const ok = result.ok && failedProbes.length === 0;
 
   if (values.json) {
-    const out = {
-      ok,
-      issues: result.issues,
-      stats: result.stats ?? null,
-      probes: probes?.map((p) => ({
-        itemId: p.target.itemId,
-        episodeId: p.target.episodeId,
-        sourceId: p.target.sourceId,
-        what: p.target.what,
-        host: hostOf(p.target.url),
-        ok: p.ok,
-        status: p.status ?? null,
-        error: p.error ?? null,
-        ms: p.ms,
-      })),
-    };
-    process.stdout.write(`${JSON.stringify(out, null, 2)}\n`);
+    const probeJson = probes?.map(({ target: t, ...p }) => ({
+      itemId: t.itemId, episodeId: t.episodeId, sourceId: t.sourceId, what: t.what, host: hostOf(t.url),
+      ok: p.ok, status: p.status ?? null, error: p.error ?? null, ms: p.ms,
+    }));
+    out(JSON.stringify({ ok, issues: result.issues, stats: result.stats ?? null, probes: probeJson }, null, 2));
     return ok ? 0 : 1;
   }
 
   const errors = result.issues.filter((i) => i.severity === "error");
   const warnings = result.issues.filter((i) => i.severity === "warning");
-  for (const e of errors) process.stdout.write(`✖ ${formatIssue(e)}\n`);
-  for (const w of warnings) process.stdout.write(`⚠ ${formatIssue(w)}\n`);
+  for (const e of errors) out(`✖ ${formatIssue(e)}`);
+  for (const w of warnings) out(`⚠ ${formatIssue(w)}`);
 
   if (result.ok && result.bundle && result.stats) {
     const { manifest } = result.bundle;
     const s = result.stats;
-    process.stdout.write(
+    out(
       `✔ ${dir}: valid izle-bundle v1 "${manifest.name}" (catalog ${manifest.catalogId}, build ${manifest.buildId})\n` +
         `  ${s.items} items (${s.movies} movies, ${s.series} series), ${s.episodes} episodes (${s.playableEpisodes} playable), ` +
         `${s.sources} sources, ${s.posters} posters` +
-        (warnings.length ? `, ${warnings.length} warning(s)` : "") +
-        "\n",
+        (warnings.length ? `, ${warnings.length} warning(s)` : ""),
     );
   } else {
-    process.stdout.write(`✖ ${dir}: invalid (${errors.length} error(s), ${warnings.length} warning(s))\n`);
+    out(`✖ ${dir}: invalid (${errors.length} error(s), ${warnings.length} warning(s))`);
   }
 
   if (probes) {
-    for (const p of probes) {
-      const t = p.target;
+    for (const { target: t, ...p } of probes) {
       const outcome = p.ok ? `${p.status}` : p.status !== undefined ? `HTTP ${p.status}` : p.error;
-      process.stdout.write(
-        `${p.ok ? "  ✔" : "  ✖"} ${t.itemId}/${t.episodeId}/${t.sourceId} ${t.what} ${hostOf(t.url)} ${outcome} ${p.ms}ms\n`,
-      );
+      const where = `${t.itemId}/${t.episodeId}/${t.sourceId} ${t.what} ${hostOf(t.url)}`;
+      out(`${p.ok ? "  ✔" : "  ✖"} ${where} ${outcome} ${p.ms}ms`);
     }
-    process.stdout.write(
+    out(
       failedProbes.length === 0
-        ? `✔ probe: all ${probes.length} URLs reachable\n`
-        : `✖ probe: ${failedProbes.length} of ${probes.length} URLs unreachable\n`,
+        ? `✔ probe: all ${probes.length} URLs reachable`
+        : `✖ probe: ${failedProbes.length} of ${probes.length} URLs unreachable`,
     );
   }
   return ok ? 0 : 1;

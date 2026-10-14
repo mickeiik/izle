@@ -10,9 +10,8 @@ export const SCHEMA_IDS = {
   resolveResult: "urn:izle:schema:resolve-result:v1",
 } as const;
 
-function loadSchema(file: string): Record<string, unknown> {
-  return JSON.parse(readFileSync(new URL(`../schema/${file}`, import.meta.url), "utf8")) as Record<string, unknown>;
-}
+const loadSchema = (file: string): Record<string, unknown> =>
+  JSON.parse(readFileSync(new URL(`../schema/${file}`, import.meta.url), "utf8"));
 
 const ajv = new Ajv2020({ strict: true, allErrors: true, discriminator: true });
 ajv.addSchema(loadSchema("common.v1.schema.json"));
@@ -48,20 +47,11 @@ function describeSchemaError(err: ErrorObject): string {
  */
 export function simplifySchemaErrors(errors: ErrorObject[] | null | undefined): Array<{ path: string; message: string }> {
   if (!errors) return [];
+  const isNull = (e: ErrorObject) => e.keyword === "type" && (e.params as { type?: string }).type === "null";
   const specific = errors.filter((e) => e.keyword !== "anyOf" && e.keyword !== "oneOf" && e.keyword !== "if");
-  const nullUnion = new Set(
-    // "must be null" next to a real error on the same path comes from `anyOf [X, null]`; keep the real one.
-    specific.filter((e) => e.keyword !== "type" || (e.params as { type?: string }).type !== "null").map((e) => e.instancePath),
-  );
-  const kept = specific.filter(
-    (e) => !(e.keyword === "type" && (e.params as { type?: string }).type === "null" && nullUnion.has(e.instancePath)),
-  );
+  // "must be null" next to a real error on the same path comes from `anyOf [X, null]`; keep the real one.
+  const realPaths = new Set(specific.filter((e) => !isNull(e)).map((e) => e.instancePath));
+  const kept = specific.filter((e) => !(isNull(e) && realPaths.has(e.instancePath)));
   const list = (kept.length > 0 ? kept : errors).map((e) => ({ path: e.instancePath || "/", message: describeSchemaError(e) }));
-  const seen = new Set<string>();
-  return list.filter((e) => {
-    const key = `${e.path}\u0000${e.message}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  return [...new Map(list.map((e) => [`${e.path}\u0000${e.message}`, e])).values()];
 }

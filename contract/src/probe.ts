@@ -48,11 +48,9 @@ export function probeTargets(bundle: Bundle): ProbeTarget[] {
 export async function probeBundle(bundle: Bundle, opts: ProbeOptions = {}): Promise<ProbeResult[]> {
   const targets = probeTargets(bundle);
   const doFetch = opts.fetch ?? fetch;
-  const timeoutMs = opts.timeoutMs ?? 20_000;
   const results: ProbeResult[] = new Array(targets.length);
   let next = 0;
-
-  async function worker(): Promise<void> {
+  const worker = async (): Promise<void> => {
     while (next < targets.length) {
       const index = next++;
       const target = targets[index]!;
@@ -62,7 +60,7 @@ export async function probeBundle(bundle: Bundle, opts: ProbeOptions = {}): Prom
           method: "GET",
           redirect: "follow",
           headers: { "User-Agent": "izle-validate/1", ...target.headers, Range: "bytes=0-0" },
-          signal: AbortSignal.timeout(timeoutMs),
+          signal: AbortSignal.timeout(opts.timeoutMs ?? 20_000),
         });
         await res.body?.cancel().catch(() => {});
         results[index] = { target, ok: res.status === 200 || res.status === 206, status: res.status, ms: Date.now() - started };
@@ -70,8 +68,7 @@ export async function probeBundle(bundle: Bundle, opts: ProbeOptions = {}): Prom
         results[index] = { target, ok: false, error: (err as Error).name || "Error", ms: Date.now() - started };
       }
     }
-  }
-
-  await Promise.all(Array.from({ length: Math.max(1, opts.concurrency ?? 4) }, () => worker()));
+  };
+  await Promise.all(Array.from({ length: Math.max(1, opts.concurrency ?? 4) }, worker));
   return results;
 }
