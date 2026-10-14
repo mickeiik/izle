@@ -7,32 +7,32 @@ import org.junit.Test
 class MediaTypesTest {
     @Test
     fun aLanguageAlsoAcceptsItsPrimarySubtag() {
-        assertArrayEquals(arrayOf("pt-BR", "pt"), PlaybackController.languagePreference("pt-BR"))
-        assertArrayEquals(arrayOf("tr"), PlaybackController.languagePreference("tr"))
-        assertArrayEquals(arrayOf("EN", "en"), PlaybackController.languagePreference("EN"))
-        assertArrayEquals(arrayOf("zh-Hant-TW", "zh"), PlaybackController.languagePreference("zh-Hant-TW"))
+        assertArrayEquals(arrayOf("pt-BR", "pt"), languagePreference("pt-BR"))
+        assertArrayEquals(arrayOf("tr"), languagePreference("tr"))
+        assertArrayEquals(arrayOf("EN", "en"), languagePreference("EN"))
+        assertArrayEquals(arrayOf("zh-Hant-TW", "zh"), languagePreference("zh-Hant-TW"))
     }
 
     @Test
     fun noLanguageMeansNoPreference() {
-        assertArrayEquals(emptyArray<String>(), PlaybackController.languagePreference(null))
-        assertArrayEquals(emptyArray<String>(), PlaybackController.languagePreference(""))
-        assertArrayEquals(emptyArray<String>(), PlaybackController.languagePreference("  "))
+        assertArrayEquals(emptyArray<String>(), languagePreference(null))
+        assertArrayEquals(emptyArray<String>(), languagePreference(""))
+        assertArrayEquals(emptyArray<String>(), languagePreference("  "))
     }
 
     @Test
     fun mediaKindsMapToTheirMimeTypes() {
-        assertEquals("application/x-mpegURL", PlaybackController.mediaMimeType("hls"))
-        assertEquals("application/dash+xml", PlaybackController.mediaMimeType("dash"))
-        assertEquals("video/mp4", PlaybackController.mediaMimeType("mp4"))
-        assertEquals("an unknown kind is played as MP4", "video/mp4", PlaybackController.mediaMimeType("webm"))
+        assertEquals("application/x-mpegURL", mediaMimeType("hls"))
+        assertEquals("application/dash+xml", mediaMimeType("dash"))
+        assertEquals("video/mp4", mediaMimeType("mp4"))
+        assertEquals("an unknown kind is played as MP4", "video/mp4", mediaMimeType("webm"))
     }
 
     @Test
     fun subtitleFormatsMapToTheirMimeTypes() {
-        assertEquals("application/x-subrip", PlaybackController.subtitleMimeType("srt"))
-        assertEquals("application/ttml+xml", PlaybackController.subtitleMimeType("ttml"))
-        assertEquals("text/vtt", PlaybackController.subtitleMimeType("vtt"))
-        assertEquals("an unknown format is read as WebVTT", "text/vtt", PlaybackController.subtitleMimeType("ass"))
+        assertEquals("application/x-subrip", subtitleMimeType("srt"))
+        assertEquals("application/ttml+xml", subtitleMimeType("ttml"))
+        assertEquals("text/vtt", subtitleMimeType("vtt"))
+        assertEquals("an unknown format is read as WebVTT", "text/vtt", subtitleMimeType("ass"))
     }
 }

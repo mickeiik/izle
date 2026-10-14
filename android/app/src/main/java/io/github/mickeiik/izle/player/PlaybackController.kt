@@ -7,7 +7,6 @@ import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
@@ -15,7 +14,6 @@ import androidx.media3.common.Tracks
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -761,32 +759,4 @@ class PlaybackController(
     }
 
     private fun durationOf(p: ExoPlayer): Long? = p.duration.takeIf { it != C.TIME_UNSET && it > 0 }
-
-    companion object {
-        fun languagePreference(tag: String?): Array<String> {
-            if (tag.isNullOrBlank()) return emptyArray()
-            return listOf(tag, tag.substringBefore('-').lowercase()).distinct().toTypedArray()
-        }
-
-        fun mediaMimeType(kind: String): String = when (kind) {
-            "hls" -> MimeTypes.APPLICATION_M3U8
-            "dash" -> MimeTypes.APPLICATION_MPD
-            else -> MimeTypes.VIDEO_MP4
-        }
-
-        fun subtitleMimeType(format: String): String = when (format) {
-            "srt" -> MimeTypes.APPLICATION_SUBRIP
-            "ttml" -> MimeTypes.APPLICATION_TTML
-            else -> MimeTypes.TEXT_VTT
-        }
-
-        private fun PlaybackException.httpStatus(): Int? {
-            var cause: Throwable? = this
-            while (cause != null) {
-                if (cause is HttpDataSource.InvalidResponseCodeException) return cause.responseCode
-                cause = cause.cause
-            }
-            return null
-        }
-    }
 }
