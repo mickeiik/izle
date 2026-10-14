@@ -33,6 +33,8 @@ import mockwebserver3.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Rule
@@ -184,6 +186,19 @@ class SeniorInvariantsTest {
         }
     }
 
+    @Test
+    @Config(qualifiers = "fr-rFR-w960dp-h540dp-land-television")
+    fun theClockFollowsTheTvsLocaleNotTheMenuLanguage() = onTv { tv ->
+        awaitTiles("Show A", "Show B", "Show C")
+        // The owner chose an English menu (the state says `uiLanguage: en`) on a French TV that has no 12/24-hour
+        // setting: the clock is the TV's 24-hour one ("14:54"), not the menu language's "2:54 PM".
+        val clock = allTexts().firstOrNull { Regex("""^\d{1,2}:\d{2}( [AP]M)?$""").matches(it) }
+        assertNotNull("a clock on Home", clock)
+        assertTrue("a 24-hour clock, got $clock", Regex("""^\d{2}:\d{2}$""").matches(clock!!))
+        assertTrue("the menu language stays English", exists(string(R.string.home_hint)))
+        tv.assertOnHome()
+    }
+
     /** Starts the app as the launcher does and closes it after [block], before the server goes away. */
     private fun onTv(block: (ActivityScenario<MainActivity>) -> Unit) {
         ActivityScenario.launch(MainActivity::class.java).use(block)
@@ -233,6 +248,12 @@ class SeniorInvariantsTest {
     /** The first text of the focused element, if any. */
     private fun focusedTitle(): String? =
         compose.onAllNodes(isFocused()).fetchSemanticsNodes().singleOrNull()?.texts()?.firstOrNull()
+
+    /** Every text shown anywhere on the screen. */
+    private fun allTexts(): List<String> {
+        fun collect(node: SemanticsNode): List<String> = node.texts() + node.children.flatMap(::collect)
+        return collect(compose.onRoot().fetchSemanticsNode())
+    }
 
     private fun SemanticsNode.texts(): List<String> = config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text }
 

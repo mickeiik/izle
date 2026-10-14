@@ -37,12 +37,12 @@ Notes:
   passed. They are what a second pass should cover, in particular hardware decoding at 1080p (the debug build caps
   video at 720p on the emulator only), the `.mov` fallback, a real remote's key repeats for the 0.6 s long press,
   and overscan.
-- **Open issue: without a 12/24-hour setting on the TV, the clock follows the app's language.** The box's locale is
+- **Found and since fixed: without a 12/24-hour setting on the TV, the clock followed the app's language.** The box's locale is
   fr-FR (24-hour by default) and its 12/24-hour setting is unset (`settings get system time_12_24` answers `null`),
   yet Home showed "2:54 PM" with the menu language English. `Clock` asks `DateFormat.is24HourFormat()` with the
   app's localized context, and Android falls back to that context's locale when the setting is unset; the UX notes
   say the clock follows the TV's setting. On the emulator, Turkish gave a 24-hour clock
-  ([phase 3](../phase3/README.md), row 10). Not fixed yet.
+  ([phase 3](../phase3/README.md), row 10). Fixed on 2026-10-14: the format is now decided on the application context, which keeps the TV's own locale, so this box shows 14:54 with an English menu.
 - **adb on this box:** there is no "Wireless debugging" (Android 7.1). With USB debugging on, the box accepted
   `adb connect` on port 5555 directly.
 - `am start -W` printed `TotalTime: 0` on this box, so no launch time was measured.

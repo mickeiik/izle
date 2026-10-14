@@ -829,3 +829,22 @@ the resolve answer's `expiresAt`, which the TV used to drop). Routine decisions:
   one: its protected constructor only stores fields, so it works without Robolectric), command decoding including
   unknown types and odd payloads, autoplay target selection, DTO fields, `Date` header and problem POST, outage
   detection, fresh-versus-cached states and the reporter. The emulator runs are in `docs/verification/tv-controls/`.
+
+## Integration of the 2026-10-14 branches (2026-10-14)
+
+- The five parallel branches were cherry-picked onto `main` in the order they finished (repository docs and CI,
+  server hardening, Compose UI tests, server features, TV features); the only conflicts were the sections each one
+  appended here, all kept. Between the merges `npm test`, `npm run typecheck`, the package build and smoke test, and
+  the Android unit tests were run on `main`; the merged server was also driven with a curl script covering every new
+  command body, the problem routes with a hostile detail, and the autoplay setting, and the admin page was checked
+  in a browser.
+- **The Home clock decides 12- or 24-hour on the application context.** The real-device notes recorded a French TV
+  without a 12/24-hour setting showing "2:54 PM" under an English menu: `DateFormat.is24HourFormat` was asked with
+  the app-language context, and Android falls back to that context's locale when the setting is unset. The
+  application context keeps the system configuration, so the clock now follows the TV's own locale; the digits and
+  the AM/PM word still use the menu language. Covered by a Robolectric test with a `fr-rFR` configuration.
+- **CHANGELOG:** every item listed under Unreleased landed, so nothing was trimmed; the clock fix was added.
+- **Merged-build smoke on the emulator:** the debug APK built from the merged `main` was paired against the merged
+  server (sample catalog): the tiles appeared, an owner's message showed as the banner over Home, and with autoplay
+  switched on a relaunch showed the countdown for the show played last and then started it (the server reported the
+  TV playing). The feature-level evidence is in `docs/verification/tv-controls/`.

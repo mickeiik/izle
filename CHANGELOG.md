@@ -42,6 +42,8 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Fixed
 
+- **The clock follows the TV's own 12/24-hour convention** when the TV has no explicit setting; it used to follow the
+  menu language (an English menu on a French TV showed "2:54 PM").
 - **Channel keys no longer leave izle.** Outside the player, CH+/CH− are consumed, so a press cannot throw the viewer
   into the TV's Live TV app.
 

@@ -128,7 +128,9 @@ fun Clock(modifier: Modifier = Modifier) {
             delay(60_000 - now % 60_000)
         }
     }
-    val pattern = if (DateFormat.is24HourFormat(context)) "HH:mm" else "h:mm a"
+    // 12- or 24-hour follows the TV's setting and, when that is unset, the TV's own locale: the application
+    // context keeps the system configuration, while LocalContext carries the app's (owner-chosen) language.
+    val pattern = if (DateFormat.is24HourFormat(context.applicationContext)) "HH:mm" else "h:mm a"
     val text = remember(now, pattern) { SimpleDateFormat(pattern, context.currentLocale()).format(Date(now)) }
     Text(text, modifier = modifier, style = MaterialTheme.typography.headlineMedium, color = IzleColors.OnSurface)
 }

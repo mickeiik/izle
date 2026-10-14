@@ -31,7 +31,7 @@ in [`docs/verification/tv-controls/`](../verification/tv-controls/README.md).
 - The focused tile scales to 110 % with a 4 dp white border; the others are dimmed.
 - Under the poster: the title (24 sp bold, up to 2 lines). On the poster: a chip saying what OK will do, and a
   progress bar when it will resume.
-- Top right: a clock (24-hour or 12-hour following the TV's setting). Bottom: the hint "OK: Play · Back: Home".
+- Top right: a clock (24-hour or 12-hour following the TV's setting, or the TV's own language when that is unset). Bottom: the hint "OK: Play · Back: Home".
 - The tile played last gets the focus back; after a live reorder the focus stays on the same show.
 - No shows: "Nothing here yet" in large type.
 - Server unreachable: the last home screen stays (cached), a red "No connection" chip appears top left, the TV
