@@ -8,11 +8,29 @@ import type { CatalogService } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
 import { redactReportText, type Logger } from "./log.ts";
 import { iso } from "./presenters.ts";
-import type { ProxyProblem } from "./proxy.ts";
+import type { ProxyProblem, ProxyProblemCode } from "./proxy.ts";
 import { RateLimiter } from "./ratelimit.ts";
 import { isCompanionScope, type PlaybackSession, type Tried } from "./resolve.ts";
 import type { Device, Problem, ProblemOrigin, Store } from "./store.ts";
-import type { ProblemReportBody } from "./validation.ts";
+
+/** Problem kinds a TV may report (`proxy` problems are only recorded by the server). */
+export const TV_PROBLEM_KINDS = ["playback", "resolve", "network", "other"] as const;
+
+export type ProblemKind = (typeof TV_PROBLEM_KINDS)[number] | "proxy";
+
+/** A TV's problem report (`POST /tv/problems`, validated in validation.ts). */
+export interface ProblemReportBody {
+  kind: (typeof TV_PROBLEM_KINDS)[number];
+  code: string;
+  ageMs?: number;
+  episodeId?: string;
+  sourceId?: string;
+  sessionId?: string;
+  positionMs?: number;
+  httpStatus?: number;
+  detail?: string;
+  appVersion?: string;
+}
 
 /** Problems kept per device (older ones are deleted on insert). */
 export const PROBLEMS_KEPT = 100;
@@ -30,7 +48,7 @@ const MAX_DETAIL = 500;
 
 export interface ServerProblem {
   kind: "resolve" | "proxy";
-  code: string;
+  code: "no_playable_source" | "source_failed" | ProxyProblemCode;
   episodeId?: string | null;
   sourceId?: string | null;
   httpStatus?: number | null;

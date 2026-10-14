@@ -71,7 +71,7 @@ test("migration 2: now_playing gains its anchor and seq, companion links exist; 
     anchorAt: null,
     seq: 0,
   });
-  const row = { catalogId: "c", itemId: "i", episodeId: "e", sourceId: "s", positionMs: 7, durationMs: 10, state: "playing", updatedAt: 3, playing: true, anchorAt: 2_900 };
+  const row = { catalogId: "c", itemId: "i", episodeId: "e", sourceId: "s", positionMs: 7, durationMs: 10, state: "playing" as const, updatedAt: 3, playing: true, anchorAt: 2_900 };
   assert.equal(s.setNowPlaying("d1", row), 1);
   assert.equal(s.setNowPlaying("d1", { ...row, positionMs: 8 }), 2);
   assert.deepEqual(s.getNowPlaying("d1"), { ...row, positionMs: 8, seq: 2 });
@@ -112,7 +112,7 @@ test("migration 3: devices gain autoplay (off), problems are kept per device, ne
   assert.equal(s.updateDevice("d1", { autoplayOnStart: false })?.autoplayOnStart, false);
 
   s.createDevice({ id: "d2", name: "TV2", tokenHash: "h2", now: 1 });
-  const base = { origin: "tv" as const, kind: "playback", catalogId: null, itemId: null, episodeId: null, sourceId: null, positionMs: null, httpStatus: null, detail: null, appVersion: null };
+  const base = { origin: "tv" as const, kind: "playback" as const, catalogId: null, itemId: null, episodeId: null, sourceId: null, positionMs: null, httpStatus: null, detail: null, appVersion: null };
   const at = [50, 10, 30, 30, 20];
   at.forEach((t, i) => s.insertProblem({ ...base, deviceId: "d1", at: t, code: `c${i}` }, 4));
   s.insertProblem({ ...base, deviceId: "d2", at: 5, code: "other" }, 4);

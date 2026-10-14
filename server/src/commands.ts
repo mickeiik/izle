@@ -4,7 +4,23 @@
 import type { Services } from "./context.ts";
 import { requireEpisode, requirePlayable } from "./lookup.ts";
 import type { Command } from "./store.ts";
-import { MESSAGE_DURATION_SEC, type CommandBody } from "./validation.ts";
+
+/** Commands that carry no payload (the SSE payload is `{}`). */
+export const PLAIN_COMMANDS = ["stop", "pause", "resume", "next", "previous"] as const;
+/** The longest relative seek, either way. */
+export const MAX_SEEK_DELTA_MS = 3_600_000;
+export const MESSAGE_MAX_CHARS = 200;
+export const MESSAGE_DURATION_SEC = { min: 3, max: 120, default: 15 };
+
+export type CommandType = "play" | "seek" | "message" | (typeof PLAIN_COMMANDS)[number];
+
+/** A command as the admin API takes it (`POST /admin/devices/:id/commands`, validated in validation.ts). */
+export type CommandBody =
+  | { type: "play"; episodeId: string }
+  | { type: (typeof PLAIN_COMMANDS)[number] }
+  | { type: "seek"; deltaMs: number; positionMs?: undefined }
+  | { type: "seek"; positionMs: number; deltaMs?: undefined }
+  | { type: "message"; text: string; durationSec?: number };
 
 /** Unacknowledged commands younger than this are replayed when a TV (re)connects to the event stream. */
 export const COMMAND_REPLAY_MS = 2 * 60_000;

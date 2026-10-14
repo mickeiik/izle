@@ -1,12 +1,16 @@
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
-import { simplifySchemaErrors } from "@izle/contract";
+import { ID_PATTERN, simplifySchemaErrors } from "@izle/contract";
 import type { Context } from "hono";
+import { MAX_SEEK_DELTA_MS, MESSAGE_DURATION_SEC, MESSAGE_MAX_CHARS, PLAIN_COMMANDS, type CommandBody } from "./commands.ts";
+import { LANGUAGE_TAG_PATTERN } from "./config.ts";
 import { HttpError } from "./errors.ts";
+import { PAIR_CODE } from "./pairing.ts";
+import { TV_PROBLEM_KINDS, type ProblemReportBody } from "./problems.ts";
 
 const ajv = new Ajv2020({ strict: true, allErrors: true });
 
-const ID = { type: "string", pattern: "^[A-Za-z0-9][A-Za-z0-9._~-]{0,119}$" };
-const LANGUAGE_TAG = { type: "string", pattern: "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$", maxLength: 35 };
+const ID = { type: "string", pattern: ID_PATTERN.source };
+const LANGUAGE_TAG = { type: "string", pattern: LANGUAGE_TAG_PATTERN, maxLength: 35 };
 const NAME = { type: "string", minLength: 1, maxLength: 60, pattern: "\\S" };
 const MS = { type: "integer", minimum: 0, maximum: 1e12 };
 
@@ -17,7 +21,7 @@ function compile<T>(schema: object): ValidateFunction<T> {
 export const approveBody = compile<{ code: string; name?: string }>({
   type: "object",
   required: ["code"],
-  properties: { code: { type: "string", pattern: "^[0-9]{6}$" }, name: NAME },
+  properties: { code: { type: "string", pattern: PAIR_CODE.source }, name: NAME },
   additionalProperties: false,
 });
 
@@ -53,20 +57,6 @@ export const cursorBody = compile<{ itemId: string; episodeId: string }>({
   properties: { itemId: ID, episodeId: ID },
   additionalProperties: false,
 });
-
-/** Commands that carry no payload (the SSE payload is `{}`). */
-export const PLAIN_COMMANDS = ["stop", "pause", "resume", "next", "previous"] as const;
-/** The longest relative seek, either way. */
-export const MAX_SEEK_DELTA_MS = 3_600_000;
-export const MESSAGE_MAX_CHARS = 200;
-export const MESSAGE_DURATION_SEC = { min: 3, max: 120, default: 15 };
-
-export type CommandBody =
-  | { type: "play"; episodeId: string }
-  | { type: (typeof PLAIN_COMMANDS)[number] }
-  | { type: "seek"; deltaMs: number; positionMs?: undefined }
-  | { type: "seek"; positionMs: number; deltaMs?: undefined }
-  | { type: "message"; text: string; durationSec?: number };
 
 export const commandBody = compile<CommandBody>({
   oneOf: [
@@ -136,22 +126,6 @@ export const progressBody = compile<{
   additionalProperties: false,
 });
 
-/** Problem kinds a TV may report (`proxy` problems are only recorded by the server). */
-export const TV_PROBLEM_KINDS = ["playback", "resolve", "network", "other"] as const;
-
-export interface ProblemReportBody {
-  kind: (typeof TV_PROBLEM_KINDS)[number];
-  code: string;
-  ageMs?: number;
-  episodeId?: string;
-  sourceId?: string;
-  sessionId?: string;
-  positionMs?: number;
-  httpStatus?: number;
-  detail?: string;
-  appVersion?: string;
-}
-
 export const problemBody = compile<ProblemReportBody>({
   type: "object",
   required: ["kind", "code"],
@@ -203,5 +177,5 @@ export async function parseBody<T>(c: Context, validate: ValidateFunction<T>): P
 }
 
 export function isId(value: string): boolean {
-  return /^[A-Za-z0-9][A-Za-z0-9._~-]{0,119}$/.test(value);
+  return ID_PATTERN.test(value);
 }

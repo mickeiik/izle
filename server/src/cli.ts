@@ -7,6 +7,7 @@ import { BackupError, backupDatabase } from "./backup.ts";
 import { reloadOnSignal } from "./catalog-admin.ts";
 import { ConfigError, loadConfig, SAMPLE_CATALOG_DIR, type ServerConfig } from "./config.ts";
 import { createLogger } from "./log.ts";
+import { PAIR_CODE } from "./pairing.ts";
 import { healthcheckAll, loadResolver, ResolverLoadError } from "./resolver.ts";
 import { startServer } from "./server.ts";
 import { adminCall, linkBase, localServerUrl, qrCode, ServerUnreachableError, signInLink } from "./shell.ts";
@@ -88,10 +89,10 @@ async function pair(config: ServerConfig, args: string[], serverUrl: string | un
   try {
     if (sub === "pending") {
       if (rest.length > 0) return fail(`pair pending takes no arguments`);
-      const r = await adminCall(server, token, "GET", "/api/v1/admin/pair/pending");
+      const r = await adminCall<{ codes: Array<{ code: string; expiresAt: string; approved: boolean }> }>(server, token, "GET", "/api/v1/admin/pair/pending");
       if (r.status === 401) return fail("the server did not accept the admin token; is it the one the server runs with?");
       if (r.status !== 200) return fail(`unexpected answer ${r.status} from ${server}`);
-      const codes: Array<{ code: string; expiresAt: string; approved: boolean }> = r.json.codes;
+      const codes = r.json!.codes;
       if (codes.length === 0) out("no TV is waiting; izle on the TV shows a 6-digit code when it is not paired");
       for (const c of codes) {
         const left = Math.max(0, Math.round((Date.parse(c.expiresAt) - Date.now()) / 1000));
@@ -100,14 +101,17 @@ async function pair(config: ServerConfig, args: string[], serverUrl: string | un
       return 0;
     }
     const [code, ...nameWords] = rest;
-    if (!/^[0-9]{6}$/.test(code ?? "")) return fail("pair approve needs the 6-digit code the TV shows");
+    if (!PAIR_CODE.test(code ?? "")) return fail("pair approve needs the 6-digit code the TV shows");
     const name = nameWords.join(" ").trim();
-    const r = await adminCall(server, token, "POST", "/api/v1/admin/pair/approve", { code, ...(name ? { name } : {}) });
+    const r = await adminCall<{ deviceId: string; name: string; message?: string }>(server, token, "POST", "/api/v1/admin/pair/approve", {
+      code,
+      ...(name ? { name } : {}),
+    });
     if (r.status === 404) return fail(`no TV is waiting with the code ${code}; the TV shows a new code every 10 minutes`);
     if (r.status === 409) return fail(`the code ${code} is already approved`);
     if (r.status === 401) return fail("the server did not accept the admin token; is it the one the server runs with?");
     if (r.status !== 200) return fail(`unexpected answer ${r.status} from ${server}${r.json?.message ? `: ${r.json.message}` : ""}`);
-    out(`approved: "${r.json.name}" (${r.json.deviceId}) shows its home screen in a moment; put shows on it from the admin page`);
+    out(`approved: "${r.json!.name}" (${r.json!.deviceId}) shows its home screen in a moment; put shows on it from the admin page`);
     return 0;
   } catch (err) {
     if (err instanceof ServerUnreachableError) return fail(`${err.message}; is it running? (--server <url> if it listens elsewhere)`);

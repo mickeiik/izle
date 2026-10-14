@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import type { Hono } from "hono";
-import { createApp } from "./app.ts";
+import { createApp, type Env } from "./app.ts";
 import { loadAdminToken } from "./auth.ts";
 import { CatalogService } from "./catalog.ts";
 import { CommandService } from "./commands.ts";
@@ -41,7 +41,7 @@ export interface RunningServer {
   url: string;
   port: number;
   ctx: AppContext;
-  app: Hono<any>;
+  app: Hono<Env>;
   close(): Promise<void>;
 }
 

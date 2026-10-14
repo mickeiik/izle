@@ -7,6 +7,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  ID_PATTERN,
   MAX_INLINE_PLAYLIST_BYTES,
   RESOLVER_API_VERSION,
   validateResolveResultsSchema,
@@ -16,6 +17,7 @@ import {
   type ResolveRequest,
   type ResolveResult,
 } from "@izle/contract";
+import { isPlaylistText } from "./hls.ts";
 import type { Logger } from "./log.ts";
 
 /** Time allowed for `createAdapters` at startup. */
@@ -23,7 +25,6 @@ export const CREATE_ADAPTERS_TIMEOUT_MS = 30_000;
 /** Time allowed for one adapter's `healthcheck`. */
 export const HEALTHCHECK_TIMEOUT_MS = 15_000;
 
-const ADAPTER_ID = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,119}$/;
 const ERROR_NAME = /^[A-Za-z][A-Za-z0-9_.-]{0,59}$/;
 
 export class ResolverLoadError extends Error {
@@ -128,7 +129,7 @@ export async function loadResolver(opts: LoadResolverOptions): Promise<LoadedRes
   const adapters = new Map<string, Adapter>();
   for (const [i, a] of created.entries()) {
     const candidate = a as Partial<Adapter> | null;
-    if (!candidate || typeof candidate.id !== "string" || !ADAPTER_ID.test(candidate.id) || typeof candidate.resolve !== "function") {
+    if (!candidate || typeof candidate.id !== "string" || !ID_PATTERN.test(candidate.id) || typeof candidate.resolve !== "function") {
       throw new ResolverLoadError(`adapter #${i} of ${file} needs an id (catalog id syntax) and a resolve() function`);
     }
     if (candidate.healthcheck !== undefined && typeof candidate.healthcheck !== "function") {
@@ -153,7 +154,7 @@ function semanticProblem(results: ResolveResult[]): string | null {
   for (const r of results) {
     if ("playlist" in r.media) {
       if (Buffer.byteLength(r.media.playlist, "utf8") > MAX_INLINE_PLAYLIST_BYTES) return "PlaylistTooLarge";
-      if (!r.media.playlist.replace(/^﻿/, "").trimStart().startsWith("#EXTM3U")) return "NotAPlaylist";
+      if (!isPlaylistText(r.media.playlist)) return "NotAPlaylist";
     }
   }
   return null;

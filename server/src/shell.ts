@@ -51,10 +51,11 @@ export function qrCode(text: string): string {
   return renderUnicodeCompact(text, { ecc: "M", border: 2 });
 }
 
-export interface AdminCallResult {
+/** `T` is the shape the caller expects of the answer it checks for; the body is not validated against it. */
+export interface AdminCallResult<T = unknown> {
   status: number;
-  // The admin API's JSON, or null when the body was not JSON.
-  json: any;
+  /** The admin API's JSON, or null when the body was not JSON. */
+  json: T | null;
 }
 
 export class ServerUnreachableError extends Error {
@@ -62,7 +63,7 @@ export class ServerUnreachableError extends Error {
 }
 
 /** One call to the running server's admin API with the admin token. */
-export async function adminCall(server: string, token: string, method: string, route: string, body?: unknown): Promise<AdminCallResult> {
+export async function adminCall<T = unknown>(server: string, token: string, method: string, route: string, body?: unknown): Promise<AdminCallResult<T>> {
   const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   let res: Response;
@@ -78,5 +79,5 @@ export async function adminCall(server: string, token: string, method: string, r
   } catch {
     json = null;
   }
-  return { status: res.status, json };
+  return { status: res.status, json: json as T | null };
 }

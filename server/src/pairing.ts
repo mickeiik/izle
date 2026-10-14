@@ -9,6 +9,8 @@ import { Waiters } from "./waiters.ts";
 export const PAIR_CODE_TTL_MS = 10 * 60_000;
 export const MAX_OPEN_PAIR_CODES = 5;
 export const MAX_PAIR_WAIT_MS = 25_000;
+/** The 6-digit code a TV shows while it waits to be paired. */
+export const PAIR_CODE = /^[0-9]{6}$/;
 
 export type PairWaitResult = { status: "pending" } | { status: "approved"; deviceId: string; deviceToken: string };
 

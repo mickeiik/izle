@@ -56,17 +56,26 @@ interface Session extends ProxySessionInit {
 
 export type ProxyTarget = { type: "index" } | { type: "video" } | { type: "u"; ref: string } | { type: "sub"; file: string };
 
+/**
+ * `upstream_<status>` (401/403/410: the session went stale), `upstream_error` (5xx, or a playlist that broke off),
+ * `upstream_unreachable` (network error or no answer in time), `not_a_playlist`, `playlist_too_large`.
+ */
+export type ProxyProblemCode =
+  | "upstream_401"
+  | "upstream_403"
+  | "upstream_410"
+  | "upstream_error"
+  | "upstream_unreachable"
+  | "not_a_playlist"
+  | "playlist_too_large";
+
 /** An upstream request of a session that failed in a way the owner should hear about. */
 export interface ProxyProblem {
   /** The session's owner key: a TV's device id, or `companion:<deviceId>`. */
   owner: string;
   episodeId: string | null;
   sourceId: string | null;
-  /**
-   * `upstream_<status>` (401/403/410: the session went stale), `upstream_error` (5xx, or a playlist that broke
-   * off), `upstream_unreachable` (network error or no answer in time), `not_a_playlist`, `playlist_too_large`.
-   */
-  code: string;
+  code: ProxyProblemCode;
   httpStatus: number | null;
   /** What was requested (`playlist`, `segment`, `video`, `subtitles`) and, when unreachable, why. Never a URL. */
   detail: string;
@@ -157,7 +166,7 @@ export class ProxyService {
     this.onProblem = opts.onProblem;
   }
 
-  private problem(s: Session, code: string, httpStatus: number | null, detail: string): void {
+  private problem(s: Session, code: ProxyProblemCode, httpStatus: number | null, detail: string): void {
     if (!this.onProblem) return;
     try {
       this.onProblem({ owner: s.deviceId, episodeId: s.episodeId ?? null, sourceId: s.sourceId ?? null, code, httpStatus, detail });

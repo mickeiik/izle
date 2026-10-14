@@ -37,7 +37,11 @@ export const DEFAULT_PORT = 8787;
 export const DEFAULT_RESOLVE_DEADLINE_MS = 12_000;
 export const DEFAULT_RESOLVE_BUDGET_MS = 30_000;
 
-const LANGUAGE_TAG = { type: "string", pattern: "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$" };
+/** Simplified BCP 47 language tag, as in the catalog contract (`LanguageTag`). */
+export const LANGUAGE_TAG_PATTERN = "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$";
+
+// Unlike the API's, the config file's tags have no length limit.
+const LANGUAGE_TAG = { type: "string", pattern: LANGUAGE_TAG_PATTERN };
 
 const CONFIG_SCHEMA = {
   type: "object",

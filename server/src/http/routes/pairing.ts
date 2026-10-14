@@ -5,7 +5,7 @@ import type { Context, Hono } from "hono";
 import { bearerToken } from "../../auth.ts";
 import type { AppContext } from "../../context.ts";
 import { HttpError } from "../../errors.ts";
-import { MAX_PAIR_WAIT_MS } from "../../pairing.ts";
+import { MAX_PAIR_WAIT_MS, PAIR_CODE } from "../../pairing.ts";
 import { iso } from "../../presenters.ts";
 import type { Env } from "../middleware.ts";
 import { parseWait } from "../params.ts";
@@ -20,7 +20,7 @@ export function registerPairing(app: Hono<Env>, ctx: AppContext, clientKey: (c: 
 
   app.get("/api/v1/pair/wait", async (c) => {
     const code = c.req.query("code") ?? "";
-    if (!/^[0-9]{6}$/.test(code)) throw new HttpError(400, "invalid_request", "code must be 6 digits");
+    if (!PAIR_CODE.test(code)) throw new HttpError(400, "invalid_request", "code must be 6 digits");
     const pairToken = bearerToken(c.req.header("Authorization"));
     if (!pairToken) throw new HttpError(401, "unauthorized", "the pair token is required", {}, { "WWW-Authenticate": 'Bearer realm="izle-pair"' });
     const waitSec = parseWait(c.req.query("wait"), MAX_PAIR_WAIT_MS / 1000, MAX_PAIR_WAIT_MS / 1000);

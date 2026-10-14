@@ -1,6 +1,9 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import type { CommandType } from "./commands.ts";
+import type { ProgressReportStatus } from "./playback.ts";
+import type { ProblemKind } from "./problems.ts";
 
 // Schema migrations, applied in order; PRAGMA user_version records how many ran. Never edit a shipped migration,
 // append a new one.
@@ -239,7 +242,7 @@ export interface CatalogBuild {
 export interface Command {
   id: number;
   deviceId: string;
-  type: string;
+  type: CommandType;
   payload: Record<string, unknown>;
   createdAt: number;
   ackedAt: number | null;
@@ -254,8 +257,7 @@ export interface Problem {
   /** When it happened (epoch ms). */
   at: number;
   origin: ProblemOrigin;
-  /** `playback`, `resolve`, `proxy`, `network` or `other`. */
-  kind: string;
+  kind: ProblemKind;
   code: string;
   /** Set (with `itemId`) when the episode was in the catalog when the problem was recorded. */
   catalogId: string | null;
@@ -268,6 +270,9 @@ export interface Problem {
   appVersion: string | null;
 }
 
+/** `starting` from a resolve until the player's first report, then the report's status. */
+export type NowPlayingState = "starting" | ProgressReportStatus;
+
 export interface NowPlaying {
   catalogId: string;
   itemId: string;
@@ -275,7 +280,7 @@ export interface NowPlaying {
   sourceId: string | null;
   positionMs: number;
   durationMs: number | null;
-  state: string;
+  state: NowPlayingState;
   updatedAt: number;
   /** Whether the player was actually advancing when it sampled `positionMs` (a rebuffer stall reports false). */
   playing: boolean;
@@ -398,7 +403,7 @@ function toCommand(r: Row): Command {
   return {
     id: num(r.id),
     deviceId: str(r.device_id),
-    type: str(r.type),
+    type: str(r.type) as CommandType,
     payload: JSON.parse(str(r.payload_json)) as Record<string, unknown>,
     createdAt: num(r.created_at),
     ackedAt: numOrNull(r.acked_at),
@@ -411,7 +416,7 @@ function toProblem(r: Row): Problem {
     deviceId: str(r.device_id),
     at: num(r.at),
     origin: str(r.origin) as ProblemOrigin,
-    kind: str(r.kind),
+    kind: str(r.kind) as ProblemKind,
     code: str(r.code),
     catalogId: strOrNull(r.catalog_id),
     itemId: strOrNull(r.item_id),
@@ -700,7 +705,7 @@ export class Store {
 
   // --- commands ------------------------------------------------------------------------------------------------
 
-  insertCommand(deviceId: string, type: string, payload: Record<string, unknown>, now: number): Command {
+  insertCommand(deviceId: string, type: CommandType, payload: Record<string, unknown>, now: number): Command {
     const r = this.get(
       "INSERT INTO commands (device_id, type, payload_json, created_at) VALUES (?, ?, ?, ?) RETURNING *",
       deviceId,
@@ -814,7 +819,7 @@ export class Store {
           sourceId: strOrNull(r.source_id),
           positionMs: num(r.position_ms),
           durationMs: numOrNull(r.duration_ms),
-          state: str(r.state),
+          state: str(r.state) as NowPlayingState,
           updatedAt: num(r.updated_at),
           playing: num(r.playing) === 1,
           anchorAt: numOrNull(r.anchor_at),

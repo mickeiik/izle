@@ -1,8 +1,9 @@
+import type { CommandType } from "./commands.ts";
 import type { Command } from "./store.ts";
 
 export type ServerEvent =
   | { type: "state"; data: { version: number } }
-  | { type: "command"; data: { id: number; type: string; payload: Record<string, unknown> } };
+  | { type: "command"; data: { id: number; type: CommandType; payload: Record<string, unknown> } };
 
 interface Subscriber {
   send(event: ServerEvent): void;

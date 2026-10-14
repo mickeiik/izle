@@ -2,7 +2,7 @@
 // validation) without creating sessions, and optionally probes the upstream. The report is safe to show in the
 // admin UI: hosts and header names only, never URLs, header values, refs or playlist text.
 
-import type { ResolveResult, Source } from "@izle/contract";
+import type { MediaKind, ResolveResult, Source } from "@izle/contract";
 import type { CatalogService } from "./catalog.ts";
 import { isPlaylistText, summarizePlaylist, type PlaylistSummary } from "./hls.ts";
 import { requireEpisode, requireSource } from "./lookup.ts";
@@ -13,7 +13,7 @@ import { errorName } from "./resolver.ts";
 export const PROBE_TIMEOUT_MS = 10_000;
 
 export interface StreamSummary {
-  kind: string;
+  kind: MediaKind;
   inline: boolean;
   host: string | null;
   headerNames: string[];
