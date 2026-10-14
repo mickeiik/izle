@@ -914,3 +914,32 @@ the resolve answer's `expiresAt`, which the TV used to drop). Routine decisions:
   episode count), so a new film does not appear twice. An episode is named `S1 E7`, else by its label, else `E7`,
   else by its id (removed episodes carry only the id). A TV's home rows show a muted `N new` chip from
   `newEpisodes`, and the page's 15-second refresh redraws the rows when a count changes.
+- **The TV's new-episodes chip** reuses the "new" colour tokens (`IzleColors.New`/`OnNew`) and the existing chip
+  style, and sits at the poster's top right. The bottom chip still says what OK does: the count only informs, takes
+  no focus and never changes what OK plays. It appears only on Home tiles, not in the autoplay-on-start overlay.
+- **A missing or null `newEpisodes` decodes to 0** (`HomeEntry.newEpisodes = 0` with the API JSON's
+  `coerceInputValues`), so the app keeps working against older servers.
+- **The offline home cache keeps the count from the last fetch:** a TV that loses the server keeps showing the chip
+  it had until the next state arrives.
+- **The Turkish plural defines `one` and `other` with the same text** ("%d yeni bölüm"): Turkish does not inflect
+  the noun after a number, but CLDR gives Turkish a `one` form, so both quantities are present.
+- **Recommended catalog layout (self-hosting guide):** `/srv/izle/catalog/builds/<buildId>/` and a relative symlink
+  `/srv/izle/catalog/current` on the active build, with `catalog.dir` pointing at `current`. The server keeps
+  `catalog.dir` as configured (`path.resolve`, never `realpath`) and reads the bundle and the posters through it,
+  so swapping the link (`ln -sfn` to a temporary name, then `mv -T`) and reloading activates a build atomically,
+  and rolling back is the same swap. A refused reload leaves the link on the bad build, so the guide says to point
+  it back: posters are read through the link and a restart would load it. The link is relative so the same
+  directory mounted into a container resolves too. The single-directory swap stays documented as the simpler
+  alternative.
+- **A job on the host publishes builds** as its own system user (`izle-publish` in the guide) that owns
+  `/srv/izle/catalog` (0755/0644, so the sandboxed service reads it and stays read-only on `/srv`) and holds a 0600
+  copy of the admin token, re-copied after a rotation. It reloads through `POST /api/v1/admin/catalog/reload`
+  rather than `systemctl reload`, so it needs no sudo and sees the `422`. The guide's example script passes the
+  token to curl on stdin (`-H @-`), never on a command line, points the link back on any answer but `200`, and
+  never retries (the admin sign-in throttle would lock the address). Nothing on the server changed for it.
+- **A resolver module change needs a restart:** the module is loaded once at start; SIGHUP and the reload route
+  re-read the catalog only. This was already the behaviour; the guide's resolver, systemd, Docker, updates and
+  troubleshooting sections, the unit file's header comment and the spec's reload row now say so.
+- **CHANGELOG:** the four entries added with the server and admin changes were folded into three (new episodes on
+  the TV's tiles with the admin and API mentions, OK resuming at the first new episode, build history on the admin
+  page and API), plus one for the guide's catalog-publishing additions.

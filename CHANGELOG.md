@@ -19,17 +19,22 @@ contract share one version number. How to update (back up, update the server, th
   on the TV.
 - **`izle-server backup <file>`** writes a consistent copy of the database while the service runs. The
   self-hosting guide's backup section uses it.
-- **Catalog build history:** the server records every catalog build it loads, with the shows and episodes it added
-  and removed, and when each episode first appeared. The first load of a catalog is the starting point: nothing in it
-  counts as new. `GET /api/v1/admin/catalog` lists the builds (newest first, up to 50) with the latest build's
-  changes, and `GET /api/v1/admin/catalog/builds/<buildId>` returns any one of them.
-- **Catalog tab: build history** with what each build added and removed: new episodes by show, new shows, removed
-  shows and episodes. On a TV's page, the home list marks shows with new episodes ("2 new").
-- **New-episode count on home entries:** each entry of a TV's home state (and of a TV's home list in the admin API)
-  says how many playable episodes a catalog reload added since the TV last played the show, or since the show was
-  put on that TV's home screen. It goes back to 0 as soon as the TV plays any episode of the show.
+- **New episodes on the TV's home tiles.** When a catalog reload adds episodes to a show on a TV's home screen, its
+  tile shows how many ("2 new episodes") at the top of the poster, until the TV plays any episode of the show. The
+  count starts when the TV last played the show, or when the show was put on that TV's home screen. A TV's page on
+  the admin page shows the same count ("2 new"); in the API it is `newEpisodes` on each home entry.
 - **OK resumes a finished show at its first new episode:** when a show was watched to the end and a later catalog
   adds episodes to it, OK plays the first new playable one instead of starting the show over.
+- **Catalog build history:** the server records every catalog build it loads, with the shows and episodes it added
+  and removed, and when each episode first appeared. The first load of a catalog is the starting point: nothing in it
+  counts as new. The admin page's Catalog tab lists the builds and what each one changed (new episodes by show, new
+  shows, removed shows and episodes). In the API, `GET /api/v1/admin/catalog` lists the builds (newest first, up to
+  50) with the latest build's changes, and `GET /api/v1/admin/catalog/builds/<buildId>` returns any one of them.
+- **Self-hosting guide: publishing catalog builds.** A versioned catalog layout (one directory per build and a
+  `current` symlink on the active one) that makes publishing and rolling back a build one atomic swap and a reload,
+  and how to let a job on the host publish builds through the admin API, without sudo. The guide now also says
+  plainly that `systemctl reload izle` re-reads the catalog only: a new resolver module needs
+  `systemctl restart izle`.
 - **Pairing from the server's shell:** `izle-server pair pending` lists the codes waiting for approval and
   `izle-server pair approve <code> [name]` approves one.
 - **Sign-in link for a phone:** `izle-server admin-token --link` prints a sign-in link for the admin page and the

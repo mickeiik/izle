@@ -73,19 +73,58 @@ group only because a resolver module's `config` may contain keys.
 ### Your own catalog
 
 A catalog bundle is a directory (`bundle.json`, `items.json`, `assets/`; see
-[catalog-bundle-v1.md](../spec/catalog-bundle-v1.md)). Keep it outside the package, for example in `/srv/izle`,
-owned by root and readable by everyone. The server only reads it.
+[catalog-bundle-v1.md](../spec/catalog-bundle-v1.md)). Keep it outside the package, under `/srv/izle`, readable by
+everyone. The server only reads it.
 
-```bash
-sudo install -d -m 0755 /srv/izle
-sudo cp -r ./my-catalog /srv/izle/catalog
-/opt/izle/bin/izle-server validate-catalog /srv/izle/catalog
+The recommended layout keeps every build in its own directory and a symlink, `current`, on the active one:
+
+```
+/srv/izle/catalog/
+  builds/20261012-1a2b3c4d5e6f/      bundle.json, items.json, assets/
+  builds/20261014-7a8b9c0d1e2f/
+  current -> builds/20261014-7a8b9c0d1e2f
 ```
 
-Then add `"catalog": { "dir": "/srv/izle/catalog" }` to the config. To publish a new build of the catalog, copy it
-next to the old one, validate it, swap the directories, and run `sudo systemctl reload izle` (or press **Reload
-from disk** on the admin page's Catalog tab). An invalid bundle is refused and the previous one stays active.
-Progress and home lists survive new builds because catalog ids are durable.
+Any directory names work; the bundle's `buildId` (in `bundle.json`) is a convenient one. Keep the link relative
+(`builds/…`), so it also resolves inside a container (§9).
+
+```bash
+B=20261014-7a8b9c0d1e2f
+sudo install -d -m 0755 /srv/izle /srv/izle/catalog /srv/izle/catalog/builds
+sudo cp -r ./my-catalog /srv/izle/catalog/builds/$B
+/opt/izle/bin/izle-server validate-catalog /srv/izle/catalog/builds/$B
+sudo ln -s builds/$B /srv/izle/catalog/current
+```
+
+Then add `"catalog": { "dir": "/srv/izle/catalog/current" }` to the config.
+
+**To publish a new build**, put it next to the others, validate it, swap the link, and reload:
+
+```bash
+B=20261015-3c4d5e6f7a8b
+sudo cp -r ./my-catalog /srv/izle/catalog/builds/$B
+/opt/izle/bin/izle-server validate-catalog /srv/izle/catalog/builds/$B
+sudo ln -sfn builds/$B /srv/izle/catalog/current.new
+sudo mv -T /srv/izle/catalog/current.new /srv/izle/catalog/current
+sudo systemctl reload izle
+```
+
+Instead of the last line you can press **Reload from disk** on the admin page's Catalog tab. `mv -T` replaces the
+link in one step, so the server never sees a half-copied build. The server keeps `catalog.dir` as configured (it
+does not resolve the link), so each reload reads whichever build `current` points at.
+
+- **An invalid bundle is refused** on reload and the previous build stays active. `systemctl reload` does not tell
+  you: check `journalctl -u izle -n 5`, or use the admin page's button, which lists the problems. Then point
+  `current` back at the previous build: the server reads posters through the link, and a restart would load
+  whatever it points at.
+- **To roll back**, point `current` at an older build and reload.
+- **Old builds** can be deleted once you no longer want to go back to them; the server reads only the one behind
+  `current`.
+
+Progress and home lists survive new builds because catalog ids are durable. Coming from a single directory at
+`/srv/izle/catalog`: move it to `/srv/izle/catalog/builds/<buildId>`, create the link, change `catalog.dir`, and
+restart. A single directory still works (copy the new build next to it, validate it, swap the directories, reload),
+but it leaves no simple way back.
 
 ### A resolver module
 
@@ -104,6 +143,62 @@ provides every adapter the catalog needs:
 
 ```bash
 sudo -u izle /opt/izle/bin/izle-server check-resolver --config /etc/izle/izle.json
+```
+
+The server loads the module once, when it starts. **A new module file needs `sudo systemctl restart izle`**;
+`systemctl reload izle` re-reads the catalog only. A catalog build that needs an adapter the running module does
+not provide is refused on reload, so install the new module first, check it, and restart.
+
+### Letting a job on the host publish builds
+
+When a script or timer on the same machine produces the catalog builds, it can publish them itself, without sudo:
+give it its own system user that owns `/srv/izle/catalog` and a copy of the admin token, and let it ask the server
+to reload through the admin API. Set this up once the service runs (§4) and has created its admin token (§5). The
+user is called `izle-publish` here; any name works.
+
+```bash
+sudo useradd --system --user-group --create-home --home-dir /var/lib/izle-publish --shell /usr/sbin/nologin izle-publish
+sudo chown -R izle-publish:izle-publish /srv/izle/catalog
+sudo install -m 0600 -o izle-publish -g izle-publish /var/lib/izle/admin.token /var/lib/izle-publish/admin.token
+```
+
+- **Permissions:** the job creates directories with mode 0755 and files with 0644 (a umask of 022, the default),
+  so the `izle` service can read every build. The service itself stays read-only on `/srv` (`ProtectSystem=strict`
+  in the unit).
+- **The token copy** is readable by `izle-publish` only. After `izle-server admin-token --rotate` (§5), copy it
+  again with the last command above.
+- **Publishing** is the sequence from [Your own catalog](#your-own-catalog), run as `izle-publish` without `sudo`,
+  with `POST /api/v1/admin/catalog/reload` and `Authorization: Bearer <token>` in place of `systemctl reload`.
+  `200` means the new build is active. `422` means the server refused it and kept the previous build (for example,
+  the bundle needs an adapter the resolver module does not provide): point `current` back at the previous build.
+- **Allow a generous timeout:** a reload re-hashes every poster, which can take a minute or more on a small machine
+  with a large catalog. After a timeout the server may still finish the reload; `GET /api/v1/admin/catalog` shows
+  which `buildId` it has.
+- **Fail on `401`, never retry:** wrong tokens count towards the admin sign-in throttle (§5). Ten failures lock out
+  the job's address for 10 minutes, even with the right token; on the same machine that also blocks
+  `izle-server pair`. A `429` means the lockout is on.
+- The job never writes `/var/lib/izle` and never touches the config or the resolver module.
+
+A publish step along those lines (`publish <buildId>`, once the build is in `builds/<buildId>/`):
+
+```sh
+#!/bin/sh
+# Activates /srv/izle/catalog/builds/<buildId>. Runs as izle-publish.
+set -eu
+home=/var/lib/izle-publish
+cd /srv/izle/catalog
+/opt/izle/bin/izle-server validate-catalog "builds/$1"
+previous=$(readlink current)
+ln -sfn "builds/$1" current.new && mv -T current.new current
+# The token goes to curl on stdin, never on a command line that other users can see.
+status=$(printf 'Authorization: Bearer %s\n' "$(cat "$home/admin.token")" |
+  curl -sS -H @- -X POST --max-time 600 -o "$home/reload.json" -w '%{http_code}' \
+    http://127.0.0.1:8787/api/v1/admin/catalog/reload) || true
+if [ "$status" != 200 ]; then
+  ln -sfn "$previous" current.new && mv -T current.new current
+  echo "reload answered $status; back on $previous (the answer is in $home/reload.json)" >&2
+  exit 1
+fi
 ```
 
 ## 4. Run it with systemd
@@ -126,8 +221,9 @@ and there are no capabilities and no privileged system calls. Keep the catalog a
 - **Logs:** one JSON object per line: `journalctl -u izle -f`, or only problems:
   `journalctl -u izle -o cat | jq -c 'select(.level != "info")'`. The log never contains stream URLs, upstream
   headers or tokens. On Node 22 a single "SQLite is an experimental feature" warning at start is expected.
-- **Catalog reload:** `sudo systemctl reload izle` (SIGHUP).
-- **Restart after a config change:** `sudo systemctl restart izle`. TVs reconnect on their own.
+- **Catalog reload:** `sudo systemctl reload izle` (SIGHUP) re-reads the catalog only.
+- **Restart after a config change or a new resolver module:** `sudo systemctl restart izle`. TVs reconnect on
+  their own.
 
 ## 5. The admin token and the admin page
 
@@ -280,7 +376,9 @@ docker run -d --name izle --restart unless-stopped -p 8787:8787 \
 ```
 
 with `"listen": { "host": "0.0.0.0", "port": 8787 }`, `"dataDir": "/var/lib/izle"` and
-`"catalog": { "dir": "/srv/izle/catalog" }` in that file. `docker kill -s HUP izle` reloads the catalog. Behind a
+`"catalog": { "dir": "/srv/izle/catalog/current" }` in that file (the layout of §3; mount the whole
+`/srv/izle/catalog` so the relative `current` link resolves in the container). `docker kill -s HUP izle` reloads the
+catalog only; a new resolver module (mounted the same way) needs `docker restart izle`. Behind a
 reverse proxy in another container, publish no port (or bind it to `127.0.0.1:8787:8787`) and set
 `trustedProxies` to the Docker network's range, e.g. `["172.16.0.0/12"]`. To update, rebuild the image from the
 new release's sources and recreate the container. The volume keeps the data.
@@ -336,6 +434,10 @@ install the older package **and** restore the copy taken before the update (`bef
 Catalog tab shows the running server version. Update the server before the TVs: a newer app may report fields an
 older server rejects (the app then falls back, but the first report after each start is lost).
 
+**Update the catalog or the resolver module:** a new catalog build needs only a reload ([§3](#your-own-catalog));
+`systemctl reload izle` re-reads the catalog and nothing else. A new resolver module file needs
+`sudo systemctl restart izle`; check it first with `check-resolver` ([§3](#a-resolver-module)).
+
 ## 11. Troubleshooting
 
 | Symptom | Likely cause |
@@ -343,6 +445,7 @@ older server rejects (the app then falls back, but the first report after each s
 | `status=203/EXEC` in `systemctl status izle` | `node` is not on the service's `PATH` (installed in a home directory); see §4 |
 | The service exits with `EACCES` | the catalog, resolver module or config is not readable by the `izle` user |
 | "the catalog bundle is invalid" | run `izle-server validate-catalog <dir>` for the full report |
+| A reload refuses a build for an adapter the new resolver module provides | the module is loaded at start only: `sudo systemctl restart izle` |
 | The TV shows "No connection" behind a proxy | buffering or a short timeout on `/api/v1/tv/events`; `curl -N https://<domain>/api/v1/tv/events` should answer `401` at once, not hang |
 | The TV's pairing screen says to wait, and the log shows `429` on `/api/v1/pair/start` | many pairing attempts from one address; behind a proxy, check `trustedProxies` |
 | `429` on admin routes after wrong tokens ("Too many wrong admin tokens" on the admin page) | 10 wrong tokens from one address within 10 minutes lock it out, even with the right token: wait 10 minutes. Behind a proxy, check `trustedProxies` (otherwise every client shares the proxy's address). The log's warnings (§4) show where the attempts came from |

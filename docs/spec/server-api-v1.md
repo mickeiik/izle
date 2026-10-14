@@ -3,8 +3,10 @@
 Status: **draft, implemented**: direct sources (Phase 2), resolver modules and the media proxy (Phase 4), browser
 admin UI over the admin API (Phase 5), reverse-proxy client addresses (Phase 6), companion audio on the owner's
 phone ([Listen along](#listen-along)), remote control beyond play/stop ([commands](#commands)),
-[problem reports](#problem-reports) and autoplay on start. Changes within v1 are additive only (new optional
-request fields, new response fields, new routes); clients MUST ignore unknown response fields.
+[problem reports](#problem-reports), autoplay on start, and catalog history (the admin API's
+[build history](#catalog-history), `newEpisodes` on home entries, and OK playing episodes appended to a finished
+item: [Play order](#play-order-and-the-cursor)). Changes within v1 are additive only (new optional request fields,
+new response fields, new routes); clients MUST ignore unknown response fields.
 
 ## Conventions
 
@@ -276,7 +278,7 @@ before sending the position was sampled (a queued report). The server anchors th
 - `playing`/`paused`/`stopped` save the position (status `watching`) and point the item's cursor at this episode.
 - `finished` marks the episode finished and moves the cursor to the next `playbackAllowed` episode in play order
   — regardless of `autoAdvance`, which only governs automatic playback — wrapping to the first allowed episode
-  after the last one.
+  after the last one (a wrapped cursor, see [Play order](#play-order-and-the-cursor)).
 - `stopped`, `finished` and cursor moves bump the state version; plain heartbeats do not.
 
 Errors: `404 unknown_episode`.
@@ -315,16 +317,19 @@ for an episode the catalog does not have is stored all the same.
 
 ## Play order and the cursor
 
-Each device has, per item, a **cursor**: the episode OK plays. The server maintains it from progress reports
-(above), and the owner can overwrite it (`PUT …/cursor`). Without a cursor, OK plays the first allowed episode
-that is not finished (or the first allowed one when all are). A cursor pointing at an episode that is no longer
-allowed moves to the next allowed one. Episode array order in the bundle is the play order; `season`/`number`
-are display only.
+Each device has, per item, a **cursor**: the episode OK plays (with the one exception below). The server maintains
+it from progress reports (above), and the owner can overwrite it (`PUT …/cursor`). Without a cursor, OK plays the
+first allowed episode that is not finished (or the first allowed one when all are). A cursor pointing at an episode
+that is no longer allowed moves to the next allowed one. Episode array order in the bundle is the play order;
+`season`/`number` are display only.
 
-A cursor the server placed by wrapping after the last episode marks a finished item. When episodes were added to
-the item after that, OK plays the first added episode with `playbackAllowed` in play order instead of the cursor;
-otherwise the cursor episode. Any later progress report or owner cursor change makes the cursor an ordinary one
-again.
+**Episodes appended to a finished item.** A cursor the server placed by wrapping (a `finished` report on the item's
+last allowed episode) marks the item as watched to the end. When a later catalog reload adds episodes to the item
+(episodes that first entered the catalog after the wrap), OK plays the first of them in play order that has
+`playbackAllowed` instead of the cursor episode; when there is none, the cursor episode as before. `continue` in
+[`GET /tv/state`](#get-apiv1tvstate), `cursorEpisodeId` in [`GET /tv/items/:itemId`](#get-apiv1tvitemsitemid) and
+`continue` on the admin device page follow this rule. Any other progress report on the item, or the owner's
+`PUT …/cursor`, makes the cursor an ordinary one again.
 
 ## Admin API
 
@@ -391,7 +396,7 @@ deleted.
 | `GET /api/v1/admin/catalog/builds/:buildId` | `{"build": Build, "changes": Changes}` — any build in the loaded catalog's history (also one beyond the 50 listed); `404 unknown_build` |
 | `GET /api/v1/admin/catalog/search?q=&limit=` | `{"items": [{"id", "kind", "title", "year", "posterUrl", "episodeCount", "playableCount"}]}` — case-, accent- and dotless-ı-insensitive match on title, original title and id; empty `q` lists everything (by title, `limit` ≤ 200, default 50) |
 | `GET /api/v1/admin/catalog/items/:id` | the item with all episodes; sources as `{id, type, label, languages, kind, needsProxy}` or `{…, adapter}` — upstream URLs, headers and refs are not exposed |
-| `POST /api/v1/admin/catalog/reload` | re-reads the bundle from disk: `200 {"catalog"}`, or `422 {"error": "invalid_catalog", "issues"}` and the previous catalog stays active (also when the bundle needs an adapter the resolver module does not provide). `SIGHUP` does the same. All devices get a new state version. |
+| `POST /api/v1/admin/catalog/reload` | re-reads the bundle from `catalog.dir` (a symlink there is followed anew on each reload): `200 {"catalog"}` (the object `GET /admin/catalog` returns), or `422 {"error": "invalid_catalog", "issues"}` and the previous catalog stays active (also when the bundle needs an adapter the resolver module does not provide). The whole bundle is validated, including a hash of every poster, so a large catalog takes a while. `SIGHUP` does the same. After a successful reload all devices get a new state version. The resolver module is not re-read: a new module needs a restart. |
 
 #### Catalog history
 
