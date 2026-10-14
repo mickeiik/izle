@@ -1317,3 +1317,86 @@ admin page, and chose on the TV the polish plus the small UX additions (countdow
   wakes all its polls at once, as before.
 - **Not verified:** Listen along on a phone (the admin branch checked it in desktop Chromium) and the TV look on the
   real TV box.
+
+## Simplification pass: server (2026-10-14)
+
+A follow-up to the design pass's server structure: dead code, duplicates and long functions, with no behaviour
+change. No CHANGELOG entry: nothing is user-visible.
+
+- **Compatibility re-exports are gone.** app.ts no longer re-exports `AppContext`, `Env`, the admin sign-in throttle
+  constants, `CATALOG_BUILDS_LISTED` or `COMMAND_REPLAY_MS`; tv.ts no longer re-exports `Services` and
+  `ProgressReportStatus`; shell.ts no longer re-exports `localServerUrl` (cli.ts and its test import it from
+  config.ts). Names are imported from the module that defines them. A correction to the design pass's "Shared
+  pieces" entry: tv.ts re-exported `Services`, not `AppContext` (app.ts re-exported `AppContext`); both are gone.
+  `MIGRATIONS` and `SCHEMA_VERSION` stay exported from store.ts on purpose.
+- **Unused options and members removed:** the proxy's `headersTimeoutMs` (it uses `UPSTREAM_HEADERS_TIMEOUT_MS`),
+  pairing's `ttlMs` and `maxOpen` (the constants; `startLimit` stays, the pairing tests set it), the module loader's
+  `fetch` (adapters get the global fetch, as before), `healthcheckAll`'s timeout parameter, `catalog.search`'s
+  default limit (the route always passes one), `ProxyService.size`, `Store.getHome` (the device list counts
+  `getHomeEntries`), `EventHub.connections` (inlined into `isOnline`) and `Logger.level`. `RunningServer` is
+  `{url, ctx, close}`: `port` and `app` were never read, so server.ts no longer imports `Env` or `Hono`. The
+  diagnostics' `fetch` is required (the route passes its context). Private now: `Store.db`,
+  `ResolveService.markFailed` and `recentlyFailed`; no longer exported: `ADMIN_UI_DIR`, `adapterLogger`, the TS
+  aligner's window and packet count, and the contract's `describeSchemaError` (never in its index). The clock
+  defaults (`now = Date.now`) stay.
+- **Smaller fixes:** the home-list route hands `DeviceService.home` the device it already has (only its id is read);
+  a progress report's missing `durationMs` becomes null in one place, `TvService.recordProgress`, so
+  `ProgressInput.durationMs` is optional like the request field; `TvService.item` passes its progress map to
+  `continueFor`, which no longer queries it a second time; the cast to `ProgressLike` was not needed;
+  `Store.migrate` reads the schema version through `schemaVersion`.
+- **Shared helpers:** `tooManyRequests()` and `unauthorized()` in errors.ts build the three 429s with `Retry-After`
+  and the three 401s with `WWW-Authenticate`; `errorName` moved from resolver.ts to errors.ts; `stopwatch()`
+  (stopwatch.ts) times the access log, adapter calls, healthchecks and the probe (the field stays `ms`); the pair
+  token check uses `secretsEqual`; the diagnostics probe reads with the proxy's `readText`, so an oversized playlist
+  is cut off at the limit instead of read whole (the same `too_large`, `not_a_playlist` and `network` reports);
+  static.ts reads a file and looks up an allow-list in one place each; the proxy computes a link's HMAC in one
+  `mac()`; hls.ts strips the BOM and splits lines in one place; config.ts has `isWildcardHost()` (shared with the
+  link base) and `databaseFile()` (the server and `backup`); `PAIR_CODE_PURGE_GRACE_MS` names the hour after which
+  pair codes go; `requireEpisodeSource()` in lookup.ts serves the three companion lookups (still 404
+  `unknown_episode`, then 404 `unknown_source`); `Notifier.version(device)` is the stored state version that a
+  progress report without a change and the SSE greeting answer with.
+- **Request schemas:** a `LANGUAGE_TAG_OR_NULL` constant, `PROGRESS_REPORT_STATUSES` in playback.ts (the schema's
+  enum and `ProgressReportStatus` both come from it), and validators typed by the domain inputs they feed
+  (`ResolveInput`, `ProgressInput`, `LinkInput`, `CompanionResolveInput` and the new `DiagnosticsInput`, which names
+  the inline type of `diagnoseEpisode`). The compiled schemas compare equal.
+- **Playback-session ownership in one place.** `PlaybackSessions.owned(id, deviceId, episodeId?)` is the check
+  progress reports (always with their episode) and TV problem reports (any episode when the report names none) both
+  make, with the same answers as before. The registry is in `Services` as `sessions`, so `ResolveService.session()`
+  and the problem service's lookup closure (a workaround for a construction order the registry already fixed) are
+  gone.
+- **CLI:** every stdout line goes through `out`; `fail()` (`izle-server: …` on stderr, exit status 1) and `usage()`
+  (the message and the usage text on stderr, exit status 2) replace the repeated writes, the invalid-bundle report
+  included; one loop checks `--base` then `--server`; `admin-token` is its own function, like the other commands.
+  stdout, stderr and the exit statuses are byte for byte the same.
+- **Splits:** `readConfigFile()` in config.ts; `TvService.resolveRecordingProblems()` (the problem records around
+  the TV's resolve); the proxy's `upstreamPlaylist()`, `passedHeaders()` and `alignedStart()`. The housekeeping timer
+  calls `pairing.purge()`, `commands.purge()` (new, with `COMMAND_RETENTION_MS`) and `problems.purge()` instead of
+  mixing store calls with a service call. The "problems cleared" log line moved from the route into
+  `ProblemService.clear`, with the same message and field. Log lines, fields, answer codes and the redaction rules are
+  unchanged.
+- **Comments:** `publicUrl` is not informational: `admin-token --link` builds the sign-in link on it (config.ts and
+  the self-hosting guide's table); an error body carries `message` when it differs from the code; TvService also holds
+  the owner's writes to the same state (home list, the "continue from" override, the now-playing long-poll); shell.ts
+  no longer claims to say where the server answers.
+- **Skipped on purpose:** one parser for the two `limit` query parameters (the catalog search and the problem list
+  answer differently, for `0.5` among others), the episode-field projections and the stored history shapes, the
+  `isId` pre-checks, the contract's public exports (`probeTargets`, `isValidDateTime`, `SCHEMA_IDS`, the bundle
+  format constants, the source types), constructor styles and device-versus-id parameters, the clock defaults, the
+  adapter deadline's timer (`AbortSignal.timeout()` does not keep a CLI run alive) and the reload route's
+  field-by-field issues. Nothing on the list turned out to change behaviour, so nothing else was dropped.
+- **No behaviour change, checked by a scratch script outside the repository** (never committed), run on the base
+  commit and after every commit. It drives an in-process server (the test resolver, the example upstream, a
+  programmable local upstream, a closed port) through the static files, pairing (start, wait, approve, both 429s),
+  TV state, items, resolve (direct, proxied, refused, failing, falling back), progress with the TV's own, a foreign
+  and an unknown session, every command type and invalid ones, acknowledgements, SSE with replays, problem reports
+  (with sessions, the 429), problem lists with odd limits and clearing, the companion routes, catalog info, builds,
+  search, item views, diagnostics with probes (a playlist, an HTML page, an oversized playlist, one that breaks off,
+  a redirect, 4xx and 5xx, a refused connection, an MP4 range, an inline playlist), proxied playlists, segments,
+  ranges, TS alignment, gzip, subtitles, stale and expired sessions, reloads, the housekeeping timer, deletion, the
+  401s and the admin lockout; then every CLI command's stdout, stderr and exit status (help, version, usage errors,
+  pair, admin-token with and without a link, backup, check-resolver, validate-catalog, configuration and startup
+  errors), the compiled request schemas and the contract's exports. It records each status, selected headers, the
+  body and the redacted log lines, with random ids, tokens, ports, paths and timings normalised, and lets fetch reach
+  loopback only. The 1122 lines were identical every time.
+- **Tests:** contract 31 (unchanged), server 142 (was 141): `PlaybackSessions.owned`. `npm run typecheck`,
+  `npm run version:check`, `npm run pack:server` and `npm run smoke:server` pass.
