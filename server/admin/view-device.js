@@ -391,12 +391,18 @@ function historyCard(ctx) {
   let key = "";
   /** @type {HTMLElement | null} */
   let content = null;
+  /** The "5 min ago" cells: unchanged rows are kept, only these texts move on. */
+  const times = relativeTimes();
   const refresh = async () => {
     const p = await ctx.read(`${ctx.path}/progress`);
     const rows = p.progress.slice(0, 30);
     const k = JSON.stringify(rows);
-    if (content && k === key) return shown.show(content);
+    if (content && k === key) {
+      times.update();
+      return shown.show(content);
+    }
     key = k;
+    times.clear();
     content =
       rows.length === 0
         ? h("p", { class: "muted" }, "Nothing watched yet.")
@@ -418,7 +424,7 @@ function historyCard(ctx) {
                     h("td", null, r.itemTitle ?? r.itemId),
                     h("td", null, r.missing ? "(no longer in the catalog)" : episodeName({ season: r.season, number: r.number, title: r.episodeTitle }, r.kind)),
                     h("td", null, r.status === "finished" ? "watched" : `${formatClock(r.positionMs)} / ${formatClock(r.durationMs)}`),
-                    h("td", { class: "muted" }, formatRelative(r.updatedAt)),
+                    times.add(h("td", { class: "muted" }), () => formatRelative(r.updatedAt)),
                   ),
                 ),
               ),
@@ -447,12 +453,17 @@ function problemsCard(ctx) {
     // The button goes with the list: the focus moves to the card's heading.
     if (r.ok) await keepFocus(() => refresh().catch(() => {}), element.querySelector("h2"));
   });
+  const times = relativeTimes();
   const refresh = async () => {
     const r = await ctx.read(`${ctx.path}/problems?limit=50`);
     clear.hidden = r.problems.length === 0;
     const k = JSON.stringify(r.problems);
-    if (content && k === key) return shown.show(content);
+    if (content && k === key) {
+      times.update();
+      return shown.show(content);
+    }
     key = k;
+    times.clear();
     content =
       r.problems.length === 0
         ? h("p", { class: "muted" }, "No problems recorded.")
@@ -470,7 +481,7 @@ function problemsCard(ctx) {
                   { class: "row" },
                   h("span", { class: `chip${p.origin === "server" ? " server" : ""}` }, originLabel(p.origin)),
                   h("strong", { class: "grow" }, `${p.kind} · ${p.code}`),
-                  h("time", { class: "muted", datetime: p.at }, `${formatRelative(p.at)} · ${at.toLocaleString([], { dateStyle: "short", timeStyle: "short" })}`),
+                  times.add(h("time", { class: "muted", datetime: p.at }), () => `${formatRelative(p.at)} · ${at.toLocaleString([], { dateStyle: "short", timeStyle: "short" })}`),
                 ),
                 context ? h("div", null, context) : null,
                 p.detail ? h("div", { class: "muted detail" }, p.detail) : null,
@@ -488,6 +499,32 @@ function problemsCard(ctx) {
     refresh,
     /** @param {unknown} err @param {() => Promise<void>} retry */
     fail: (err, retry) => shown.fail(err, retry, "Could not load the problems."),
+  };
+}
+
+/**
+ * Elements that show a relative time ("5 min ago"). A list that did not change is kept as it is (nothing in it
+ * loses the focus); `update()` moves only these texts on.
+ */
+function relativeTimes() {
+  /** @type {Array<[HTMLElement, () => string]>} */
+  let shown = [];
+  return {
+    /** @template {HTMLElement} E @param {E} el @param {() => string} text @returns {E} */
+    add(el, text) {
+      el.textContent = text();
+      shown.push([el, text]);
+      return el;
+    },
+    update() {
+      for (const [el, text] of shown) {
+        const t = text();
+        if (el.textContent !== t) el.textContent = t;
+      }
+    },
+    clear() {
+      shown = [];
+    },
   };
 }
 
