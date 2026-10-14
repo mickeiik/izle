@@ -21,7 +21,6 @@ import io.github.mickeiik.izle.player.PlaybackController
 import io.github.mickeiik.izle.player.PlayerPhase
 import io.github.mickeiik.izle.player.TrackOption
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -30,9 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.IOException
@@ -53,11 +50,6 @@ sealed interface Screen {
 enum class SetupError { Invalid, Unreachable }
 
 data class SetupUi(val address: String = "", val busy: Boolean = false, val error: SetupError? = null)
-
-enum class PairingProblem { Unreachable, RateLimited }
-
-/** `adminUrl` is the admin page's address, shown so the owner knows what to open on the phone. */
-data class PairingUi(val adminUrl: String = "", val code: String? = null, val problem: PairingProblem? = null)
 
 enum class HomeMessage { NoConnection }
 
@@ -352,48 +344,17 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         startPairing()
     }
 
-    /** Shows a code, long-polls for the owner's approval, starts over when the code expires. */
+    /** Shows a code until the owner approves this TV (see [PairingLoop]), then Home. */
     private fun startPairing() {
         pairingJob?.cancel()
         val url = serverUrl ?: return
-        val api = graph.apiClient(url, null)
+        val api = graph.apiClient(url, null).pairingApi()
         pairingJob = viewModelScope.launch {
-            while (isActive) {
-                val start = try {
-                    api.pairStart()
-                } catch (e: ApiException) {
-                    _pairing.update { it.copy(code = null, problem = PairingProblem.RateLimited) }
-                    delay(((e.retryAfterSec ?: 30L).coerceIn(5L, 600L)) * 1_000)
-                    continue
-                } catch (e: IOException) {
-                    _pairing.update { it.copy(code = null, problem = PairingProblem.Unreachable) }
-                    delay(10_000)
-                    continue
-                }
-                _pairing.update { it.copy(code = start.code, problem = null) }
-                while (isActive) {
-                    val wait = try {
-                        api.pairWait(start.code, start.pairToken)
-                    } catch (e: IOException) {
-                        _pairing.update { it.copy(problem = PairingProblem.Unreachable) }
-                        delay(5_000)
-                        continue
-                    } catch (e: ApiException) {
-                        break // unknown code (server restarted): new code
-                    }
-                    _pairing.update { it.copy(problem = null) }
-                    if (wait.status == "approved" && wait.deviceId != null && wait.deviceToken != null) {
-                        // The server hands the token out once: keep it even if the screen goes away right now.
-                        withContext(NonCancellable) {
-                            store.savePairing(wait.deviceId, wait.deviceToken)
-                            repository.use(graph.apiClient(url, wait.deviceToken))
-                            homeFocusItemId = null
-                            showHome()
-                        }
-                        return@launch
-                    }
-                    if (wait.status != "pending") break
-                }
+            PairingLoop.run(api, _pairing) { deviceId, deviceToken ->
+                store.savePairing(deviceId, deviceToken)
+                repository.use(graph.apiClient(url, deviceToken))
+                homeFocusItemId = null
+                showHome()
             }
         }
     }
