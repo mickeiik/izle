@@ -72,12 +72,8 @@ test("admin helpers: episode names, what OK does, list moves and episode states"
     ["e2", true, false, 50],
     ["e3", false, false, null],
   ]);
-  const s = (o: { playbackAllowed?: boolean; current?: boolean; watched?: boolean; percent?: number | null }) => ({
-    episode: { playbackAllowed: o.playbackAllowed ?? true },
-    current: o.current ?? false,
-    watched: o.watched ?? false,
-    percent: o.percent ?? null,
-  });
+  const s = ({ playbackAllowed = true, current = false, watched = false, percent = null as number | null }) =>
+    ({ episode: { playbackAllowed }, current, watched, percent });
   cases([
     [episodeStateLabel(s({ playbackAllowed: false, current: true })), "not allowed"],
     [episodeStateLabel(s({ current: true, percent: 40 })), "next"],
@@ -105,21 +101,9 @@ test("admin helpers: what the TV plays, when the remote control applies, and how
     [originLabel("tv"), "TV"], [originLabel("server"), "server"],
   ]);
   const p = {
-    origin: "tv",
-    kind: "playback",
-    code: "ERROR_CODE_IO_BAD_HTTP_STATUS",
-    itemId: "show",
-    itemTitle: "Şov Dünyası",
-    itemKind: "series",
-    episodeId: "show.e1",
-    episodeTitle: "Pilot",
-    season: 1,
-    number: 1,
-    sourceId: "tr-dub",
-    positionMs: 754_000,
-    httpStatus: 403,
-    appVersion: "0.3.0 (300)",
-    missing: false,
+    origin: "tv", kind: "playback", code: "ERROR_CODE_IO_BAD_HTTP_STATUS", itemId: "show", itemTitle: "Şov Dünyası",
+    itemKind: "series", episodeId: "show.e1", episodeTitle: "Pilot", season: 1, number: 1, sourceId: "tr-dub",
+    positionMs: 754_000, httpStatus: 403, appVersion: "0.3.0 (300)", missing: false,
   };
   const bare = { ...p, sourceId: null, positionMs: null, httpStatus: null, appVersion: null };
   cases([
@@ -133,11 +117,8 @@ test("admin helpers: what the TV plays, when the remote control applies, and how
 });
 
 test("admin helpers: build summaries and episode changes grouped by show", () => {
-  const build = (added: [number, number], removed: [number, number], baseline = false) => ({
-    baseline,
-    added: { items: added[0], episodes: added[1] },
-    removed: { items: removed[0], episodes: removed[1] },
-  });
+  const build = ([ai, ae]: [number, number], [ri, re]: [number, number], baseline = false) =>
+    ({ baseline, added: { items: ai, episodes: ae }, removed: { items: ri, episodes: re } });
   cases([
     [buildSummary(build([2, 14], [0, 1])), "+2 shows · +14 episodes · −1 episode"],
     [buildSummary(build([0, 1], [1, 3])), "+1 episode · −1 show · −3 episodes"],
@@ -145,16 +126,8 @@ test("admin helpers: build summaries and episode changes grouped by show", () =>
     [buildSummary(build([0, 0], [0, 0])), "nothing added or removed", "a new build id with the same shows and episodes"],
     [buildSummary(build([0, 0], [0, 0], true)), "first load"],
   ]);
-  const added = (id: string, itemId: string, itemTitle: string, rest: Record<string, unknown> = {}) => ({
-    id,
-    itemId,
-    itemTitle,
-    season: null,
-    number: null,
-    label: null,
-    playbackAllowed: true,
-    ...rest,
-  });
+  const added = (id: string, itemId: string, itemTitle: string, rest: Record<string, unknown> = {}) =>
+    ({ id, itemId, itemTitle, season: null, number: null, label: null, playbackAllowed: true, ...rest });
   assert.deepEqual(
     groupEpisodeChanges([
       added("a.s1e7", "a", "Aşk", { season: 1, number: 7 }),
