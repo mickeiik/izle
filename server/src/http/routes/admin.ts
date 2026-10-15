@@ -1,8 +1,9 @@
 // The admin API: pairing approval, the TVs (list, page, settings, deletion, home list, "continue from", what each
-// has watched and is playing, remote commands, problem reports) and the catalog (what is loaded and its builds,
-// search, an item's details, the "test this episode" diagnostics, the reload). "Listen along" is in companion.ts.
+// has watched and is playing, remote commands, problem reports), the catalog (what is loaded and its builds,
+// search, an item's details, the "test this episode" diagnostics, the reload), and "Listen along" (companion audio
+// on the owner's phone: the candidate sources of what a TV plays, resolving one for the phone, the timing links).
 
-import type { Hono } from "hono";
+import type { Context, Hono } from "hono";
 import { buildJson, catalogInfo, catalogItemJson, reloadCatalog, searchHitJson } from "../../catalog-admin.ts";
 import type { AppContext } from "../../context.ts";
 import { diagnoseEpisode } from "../../diagnostics.ts";
@@ -10,13 +11,20 @@ import { HttpError } from "../../errors.ts";
 import { requireItem } from "../../lookup.ts";
 import { PROBLEM_LIST_DEFAULT, PROBLEM_LIST_MAX } from "../../problems.ts";
 import { iso } from "../../presenters.ts";
+import type { Device, Store } from "../../store.ts";
 import { HOME_MAX_ITEMS, MAX_NOW_WAIT_MS } from "../../tv.ts";
-import { approveBody, commandBody, cursorBody, devicePatchBody, diagnosticsBody, homeBody, isId, parseBody } from "../../validation.ts";
+import { approveBody, commandBody, companionLinkBody, companionResolveBody, cursorBody, devicePatchBody, diagnosticsBody, homeBody, isId, parseBody, parseWait } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
-import { parseWait, requireDevice } from "../params.ts";
+
+/** The device a `/admin/devices/:id` route names; 404 `unknown_device` otherwise. */
+function requireDevice(store: Store, id: string): Device {
+  const d = isId(id) ? store.getDevice(id) : null;
+  if (!d) throw new HttpError(404, "unknown_device");
+  return d;
+}
 
 export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
-  const { store, tv, pairing, devices, catalog } = ctx;
+  const { store, tv, pairing, devices, catalog, companion } = ctx;
 
   app.post("/api/v1/admin/pair/approve", async (c) => {
     const body = await parseBody(c, approveBody);
@@ -120,5 +128,32 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
       return c.json({ error: "invalid_catalog", issues: r.issues.map((i) => ({ severity: i.severity, file: i.file, path: i.path, message: i.message })) }, 422);
     }
     return c.json({ catalog: catalogInfo(ctx) });
+  });
+
+  app.get("/api/v1/admin/devices/:id/companion", (c) => c.json(companion.candidates(requireDevice(store, c.req.param("id")))));
+
+  app.post("/api/v1/admin/devices/:id/companion/resolve", async (c) => {
+    const d = requireDevice(store, c.req.param("id"));
+    const body = await parseBody(c, companionResolveBody);
+    return c.json(await companion.resolve(d, body, c.req.raw.signal));
+  });
+
+  const linkParams = (c: Context) => {
+    const episodeId = c.req.param("episodeId") ?? "";
+    const sourceId = c.req.param("sourceId") ?? "";
+    if (!isId(episodeId)) throw new HttpError(404, "unknown_episode");
+    if (!isId(sourceId)) throw new HttpError(404, "unknown_source");
+    return { episodeId, sourceId };
+  };
+
+  app.put("/api/v1/admin/companion/links/:episodeId/:sourceId", async (c) => {
+    const { episodeId, sourceId } = linkParams(c);
+    const body = await parseBody(c, companionLinkBody);
+    return c.json({ link: companion.putLink(episodeId, sourceId, body) });
+  });
+
+  app.post("/api/v1/admin/companion/links/:episodeId/:sourceId/copy-to-item", (c) => {
+    const { episodeId, sourceId } = linkParams(c);
+    return c.json(companion.copyToItem(episodeId, sourceId));
   });
 }

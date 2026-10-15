@@ -14,8 +14,6 @@ import { EventHub, Notifier } from "./events.ts";
 import { CatalogHistory } from "./history.ts";
 import { clientKeyFor, registerMiddleware, type Env } from "./http/middleware.ts";
 import { registerAdmin } from "./http/routes/admin.ts";
-import { registerCompanion } from "./http/routes/companion.ts";
-import { registerProxy } from "./http/routes/proxy.ts";
 import { registerTv } from "./http/routes/tv.ts";
 import { registerStatic } from "./http/static.ts";
 import { createLogger, type Logger } from "./log.ts";
@@ -114,10 +112,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const clientKey = clientKeyFor(config);
   registerMiddleware(app, ctx, clientKey);
   registerStatic(app, ctx);
-  registerProxy(app, ctx);
   registerTv(app, ctx, clientKey);
   registerAdmin(app, ctx);
-  registerCompanion(app, ctx);
 
   let server: Server;
   try {

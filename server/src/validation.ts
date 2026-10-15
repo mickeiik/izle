@@ -131,3 +131,10 @@ export async function parseBody<T>(c: Context, validate: ValidateFunction<T>): P
 export function isId(value: string): boolean {
   return ID_PATTERN.test(value);
 }
+
+/** The `wait=<seconds>` query parameter of the long-poll routes. */
+export function parseWait(param: string | undefined, defaultSec: number, maxSec: number): number {
+  const sec = param === undefined ? defaultSec : Number(param);
+  if (!Number.isInteger(sec) || sec < 0 || sec > maxSec) throw new HttpError(400, "invalid_request", `wait must be an integer between 0 and ${maxSec}`);
+  return sec;
+}
