@@ -84,9 +84,22 @@ fun PlayerScreen(ui: PlayerUi, player: Player?, onPlayNext: () -> Unit, onHome: 
                     if (ui.showInfo) InfoPanel(ui)
                 }
             }
-            is PlayerPhase.UpNext -> UpNextPanel(ui, phase, onPlayNext, onHome)
+            is PlayerPhase.UpNext -> {
+                val next = phase.next
+                val name = ui.item?.let { episodeNameText(EpisodeNames.name(it.kind, next.season, next.number, next.label, (ui.episode?.index ?: 0) + 1)) }
+                PosterPanel(
+                    ui.posterUrl, ui.item?.title, overline = stringResource(R.string.up_next), title = name ?: ui.item?.title.orEmpty(),
+                    lines = listOfNotNull(next.title?.takeIf { it.isNotBlank() }),
+                    countdown = PanelCountdown(stringResource(R.string.up_next_countdown, phase.secondsLeft), phase.secondsLeft, PlaybackPlan.AUTO_NEXT_COUNTDOWN_SEC),
+                    buttons = listOf(PanelButton(stringResource(R.string.play_now), onPlayNext), PanelButton(stringResource(R.string.go_home), onHome)),
+                )
+            }
             PlayerPhase.Finished -> PosterPanel(ui.posterUrl, ui.item?.title, title = stringResource(R.string.finished), lines = listOfNotNull(ui.item?.title))
-            is PlayerPhase.Failed -> FailedPanel(ui, phase, onRetry, onHome)
+            is PlayerPhase.Failed -> PosterPanel(
+                ui.posterUrl, ui.item?.title, title = stringResource(R.string.cannot_play), lines = listOfNotNull(ui.item?.title),
+                countdown = PanelCountdown(stringResource(R.string.auto_home_countdown, phase.secondsLeft), phase.secondsLeft, PlaybackPlan.FAILED_AUTO_HOME_SEC),
+                buttons = listOf(PanelButton(stringResource(R.string.try_again), onRetry), PanelButton(stringResource(R.string.go_home), onHome)),
+            )
         }
     }
 }
@@ -163,31 +176,4 @@ private fun InfoPanel(ui: PlayerUi) {
             if (duration > 0) Text(formatTime(duration), style = MaterialTheme.typography.titleLarge, color = IzleColors.Dim)
         }
     }
-}
-
-@Composable
-private fun UpNextPanel(ui: PlayerUi, phase: PlayerPhase.UpNext, onPlayNext: () -> Unit, onHome: () -> Unit) {
-    val next = phase.next
-    val name = ui.item?.let { episodeNameText(EpisodeNames.name(it.kind, next.season, next.number, next.label, (ui.episode?.index ?: 0) + 1)) }
-    PosterPanel(
-        posterUrl = ui.posterUrl,
-        showTitle = ui.item?.title,
-        overline = stringResource(R.string.up_next),
-        title = name ?: ui.item?.title.orEmpty(),
-        lines = listOfNotNull(next.title?.takeIf { it.isNotBlank() }),
-        countdown = PanelCountdown(stringResource(R.string.up_next_countdown, phase.secondsLeft), phase.secondsLeft, PlaybackPlan.AUTO_NEXT_COUNTDOWN_SEC),
-        buttons = listOf(PanelButton(stringResource(R.string.play_now), onPlayNext), PanelButton(stringResource(R.string.go_home), onHome)),
-    )
-}
-
-@Composable
-private fun FailedPanel(ui: PlayerUi, phase: PlayerPhase.Failed, onRetry: () -> Unit, onHome: () -> Unit) {
-    PosterPanel(
-        posterUrl = ui.posterUrl,
-        showTitle = ui.item?.title,
-        title = stringResource(R.string.cannot_play),
-        lines = listOfNotNull(ui.item?.title),
-        countdown = PanelCountdown(stringResource(R.string.auto_home_countdown, phase.secondsLeft), phase.secondsLeft, PlaybackPlan.FAILED_AUTO_HOME_SEC),
-        buttons = listOf(PanelButton(stringResource(R.string.try_again), onRetry), PanelButton(stringResource(R.string.go_home), onHome)),
-    )
 }
