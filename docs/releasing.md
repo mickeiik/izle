@@ -80,7 +80,7 @@ automated session) goes through this list.
 
 - [ ] **Secret scan of the whole history.** `gitleaks git .` (or
   `docker run --rm -v "$PWD":/repo:ro ghcr.io/gitleaks/gitleaks:latest git /repo`), then review every finding.
-  Expect none: the only known hit, a made-up token the log redaction tests use as a hostile fixture, is marked
+  Expect none: the only known hits, made-up tokens the log redaction tests use as hostile fixtures, are marked
   with an inline `gitleaks:allow` and listed in [`.gitleaksignore`](../.gitleaksignore).
 - [ ] **Private names.** Search the history for the names of your private catalogs, their sources, their hosts and
   your private repositories (only you know the list): `git log -p --all | grep -n -i -E 'name-one|name-two|private-host'`.

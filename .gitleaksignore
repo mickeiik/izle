@@ -1,3 +1,4 @@
-# Made-up device token used as a hostile fixture by the log redaction tests (server/test/log.test.ts); the line now
-# carries an inline gitleaks:allow, this entry covers the commit that introduced it.
+# Made-up tokens used as hostile fixtures by the log redaction tests (server/test/log.test.ts); their lines now carry
+# an inline gitleaks:allow, these entries cover the commits that introduced them.
 a0a70e0692a7985946dad8331155edf16fdfdbc8:server/test/log.test.ts:generic-api-key:5
+93eafb68b4d64d20ea5d2defa06aa4453000a151:server/test/log.test.ts:generic-api-key:34

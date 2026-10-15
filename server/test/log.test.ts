@@ -30,7 +30,7 @@ test("problem text from a TV: URLs and tokens go, error names stay; the log itse
   for (const kept of ["UnknownHostException", "io_bad_http_status_403", "ERROR_CODE_DRM_LICENSE_ACQUISITION_FAILED", "onPlayerErrorChangedEvent"]) {
     assert.equal(redactReportText(kept), kept);
   }
-  for (const token of [DEVICE_TOKEN, "A1B2C3D4E5F6A7B8C9D0E1", "9f86d081884c7d659a2feaa0c55ad015", "abcdefghijklmnopqrstUVWXYZ", "Tq4_Lm9-Zx2Kp8Rw3Yv6Nb"]) {
+  for (const token of [DEVICE_TOKEN, "A1B2C3D4E5F6A7B8C9D0E1", "9f86d081884c7d659a2feaa0c55ad015", "abcdefghijklmnopqrstUVWXYZ", "Tq4_Lm9-Zx2Kp8Rw3Yv6Nb"]) { // gitleaks:allow (made-up hostile fixtures)
     assert.equal(redactReportText(`x ${token} y`), "x <token> y", token);
   }
   assert.equal(redactReportText("ab ".repeat(200)).length, 501, "capped like log strings");
