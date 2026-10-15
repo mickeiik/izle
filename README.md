@@ -56,7 +56,7 @@ Security problems are reported privately: [SECURITY.md](SECURITY.md).
 ## Development
 
 Requirements: Node.js ≥ 22.13 and npm; for the TV app a JDK 21+ and the Android SDK. Every command (tests,
-typecheck, packaging, the emulator loop) is listed in [AGENTS.md](AGENTS.md#commands).
+typecheck, packaging, resolver check, the emulator loop) is listed in [AGENTS.md](AGENTS.md#commands).
 
 ```bash
 npm ci && npm test
@@ -67,66 +67,46 @@ npm run -s -w server dev -- admin-token --config server/izle.dev.json   # prints
 Open `http://localhost:8787/admin/` and sign in with the token (`admin-token --link` prints a sign-in link and its
 QR code for a phone). There the owner approves the pairing code a TV shows; per TV, picks and orders the home
 screen's shows, sets "continue from episode X", the menu, audio and subtitle languages and autoplay on start, sees
-what is playing, plays, stops, pauses, resumes, seeks and skips episodes, sends a short message, and sees the
+and controls what is playing (play, stop, pause, resume, seek, skip episodes), sends a short message and sees the
 problems the TV ran into (its own reports, and failed resolves or proxy requests the server saw); and reloads the
 catalog and tests episode sources.
 
-Streams resolved at play time need `resolver.module` in the config pointing at a local module;
-`npm run -s -w server dev -- check-resolver --config <file>` checks it, and
-[`server/examples/resolver-example/`](server/examples/resolver-example/README.md) runs the whole chain locally.
-
 ### Try the API with curl
 
-The flow a TV and its owner go through: pair, put shows on the home screen, read the home state, resolve a
-stream, report progress. Needs `curl` and `jq`; run it in a second terminal while the server is running.
+The flow a TV and its owner go through ([server API](docs/spec/server-api-v1.md)). Needs `curl` and `jq`; run it in
+a second terminal while the server is running.
 
 ```bash
-B=http://localhost:8787
+B=http://localhost:8787; JSON='Content-Type: application/json'
 ADMIN=$(npm run -s -w server dev -- admin-token --config server/izle.dev.json)
-
 # 1. The TV asks for a pairing code and shows it on screen.
-START=$(curl -s -X POST $B/api/v1/pair/start)
-CODE=$(echo "$START" | jq -r .code); PAIR=$(echo "$START" | jq -r .pairToken)
-
-# 2. The owner approves the code, optionally naming the TV (in a shell:
-#    `npm run -s -w server dev -- pair approve $CODE Living room --config server/izle.dev.json`).
-curl -s -X POST $B/api/v1/admin/pair/approve -H "Authorization: Bearer $ADMIN" \
-  -H 'Content-Type: application/json' -d "{\"code\":\"$CODE\",\"name\":\"Living room\"}"; echo
-
+START=$(curl -s -X POST $B/api/v1/pair/start); CODE=$(echo "$START" | jq -r .code); PAIR=$(echo "$START" | jq -r .pairToken)
+# 2. The owner approves it (or: npm run -s -w server dev -- pair approve $CODE Living room --config server/izle.dev.json).
+curl -s -X POST $B/api/v1/admin/pair/approve -H "Authorization: Bearer $ADMIN" -H "$JSON" -d "{\"code\":\"$CODE\",\"name\":\"Living room\"}"; echo
 # 3. The TV's long-poll receives its device token (exactly once).
 WAIT=$(curl -s "$B/api/v1/pair/wait?code=$CODE" -H "Authorization: Bearer $PAIR")
 DEVICE=$(echo "$WAIT" | jq -r .deviceId); TV=$(echo "$WAIT" | jq -r .deviceToken)
-
-# 4. The owner chooses what appears on the TV's home screen, in order.
-curl -s -X PUT $B/api/v1/admin/devices/$DEVICE/home -H "Authorization: Bearer $ADMIN" \
-  -H 'Content-Type: application/json' -d '{"itemIds":["caminandes","tears-of-steel","big-buck-bunny"]}' | jq '.home[].itemId'
-
-# 5. The TV reads its home screen: one tile per show, with what OK will play.
+# 4. The owner puts shows on the TV's home screen, in order; 5. the TV reads it: what OK plays per show.
+curl -s -X PUT $B/api/v1/admin/devices/$DEVICE/home -H "Authorization: Bearer $ADMIN" -H "$JSON" \
+  -d '{"itemIds":["caminandes","tears-of-steel","big-buck-bunny"]}' | jq '.home[].itemId'
 curl -s $B/api/v1/tv/state -H "Authorization: Bearer $TV" | jq '.home[] | {show: .item.title, next: .continue.episodeId, status: .continue.status}'
-
-# 6. OK on Caminandes: resolve the stream for the episode the tile points at.
-PLAY=$(curl -s -X POST $B/api/v1/tv/resolve -H "Authorization: Bearer $TV" \
-  -H 'Content-Type: application/json' -d '{"episodeId":"caminandes.s01e01"}')
+# 6. OK on Caminandes resolves the stream; 7. "finished" progress moves the show on to the next episode.
+PLAY=$(curl -s -X POST $B/api/v1/tv/resolve -H "Authorization: Bearer $TV" -H "$JSON" -d '{"episodeId":"caminandes.s01e01"}')
 echo "$PLAY" | jq '{sourceId, media, next: .next.episodeId}'
-
-# 7. The player reports progress; "finished" moves the show on to the next episode.
-curl -s -X POST $B/api/v1/tv/progress -H "Authorization: Bearer $TV" -H 'Content-Type: application/json' \
+curl -s -X POST $B/api/v1/tv/progress -H "Authorization: Bearer $TV" -H "$JSON" \
   -d "{\"sessionId\":$(echo "$PLAY" | jq .sessionId),\"episodeId\":\"caminandes.s01e01\",\"positionMs\":90000,\"durationMs\":90000,\"status\":\"finished\"}"; echo
-curl -s $B/api/v1/tv/state -H "Authorization: Bearer $TV" | jq '.home[0].continue | {episodeId, status}'
+curl -s $B/api/v1/tv/state -H "Authorization: Bearer $TV" | jq '.home[0].continue | {episodeId, status}'   # caminandes.s01e02, new
 ```
 
-The last command shows `caminandes.s01e02` with status `new`. Live updates for the TV stream from
-`GET /api/v1/tv/events` (server-sent events): `curl -N $B/api/v1/tv/events -H "Authorization: Bearer $TV"`, then
-change the home list again from another terminal.
+Live updates for the TV stream from `GET /api/v1/tv/events` (server-sent events): run
+`curl -N $B/api/v1/tv/events -H "Authorization: Bearer $TV"` and change the home list from another terminal.
 
 ### Android
 
-Build, install and start the app on a TV emulator as in the [emulator loop](AGENTS.md#emulator-loop). The emulator
-reaches a server on the host at `http://10.0.2.2:8787`, which debug builds prefill on the first-run screen. The TV
-then shows a 6-digit pairing code and the admin page's address: approve it (admin page, or step 2 above), put shows
-on its home screen, and the tiles appear without a restart; everything else the owner controls applies live the same
-way. On the TV, the remote's Menu key or holding OK opens a hidden menu (episodes, start over, audio, subtitles,
-settings, about).
+Build, install and start the app on a TV emulator as in the [emulator loop](AGENTS.md#emulator-loop); debug builds
+prefill the host's server address. The TV then shows a 6-digit pairing code: approve it (admin page, or step 2
+above) and put shows on its home screen; the tiles, and everything else the owner controls, apply live without a
+restart. On the TV, the remote's Menu key or holding OK opens the [hidden menu](docs/ux/senior-tv.md#hidden-menu).
 
 ## License
 
