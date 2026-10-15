@@ -62,6 +62,10 @@ The admin UI (`server/admin/`, served at `/admin/`) is plain ES modules without 
 typechecked by `server/admin/tsconfig.json` (DOM types) as part of `npm run typecheck`; its pure helpers in
 `lib.js` are unit-tested from node. It runs under a strict CSP: no inline scripts or styles, no `innerHTML`.
 
+The project page (`site/`, published to https://mickeiik.github.io/izle/ by `.github/workflows/pages.yml` on pushes
+to main) is static HTML/CSS/JS with no build step; `site/images` is a symlink to `docs/images`. Preview it with
+`python3 -m http.server 8790 --directory site`. It never implies izle provides content.
+
 TypeScript is run directly by `tsx`; there is no build step for development. Use `.ts` extensions in relative
 imports, ESM only, erasable syntax only (no enums, no parameter properties, no namespaces).
 

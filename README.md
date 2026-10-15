@@ -4,7 +4,7 @@
 [![Release](https://img.shields.io/github/v/release/mickeiik/izle)](https://github.com/mickeiik/izle/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/mickeiik/izle)](LICENSE)
 
-A senior-first Android TV player with a small self-hosted server.
+A senior-first Android TV player with a small self-hosted server. Project page: <https://mickeiik.github.io/izle/>
 
 | The TV: one screen, OK plays | The owner's admin page |
 |---|---|

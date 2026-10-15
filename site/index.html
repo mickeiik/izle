@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>izle — switch on, press OK, it plays</title>
+  <meta name="description" content="A senior-first Android TV player with a small self-hosted server. One screen of big posters: OK plays the next episode. Everything else is done remotely from your phone.">
+  <meta name="color-scheme" content="dark light">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="main.js"></script>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#"><img src="icon.svg" alt="" width="28" height="28">izle</a>
+    <nav>
+      <a href="#how">How it works</a>
+      <a href="#try">Try it</a>
+      <a class="gh" href="https://github.com/mickeiik/izle">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Open source · self-hosted · Android TV</p>
+        <h1>Switch on.<br>Press <span class="ok-word">OK</span>.<br>It plays.</h1>
+        <p class="lede">izle is a TV player for someone who only knows classic television. One screen of big posters, and the
+          OK button plays the next episode. You run everything else from your phone.</p>
+        <div class="ctas">
+          <a class="btn primary" href="#try">Try it in 10 minutes</a>
+          <a class="btn" href="https://github.com/mickeiik/izle/releases/latest">Download the TV app</a>
+        </div>
+      </div>
+
+      <figure class="tv-demo">
+        <div class="tv">
+          <div class="screen">
+            <img id="screen-home" src="images/tv-home.jpg" alt="The TV's home screen: four large posters, the focused one says Continue · Episode 1" width="1280" height="720">
+            <img id="screen-player" src="images/tv-player.jpg" alt="The player, paused: show, episode and a progress bar in large type" width="1280" height="720" hidden>
+          </div>
+        </div>
+        <div class="remote" role="group" aria-label="Try the remote">
+          <button class="key ok" id="key-ok" type="button" aria-label="OK">OK</button>
+          <button class="key back" id="key-back" type="button" aria-label="Back">←</button>
+        </div>
+        <figcaption id="demo-caption">Press <b>OK</b> on the remote.</figcaption>
+      </figure>
+    </section>
+
+    <section class="rules" aria-label="The three rules on the TV">
+      <div><span class="big">1</span><p><b>One screen.</b> No menus, no seasons, no settings, no small print.</p></div>
+      <div><span class="big">OK</span><p><b>Plays the right thing.</b> Resumes the half-watched episode or starts the next one.</p></div>
+      <div><span class="big">←</span><p><b>Back goes home.</b> Always. Mistakes fix themselves.</p></div>
+    </section>
+
+    <section id="how" class="split">
+      <div class="split-copy">
+        <p class="eyebrow">For the person you set it up for</p>
+        <h2>It works like a TV channel, not a streaming app</h2>
+        <p>Episodes follow one another on their own. When something goes wrong, the TV shows a short message in large
+          letters and goes back to the posters by itself. There is nothing to get lost in.</p>
+        <p>The app is in English and Turkish, with audio and subtitle languages chosen for each TV.</p>
+      </div>
+      <img class="shot" src="images/tv-message.jpg" alt="A message from the owner, Dinner is ready!, in large letters over the picture" width="1280" height="720" loading="lazy">
+    </section>
+
+    <section class="split reverse">
+      <div class="split-copy">
+        <p class="eyebrow">For you</p>
+        <h2>Everything else, from your phone</h2>
+        <ul class="ticks">
+          <li>Choose which shows are on each TV's home screen, in what order, and where to continue</li>
+          <li>See what is playing and pause, seek, skip or stop it from anywhere</li>
+          <li>Send a short message to the screen: <i>“Dinner is ready!”</i></li>
+          <li>See the problems a TV ran into, and test every episode's sources</li>
+        </ul>
+      </div>
+      <img class="shot light" src="images/admin-tv-page.jpg" alt="The admin page of a TV: what is playing, playback buttons, a message box and the home screen's shows" width="1280" height="900" loading="lazy">
+    </section>
+
+    <section class="feature-band">
+      <div>
+        <h3>Listen along</h3>
+        <p>Your phone plays another version of the episode on the TV, a dub in another language for example, in sync
+          with the picture. You can adjust the offset and speed when two releases don't line up.</p>
+      </div>
+      <div>
+        <h3>Your server, your catalog</h3>
+        <p>izle ships no content. The server reads a catalog you host: a folder of JSON and posters that points at your
+          HLS, DASH or MP4 videos. A sample catalog of openly licensed films is included.</p>
+      </div>
+      <div>
+        <h3>Small and private</h3>
+        <p>One dependency-free Node.js package or a Docker image. No accounts, no cloud, no tracking. Stream URLs and
+          tokens are kept out of logs and never reach the TV.</p>
+      </div>
+    </section>
+
+    <section id="try" class="try">
+      <h2>Try it in about 10 minutes</h2>
+      <p>You need a computer with Docker and an Android TV, Google TV or the Android TV emulator on the same network.</p>
+      <ol class="steps">
+        <li><b>Build and start the server</b> from a clone of the repository
+          <code>docker build -t izle-server .</code>
+          <code>docker run -d -p 8787:8787 -v izle-data:/var/lib/izle izle-server</code></li>
+        <li><b>Install the TV app</b> from the latest release, with adb.</li>
+        <li><b>Pair the TV</b> by approving its 6-digit code on the admin page.</li>
+        <li><b>Add a few sample films</b> to its home screen and press OK.</li>
+      </ol>
+      <div class="ctas center">
+        <a class="btn primary" href="https://github.com/mickeiik/izle#quick-start-about-10-minutes">Full quick start</a>
+        <a class="btn" href="https://github.com/mickeiik/izle/blob/main/docs/deploy/self-hosting.md">Self-hosting guide</a>
+      </div>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p><b>Early development.</b> The server, TV app, admin page and self-hosting setup work, but expect rough edges.
+      See the <a href="https://github.com/mickeiik/izle/blob/main/CHANGELOG.md">changelog</a>.</p>
+    <p>izle is a player. It doesn't provide or point to any shows; you bring your own catalog.
+      <a href="https://github.com/mickeiik/izle/blob/main/LICENSE">MIT licence</a>. The screenshots show openly
+      licensed sample films.</p>
+  </footer>
+</body>
+</html>

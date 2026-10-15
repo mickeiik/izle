@@ -1,0 +1,130 @@
+:root {
+  /* The TV's palette: near-black, the "Continue" yellow and the icon's blue. */
+  --bg: #0d0e13; --surface: #171920; --line: #2a2d37; --text: #f1f2f5; --muted: #a6acb9;
+  --yellow: #ffd25a; --on-yellow: #1a1606; --blue: #1d4e89; --blue-soft: #79b0ef; --green: #7fd6a4;
+  --radius: 18px; --page-w: 72rem;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  line-height: 1.55;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f4ee; --surface: #ffffff; --line: #e3dfd3; --text: #16181d; --muted: #545b68;
+    --blue-soft: #1d4e89; --green: #146639;
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f6f4ee; --surface: #ffffff; --line: #e3dfd3; --text: #16181d; --muted: #545b68;
+  --blue-soft: #1d4e89; --green: #146639;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); overflow-x: hidden; }
+img { max-width: 100%; height: auto; display: block; }
+a { color: var(--blue-soft); text-underline-offset: 0.18em; }
+h1, h2, h3 { line-height: 1.1; margin: 0 0 0.6em; letter-spacing: -0.02em; }
+p { margin: 0 0 1em; }
+code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.85em; }
+
+main, .top, .foot { max-width: var(--page-w); margin: 0 auto; padding: 0 1.25rem; }
+
+/* --- header ---------------------------------------------------------------------------------------------------- */
+.top { display: flex; align-items: center; justify-content: space-between; height: 4.5rem; }
+.brand { display: flex; align-items: center; gap: 0.55rem; font-weight: 800; font-size: 1.35rem; color: var(--text);
+  text-decoration: none; letter-spacing: -0.02em; }
+.top nav { display: flex; gap: 1.4rem; align-items: center; }
+.top nav a { color: var(--muted); text-decoration: none; font-weight: 500; }
+.top nav a:hover { color: var(--text); }
+.top nav .gh { color: var(--text); border: 1px solid var(--line); padding: 0.35rem 0.85rem; border-radius: 999px; }
+
+/* --- buttons --------------------------------------------------------------------------------------------------- */
+.ctas { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.ctas.center { justify-content: center; }
+.btn { display: inline-block; padding: 0.85rem 1.4rem; border-radius: 999px; font-weight: 700; text-decoration: none;
+  color: var(--text); border: 1.5px solid var(--line); transition: transform 0.15s, border-color 0.15s; }
+.btn:hover { transform: translateY(-1px); border-color: var(--muted); }
+.btn.primary { background: var(--yellow); color: var(--on-yellow); border-color: var(--yellow); }
+.btn:focus-visible, .key:focus-visible { outline: 3px solid var(--blue-soft); outline-offset: 3px; }
+
+/* --- hero ------------------------------------------------------------------------------------------------------ */
+.hero { display: grid; grid-template-columns: 1fr 1.15fr; gap: 3.5rem; align-items: center; padding: 3.5rem 0 4.5rem; }
+.eyebrow { color: var(--muted); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+  margin-bottom: 1rem; }
+h1 { font-size: clamp(3rem, 7vw, 5.4rem); font-weight: 850; letter-spacing: -0.045em; line-height: 0.98; }
+.ok-word { background: var(--yellow); color: var(--on-yellow); padding: 0 0.18em; border-radius: 0.18em; }
+.lede { font-size: 1.2rem; color: var(--muted); max-width: 32rem; margin-bottom: 2rem; }
+
+.tv-demo { margin: 0; position: relative; }
+.tv { background: #050507; padding: 0.7rem; border-radius: 16px; border: 1px solid #262830;
+  box-shadow: 0 30px 80px -20px rgb(0 0 0 / 70%), 0 0 0 1px rgb(255 255 255 / 3%) inset; }
+.screen { aspect-ratio: 16 / 9; overflow: hidden; border-radius: 6px; background: #000; }
+.screen img { width: 100%; height: 100%; object-fit: cover; }
+.screen img[hidden] { display: none; }
+.tv::after { content: ""; display: block; width: 28%; height: 0.55rem; margin: 0.7rem auto -1.2rem;
+  background: #1c1e25; border-radius: 0 0 8px 8px; }
+
+.remote { position: absolute; right: -0.75rem; bottom: -2.75rem; display: flex; flex-direction: column; align-items: center;
+  gap: 0.7rem; padding: 1.1rem 0.9rem 1.3rem; background: linear-gradient(#2a2d36, #1b1d24); border-radius: 2.2rem;
+  border: 1px solid #353844; box-shadow: 0 18px 40px -10px rgb(0 0 0 / 65%); transform: rotate(6deg); }
+.key { font: inherit; cursor: pointer; border: 0; color: #fff; display: grid; place-items: center; }
+.key.ok { width: 4.2rem; height: 4.2rem; border-radius: 50%; background: var(--yellow); color: var(--on-yellow);
+  font-weight: 900; font-size: 1.2rem; box-shadow: 0 0 0 6px #3a3d48, 0 4px 0 6px #121318;
+  animation: pulse 2.4s ease-in-out infinite; }
+.key.back { width: 2.6rem; height: 2.6rem; border-radius: 50%; background: #3a3d48; font-size: 1.2rem; }
+.key:active { transform: translateY(2px); }
+@keyframes pulse { 50% { box-shadow: 0 0 0 6px #3a3d48, 0 4px 0 6px #121318, 0 0 0 16px rgb(255 210 90 / 18%); } }
+@media (prefers-reduced-motion: reduce) { .key.ok { animation: none; } }
+.tv-demo figcaption { margin-top: 1.6rem; color: var(--muted); font-size: 0.95rem; }
+.tv-demo figcaption b { color: var(--text); }
+
+/* --- rules ----------------------------------------------------------------------------------------------------- */
+.rules { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; padding: 1rem 0 5rem; }
+.rules > div { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.6rem; }
+.rules .big { display: block; font-size: 2.6rem; font-weight: 900; color: var(--yellow); line-height: 1; margin-bottom: 0.8rem; }
+.rules p { margin: 0; color: var(--muted); font-size: 1.05rem; }
+.rules b { color: var(--text); }
+
+/* --- split sections -------------------------------------------------------------------------------------------- */
+.split { display: grid; grid-template-columns: 1fr 1.2fr; gap: 3.5rem; align-items: center; padding: 3rem 0; }
+.split.reverse .split-copy { order: 2; }
+h2 { font-size: clamp(1.9rem, 3.6vw, 2.7rem); font-weight: 800; }
+.split-copy p { color: var(--muted); font-size: 1.1rem; }
+.shot { border-radius: 14px; border: 1px solid var(--line); box-shadow: 0 24px 60px -24px rgb(0 0 0 / 55%); }
+.ticks { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.85rem; font-size: 1.08rem; }
+.ticks li { padding-left: 2rem; position: relative; color: var(--muted); }
+.ticks li::before { content: "✓"; position: absolute; left: 0; top: 0; color: var(--green); font-weight: 900; }
+
+/* --- feature band ---------------------------------------------------------------------------------------------- */
+.feature-band { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2.5rem; margin: 4rem 0; padding: 2.75rem 0;
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.feature-band h3 { font-size: 1.25rem; }
+.feature-band p { color: var(--muted); margin: 0; }
+
+/* --- try ------------------------------------------------------------------------------------------------------- */
+.try { text-align: center; padding: 2rem 0 5rem; }
+.try > p { color: var(--muted); font-size: 1.1rem; max-width: 36rem; margin: 0 auto 2.5rem; }
+.steps { list-style: none; counter-reset: step; padding: 0; margin: 0 auto 2.5rem; max-width: 40rem; text-align: left;
+  display: grid; gap: 0.75rem; }
+.steps li { counter-increment: step; position: relative; background: var(--surface); border: 1px solid var(--line);
+  border-radius: 14px; padding: 1rem 1.2rem 1rem 3.8rem; color: var(--muted); }
+.steps li::before { content: counter(step); position: absolute; left: 1.1rem; top: 0.9rem; width: 1.8rem; height: 1.8rem;
+  border-radius: 50%; background: var(--yellow); color: var(--on-yellow); font-weight: 900; display: grid; place-items: center; }
+.steps b { color: var(--text); }
+.steps code { display: block; margin-top: 0.5rem; padding: 0.6rem 0.8rem; background: var(--bg); border-radius: 8px;
+  color: var(--text); overflow-x: auto; white-space: nowrap; }
+
+/* --- footer ---------------------------------------------------------------------------------------------------- */
+.foot { border-top: 1px solid var(--line); padding-top: 2rem; padding-bottom: 3rem; color: var(--muted); font-size: 0.92rem; }
+.foot b { color: var(--text); }
+
+/* --- narrow ---------------------------------------------------------------------------------------------------- */
+@media (max-width: 860px) {
+  .hero, .split { grid-template-columns: 1fr; gap: 2.5rem; }
+  .split.reverse .split-copy { order: 0; }
+  .hero { padding-top: 1.5rem; }
+  .rules, .feature-band { grid-template-columns: 1fr; }
+  .remote { right: 0.5rem; bottom: -2.25rem; transform: rotate(6deg) scale(0.85); }
+  .top nav a:not(.gh) { display: none; }
+}
