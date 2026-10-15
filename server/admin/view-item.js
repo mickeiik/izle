@@ -12,14 +12,10 @@ function reportView(report) {
   /** @type {Array<ReturnType<typeof sourceReport>>} */
   const sources = report.sources.map((/** @type {any} */ s) => sourceReport(s));
   const working = sources.filter((r) => r.ok).length;
-  const item = (/** @type {ReturnType<typeof sourceReport>} */ r) =>
-    h(
-      "li",
-      { class: r.ok ? "ok" : "bad" },
-      h("strong", null, h("span", { "aria-hidden": "true" }, r.ok ? "✔ " : "✖ "), srOnly(r.ok ? "Works: " : "Fails: "), r.sourceId),
-      h("span", { class: "muted" }, ` ${r.how}`),
-      h("div", null, r.lines.map((l) => h("div", null, l))),
-    );
+  const item = (/** @type {ReturnType<typeof sourceReport>} */ r) => {
+    const name = h("strong", null, h("span", { "aria-hidden": "true" }, r.ok ? "✔ " : "✖ "), srOnly(r.ok ? "Works: " : "Fails: "), r.sourceId);
+    return h("li", { class: r.ok ? "ok" : "bad" }, name, h("span", { class: "muted" }, ` ${r.how}`), h("div", null, r.lines.map((l) => h("div", null, l))));
+  };
   const summary = h("p", { class: "summary" }, `Working: ${working} of ${plural(sources.length, "source")}.`);
   return h("div", null, summary, h("ul", { class: "diag" }, sources.map(item)));
 }
@@ -42,20 +38,12 @@ function episodeEntry(e, item) {
     e.playbackAllowed ? null : "playback not allowed",
     e.autoAdvance === false ? "no auto-advance after this one" : null,
   ].filter(Boolean);
-  const source = (/** @type {any} */ s) =>
-    h(
-      "li",
-      null,
-      h("code", null, s.id),
-      ` ${s.type === "adapter" ? `adapter ${s.adapter}` : s.kind.toUpperCase()}${s.needsProxy ? " · proxied" : ""}${s.label ? ` · ${s.label}` : ""} · audio ${s.languages.audio === null ? "unknown" : s.languages.audio.join(", ") || "none"}`,
-    );
-  const what = h(
-    "div",
-    { class: "grow" },
-    film ? null : h("strong", null, label),
-    facts.length ? h("div", { class: "muted" }, film ? `Duration ${facts.join(" · ")}` : facts.join(" · ")) : null,
-    h("ul", { class: "sources" }, e.sources.map(source)),
-  );
+  const source = (/** @type {any} */ s) => {
+    const audio = s.languages.audio === null ? "unknown" : s.languages.audio.join(", ") || "none";
+    return h("li", null, h("code", null, s.id), ` ${s.type === "adapter" ? `adapter ${s.adapter}` : s.kind.toUpperCase()}${s.needsProxy ? " · proxied" : ""}${s.label ? ` · ${s.label}` : ""} · audio ${audio}`);
+  };
+  const factsLine = facts.length ? h("div", { class: "muted" }, film ? `Duration ${facts.join(" · ")}` : facts.join(" · ")) : null;
+  const what = h("div", { class: "grow" }, film ? null : h("strong", null, label), factsLine, h("ul", { class: "sources" }, e.sources.map(source)));
   return h(film ? "div" : "li", null, h("div", { class: "row top-align" }, what, e.sources.length ? test : null), out);
 }
 
@@ -74,15 +62,9 @@ export function itemView(scope, itemId) {
         item.originalTitle && item.originalTitle !== item.title ? item.originalTitle : null,
         item.genres.join(", "),
       ];
-      const about = h(
-        "div",
-        { class: "grow" },
-        h("p", { class: "muted" }, meta.filter(Boolean).join(" · ")),
-        item.synopsis ? h("p", null, item.synopsis) : null,
-        item.kind === "series" ? h("p", { class: "muted" }, item.autoAdvance ? "Episodes advance on their own." : "Episodes do not advance on their own.") : null,
-      );
-      const row = h("div", { class: "row top-align" }, poster(item.posterUrl, item.title), about);
-      const head = h("section", { class: "card show-head" }, row);
+      const advance = item.kind === "series" ? h("p", { class: "muted" }, item.autoAdvance ? "Episodes advance on their own." : "Episodes do not advance on their own.") : null;
+      const about = h("div", { class: "grow" }, h("p", { class: "muted" }, meta.filter(Boolean).join(" · ")), item.synopsis ? h("p", null, item.synopsis) : null, advance);
+      const head = h("section", { class: "card show-head" }, h("div", { class: "row top-align" }, poster(item.posterUrl, item.title), about));
       const entries =
         item.kind === "movie" && item.episodes.length === 1
           ? card({ title: "Sources", intro: "Where the film is played from, in the order the TV tries them." }, episodeEntry(item.episodes[0], item))

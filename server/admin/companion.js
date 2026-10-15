@@ -6,21 +6,7 @@
 import { api, attempt, devicePath, isUnauthorized, readStored, writeStored } from "./api.js";
 import { attach, nativeHlsBroken } from "./companion-player.js";
 import { actionButton, card, h, slot, toast } from "./dom.js";
-import {
-  SYNC,
-  candidateOptions,
-  clockOffset,
-  companionTarget,
-  errorText,
-  formatDrift,
-  formatPosition,
-  isActive,
-  parseCandidate,
-  plural,
-  pushSample,
-  syncDecision,
-  tvPositionAt,
-} from "./lib.js";
+import { SYNC, candidateOptions, clockOffset, companionTarget, errorText, formatDrift, formatPosition, isActive, parseCandidate, plural, syncDecision, tvPositionAt } from "./lib.js";
 
 const NUDGE_KEY = "izle.companion.nudgeMs";
 const TICK_MS = 250;
@@ -106,29 +92,11 @@ export function companionCard({ deviceId, signal }) {
   };
   nudge(0);
 
-  const form = h(
-    "div",
-    { class: "companion" },
-    h("label", { for: "cp-source" }, "Audio on this phone"),
-    select,
-    h(
-      "div",
-      { class: "timing" },
-      h("div", null, h("label", { for: "cp-offset" }, "Offset (seconds)"), offsetInput),
-      h("div", null, h("label", { for: "cp-rate" }, "Speed"), rateInput),
-    ),
-    h("p", { class: "hint" }, "Offset: where the companion is when the TV is at 0:00 (negative when it starts earlier). Speed: companion seconds per TV second, e.g. 1.0427 for a PAL transfer against a film-rate source. Changes apply while you listen; Save keeps them."),
-    h("div", { class: "actions" }, save, applyAll),
-    h("div", { class: "actions" }, listen, startAudio),
-    h("div", { class: "nudge" }, h("button", { type: "button", onclick: () => nudge(-50) }, "−50 ms"), nudgeText, h("button", { type: "button", onclick: () => nudge(50) }, "+50 ms"), h("span", { class: "hint" }, "for your earphones' delay; remembered on this phone")),
-    status,
-    error,
-    audio,
-  );
-  const element = card(
-    { title: "Listen along", intro: "Hear another source of what the TV is playing, on this phone, in sync with the picture. Plug in earphones first." },
-    body.element,
-  );
+  const timing = h("div", { class: "timing" }, h("div", null, h("label", { for: "cp-offset" }, "Offset (seconds)"), offsetInput), h("div", null, h("label", { for: "cp-rate" }, "Speed"), rateInput));
+  const timingHint = h("p", { class: "hint" }, "Offset: where the companion is when the TV is at 0:00 (negative when it starts earlier). Speed: companion seconds per TV second, e.g. 1.0427 for a PAL transfer against a film-rate source. Changes apply while you listen; Save keeps them.");
+  const nudgeRow = h("div", { class: "nudge" }, h("button", { type: "button", onclick: () => nudge(-50) }, "−50 ms"), nudgeText, h("button", { type: "button", onclick: () => nudge(50) }, "+50 ms"), h("span", { class: "hint" }, "for your earphones' delay; remembered on this phone"));
+  const form = h("div", { class: "companion" }, h("label", { for: "cp-source" }, "Audio on this phone"), select, timing, timingHint, h("div", { class: "actions" }, save, applyAll), h("div", { class: "actions" }, listen, startAudio), nudgeRow, status, error, audio);
+  const element = card({ title: "Listen along", intro: "Hear another source of what the TV is playing, on this phone, in sync with the picture. Plug in earphones first." }, body.element);
 
   const showError = (/** @type {string} */ text) => {
     error.textContent = text;
@@ -226,7 +194,7 @@ export function companionCard({ deviceId, signal }) {
     const receivedAt = Date.now();
     const rtt = receivedAt - sentAt;
     if (!wait || rtt <= SYNC.sampleMaxRttMs) {
-      samples = pushSample(samples, { sentAt, receivedAt, serverNowMs: r.serverNowMs });
+      samples = [...samples, { sentAt, receivedAt, serverNowMs: r.serverNowMs }].slice(-8);
       offset = clockOffset(samples);
       bestRtt = Math.min(bestRtt, rtt);
     }

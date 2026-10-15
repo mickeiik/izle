@@ -38,18 +38,11 @@ function buildDetail(b, changes) {
     ["Removed episodes", groupEpisodeChanges(changes.episodes.removed).filter((g) => !goneShows.has(g.itemId)).map(groupLine)],
   ];
   const shown = sections.filter(([, lines]) => lines.length > 0);
-  const cut = ["added", "removed"].some(
-    (k) => changes.items[k].length < b[k].items || changes.episodes[k].length < b[k].episodes,
-  );
-  return h(
-    "div",
-    null,
-    head,
-    shown.length
-      ? h("dl", { class: "facts" }, shown.flatMap(([title, lines]) => [h("dt", null, title), h("dd", null, lines)]))
-      : h("p", { class: "muted" }, "No show or episode was added or removed: this build changed something else, such as titles or sources."),
-    cut ? h("p", { class: "hint" }, "Long lists are cut short; the counts in the list above are exact.") : null,
-  );
+  const cut = ["added", "removed"].some((k) => changes.items[k].length < b[k].items || changes.episodes[k].length < b[k].episodes);
+  const list = shown.length
+    ? h("dl", { class: "facts" }, shown.flatMap(([title, lines]) => [h("dt", null, title), h("dd", null, lines)]))
+    : h("p", { class: "muted" }, "No show or episode was added or removed: this build changed something else, such as titles or sources.");
+  return h("div", null, head, list, cut ? h("p", { class: "hint" }, "Long lists are cut short; the counts in the list above are exact.") : null);
 }
 
 /** @param {import("./router.js").Scope} scope */

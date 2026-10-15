@@ -2,12 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import {
-  SEARCH_MAX, buildSummary, canControlPlayback, candidateOptions, catalogSearchPath, clockOffset, companionTarget,
-  continueText, episodeName, episodeStateLabel, episodeStates, errorMessage, errorText, formatClock, formatCode,
-  formatCountdown, formatDrift, formatPosition, formatRelative, groupEpisodeChanges, isActive, issueLine, languageLabel,
-  moveItem, originLabel, parseCandidate, percent, playbackState, plural, primarySubtag, problemContext, pushSample,
-  resumes, sameLanguage, searchSummary, serverAddress, shortId, showMeta, sourceReport, syncDecision, tokenFromHash,
-  triedText, tvPositionAt,
+  buildSummary, candidateOptions, catalogSearchPath, clockOffset, companionTarget, continueText, episodeName,
+  episodeStateLabel, episodeStates, errorText, formatClock, formatCode, formatCountdown, formatDrift, formatPosition,
+  formatRelative, groupEpisodeChanges, isActive, issueLine, languageLabel, moveItem, parseCandidate, percent,
+  playbackState, plural, problemContext, resumes, sameLanguage, searchSummary, serverAddress, shortId, showMeta,
+  sourceReport, syncDecision, tokenFromHash, tvPositionAt,
 } from "../admin/lib.js";
 import { ADMIN_FILES, ADMIN_VENDOR_FILES } from "../src/admin-files.ts";
 import { startTestServer } from "./helpers.ts";
@@ -67,11 +66,8 @@ test("admin helpers: episode names, what OK does, list moves and episode states"
     { episodeId: "e1", status: "finished", positionMs: 10, durationMs: 10 },
     { episodeId: "e2", status: "watching", positionMs: 5, durationMs: 10 },
   ]);
-  assert.deepEqual(states.map((s) => [s.episode.id, s.current, s.watched, s.percent]), [
-    ["e1", false, true, null],
-    ["e2", true, false, 50],
-    ["e3", false, false, null],
-  ]);
+  assert.deepEqual(states.map((s) => [s.episode.id, s.current, s.watched, s.percent]),
+    [["e1", false, true, null], ["e2", true, false, 50], ["e3", false, false, null]]);
   const s = ({ playbackAllowed = true, current = false, watched = false, percent = null as number | null }) =>
     ({ episode: { playbackAllowed }, current, watched, percent });
   cases([
@@ -83,8 +79,8 @@ test("admin helpers: episode names, what OK does, list moves and episode states"
   ]);
 });
 
-test("admin helpers: what the TV plays, when the remote control applies, and how a problem reads", () => {
-  const n = { state: "playing", updatedAt: ago(20_000), itemTitle: "X", episodeTitle: null, positionMs: 1, durationMs: 2 };
+test("admin helpers: what the TV plays and how a problem reads", () => {
+  const n = { state: "playing", updatedAt: ago(20_000) };
   cases([
     [isActive(n, true, NOW), true],
     [isActive(n, false, NOW), false, "an offline TV is not playing"],
@@ -94,17 +90,9 @@ test("admin helpers: what the TV plays, when the remote control applies, and how
     [playbackState({ ...n, state: "paused" }, true, NOW), { label: "Paused", tone: "", active: true }],
     [playbackState({ ...n, state: "starting" }, true, NOW), { label: "Starting", tone: "", active: true }],
     [playbackState({ ...n, state: "stopped" }, true, NOW), { label: "Last played", tone: "", active: false }],
-    [canControlPlayback(null), false], [canControlPlayback(undefined), false],
-    [canControlPlayback({ state: "playing" }), true], [canControlPlayback({ state: "paused" }), true],
-    [canControlPlayback({ state: "starting" }), false], [canControlPlayback({ state: "stopped" }), false],
-    [canControlPlayback({ state: "finished" }), false],
-    [originLabel("tv"), "TV"], [originLabel("server"), "server"],
   ]);
-  const p = {
-    origin: "tv", kind: "playback", code: "ERROR_CODE_IO_BAD_HTTP_STATUS", itemId: "show", itemTitle: "Şov Dünyası",
-    itemKind: "series", episodeId: "show.e1", episodeTitle: "Pilot", season: 1, number: 1, sourceId: "tr-dub",
-    positionMs: 754_000, httpStatus: 403, appVersion: "0.3.0 (300)", missing: false,
-  };
+  const p = { itemId: "show", itemTitle: "Şov Dünyası", itemKind: "series", episodeId: "show.e1", episodeTitle: "Pilot", season: 1, number: 1,
+    sourceId: "tr-dub", positionMs: 754_000, httpStatus: 403, appVersion: "0.3.0 (300)", missing: false };
   const bare = { ...p, sourceId: null, positionMs: null, httpStatus: null, appVersion: null };
   cases([
     [problemContext(p), "Şov Dünyası · S1 · E1 — Pilot · source tr-dub · at 12:34 · HTTP 403 · app 0.3.0 (300)"],
@@ -172,8 +160,8 @@ test("admin helpers: show lines, searches, ids, issues, error texts and language
     [searchSummary(3, " pro "), "3 shows match “pro”."], [searchSummary(1, "pro"), "1 show matches “pro”."],
     [searchSummary(0, "xyz"), "No show matches “xyz”."], [searchSummary(7, ""), "All 7 shows."],
     [searchSummary(1, ""), "The catalog's only show."], [searchSummary(0, ""), "The catalog has no shows."],
-    [searchSummary(SEARCH_MAX, ""), "The first 200 shows; type a title to narrow the list.", "the server's cap"],
-    [searchSummary(SEARCH_MAX, "a"), "The first 200 shows that match “a”; type more to narrow the list."],
+    [searchSummary(200, ""), "The first 200 shows; type a title to narrow the list.", "the server's cap"],
+    [searchSummary(200, "a"), "The first 200 shows that match “a”; type more to narrow the list."],
     [catalogSearchPath(" pro "), "/catalog/search?limit=200&q=pro"],
     [catalogSearchPath("a&b c"), "/catalog/search?limit=200&q=a%26b%20c"],
     [catalogSearchPath(""), "/catalog/search?limit=200&q=", "an empty box lists the catalog"],
@@ -181,8 +169,7 @@ test("admin helpers: show lines, searches, ids, issues, error texts and language
     [shortId("20261014-6b05c8e71a2b3c4d5e6f"), "20261014-6b05c8e71a2…"],
     [issueLine({ file: "items.json", path: "/items/3/poster", message: "file not found" }), "items.json /items/3/poster: file not found"],
     [issueLine({ file: "bundle.json", path: null, message: "unknown format" }), "bundle.json: unknown format"],
-    [errorMessage("too_many_items"), "A home screen holds at most 12 shows."],
-    [errorMessage("weird_code"), "The server answered: weird_code."],
+    [errorText({ code: "too_many_items" }), "A home screen holds at most 12 shows."],
     [errorText({ code: "network" }), "The server cannot be reached.", "an ApiError's code"],
     [errorText({ code: "hls_unsupported" }), "This browser cannot play HLS.", "the companion player's"],
     [errorText({ code: "weird" }), "The server answered: weird."],
@@ -192,39 +179,27 @@ test("admin helpers: show lines, searches, ids, issues, error texts and language
     [plural(1, "variant"), "1 variant"], [plural(3, "segment"), "3 segments"],
     [languageLabel("tr"), "Türkçe (tr)"], [languageLabel("pt-BR"), "Português (pt-BR)"], [languageLabel("xx"), "xx"],
     [languageLabel(null, "Off"), "Off"],
-    [primarySubtag("pt-BR"), "pt"], [primarySubtag("EN"), "en"],
     [sameLanguage("en", "en-GB"), true], [sameLanguage("TR", "tr"), true], [sameLanguage("en", "tr"), false],
     [sameLanguage(null, "en"), false], [sameLanguage("en", undefined), false],
   ]);
 });
 
 test("admin helpers: a diagnostics source, line by line", () => {
-  cases([
-    [triedText("empty", null), "the adapter found nothing to play"],
-    [triedText("error", "UpstreamError"), "the adapter failed (UpstreamError)"],
-    [triedText("timeout", "TimeoutError"), "timed out"],
-    [triedText("timeout", "BudgetExhausted"), "skipped: the time budget of the request ran out"],
-  ]);
   const at = (iso: string) => `at ${iso}`;
-  assert.deepEqual(sourceReport({ sourceId: "missing", type: "adapter", adapterId: "example", ok: false, code: "empty", ms: 1 }, at), {
-    ok: false,
-    sourceId: "missing",
-    how: "adapter example · 1 ms",
-    lines: ["the adapter found nothing to play"],
-  });
+  const failed = (code: string, name: string | null) => sourceReport({ sourceId: "s", type: "direct", ok: false, code, name, ms: 0 }, at).lines;
+  cases([
+    [failed("error", "UpstreamError"), ["the adapter failed (UpstreamError)"]],
+    [failed("timeout", "TimeoutError"), ["timed out"]],
+    [failed("timeout", "BudgetExhausted"), ["skipped: the time budget of the request ran out"]],
+  ]);
+  assert.deepEqual(sourceReport({ sourceId: "missing", type: "adapter", adapterId: "example", ok: false, code: "empty", ms: 1 }, at),
+    { ok: false, sourceId: "missing", how: "adapter example · 1 ms", lines: ["the adapter found nothing to play"] });
   const stream = { kind: "hls", inline: false, host: "127.0.0.1:8788", headerNames: ["Referer"], delivery: "proxy", languages: { audio: ["en", "tr"], subtitles: ["en"] }, expiresAt: "2026-10-14T12:00:00Z" };
   const probe = { ok: true, status: 200, ms: 3, playlist: { master: true, variants: 1, renditions: 3, segments: 0 } };
   assert.deepEqual(sourceReport({ sourceId: "signed-hls", type: "adapter", adapterId: "example", ok: true, ms: 2, stream, probe }, at), {
-    ok: true,
-    sourceId: "signed-hls",
-    how: "adapter example · 2 ms",
-    lines: [
-      "HLS from 127.0.0.1:8788 · through the proxy",
-      "upstream headers: Referer",
-      "audio en, tr · subtitles en",
-      "expires at 2026-10-14T12:00:00Z",
-      "probe ok (HTTP 200, 1 variant, 3 renditions, 3 ms)",
-    ],
+    ok: true, sourceId: "signed-hls", how: "adapter example · 2 ms",
+    lines: ["HLS from 127.0.0.1:8788 · through the proxy", "upstream headers: Referer", "audio en, tr · subtitles en",
+      "expires at 2026-10-14T12:00:00Z", "probe ok (HTTP 200, 1 variant, 3 renditions, 3 ms)"],
   });
   const direct = { kind: "mp4", inline: true, host: null, headerNames: [], delivery: "direct", languages: { audio: null, subtitles: [] }, expiresAt: null };
   const r = sourceReport({ sourceId: "d", type: "direct", ok: true, ms: 0, stream: direct, probe: { ok: false, status: 403, ms: 5, error: null, name: null } }, at);
@@ -327,29 +302,20 @@ test("listen along helpers: TV position, companion target, sync decisions, clock
     [decide(500, 1, false), { action: "pause", rate: 1, state: "paused", errorMs: 500 }],
     [syncDecision({ targetMs: -3_000, actualMs: 0, tvPlaying: true, nominalRate: 1 }).state, "waiting"],
     [clockOffset([slow, quick, longPoll]), 6_020 - 1_020], [clockOffset([longPoll]), null], [clockOffset([]), null],
-    [pushSample([quick, slow], longPoll, 2), [slow, longPoll]],
     [formatDrift(600), "+600 ms"], [formatDrift(-12.4), "−12 ms"], [formatDrift(1_540), "+1.5 s"],
     [formatDrift(null), "–"],
     [formatPosition(3_725_450), "1:02:05.4"], [formatPosition(65_000), "1:05.0"], [formatPosition(-1), "–"],
   ]);
-  const options = candidateOptions([
-    { sourceId: "hls-multi-audio", label: "Unified", languages: { audio: ["en", "it"], subtitles: [] }, current: true, supported: true, reason: null },
-    { sourceId: "fr-dub", label: null, languages: { audio: ["fr"], subtitles: null }, current: false, supported: true, reason: null },
-    { sourceId: "silent", label: null, languages: { audio: [], subtitles: null }, current: false, supported: true, reason: null },
-    { sourceId: "mystery", label: null, languages: { audio: null, subtitles: null }, current: false, supported: true, reason: null },
-    { sourceId: "dash", label: null, languages: { audio: ["de"], subtitles: [] }, current: false, supported: false, reason: "dash" },
+  const source = (sourceId: string, audio: string[] | null, more = {}) =>
+    ({ sourceId, label: null, languages: { audio, subtitles: null }, current: false, supported: true, reason: null, ...more });
+  const options = candidateOptions([source("hls-multi-audio", ["en", "it"], { label: "Unified", current: true }), source("fr-dub", ["fr"]),
+    source("silent", []), source("mystery", null), source("dash", ["de"], { supported: false, reason: "dash" })]);
+  assert.deepEqual(options.map((o) => [o.sourceId, o.language, o.disabled, o.label]), [
+    ["hls-multi-audio", "en", false, "hls-multi-audio — Unified · English (en) · the TV's source"],
+    ["hls-multi-audio", "it", false, "hls-multi-audio — Unified · Italiano (it) · the TV's source"],
+    ["fr-dub", null, false, "fr-dub · Français (fr)"], ["silent", null, false, "silent · no dialogue"], ["mystery", null, false, "mystery"],
+    ["dash", null, true, "dash · Deutsch (de) · DASH, cannot play on a phone"],
   ]);
-  assert.deepEqual(
-    options.map((o) => [o.sourceId, o.language, o.disabled, o.label]),
-    [
-      ["hls-multi-audio", "en", false, "hls-multi-audio — Unified · English (en) · the TV's source"],
-      ["hls-multi-audio", "it", false, "hls-multi-audio — Unified · Italiano (it) · the TV's source"],
-      ["fr-dub", null, false, "fr-dub · Français (fr)"],
-      ["silent", null, false, "silent · no dialogue"],
-      ["mystery", null, false, "mystery"],
-      ["dash", null, true, "dash · Deutsch (de) · DASH, cannot play on a phone"],
-    ],
-  );
   assert.deepEqual(parseCandidate(options[1]!.value), { sourceId: "hls-multi-audio", language: "it" });
   assert.deepEqual(parseCandidate(options[2]!.value), { sourceId: "fr-dub", language: null });
 });
