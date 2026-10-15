@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # izle-server image, built with the same package a release ships; usage: docs/deploy/self-hosting.md (Docker).
 
-FROM node:24-slim AS build
+FROM node:25-slim AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
 COPY contract/package.json contract/
@@ -10,7 +10,7 @@ RUN npm ci --no-audit --no-fund
 COPY . .
 RUN node scripts/pack-server.mjs --out /out
 
-FROM node:24-slim
+FROM node:25-slim
 RUN --mount=from=build,source=/out,target=/out \
     npm install --global --prefix /opt/izle --offline --no-audit --no-fund /out/izle-server-*.tgz \
     && mkdir -p /etc/izle /var/lib/izle \
