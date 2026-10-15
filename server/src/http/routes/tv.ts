@@ -1,7 +1,8 @@
 // What the TV calls: pairing (unauthenticated; the owner's approval is an admin route), then with its device token
 // the home state, item details, resolve, playback progress, command acknowledgements, problem reports and the event
 // stream (SSE: the state version on connect, then state changes and commands; unacknowledged recent commands are
-// replayed on every (re)connect).
+// replayed on every (re)connect). Also the media proxy, whose token in the path is the credential: media requests
+// carry no device token.
 
 import type { Context, Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -11,12 +12,22 @@ import { HttpError, unauthorized } from "../../errors.ts";
 import { commandEvent, eventId, type ServerEvent } from "../../events.ts";
 import { MAX_PAIR_WAIT_MS, PAIR_CODE } from "../../pairing.ts";
 import { iso } from "../../presenters.ts";
-import { isId, parseBody, problemBody, progressBody, resolveBody } from "../../validation.ts";
+import { PROXY_TOKEN, type ProxyTarget } from "../../proxy.ts";
+import { isId, parseBody, parseWait, problemBody, progressBody, resolveBody } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
-import { parseWait } from "../params.ts";
 
 export function registerTv(app: Hono<Env>, ctx: AppContext, clientKey: (c: Context) => string): void {
   const { tv, pairing, events, notifier } = ctx;
+
+  const proxyRoute = (target: (c: Context) => ProxyTarget) => (c: Context) => {
+    const token = c.req.param("token") ?? "";
+    if (!PROXY_TOKEN.test(token)) throw new HttpError(404, "not_found");
+    return ctx.proxy.serve(c.req.raw, token, target(c));
+  };
+  app.get("/p/:token/index.m3u8", proxyRoute(() => ({ type: "index" })));
+  app.get("/p/:token/video.mp4", proxyRoute(() => ({ type: "video" })));
+  app.get("/p/:token/u/:ref", proxyRoute((c) => ({ type: "u", ref: c.req.param("ref") ?? "" })));
+  app.get("/p/:token/sub/:file", proxyRoute((c) => ({ type: "sub", file: c.req.param("file") ?? "" })));
 
   app.post("/api/v1/pair/start", (c) => {
     const r = pairing.start(clientKey(c));

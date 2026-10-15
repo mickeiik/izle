@@ -1,21 +1,23 @@
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, type ServerConfig } from "../src/config.ts";
 import { createLogger } from "../src/log.ts";
-import { startServer, type RunningServer, type StartOptions } from "../src/server.ts";
+import { startServer } from "../src/server.ts";
 
 export const ADMIN_TOKEN = "test-admin-token-0123456789abcdef";
+
+/** A logger that discards everything. */
+export const silentLogger = createLogger({ write: () => {} });
 
 /** The tests' resolver module: the example module's adapters plus a "test" adapter with hostile behaviours. */
 export const TEST_RESOLVER = fileURLToPath(new URL("./fixtures/test-resolver.js", import.meta.url));
 
-const TINY_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
-  "base64",
-);
+const TINY_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
 const TINY_PNG_NAME = `${createHash("sha256").update(TINY_PNG).digest("hex")}.png`;
 
 const lang = (audio: string[] | null, subtitles: string[] | null = []) => ({ audio, subtitles });
@@ -35,45 +37,18 @@ export function fixtureItems(): Json {
   return {
     items: [
       {
-        id: "show",
-        kind: "series",
-        title: "Şov Dünyası",
-        originalTitle: "Show World",
-        poster: `assets/${TINY_PNG_NAME}`,
+        id: "show", kind: "series", title: "Şov Dünyası", originalTitle: "Show World", poster: `assets/${TINY_PNG_NAME}`,
         episodes: [
           {
-            id: "show.e1",
-            season: 1,
-            number: 1,
-            title: "Pilot",
-            durationMs: 1_200_000,
-            playbackAllowed: true,
-            sources: [
-              direct("unknown", null),
-              direct("en-orig", ["en"]),
-              direct("tr-dub", ["tr"]),
-              direct("multi", ["tr-TR", "en"]),
-            ],
+            id: "show.e1", season: 1, number: 1, title: "Pilot", durationMs: 1_200_000, playbackAllowed: true,
+            sources: [direct("unknown", null), direct("en-orig", ["en"]), direct("tr-dub", ["tr"]), direct("multi", ["tr-TR", "en"])],
           },
-          {
-            id: "show.e2",
-            season: 1,
-            number: 2,
-            title: "Season finale",
-            playbackAllowed: true,
-            autoAdvance: false,
-            sources: [direct("main", ["tr"])],
-          },
+          { id: "show.e2", season: 1, number: 2, title: "Season finale", playbackAllowed: true, autoAdvance: false, sources: [direct("main", ["tr"])] },
           { id: "show.e3", season: 2, number: 1, playbackAllowed: false, sources: [] },
           {
-            id: "show.e4",
-            season: 2,
-            number: 2,
-            playbackAllowed: true,
+            id: "show.e4", season: 2, number: 2, playbackAllowed: true,
             sources: [
-              direct("needs-proxy", ["tr"], {
-                media: { kind: "hls", url: "https://media.example.test/needs-proxy.m3u8", headers: { Referer: "https://site.example.test/" } },
-              }),
+              direct("needs-proxy", ["tr"], { media: { kind: "hls", url: "https://media.example.test/needs-proxy.m3u8", headers: { Referer: "https://site.example.test/" } } }),
               { id: "via-adapter", type: "adapter", adapter: "example", ref: { secret: "ref-value" }, languages: lang(null, null) },
               direct("plain", ["tr"]),
             ],
@@ -82,20 +57,11 @@ export function fixtureItems(): Json {
         ],
       },
       {
-        id: "film",
-        kind: "movie",
-        title: "Film",
-        year: 1999,
-        poster: `assets/${TINY_PNG_NAME}`,
+        id: "film", kind: "movie", title: "Film", year: 1999, poster: `assets/${TINY_PNG_NAME}`,
         episodes: [
           {
-            id: "film.main",
-            durationMs: 5_400_000,
-            playbackAllowed: true,
-            sources: [
-              direct("a", ["en"], { subtitleTracks: [{ url: "https://media.example.test/a/tr.vtt", language: "tr", format: "vtt" }] }),
-              direct("b", ["de"]),
-            ],
+            id: "film.main", durationMs: 5_400_000, playbackAllowed: true,
+            sources: [direct("a", ["en"], { subtitleTracks: [{ url: "https://media.example.test/a/tr.vtt", language: "tr", format: "vtt" }] }), direct("b", ["de"])],
           },
         ],
       },
@@ -111,16 +77,8 @@ export function fixtureItems(): Json {
 
 export function fixtureManifest(): Json {
   return {
-    format: "izle-bundle",
-    formatVersion: 1,
-    catalogId: "fixture",
-    buildId: "fixture-1",
-    builtAt: "2026-10-10T12:00:00Z",
-    name: "Fixture catalog",
-    defaults: { uiLanguage: "tr", preferredAudioLanguage: "tr" },
-    adapters: ["example"],
-    items: "items.json",
-    assetsDir: "assets",
+    format: "izle-bundle", formatVersion: 1, catalogId: "fixture", buildId: "fixture-1", builtAt: "2026-10-10T12:00:00Z", name: "Fixture catalog",
+    defaults: { uiLanguage: "tr", preferredAudioLanguage: "tr" }, adapters: ["example"], items: "items.json", assetsDir: "assets",
   };
 }
 
@@ -141,6 +99,16 @@ export async function tempDir(prefix = "izle-test-"): Promise<string> {
   return mkdtemp(path.join(tmpdir(), prefix));
 }
 
+/** Starts a local HTTP server on a free loopback port: its base URL, and a close that ends its connections. */
+export async function listen(server: Server) {
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const close = () => {
+    server.closeAllConnections();
+    return new Promise<void>((resolve) => server.close(() => resolve()));
+  };
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, close };
+}
+
 /** A controllable clock. */
 export function fakeClock(start = Date.parse("2026-10-10T12:00:00Z")) {
   let t = start;
@@ -150,7 +118,7 @@ export function fakeClock(start = Date.parse("2026-10-10T12:00:00Z")) {
 type Answer = { status: number; json: Json; headers: Headers };
 
 export interface TestServer {
-  srv: RunningServer;
+  srv: Awaited<ReturnType<typeof startServer>>;
   base: string;
   config: ServerConfig;
   bundleDir: string;
@@ -162,30 +130,22 @@ export interface TestServer {
   close(): Promise<void>;
 }
 
-export interface TestServerOptions extends Partial<Omit<StartOptions, "config">> {
+export interface TestServerOptions extends Partial<Omit<Parameters<typeof startServer>[0], "config">> {
   bundleDir?: string;
   configFile?: Json;
 }
 
 export async function startTestServer(opts: TestServerOptions = {}): Promise<TestServer> {
+  const { bundleDir: givenBundle, configFile, ...startOptions } = opts;
   const root = await tempDir();
-  const bundleDir = opts.bundleDir ?? (await writeBundle(path.join(root, "bundle")));
+  const bundleDir = givenBundle ?? (await writeBundle(path.join(root, "bundle")));
   const configPath = path.join(root, "izle.json");
-  await writeFile(
-    configPath,
-    JSON.stringify({ listen: { host: "127.0.0.1", port: 0 }, dataDir: "./data", catalog: { dir: bundleDir }, ...opts.configFile }),
-  );
+  await writeFile(configPath, JSON.stringify({ listen: { host: "127.0.0.1", port: 0 }, dataDir: "./data", catalog: { dir: bundleDir }, ...configFile }));
   const config = loadConfig({ path: configPath, env: { IZLE_ADMIN_TOKEN: ADMIN_TOKEN } });
   const logs: string[] = [];
   const clock = fakeClock();
-  const srv = await startServer({
-    config,
-    log: opts.log ?? createLogger({ level: "debug", write: (l) => void logs.push(l), now: clock.now }),
-    now: opts.now ?? clock.now,
-    pingMs: opts.pingMs ?? 20_000,
-    pairing: opts.pairing,
-    fetch: opts.fetch,
-  });
+  const log = createLogger({ level: "debug", write: (l) => void logs.push(l), now: clock.now });
+  const srv = await startServer({ config, log, now: clock.now, ...startOptions });
   const base = srv.url;
 
   const call: TestServer["call"] = async (method, route, o = {}) => {

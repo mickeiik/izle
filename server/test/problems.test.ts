@@ -3,11 +3,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { DEFAULT_API_KEY, startUpstream } from "../examples/resolver-example/upstream.js";
 import { noPlayableDetail, triedDetail } from "../src/problems.ts";
-import { fixtureItems, fixtureManifest, publishBuild, startTestServer, tempDir, TEST_RESOLVER, writeBundle, type Json, type TestServer } from "./helpers.ts";
+import { fixtureItems, fixtureManifest, listen, publishBuild, startTestServer, tempDir, TEST_RESOLVER, writeBundle, type Json, type TestServer } from "./helpers.ts";
 
 /** A made-up token-like run (40 base64url characters), never a real secret. */
 const RUN = "Zq3v9Kx2LmN8pQ4rT6uW1yA5bC7dE0fGhIjKlMnO"; // gitleaks:allow (made-up hostile fixture)
@@ -26,43 +25,18 @@ async function setup(t: { after(fn: () => unknown): void }, s?: TestServer) {
 
 test("a TV's report is stored with its time, episode and source, and listed for the owner with titles", async (t) => {
   const { s, tv, report, list } = await setup(t);
-  const r = await report({
-    kind: "playback",
-    code: "ERROR_CODE_IO_BAD_HTTP_STATUS",
-    ageMs: 90_000,
-    episodeId: "show.e1",
-    sourceId: "tr-dub",
-    positionMs: 754_000,
-    httpStatus: 403,
-    detail: "InvalidResponseCodeException: Response code: 403",
-    appVersion: "0.3.0 (300)",
-  });
+  const fields = {
+    kind: "playback", code: "ERROR_CODE_IO_BAD_HTTP_STATUS", episodeId: "show.e1", sourceId: "tr-dub", positionMs: 754_000, httpStatus: 403,
+    detail: "InvalidResponseCodeException: Response code: 403", appVersion: "0.3.0 (300)",
+  };
+  const r = await report({ ...fields, ageMs: 90_000 });
   assert.equal(r.status, 202);
   assert.deepEqual(r.json, { ok: true });
   const l = await list();
   assert.equal(l.status, 200);
-  assert.deepEqual(l.json.problems, [
-    {
-      id: l.json.problems[0].id,
-      at: new Date(s.clock.now() - 90_000).toISOString(),
-      origin: "tv",
-      kind: "playback",
-      code: "ERROR_CODE_IO_BAD_HTTP_STATUS",
-      itemId: "show",
-      itemTitle: "Şov Dünyası",
-      itemKind: "series",
-      episodeId: "show.e1",
-      episodeTitle: "Pilot",
-      season: 1,
-      number: 1,
-      sourceId: "tr-dub",
-      positionMs: 754_000,
-      httpStatus: 403,
-      detail: "InvalidResponseCodeException: Response code: 403",
-      appVersion: "0.3.0 (300)",
-      missing: false,
-    },
-  ]);
+  const at = new Date(s.clock.now() - 90_000).toISOString();
+  const titles = { itemId: "show", itemTitle: "Şov Dünyası", itemKind: "series", episodeTitle: "Pilot", season: 1, number: 1, missing: false };
+  assert.deepEqual(l.json.problems, [{ id: l.json.problems[0].id, at, origin: "tv", ...fields, ...titles }]);
   const [row] = s.srv.ctx.store.listProblems(tv.deviceId, 10);
   assert.equal(row!.at, s.clock.now() - 90_000, "at = receipt − ageMs");
   assert.deepEqual([row!.catalogId, row!.itemId], ["fixture", "show"], "the catalog's item is stored with the episode");
@@ -72,10 +46,8 @@ test("a TV's report is stored with its time, episode and source, and listed for 
   await report({ kind: "other", code: "x", ageMs: 120_000, episodeId: "gone.e1" });
   const all = (await list()).json.problems;
   assert.deepEqual(all.map((p: Json) => p.code), ["server_unreachable", "ERROR_CODE_IO_BAD_HTTP_STATUS", "x"]);
-  assert.deepEqual(
-    [all[0].itemId, all[0].itemTitle, all[0].episodeId, all[0].missing, all[0].detail, all[0].appVersion, all[0].positionMs],
-    [null, null, null, false, null, null, null],
-  );
+  const { itemId, itemTitle, episodeId, missing, detail, appVersion, positionMs } = all[0];
+  assert.deepEqual([itemId, itemTitle, episodeId, missing, detail, appVersion, positionMs], [null, null, null, false, null, null, null]);
   assert.deepEqual([all[2].itemId, all[2].itemTitle, all[2].episodeTitle, all[2].missing], [null, null, null, true]);
   assert.equal((await list("?limit=2")).json.problems.length, 2);
 });
@@ -105,29 +77,13 @@ test("a hostile detail is stored and logged redacted; identifiers survive; the d
 test("report validation", async (t) => {
   const { s, report } = await setup(t);
   assert.equal((await s.call("POST", "/api/v1/tv/problems", { body: { kind: "other", code: "x" } })).status, 401);
+  const x = (fields: Json) => ({ kind: "playback", code: "x", ...fields });
   for (const bad of [
-    {},
-    { kind: "playback" },
-    { code: "x" },
-    { kind: "proxy", code: "x" },
-    { kind: "crash", code: "x" },
-    { kind: "playback", code: "" },
-    { kind: "playback", code: "has space" },
-    { kind: "playback", code: "https://cdn.example.test/x" },
-    { kind: "playback", code: "x".repeat(65) },
-    { kind: "playback", code: "x", ageMs: -1 },
-    { kind: "playback", code: "x", ageMs: 86_400_001 },
-    { kind: "playback", code: "x", episodeId: "bad id" },
-    { kind: "playback", code: "x", sourceId: "" },
-    { kind: "playback", code: "x", sessionId: "s".repeat(65) },
-    { kind: "playback", code: "x", positionMs: -1 },
-    { kind: "playback", code: "x", positionMs: 1.5 },
-    { kind: "playback", code: "x", httpStatus: 99 },
-    { kind: "playback", code: "x", httpStatus: 600 },
-    { kind: "playback", code: "x", detail: "d".repeat(501) },
-    { kind: "playback", code: "x", appVersion: "v".repeat(41) },
-    { kind: "playback", code: "x", episodeId: null },
-    { kind: "playback", code: "x", extra: 1 },
+    {}, { kind: "playback" }, { code: "x" }, { kind: "proxy", code: "x" }, { kind: "crash", code: "x" },
+    ...["", "has space", "https://cdn.example.test/x", "x".repeat(65)].map((code) => x({ code })),
+    x({ ageMs: -1 }), x({ ageMs: 86_400_001 }), x({ episodeId: "bad id" }), x({ sourceId: "" }), x({ sessionId: "s".repeat(65) }),
+    x({ positionMs: -1 }), x({ positionMs: 1.5 }), x({ httpStatus: 99 }), x({ httpStatus: 600 }), x({ detail: "d".repeat(501) }),
+    x({ appVersion: "v".repeat(41) }), x({ episodeId: null }), x({ extra: 1 }),
   ]) {
     const r = await report(bad);
     assert.equal(r.status, 400, JSON.stringify(bad));
@@ -146,10 +102,7 @@ test("a report naming the TV's playback session gets the episode and source from
   await s.call("POST", "/api/v1/tv/problems", { token: other.token, body: { kind: "playback", code: "foreign", sessionId: played.json.sessionId } });
   await report({ kind: "playback", code: "mismatch", sessionId: played.json.sessionId, episodeId: "film.main" });
   const rows = s.srv.ctx.store.listProblems(tv.deviceId, 10);
-  assert.deepEqual(rows.map((p) => [p.code, p.episodeId, p.sourceId]), [
-    ["mismatch", "film.main", null],
-    ["decoder", "show.e1", "tr-dub"],
-  ]);
+  assert.deepEqual(rows.map((p) => [p.code, p.episodeId, p.sourceId]), [["mismatch", "film.main", null], ["decoder", "show.e1", "tr-dub"]]);
   assert.deepEqual(
     s.srv.ctx.store.listProblems(other.deviceId, 10).map((p) => [p.code, p.episodeId, p.sourceId]),
     [["foreign", null, null]],
@@ -228,10 +181,7 @@ test("detail helpers: failed sources in a few words", () => {
   assert.equal(triedDetail({ sourceId: "a", code: "error", adapterId: "x", name: "InvalidResult" }), "error InvalidResult");
   assert.equal(triedDetail({ sourceId: "a", code: "empty", adapterId: "x" }), "empty");
   assert.equal(
-    noPlayableDetail([
-      { sourceId: "src-a", code: "timeout", name: "TimeoutError" },
-      { sourceId: "src-b", code: "error", name: "InvalidResult" },
-    ]),
+    noPlayableDetail([{ sourceId: "src-a", code: "timeout", name: "TimeoutError" }, { sourceId: "src-b", code: "error", name: "InvalidResult" }]),
     "src-a: timeout; src-b: error InvalidResult",
   );
   assert.equal(noPlayableDetail([], ["a", "b"]), "excluded by the TV: a, b");
@@ -251,32 +201,18 @@ const hls = (id: string, url: string) => ({ id, type: "direct", languages: tr, m
 async function startFlaky() {
   let mode: "503" | "html" = "503";
   const server = createServer((req, res) => {
-    if (req.headers.referer !== REFERER) {
-      res.writeHead(403);
-      return res.end();
-    }
-    if (mode === "html") {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      return res.end("<html><body>Are you a robot?</body></html>");
-    }
-    res.writeHead(503);
-    res.end("unavailable");
+    if (req.headers.referer !== REFERER) return void res.writeHead(403).end();
+    if (mode === "html") return void res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }).end("<html><body>Are you a robot?</body></html>");
+    res.writeHead(503).end("unavailable");
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return {
-    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
-    set: (m: "503" | "html") => void (mode = m),
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
-  };
+  return { ...(await listen(server)), set: (m: "503" | "html") => void (mode = m) };
 }
 
-/** A loopback port nothing listens on (connections are refused). */
-async function closedPort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const { port } = server.address() as AddressInfo;
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  return port;
+/** A loopback base URL nothing listens on (connections are refused). */
+async function closedUrl(): Promise<string> {
+  const { url, close } = await listen(createServer());
+  await close();
+  return url;
 }
 
 async function setupServerOrigin(t: { after(fn: () => unknown): void }) {
@@ -291,7 +227,7 @@ async function setupServerOrigin(t: { after(fn: () => unknown): void }) {
     movie("broken", [testSource("bad", { behavior: "throw" }), testSource("slow", { behavior: "hang-signal" }), testSource("invalid", { behavior: "invalid" })]),
     movie("signed", [{ id: "signed", type: "adapter", adapter: "example", ref: { video: "demo" }, languages: tr }]),
     movie("flaky", [hls("flaky-hls", `${flaky.url}/master.m3u8`)]),
-    movie("away", [hls("away-hls", `http://127.0.0.1:${await closedPort()}/master.m3u8`)]),
+    movie("away", [hls("away-hls", `${await closedUrl()}/master.m3u8`)]),
   );
   const bundleDir = await writeBundle(path.join(await tempDir(), "bundle"), { ...fixtureManifest(), adapters: ["example", "test"] }, items);
   const s = await startTestServer({

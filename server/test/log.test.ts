@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createLogger, isSecretKey, redact, redactReportText, redactString } from "../src/log.ts";
+import { createLogger, redact, redactReportText } from "../src/log.ts";
 
 const DEVICE_TOKEN = "Zq3v9Kx2LmN8pQ4rT6uW1yA5bC7dE0fGhIjKlMnOpQr"; // gitleaks:allow (made-up hostile fixture)
 
@@ -10,19 +10,18 @@ function capture() {
 }
 
 test("secret-looking keys are dropped whatever their casing", () => {
-  for (const k of ["url", "baseUrl", "posterURL", "headers", "Authorization", "set-cookie", "cookie", "deviceToken", "pair_token", "ref", "config", "resolverConfig", "playlist", "password", "body"]) {
-    assert.equal(isSecretKey(k), true, k);
-  }
-  for (const k of ["preferredAudioLanguage", "itemId", "episodeId", "status", "route", "ms", "referenceCount"]) {
-    assert.equal(isSecretKey(k), false, k);
-  }
+  const keys = (list: string[]) => Object.fromEntries(list.map((k) => [k, 1]));
+  const secret = ["url", "baseUrl", "posterURL", "headers", "Authorization", "set-cookie", "cookie", "deviceToken", "pair_token", "ref", "config"];
+  assert.deepEqual(redact(keys([...secret, "resolverConfig", "playlist", "password", "body"])), {});
+  const plain = keys(["preferredAudioLanguage", "itemId", "episodeId", "status", "route", "ms", "referenceCount"]);
+  assert.equal(Object.keys(redact(plain) as object).length, Object.keys(plain).length, "none dropped (long keys are scrubbed, not dropped)");
 });
 
 test("URLs become <url host> and token-like runs become <token>", () => {
-  assert.equal(redactString("GET https://cdn.example.test/a/b.ts?sig=abc failed"), "GET <url cdn.example.test> failed");
-  assert.equal(redactString(`token ${DEVICE_TOKEN} leaked`), "token <token> leaked");
-  assert.equal(redactString("ftp://user:pw@files.example.test/x"), "<url files.example.test>");
-  assert.equal(redactString("caminandes.s01e01 / hls-multi-audio"), "caminandes.s01e01 / hls-multi-audio");
+  assert.equal(redact("GET https://cdn.example.test/a/b.ts?sig=abc failed"), "GET <url cdn.example.test> failed");
+  assert.equal(redact(`token ${DEVICE_TOKEN} leaked`), "token <token> leaked");
+  assert.equal(redact("ftp://user:pw@files.example.test/x"), "<url files.example.test>");
+  assert.equal(redact("caminandes.s01e01 / hls-multi-audio"), "caminandes.s01e01 / hls-multi-audio");
 });
 
 test("problem text from a TV: URLs and tokens go, error names stay; the log itself stays strict", () => {
@@ -35,7 +34,7 @@ test("problem text from a TV: URLs and tokens go, error names stay; the log itse
     assert.equal(redactReportText(`x ${token} y`), "x <token> y", token);
   }
   assert.equal(redactReportText("ab ".repeat(200)).length, 501, "capped like log strings");
-  assert.equal(redactString("ERROR_CODE_IO_BAD_HTTP_STATUS"), "<token>", "log lines keep the strict rule");
+  assert.equal(redact("ERROR_CODE_IO_BAD_HTTP_STATUS"), "<token>", "log lines keep the strict rule");
 });
 
 test("hostile fixture: nothing secret survives a log line", () => {
@@ -84,10 +83,7 @@ test("levels filter and child loggers bind fields", () => {
 
 test("redact copes with odd values", () => {
   assert.deepEqual(redact({ a: undefined, b: () => 1, c: 10n, d: new Date(0), e: new Map(), f: Buffer.from("x") }), {
-    c: "10",
-    d: "1970-01-01T00:00:00.000Z",
-    e: "<Map>",
-    f: "<Buffer>",
+    c: "10", d: "1970-01-01T00:00:00.000Z", e: "<Map>", f: "<Buffer>",
   });
   let deep: Record<string, unknown> = {};
   const root = deep;

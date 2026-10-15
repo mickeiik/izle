@@ -59,17 +59,8 @@ test("migration 2: now_playing gains its anchor and seq, companion links exist; 
   const s = new Store(file);
   assert.equal(s.schemaVersion, SCHEMA_VERSION);
   assert.deepEqual(s.getNowPlaying("d1"), {
-    catalogId: "c",
-    itemId: "i",
-    episodeId: "e",
-    sourceId: null,
-    positionMs: 5,
-    durationMs: 10,
-    state: "paused",
-    updatedAt: 2,
-    playing: false,
-    anchorAt: null,
-    seq: 0,
+    catalogId: "c", itemId: "i", episodeId: "e", sourceId: null, positionMs: 5, durationMs: 10, state: "paused", updatedAt: 2, playing: false,
+    anchorAt: null, seq: 0,
   });
   const row = { catalogId: "c", itemId: "i", episodeId: "e", sourceId: "s", positionMs: 7, durationMs: 10, state: "playing" as const, updatedAt: 3, playing: true, anchorAt: 2_900 };
   assert.equal(s.setNowPlaying("d1", row), 1);
@@ -187,9 +178,7 @@ test("catalog history rows: episodes seen after a date, removal and return, buil
   s.moveSeen("c", [{ episodeId: "a.3", itemId: "b" }]);
   assert.deepEqual(s.episodesSeenAfter("c", "b", 0), ["a.3"]);
   assert.deepEqual(s.catalogSeen("c").map((e) => [e.episodeId, e.itemId, e.firstSeenAt, e.buildId, e.removedAt]), [
-    ["a.1", "a", 0, "b1", null],
-    ["a.2", "a", 0, "b1", null],
-    ["a.3", "b", 100, "b2", null],
+    ["a.1", "a", 0, "b1", null], ["a.2", "a", 0, "b1", null], ["a.3", "b", 100, "b2", null],
   ]);
 
   const counts = { items: 2, episodes: 3, itemsAdded: 0, itemsRemoved: 0, episodesAdded: 1, episodesRemoved: 0 };

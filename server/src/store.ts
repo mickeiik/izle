@@ -22,7 +22,7 @@ export interface Device {
   autoplayOnStart: boolean;
 }
 
-export interface PairCode {
+interface PairCode {
   code: string;
   pairTokenHash: string;
   deviceId: string | null;
@@ -42,7 +42,7 @@ export interface Progress {
   updatedAt: number;
 }
 
-export interface Cursor {
+interface Cursor {
   catalogId: string;
   itemId: string;
   episodeId: string;
@@ -70,15 +70,7 @@ export interface CatalogChanges {
     removed: Array<{ id: string; title: string | null }>;
   };
   episodes: {
-    added: Array<{
-      id: string;
-      itemId: string;
-      itemTitle: string;
-      season: number | null;
-      number: number | null;
-      label: string | null;
-      playbackAllowed: boolean;
-    }>;
+    added: Array<{ id: string; itemId: string; itemTitle: string; season: number | null; number: number | null; label: string | null; playbackAllowed: boolean }>;
     removed: Array<{ id: string; itemId: string; itemTitle: string | null }>;
   };
 }
@@ -198,12 +190,8 @@ export class Store {
     this.db = new DatabaseSync(file, { enableForeignKeyConstraints: true });
     this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
     const current = this.schemaVersion;
-    if (current > MIGRATIONS.length) {
-      throw new Error(`database schema version ${current} is newer than this server (${MIGRATIONS.length})`);
-    }
-    for (let v = current; v < MIGRATIONS.length; v++) {
-      this.transaction(() => this.db.exec(`${MIGRATIONS[v]!}; PRAGMA user_version = ${v + 1}`));
-    }
+    if (current > MIGRATIONS.length) throw new Error(`database schema version ${current} is newer than this server (${MIGRATIONS.length})`);
+    for (let v = current; v < MIGRATIONS.length; v++) this.transaction(() => this.db.exec(`${MIGRATIONS[v]!}; PRAGMA user_version = ${v + 1}`));
   }
 
   get schemaVersion(): number {
@@ -370,17 +358,12 @@ export class Store {
   // --- progress & cursor ---------------------------------------------------------------------------------------
 
   getProgress(deviceId: string, catalogId: string, episodeId: string): Progress | null {
-    const sql = "SELECT * FROM progress WHERE device_id = ? AND catalog_id = ? AND episode_id = ?";
-    return this.one(sql, [deviceId, catalogId, episodeId], "device_id");
+    return this.one("SELECT * FROM progress WHERE device_id = ? AND catalog_id = ? AND episode_id = ?", [deviceId, catalogId, episodeId], "device_id");
   }
 
   listProgress(deviceId: string, catalogId: string, itemId: string | null = null): Progress[] {
-    return this.many(
-      `SELECT * FROM progress WHERE device_id = ? AND catalog_id = ? AND (? IS NULL OR item_id = ?)
-       ORDER BY updated_at DESC`,
-      [deviceId, catalogId, itemId, itemId],
-      "device_id",
-    );
+    const sql = "SELECT * FROM progress WHERE device_id = ? AND catalog_id = ? AND (? IS NULL OR item_id = ?) ORDER BY updated_at DESC";
+    return this.many(sql, [deviceId, catalogId, itemId, itemId], "device_id");
   }
 
   upsertProgress(deviceId: string, p: Progress): void {
@@ -393,15 +376,12 @@ export class Store {
 
   /** When the device last reported progress on any episode of the item (epoch ms), or null. */
   lastProgressAt(deviceId: string, catalogId: string, itemId: string): number | null {
-    return this.one<{ at: number | null }>(
-      "SELECT MAX(updated_at) AS at FROM progress WHERE device_id = ? AND catalog_id = ? AND item_id = ?",
-      [deviceId, catalogId, itemId],
-    )!.at;
+    const sql = "SELECT MAX(updated_at) AS at FROM progress WHERE device_id = ? AND catalog_id = ? AND item_id = ?";
+    return this.one<{ at: number | null }>(sql, [deviceId, catalogId, itemId])!.at;
   }
 
   getCursor(deviceId: string, catalogId: string, itemId: string): Cursor | null {
-    const sql = "SELECT * FROM item_cursor WHERE device_id = ? AND catalog_id = ? AND item_id = ?";
-    return this.one(sql, [deviceId, catalogId, itemId], "device_id");
+    return this.one("SELECT * FROM item_cursor WHERE device_id = ? AND catalog_id = ? AND item_id = ?", [deviceId, catalogId, itemId], "device_id");
   }
 
   listCursors(deviceId: string, catalogId: string): Cursor[] {
@@ -439,12 +419,8 @@ export class Store {
   insertProblem(p: Omit<Problem, "id">, keep: number): Problem {
     return this.transaction(() => {
       const r = this.insert("problems", p, undefined, " RETURNING *")!;
-      this.run(
-        "DELETE FROM problems WHERE device_id = ? AND id NOT IN (SELECT id FROM problems WHERE device_id = ? ORDER BY at DESC, id DESC LIMIT ?)",
-        p.deviceId,
-        p.deviceId,
-        keep,
-      );
+      const newest = "SELECT id FROM problems WHERE device_id = ? ORDER BY at DESC, id DESC LIMIT ?";
+      this.run(`DELETE FROM problems WHERE device_id = ? AND id NOT IN (${newest})`, p.deviceId, p.deviceId, keep);
       return fromRow(r);
     });
   }
@@ -490,9 +466,7 @@ export class Store {
   }
 
   insertSeen(catalogId: string, buildId: string, firstSeenAt: number, episodes: ReadonlyArray<{ episodeId: string; itemId: string }>): void {
-    const insert = this.db.prepare(
-      "INSERT INTO catalog_seen (catalog_id, episode_id, item_id, first_seen_at, build_id) VALUES (?, ?, ?, ?, ?)",
-    );
+    const insert = this.db.prepare("INSERT INTO catalog_seen (catalog_id, episode_id, item_id, first_seen_at, build_id) VALUES (?, ?, ?, ?, ?)");
     for (const e of episodes) insert.run(catalogId, e.episodeId, e.itemId, firstSeenAt, buildId);
   }
 
@@ -516,11 +490,9 @@ export class Store {
 
   /** The item's present episodes that first appeared after `sinceMs`, oldest first. Baseline episodes (0) never do. */
   episodesSeenAfter(catalogId: string, itemId: string, sinceMs: number): string[] {
-    return this.many<{ episodeId: string }>(
-      `SELECT episode_id FROM catalog_seen WHERE catalog_id = ? AND item_id = ? AND removed_at IS NULL AND first_seen_at > ?
-       ORDER BY first_seen_at, episode_id`,
-      [catalogId, itemId, sinceMs],
-    ).map((e) => e.episodeId);
+    const sql = `SELECT episode_id FROM catalog_seen WHERE catalog_id = ? AND item_id = ? AND removed_at IS NULL AND first_seen_at > ?
+       ORDER BY first_seen_at, episode_id`;
+    return this.many<{ episodeId: string }>(sql, [catalogId, itemId, sinceMs]).map((e) => e.episodeId);
   }
 
   /** Stores a loaded build. A build id loaded again later (a rollback) replaces its row with the new load. */
@@ -538,8 +510,7 @@ export class Store {
   }
 
   getCatalogBuild(catalogId: string, buildId: string): { build: CatalogBuild; changes: CatalogChanges } | null {
-    const sql = "SELECT * FROM catalog_builds WHERE catalog_id = ? AND build_id = ?";
-    const r = this.one<CatalogBuild & { changes: CatalogChanges }>(sql, [catalogId, buildId]);
+    const r = this.one<CatalogBuild & { changes: CatalogChanges }>("SELECT * FROM catalog_builds WHERE catalog_id = ? AND build_id = ?", [catalogId, buildId]);
     if (!r) return null;
     const { changes, ...build } = r;
     return { build, changes };

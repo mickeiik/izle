@@ -36,6 +36,7 @@ Relative --config paths resolve against the directory npm or the shell was start
 config file resolve against the file's directory. IZLE_ADMIN_TOKEN overrides the admin token file.`;
 
 const out = (line: string) => void process.stdout.write(`${line}\n`);
+const TOKEN_REFUSED = "the server did not accept the admin token; is it the one the server runs with?";
 /** For the commands' own log lines (redacted, like the server's), so stdout stays what the command prints. */
 const stderrLog = createLogger({ write: (l) => void process.stderr.write(`${l}\n`) });
 
@@ -92,7 +93,7 @@ async function pair(config: ServerConfig, args: string[], serverUrl: string | un
     if (sub === "pending") {
       if (rest.length > 0) return fail(`pair pending takes no arguments`);
       const r = await adminCall<{ codes: Array<{ code: string; expiresAt: string; approved: boolean }> }>(server, token, "GET", "/api/v1/admin/pair/pending");
-      if (r.status === 401) return fail("the server did not accept the admin token; is it the one the server runs with?");
+      if (r.status === 401) return fail(TOKEN_REFUSED);
       if (r.status !== 200) return fail(`unexpected answer ${r.status} from ${server}`);
       const codes = r.json!.codes;
       if (codes.length === 0) out("no TV is waiting; izle on the TV shows a 6-digit code when it is not paired");
@@ -105,13 +106,11 @@ async function pair(config: ServerConfig, args: string[], serverUrl: string | un
     const [code, ...nameWords] = rest;
     if (!PAIR_CODE.test(code ?? "")) return fail("pair approve needs the 6-digit code the TV shows");
     const name = nameWords.join(" ").trim();
-    const r = await adminCall<{ deviceId: string; name: string; message?: string }>(server, token, "POST", "/api/v1/admin/pair/approve", {
-      code,
-      ...(name ? { name } : {}),
-    });
+    const body = { code, ...(name ? { name } : {}) };
+    const r = await adminCall<{ deviceId: string; name: string; message?: string }>(server, token, "POST", "/api/v1/admin/pair/approve", body);
     if (r.status === 404) return fail(`no TV is waiting with the code ${code}; the TV shows a new code every 10 minutes`);
     if (r.status === 409) return fail(`the code ${code} is already approved`);
-    if (r.status === 401) return fail("the server did not accept the admin token; is it the one the server runs with?");
+    if (r.status === 401) return fail(TOKEN_REFUSED);
     if (r.status !== 200) return fail(`unexpected answer ${r.status} from ${server}${r.json?.message ? `: ${r.json.message}` : ""}`);
     out(`approved: "${r.json!.name}" (${r.json!.deviceId}) shows its home screen in a moment; put shows on it from the admin page`);
     return 0;
@@ -165,32 +164,24 @@ function invocationDir(): string {
   return process.env.INIT_CWD ?? process.cwd();
 }
 
+const OPTIONS = {
+  config: { type: "string", short: "c" }, rotate: { type: "boolean" }, link: { type: "boolean" }, base: { type: "string" },
+  server: { type: "string" }, force: { type: "boolean" }, help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" },
+} as const;
+
 export async function main(argv: string[]): Promise<number> {
   const command = argv[0] && !argv[0].startsWith("-") ? argv[0] : undefined;
   const rest = command === undefined ? argv : argv.slice(1);
 
   if (command === "validate-catalog") return validateMain(rest);
 
-  let values: { config?: string; rotate?: boolean; link?: boolean; base?: string; server?: string; force?: boolean; help?: boolean; version?: boolean };
-  let positionals: string[];
+  let parsed;
   try {
-    ({ values, positionals } = parseArgs({
-      args: rest,
-      allowPositionals: true,
-      options: {
-        config: { type: "string", short: "c" },
-        rotate: { type: "boolean" },
-        link: { type: "boolean" },
-        base: { type: "string" },
-        server: { type: "string" },
-        force: { type: "boolean" },
-        help: { type: "boolean", short: "h" },
-        version: { type: "boolean", short: "v" },
-      },
-    }));
+    parsed = parseArgs({ args: rest, allowPositionals: true, options: OPTIONS });
   } catch (err) {
     return usage((err as Error).message);
   }
+  const { values, positionals } = parsed;
   const maxPositionals = command === "pair" ? Infinity : command === "backup" ? 1 : 0;
   if (positionals.length > maxPositionals) return usage(`unexpected argument "${positionals[maxPositionals]}"`);
   for (const [flag, owner] of [["rotate", "admin-token"], ["link", "admin-token"], ["base", "admin-token"], ["server", "pair"], ["force", "backup"]] as const) {

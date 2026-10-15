@@ -1,10 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { DEFAULT_API_KEY, DEFAULT_REFERER, junkBytes, startUpstream, syntheticMedia, syntheticTsSegment } from "../examples/resolver-example/upstream.js";
-import { fixtureManifest, startTestServer, tempDir, TEST_RESOLVER, writeBundle, type Json } from "./helpers.ts";
+import { fixtureManifest, listen, startTestServer, tempDir, TEST_RESOLVER, writeBundle, type Json } from "./helpers.ts";
 import { seenSignals } from "./fixtures/test-resolver.js";
 
 const PROXY_URL = /^\/p\/([A-Za-z0-9_-]{43})\/(index\.m3u8|video\.mp4)$/;
@@ -27,10 +26,8 @@ function proxyItems(up: string): Json {
       movie("fallback", [exampleSource("gone", { video: "gone" }), testSource("broken", { behavior: "throw" }), exampleSource("works", { video: "demo" })]),
       movie("hang", [testSource("hang", { behavior: "hang" }), testSource("hang2", { behavior: "hang-signal" })]),
       movie("hostile", [
-        testSource("throw", { behavior: "throw" }),
-        testSource("throw-sync", { behavior: "throw-sync" }),
-        testSource("invalid", { behavior: "invalid" }),
-        testSource("not-playlist", { behavior: "not-playlist" }),
+        testSource("throw", { behavior: "throw" }), testSource("throw-sync", { behavior: "throw-sync" }),
+        testSource("invalid", { behavior: "invalid" }), testSource("not-playlist", { behavior: "not-playlist" }),
         testSource("empty", { behavior: "empty" }),
       ]),
       movie("logger", [testSource("log", { behavior: "log", url: `${up}/static/demo/master.m3u8` })]),
@@ -227,12 +224,8 @@ test("segments stream through without being buffered, and a TV that goes away ca
     }
     void released.then(() => res.end(Buffer.alloc(65536, 2)));
   });
-  await new Promise<void>((r) => slow.listen(0, "127.0.0.1", r));
-  t.after(() => {
-    slow.closeAllConnections();
-    slow.close();
-  });
-  const slowUrl = `http://127.0.0.1:${(slow.address() as AddressInfo).port}`;
+  const { url: slowUrl, close } = await listen(slow);
+  t.after(close);
   const mp4 = (id: string, p: string) => direct(id, { kind: "mp4", url: `${slowUrl}${p}`, headers: REF });
   const items = () => ({ items: [movie("slow", [mp4("a", "/slow")]), movie("held", [mp4("b", "/hold")])] });
   const { s, resolve, get } = await setupProxy(t, { items });

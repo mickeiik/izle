@@ -7,7 +7,7 @@ import { isWildcardHost, localServerUrl, type ServerConfig } from "./config.ts";
  * running server's admin API, and the admin page's sign-in link (its base address) with its QR code.
  */
 
-export interface LinkBase {
+interface LinkBase {
   url: string;
   /** Where the address came from, for the note printed next to the link. */
   source: "publicUrl" | "listen.host" | "interface" | "loopback";

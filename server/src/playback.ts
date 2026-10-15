@@ -4,24 +4,19 @@
 import type { CatalogItem, LanguageFacts, Source } from "@izle/contract";
 import type { Progress } from "./store.ts";
 
-export type ProgressLike = Pick<Progress, "episodeId" | "positionMs" | "durationMs" | "status">;
 
-/** Index of the first episode after `from` (exclusive) with playbackAllowed, or -1. */
-export function nextAllowedIndex(item: CatalogItem, from: number): number {
+/** Index of the first episode after `from` (exclusive) with playbackAllowed, or -1 (`from` -1: the first one). */
+function nextAllowedIndex(item: CatalogItem, from: number): number {
   for (let i = from + 1; i < item.episodes.length; i++) if (item.episodes[i]!.playbackAllowed) return i;
   return -1;
 }
 
-export function firstAllowedIndex(item: CatalogItem): number {
-  return nextAllowedIndex(item, -1);
-}
-
 export function isPlayable(item: CatalogItem): boolean {
-  return firstAllowedIndex(item) >= 0;
+  return nextAllowedIndex(item, -1) >= 0;
 }
 
 /** An item's cursor as the play-order rules see it; a bare episode id is an ordinary (not wrapped) cursor. */
-export interface CursorLike {
+interface CursorLike {
   episodeId: string;
   /** Placed by the wrap to the first episode after the last one was finished. */
   wrapped: boolean;
@@ -38,10 +33,10 @@ export interface CursorLike {
 export function cursorIndex(
   item: CatalogItem,
   cursor: string | CursorLike | null,
-  progress: ReadonlyMap<string, ProgressLike>,
+  progress: ReadonlyMap<string, Pick<Progress, "status">>,
   appended: ReadonlySet<string> = new Set(),
 ): number {
-  const first = firstAllowedIndex(item);
+  const first = nextAllowedIndex(item, -1);
   if (first < 0) return -1;
   const c: CursorLike | null = typeof cursor === "string" ? { episodeId: cursor, wrapped: false } : cursor;
   if (c?.wrapped && appended.size > 0) {
@@ -62,16 +57,6 @@ export function cursorIndex(
   return first;
 }
 
-/**
- * Where the cursor goes after an episode finished: the next allowed episode in play order, wrapping to the first
- * allowed one after the last (so OK on a fully watched item starts it again). `autoAdvance` does not matter here;
- * it only controls whether playback continues by itself.
- */
-export function cursorAfterFinished(item: CatalogItem, finishedIndex: number): number {
-  const next = nextAllowedIndex(item, finishedIndex);
-  return next >= 0 ? next : firstAllowedIndex(item);
-}
-
 /** What a progress report says the player is doing. */
 export const PROGRESS_REPORT_STATUSES = ["playing", "paused", "stopped", "finished"] as const;
 
@@ -79,10 +64,11 @@ export type ProgressReportStatus = (typeof PROGRESS_REPORT_STATUSES)[number];
 
 /**
  * The cursor after a progress report on the episode at `index`. `finished` moves it to the next allowed episode,
- * wrapping to the first after the last; only that wrap gives a wrapped cursor. Every other report keeps it on the
- * reported episode as an ordinary cursor. `changed` (the state version must be bumped) is always true for `stopped`
- * and `finished` (the TV left the player); any other report is a change when the cursor moves, or stops being
- * wrapped (OK may then play another episode).
+ * wrapping to the first after the last (so OK on a fully watched item starts it again; `autoAdvance` does not matter
+ * here); only that wrap gives a wrapped cursor. Every other report keeps it on the reported episode as an ordinary
+ * cursor. `changed` (the state version must be bumped) is always true for `stopped` and `finished` (the TV left the
+ * player); any other report is a change when the cursor moves, or stops being wrapped (OK may then play another
+ * episode).
  */
 export function cursorAfterReport(
   item: CatalogItem,
@@ -90,10 +76,10 @@ export function cursorAfterReport(
   status: ProgressReportStatus,
   before: CursorLike | null,
 ): CursorLike & { changed: boolean } {
-  const here = item.episodes[index]!;
   const finished = status === "finished";
-  const episodeId = finished ? (item.episodes[cursorAfterFinished(item, index)] ?? here).id : here.id;
-  const wrapped = finished && nextAllowedIndex(item, index) < 0;
+  const next = nextAllowedIndex(item, index);
+  const wrapped = finished && next < 0;
+  const episodeId = (finished ? item.episodes[wrapped ? nextAllowedIndex(item, -1) : next] : undefined)?.id ?? item.episodes[index]!.id;
   const changed = finished || status === "stopped" || before?.episodeId !== episodeId || (before?.wrapped ?? false) !== wrapped;
   return { episodeId, wrapped, changed };
 }
@@ -112,7 +98,7 @@ export function autoNextIndex(item: CatalogItem, index: number): number {
  * 0 = matches the preferred audio language (or has no dialogue, or no preference is set), 1 = unknown,
  * 2 = known not to match. Languages match on their primary subtag.
  */
-export function audioRank(languages: LanguageFacts, preferred: string | null): 0 | 1 | 2 {
+function audioRank(languages: LanguageFacts, preferred: string | null): 0 | 1 | 2 {
   if (!preferred) return 0;
   if (languages.audio === null) return 1;
   if (languages.audio.length === 0) return 0;

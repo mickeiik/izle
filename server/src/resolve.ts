@@ -9,7 +9,7 @@ import { entryPath, subtitlePath, type ProxyService } from "./proxy.ts";
 import { runAdapter, type AdapterFailureCode } from "./resolver.ts";
 
 const FAILURE_PENALTY_MS = 10 * 60_000;
-export const PLAYBACK_SESSION_TTL_MS = 12 * 60 * 60_000;
+const PLAYBACK_SESSION_TTL_MS = 12 * 60 * 60_000;
 
 export interface ResolveInput {
   episodeId: string;
@@ -170,7 +170,6 @@ export class ResolveService {
   private readonly o: ResolveServiceOptions;
   private readonly catalog: CatalogService;
   private readonly now: () => number;
-  /** Time for one adapter call. */
   readonly deadlineMs: number;
   readonly proxyAlways: boolean;
 
@@ -212,28 +211,18 @@ export class ResolveService {
     if (unavailable) return { ok: false, tried: unavailable, results: null, ms: 0 };
     // A source's stream from what resolved it (its own media, or an adapter's result), the source filling gaps.
     const stream = (r: ResolveResult): UpstreamStream => ({
-      media: r.media,
-      headers: r.headers ?? {},
-      languages: r.languages ?? source.languages,
-      subtitleTracks: r.subtitleTracks ?? source.subtitleTracks ?? [],
-      label: r.label ?? source.label ?? null,
-      expiresAt: r.expiresAt ?? null,
+      media: r.media, headers: r.headers ?? {}, languages: r.languages ?? source.languages,
+      subtitleTracks: r.subtitleTracks ?? source.subtitleTracks ?? [], label: r.label ?? source.label ?? null, expiresAt: r.expiresAt ?? null,
     });
     if (source.type === "direct") {
       const { kind, url, headers } = source.media;
       return { ok: true, results: null, ms: 0, stream: stream({ media: { kind, url }, headers }) };
     }
     const adapter = this.o.adapters!.get(source.adapter)!;
+    const req = { catalogId: this.catalog.catalogId, itemId: ref.item.id, episodeId: ref.episode.id, sourceId: source.id, ref: source.ref };
     const outcome = await runAdapter(
       adapter,
-      {
-        catalogId: this.catalog.catalogId,
-        itemId: ref.item.id,
-        episodeId: ref.episode.id,
-        sourceId: source.id,
-        ref: source.ref,
-        preferredAudioLanguage: opts.preferredAudioLanguage,
-      },
+      { ...req, preferredAudioLanguage: opts.preferredAudioLanguage },
       { deadlineMs: opts.deadlineMs, ...(opts.signal ? { signal: opts.signal } : {}) },
     );
     if (!outcome.ok) {
@@ -244,8 +233,7 @@ export class ResolveService {
     const { results, ms } = outcome;
     // Results come in the adapter's preference order; the first one the server can serve wins.
     const result = results.find((r) => servable(r.media, r.headers));
-    const unsupported: Tried = { sourceId: source.id, code: "unsupported", adapterId: adapter.id };
-    if (!result) return { ok: false, tried: unsupported, results, ms };
+    if (!result) return { ok: false, tried: { sourceId: source.id, code: "unsupported", adapterId: adapter.id }, results, ms };
     return { ok: true, results, ms, stream: stream(result) };
   }
 
@@ -279,9 +267,7 @@ export class ResolveService {
     return {
       media: { kind: m.kind, url },
       subtitleTracks: s.subtitleTracks.map((t, i) => ({
-        url: proxySubtitles[i] ? subtitlePath(token!, i, t.format) : t.url,
-        language: t.language,
-        format: t.format,
+        url: proxySubtitles[i] ? subtitlePath(token!, i, t.format) : t.url, language: t.language, format: t.format,
         ...(t.label !== undefined ? { label: t.label } : {}),
       })),
       delivery: proxyMain ? "proxy" : "direct",
@@ -334,26 +320,10 @@ export class ResolveService {
       }
       const session = this.o.sessions.open({ deviceId: owner, catalogId: this.catalog.catalogId, itemId: ref.item.id, episodeId: episode.id, sourceId: source.id });
       const delivered = this.deliver(owner, a.stream, this.o.proxyAlways || companion, { episodeId: episode.id, sourceId: source.id });
-      this.o.log.info("resolved", {
-        deviceId,
-        itemId: ref.item.id,
-        episodeId: episode.id,
-        sourceId: source.id,
-        kind: delivered.media.kind,
-        delivery: delivered.delivery,
-        ...(companion ? { companion: true } : {}),
-        ...(source.type === "adapter" ? { adapterId: source.adapter, ms: a.ms } : {}),
-      });
-      return {
-        session,
-        ref,
-        source,
-        ...delivered,
-        languages: a.stream.languages,
-        alternatives: candidates.slice(i + 1).filter((s) => this.staticCheck(s) === null).map((s) => s.id),
-        expiresAt: a.stream.expiresAt,
-        failed: tried,
-      };
+      const fields = { deviceId, itemId: ref.item.id, episodeId: episode.id, sourceId: source.id, kind: delivered.media.kind, delivery: delivered.delivery };
+      this.o.log.info("resolved", { ...fields, ...(companion ? { companion: true } : {}), ...(source.type === "adapter" ? { adapterId: source.adapter, ms: a.ms } : {}) });
+      const alternatives = candidates.slice(i + 1).filter((s) => this.staticCheck(s) === null).map((s) => s.id);
+      return { session, ref, source, ...delivered, languages: a.stream.languages, alternatives, expiresAt: a.stream.expiresAt, failed: tried };
     }
     this.o.log.warn("no playable source", { deviceId, episodeId: episode.id, tried: tried.length });
     throw new HttpError(502, "no_playable_source", "none of the episode's sources can be played", { tried });

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { deliveryPlan, PLAYBACK_SESSION_TTL_MS, PlaybackSessions } from "../src/resolve.ts";
+import { deliveryPlan, PlaybackSessions } from "../src/resolve.ts";
 import { fakeClock } from "./helpers.ts";
 
 const hls = { kind: "hls" as const, url: "https://media.example.test/m.m3u8" };
@@ -30,8 +30,8 @@ test("playback sessions: open, look up, expire after their lifetime", () => {
   assert.match(s.id, /^[A-Za-z0-9]{16}$/);
   assert.deepEqual(sessions.get(s.id), { id: s.id, deviceId: "tv", catalogId: "c", itemId: "i", episodeId: "e", sourceId: "s", createdAt: clock.now() });
   assert.equal(sessions.get("nope"), undefined);
-  clock.advance(PLAYBACK_SESSION_TTL_MS);
-  assert.ok(sessions.get(s.id), "still valid at exactly the lifetime");
+  clock.advance(12 * 60 * 60_000);
+  assert.ok(sessions.get(s.id), "still valid at exactly the lifetime (12 h)");
   clock.advance(1);
   assert.equal(sessions.get(s.id), undefined);
 });

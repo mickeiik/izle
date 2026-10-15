@@ -57,9 +57,7 @@ test("SSE: commands reach the TV with their payloads, and come again in order un
   await eventually(() => s.srv.ctx.events.isOnline(tv.deviceId));
 
   const cases: Array<[{ type: string } & Record<string, unknown>, Record<string, unknown>]> = [
-    [{ type: "pause" }, {}],
-    [{ type: "next" }, {}],
-    [{ type: "seek", positionMs: 600_000 }, { positionMs: 600_000 }],
+    [{ type: "pause" }, {}], [{ type: "next" }, {}], [{ type: "seek", positionMs: 600_000 }, { positionMs: 600_000 }],
     [{ type: "message", text: " Yemek hazır! " }, { text: "Yemek hazır!", durationSec: 15 }],
   ];
   const ids: number[] = [];
@@ -83,10 +81,7 @@ test("SSE: commands reach the TV with their payloads, and come again in order un
   await again.next((m) => m.event === "state");
   const replayed = [];
   for (let i = 1; i < cases.length; i++) replayed.push(JSON.parse((await again.next((m) => m.event === "command")).data!));
-  assert.deepEqual(
-    replayed.map((c) => [c.id, c.type, c.payload]),
-    cases.slice(1).map(([body, payload], i) => [ids[i + 1], body.type, payload]),
-  );
+  assert.deepEqual(replayed.map((c) => [c.id, c.type, c.payload]), cases.slice(1).map(([body, payload], i) => [ids[i + 1], body.type, payload]));
 
   // The autoplay setting is part of the TV's state: a change is announced like any other.
   await s.admin("PATCH", `/devices/${tv.deviceId}`, { autoplayOnStart: true });

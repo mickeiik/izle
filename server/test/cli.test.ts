@@ -29,6 +29,13 @@ async function run(argv: string[]): Promise<{ code: number; out: string; err: st
   }
 }
 
+/** Runs the CLI and checks its exit status and, when given, what it printed on stderr. */
+async function refused(argv: string[], code: number, err?: RegExp, message?: string): Promise<void> {
+  const r = await run(argv);
+  assert.equal(r.code, code, message ?? r.err);
+  if (err) assert.match(r.err, err);
+}
+
 test("cli: pair pending / pair approve drive the running server's admin API", async (t) => {
   const s = await startTestServer();
   t.after(() => s.close());
@@ -57,34 +64,20 @@ test("cli: pair pending / pair approve drive the running server's admin API", as
   assert.deepEqual(devices, [["Living room", "pending"], ["TV", "pending"]]);
   r = await run(["pair", "pending", ...cfg]);
   assert.match(r.out, new RegExp(`^${first.json.code}  approved, waiting for the TV to collect its token$`, "m"));
-  r = await run(["pair", "approve", first.json.code, ...cfg]);
-  assert.equal(r.code, 1);
-  assert.match(r.err, /already approved/);
+  await refused(["pair", "approve", first.json.code, ...cfg], 1, /already approved/);
 
   // The TV's long-poll was woken through the server, like an approval from the admin page.
   const wait = await s.call("GET", `/api/v1/pair/wait?code=${first.json.code}&wait=0`, { token: first.json.pairToken });
   assert.equal(wait.json.status, "approved");
-  r = await run(["pair", "approve", first.json.code, ...cfg]);
-  assert.equal(r.code, 1);
-  assert.match(r.err, /no TV is waiting with the code/, "a collected code is gone");
-  r = await run(["pair", "approve", "000000", ...cfg]);
-  assert.equal(r.code, 1);
-  assert.match(r.err, /no TV is waiting with the code 000000/);
-  r = await run(["pair", "approve", "12ab", ...cfg]);
-  assert.equal(r.code, 1);
-  assert.match(r.err, /6-digit code/);
-  r = await run(["pair", "approve", "123456", "--config", s.config.configPath!, "--server", "http://127.0.0.1:1"]);
-  assert.equal(r.code, 1);
-  assert.match(r.err, /no izle server answers at http:\/\/127\.0\.0\.1:1; is it running\?/);
-  r = await run(["pair", "nonsense", ...cfg]);
-  assert.equal(r.code, 2);
-  r = await run(["pair", "approve", "123456", "--config", s.config.configPath!, "--server", "ftp://x"]);
-  assert.equal(r.code, 2);
-  r = await run(["admin-token", "--config", s.config.configPath!, "--server", s.base]);
-  assert.equal(r.code, 2, "--server belongs to pair");
-  assert.match(r.err, /--server belongs to the pair command/);
-  r = await run(["check-resolver", "extra", "--config", s.config.configPath!]);
-  assert.equal(r.code, 2, "stray arguments are still refused");
+  await refused(["pair", "approve", first.json.code, ...cfg], 1, /no TV is waiting with the code/, "a collected code is gone");
+  await refused(["pair", "approve", "000000", ...cfg], 1, /no TV is waiting with the code 000000/);
+  await refused(["pair", "approve", "12ab", ...cfg], 1, /6-digit code/);
+  const unreachable = ["--config", s.config.configPath!, "--server", "http://127.0.0.1:1"];
+  await refused(["pair", "approve", "123456", ...unreachable], 1, /no izle server answers at http:\/\/127\.0\.0\.1:1; is it running\?/);
+  await refused(["pair", "nonsense", ...cfg], 2);
+  await refused(["pair", "approve", "123456", "--config", s.config.configPath!, "--server", "ftp://x"], 2);
+  await refused(["admin-token", "--config", s.config.configPath!, "--server", s.base], 2, /--server belongs to the pair command/);
+  await refused(["check-resolver", "extra", "--config", s.config.configPath!], 2, undefined, "stray arguments are still refused");
 });
 
 test("cli: pair approve against a wrong admin token is reported, not retried", async (t) => {
@@ -94,9 +87,7 @@ test("cli: pair approve against a wrong admin token is reported, not retried", a
   const saved = process.env.IZLE_ADMIN_TOKEN;
   process.env.IZLE_ADMIN_TOKEN = "another-token-that-is-long-enough";
   try {
-    const r = await run(["pair", "approve", start.json.code, "--config", s.config.configPath!, "--server", s.base]);
-    assert.equal(r.code, 1);
-    assert.match(r.err, /did not accept the admin token/);
+    await refused(["pair", "approve", start.json.code, "--config", s.config.configPath!, "--server", s.base], 1, /did not accept the admin token/);
   } finally {
     process.env.IZLE_ADMIN_TOKEN = saved;
   }
@@ -127,10 +118,8 @@ test("cli: admin-token --link prints the sign-in link and its QR code", async (t
   r = await run(["admin-token", "--link", "--base", "http://100.64.0.2:8787/", "--config", s.config.configPath!]);
   assert.equal(r.code, 0);
   assert.ok(r.out.startsWith(`http://100.64.0.2:8787/admin/#token=${ADMIN_TOKEN}\n`), "--base wins over publicUrl");
-  r = await run(["admin-token", "--link", "--base", "izle.example.org", "--config", s.config.configPath!]);
-  assert.equal(r.code, 2);
-  r = await run(["--link", "--config", s.config.configPath!]);
-  assert.equal(r.code, 2, "--link belongs to admin-token");
+  await refused(["admin-token", "--link", "--base", "izle.example.org", "--config", s.config.configPath!], 2);
+  await refused(["--link", "--config", s.config.configPath!], 2, /--link belongs to the admin-token command/);
 });
 
 test("shell helpers: local address, link base and link format", () => {
@@ -143,10 +132,7 @@ test("shell helpers: local address, link base and link format", () => {
   const interfaces = () =>
     ({
       lo: [{ address: "127.0.0.1", family: "IPv4", internal: true }],
-      eth0: [
-        { address: "fe80::1", family: "IPv6", internal: false },
-        { address: "192.168.1.54", family: "IPv4", internal: false },
-      ],
+      eth0: [{ address: "fe80::1", family: "IPv6", internal: false }, { address: "192.168.1.54", family: "IPv4", internal: false }],
     }) as any;
   assert.deepEqual(linkBase(config({ host: "0.0.0.0", port: 8787 }, "https://izle.example.org"), interfaces), { url: "https://izle.example.org", source: "publicUrl" });
   assert.deepEqual(linkBase(config({ host: "192.168.1.54", port: 8787 }), interfaces), { url: "http://192.168.1.54:8787", source: "listen.host" });
@@ -198,9 +184,7 @@ test("cli: backup copies the running server's database; an existing file needs -
   // The running server holds the database open in WAL mode; what it wrote is in the copy.
   assert.deepEqual(readBackup(target), { schemaVersion: SCHEMA_VERSION, devices: [[tv.deviceId, "Salon"]], home: ["show", "film"] });
 
-  r = await run(["backup", target, ...cfg]);
-  assert.equal(r.code, 1);
-  assert.match(r.err, /already exists; pass --force to replace it/);
+  await refused(["backup", target, ...cfg], 1, /already exists; pass --force to replace it/);
   assert.equal((await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["film"] })).status, 200, "the server keeps working");
   r = await run(["backup", target, "--force", ...cfg]);
   assert.equal(r.code, 0, r.err);
@@ -208,24 +192,16 @@ test("cli: backup copies the running server's database; an existing file needs -
   assert.equal(statSync(target).mode & 0o777, 0o600);
 
   for (const own of ["izle.db", "izle.db-wal"]) {
-    r = await run(["backup", path.join(s.config.dataDir, own), "--force", ...cfg]);
-    assert.equal(r.code, 1, `${own} is never a target`);
-    assert.match(r.err, /is the database itself/);
+    await refused(["backup", path.join(s.config.dataDir, own), "--force", ...cfg], 1, /is the database itself/, `${own} is never a target`);
   }
-  r = await run(["backup", dir, "--force", ...cfg]);
-  assert.equal(r.code, 1);
-  assert.match(r.err, /is a directory/);
-  r = await run(["backup", path.join(dir, "missing", "copy.db"), ...cfg]);
-  assert.equal(r.code, 1);
-  assert.match(r.err, /the directory .*missing does not exist/);
+  await refused(["backup", dir, "--force", ...cfg], 1, /is a directory/);
+  await refused(["backup", path.join(dir, "missing", "copy.db"), ...cfg], 1, /the directory .*missing does not exist/);
   assert.deepEqual(readdirSync(dir), ["izle-backup.db"], "no partial files are left behind");
   assert.deepEqual((await s.admin("GET", `/devices/${tv.deviceId}`)).json.home.map((h: { itemId: string }) => h.itemId), ["film"], "the database is untouched");
 
-  assert.equal((await run(["backup", ...cfg])).code, 2, "the file is required");
-  assert.equal((await run(["backup", target, "extra", ...cfg])).code, 2);
-  r = await run(["admin-token", "--force", ...cfg]);
-  assert.equal(r.code, 2);
-  assert.match(r.err, /--force belongs to the backup command/);
+  await refused(["backup", ...cfg], 2, undefined, "the file is required");
+  await refused(["backup", target, "extra", ...cfg], 2);
+  await refused(["admin-token", "--force", ...cfg], 2, /--force belongs to the backup command/);
 });
 
 test("cli: backup without a database says so and creates nothing", async () => {

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CATALOG_BUILDS_LISTED, reloadOnSignal } from "../src/catalog-admin.ts";
+import { reloadOnSignal } from "../src/catalog-admin.ts";
 import { HOME_MAX_ITEMS } from "../src/tv.ts";
 import { openEvents, publishBuild, startTestServer, type Json } from "./helpers.ts";
 
@@ -114,17 +114,10 @@ test("commands: every type is validated and stored with its payload; the log nev
   const send = (body: unknown) => s.admin("POST", `/devices/${tv.deviceId}/commands`, body);
   const TEXT = "Yemek hazır, anneanne!";
   const good: Array<[unknown, Record<string, unknown>]> = [
-    [{ type: "stop" }, {}],
-    [{ type: "pause" }, {}],
-    [{ type: "resume" }, {}],
-    [{ type: "next" }, {}],
-    [{ type: "previous" }, {}],
-    [{ type: "seek", deltaMs: -30_000 }, { deltaMs: -30_000 }],
-    [{ type: "seek", deltaMs: 3_600_000 }, { deltaMs: 3_600_000 }],
-    [{ type: "seek", deltaMs: -3_600_000 }, { deltaMs: -3_600_000 }],
-    [{ type: "seek", positionMs: 0 }, { positionMs: 0 }],
-    [{ type: "seek", positionMs: 754_000 }, { positionMs: 754_000 }],
-    [{ type: "message", text: `  ${TEXT}\n` }, { text: TEXT, durationSec: 15 }],
+    [{ type: "stop" }, {}], [{ type: "pause" }, {}], [{ type: "resume" }, {}], [{ type: "next" }, {}], [{ type: "previous" }, {}],
+    [{ type: "seek", deltaMs: -30_000 }, { deltaMs: -30_000 }], [{ type: "seek", deltaMs: 3_600_000 }, { deltaMs: 3_600_000 }],
+    [{ type: "seek", deltaMs: -3_600_000 }, { deltaMs: -3_600_000 }], [{ type: "seek", positionMs: 0 }, { positionMs: 0 }],
+    [{ type: "seek", positionMs: 754_000 }, { positionMs: 754_000 }], [{ type: "message", text: `  ${TEXT}\n` }, { text: TEXT, durationSec: 15 }],
     [{ type: "message", text: "x".repeat(200), durationSec: 3 }, { text: "x".repeat(200), durationSec: 3 }],
     [{ type: "message", text: "Bye", durationSec: 120 }, { text: "Bye", durationSec: 120 }],
   ];
@@ -142,30 +135,13 @@ test("commands: every type is validated and stored with its payload; the log nev
   );
 
   const bad: unknown[] = [
-    { type: "play" },
-    { type: "stop", episodeId: "show.e1" },
-    { type: "seek" },
-    { type: "seek", deltaMs: 30_000, positionMs: 10_000 },
-    { type: "seek", deltaMs: 3_600_001 },
-    { type: "seek", deltaMs: -3_600_001 },
-    { type: "seek", deltaMs: 1.5 },
-    { type: "seek", positionMs: -1 },
-    { type: "seek", positionMs: "10" },
-    { type: "message" },
-    { type: "message", text: "" },
-    { type: "message", text: "   " },
-    { type: "message", text: "\n\t" },
-    { type: "message", text: "x".repeat(201) },
-    { type: "message", text: 42 },
-    { type: "message", text: "Hi", durationSec: 2 },
-    { type: "message", text: "Hi", durationSec: 121 },
-    { type: "message", text: "Hi", durationSec: 10.5 },
-    { type: "message", text: "Hi", extra: true },
-    { type: "pause", episodeId: "show.e1" },
-    { type: "next", deltaMs: 1000 },
-    { type: "rewind" },
-    { type: "PAUSE" },
-    {},
+    { type: "play" }, { type: "stop", episodeId: "show.e1" }, { type: "seek" }, { type: "seek", deltaMs: 30_000, positionMs: 10_000 },
+    { type: "seek", deltaMs: 3_600_001 }, { type: "seek", deltaMs: -3_600_001 }, { type: "seek", deltaMs: 1.5 }, { type: "seek", positionMs: -1 },
+    { type: "seek", positionMs: "10" }, { type: "message" }, { type: "message", text: "" }, { type: "message", text: "   " },
+    { type: "message", text: "\n\t" }, { type: "message", text: "x".repeat(201) }, { type: "message", text: 42 },
+    { type: "message", text: "Hi", durationSec: 2 }, { type: "message", text: "Hi", durationSec: 121 },
+    { type: "message", text: "Hi", durationSec: 10.5 }, { type: "message", text: "Hi", extra: true }, { type: "pause", episodeId: "show.e1" },
+    { type: "next", deltaMs: 1000 }, { type: "rewind" }, { type: "PAUSE" }, {},
   ];
   for (const body of bad) {
     const r = await send(body);
@@ -246,9 +222,7 @@ test("diagnostics: the probe reaches upstreams through the server's fetch", asyn
   const { ms, ...probe } = d.json.sources[0].probe;
   assert.equal(typeof ms, "number");
   assert.deepEqual(probe, {
-    ok: true,
-    status: 200,
-    contentType: "application/vnd.apple.mpegurl",
+    ok: true, status: 200, contentType: "application/vnd.apple.mpegurl",
     playlist: { master: true, variants: 1, renditions: 0, segments: 0, endList: false },
   });
   assert.deepEqual(asked, [["https://media.example.test/tr-dub/master.m3u8", {}]], "no Range for a playlist, no upstream headers");
@@ -301,13 +275,8 @@ test("catalog reload on SIGHUP: bumps every TV like the route; a reload that thr
 test("catalog builds: the baseline, then each reload's changes newest first; one build by id; unknown build", async (t) => {
   const { s } = await setup(t);
   const baseline = {
-    buildId: "fixture-1",
-    builtAt: "2026-10-10T12:00:00Z",
-    loadedAt: "2026-10-10T12:00:00.000Z",
-    baseline: true,
-    counts: { items: 16, episodes: 20 },
-    added: { items: 0, episodes: 0 },
-    removed: { items: 0, episodes: 0 },
+    buildId: "fixture-1", builtAt: "2026-10-10T12:00:00Z", loadedAt: "2026-10-10T12:00:00.000Z", baseline: true, counts: { items: 16, episodes: 20 },
+    added: { items: 0, episodes: 0 }, removed: { items: 0, episodes: 0 },
   };
   const first = await s.admin("GET", "/catalog");
   assert.deepEqual(first.json.builds, [baseline]);
@@ -322,13 +291,8 @@ test("catalog builds: the baseline, then each reload's changes newest first; one
   assert.deepEqual(reload.json.catalog.builds.map((b: { buildId: string }) => b.buildId), ["fixture-2", "fixture-1"], "the reload answers with the new history");
   const second = await s.admin("GET", "/catalog");
   const build2 = {
-    buildId: "fixture-2",
-    builtAt: "2026-10-10T12:00:00Z",
-    loadedAt: "2026-10-10T13:00:00.000Z",
-    baseline: false,
-    counts: { items: 15, episodes: 19 },
-    added: { items: 0, episodes: 0 },
-    removed: { items: 1, episodes: 1 },
+    buildId: "fixture-2", builtAt: "2026-10-10T12:00:00Z", loadedAt: "2026-10-10T13:00:00.000Z", baseline: false, counts: { items: 15, episodes: 19 },
+    added: { items: 0, episodes: 0 }, removed: { items: 1, episodes: 1 },
   };
   assert.deepEqual(second.json.builds, [build2, baseline]);
   const changes2 = {
@@ -371,15 +335,15 @@ test("catalog builds: the baseline, then each reload's changes newest first; one
   // The list holds the newest builds only; older ones are still readable by id.
   const store = s.srv.ctx.store;
   const empty = { items: { added: [], removed: [] }, episodes: { added: [], removed: [] } };
-  for (let i = 0; i < CATALOG_BUILDS_LISTED; i++) {
+  for (let i = 0; i < 50; i++) {
     store.recordCatalogBuild(
       { catalogId: "fixture", buildId: `old-${i}`, builtAt: "2026-10-01T00:00:00Z", loadedAt: s.clock.now() + 1000 + i, baseline: false, items: 16, episodes: 21, itemsAdded: 0, itemsRemoved: 0, episodesAdded: 0, episodesRemoved: 0 },
       empty,
     );
   }
   const capped = await s.admin("GET", "/catalog");
-  assert.equal(capped.json.builds.length, CATALOG_BUILDS_LISTED);
-  assert.equal(capped.json.builds[0].buildId, `old-${CATALOG_BUILDS_LISTED - 1}`, "newest first");
+  assert.equal(capped.json.builds.length, 50);
+  assert.equal(capped.json.builds[0].buildId, "old-49", "newest first");
   assert.ok(!capped.json.builds.some((b: Json) => b.baseline), "the baseline fell off the list");
   assert.deepEqual(capped.json.changes, empty, "the latest build's changes");
   assert.equal((await s.admin("GET", "/catalog/builds/fixture-1")).status, 200);

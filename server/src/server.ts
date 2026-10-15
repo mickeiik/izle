@@ -14,8 +14,6 @@ import { EventHub, Notifier } from "./events.ts";
 import { CatalogHistory } from "./history.ts";
 import { clientKeyFor, registerMiddleware, type Env } from "./http/middleware.ts";
 import { registerAdmin } from "./http/routes/admin.ts";
-import { registerCompanion } from "./http/routes/companion.ts";
-import { registerProxy } from "./http/routes/proxy.ts";
 import { registerTv } from "./http/routes/tv.ts";
 import { registerStatic } from "./http/static.ts";
 import { createLogger, type Logger } from "./log.ts";
@@ -28,7 +26,7 @@ import { Store } from "./store.ts";
 import { TvService } from "./tv.ts";
 import { VERSION } from "./version.ts";
 
-export interface StartOptions {
+interface StartOptions {
   config: ServerConfig;
   log?: Logger;
   /** Clock override (tests). */
@@ -40,7 +38,7 @@ export interface StartOptions {
   fetch?: typeof fetch;
 }
 
-export interface RunningServer {
+interface RunningServer {
   url: string;
   ctx: AppContext;
   close(): Promise<void>;
@@ -73,40 +71,19 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const events = new EventHub();
   const sessions = new PlaybackSessions(now);
   const problems = new ProblemService({ store, catalog, log, now, sessions });
-  const proxy = new ProxyService({
-    log,
-    now,
-    ttlMs: config.proxy.sessionTtlSec * 1000,
-    alignTsSegments: config.proxy.alignTsSegments,
-    fetch: fetchUpstream,
-    onProblem: (p) => problems.recordProxy(p),
-  });
+  const { sessionTtlSec, alignTsSegments, always: proxyAlways } = config.proxy;
+  const proxy = new ProxyService({ log, now, ttlMs: sessionTtlSec * 1000, alignTsSegments, fetch: fetchUpstream, onProblem: (p) => problems.recordProxy(p) });
   const resolver = new ResolveService({
-    catalog,
-    log,
-    now,
-    proxy,
-    sessions,
-    adapters: resolverModule?.adapters ?? null,
-    proxyAlways: config.proxy.always,
+    catalog, log, now, proxy, sessions, adapters: resolverModule?.adapters ?? null, proxyAlways,
     deadlineMs: config.resolver?.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,
     budgetMs: config.resolver?.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
   });
   const services = { config, store, catalog, events, notifier: new Notifier(store, events), resolver, sessions, problems, log, now };
   const tv = new TvService(services);
   const ctx: AppContext = {
-    ...services,
-    tv,
-    companion: new CompanionService(services),
-    pairing: new PairingService(store, log, now, opts.pairing),
-    proxy,
-    devices: new DeviceService({ ...services, tv, proxy }),
-    commands: new CommandService(services),
-    resolverModule,
-    adminToken,
-    pingMs: opts.pingMs ?? 20_000,
-    fetch: fetchUpstream,
-    adminUiDir: fileURLToPath(new URL("../admin", import.meta.url)),
+    ...services, tv, companion: new CompanionService(services), pairing: new PairingService(store, log, now, opts.pairing), proxy,
+    devices: new DeviceService({ ...services, tv, proxy }), commands: new CommandService(services), resolverModule, adminToken,
+    pingMs: opts.pingMs ?? 20_000, fetch: fetchUpstream, adminUiDir: fileURLToPath(new URL("../admin", import.meta.url)),
   };
 
   // One app with every area's routes, middleware first: access logs name the route template, so no sub-apps.
@@ -114,10 +91,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const clientKey = clientKeyFor(config);
   registerMiddleware(app, ctx, clientKey);
   registerStatic(app, ctx);
-  registerProxy(app, ctx);
   registerTv(app, ctx, clientKey);
   registerAdmin(app, ctx);
-  registerCompanion(app, ctx);
 
   let server: Server;
   try {

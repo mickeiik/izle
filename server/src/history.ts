@@ -3,7 +3,7 @@ import type { Logger } from "./log.ts";
 import type { CatalogBuild, CatalogChanges, SeenEpisode, Store } from "./store.ts";
 
 /** The longest each list in a build's changes gets; the counts on the build stay exact. */
-export const CHANGES_CAP = 500;
+const CHANGES_CAP = 500;
 
 const cap = <T>(list: T[]): T[] => list.slice(0, CHANGES_CAP);
 
@@ -70,15 +70,8 @@ export class CatalogHistory {
       for (const episode of item.episodes) {
         const s = known.get(episode.id);
         if (!s) {
-          added.push({
-            id: episode.id,
-            itemId: item.id,
-            itemTitle: item.title,
-            season: episode.season ?? null,
-            number: episode.number ?? null,
-            label: episode.label ?? null,
-            playbackAllowed: episode.playbackAllowed,
-          });
+          const { season = null, number = null, label = null, playbackAllowed } = episode;
+          added.push({ id: episode.id, itemId: item.id, itemTitle: item.title, season, number, label, playbackAllowed });
           continue;
         }
         // A returning episode keeps its first-seen date: it is not new to anyone who saw it before.
@@ -100,17 +93,10 @@ export class CatalogHistory {
         added: cap(itemsAdded).map((item) => ({ id: item.id, title: item.title, kind: item.kind })),
         removed: cap(itemsRemoved).map((id) => ({ id, title: titleOf(id) })),
       },
-      episodes: {
-        added: cap(added),
-        removed: cap(removed).map((s) => ({ id: s.episodeId, itemId: s.itemId, itemTitle: titleOf(s.itemId) })),
-      },
+      episodes: { added: cap(added), removed: cap(removed).map((s) => ({ id: s.episodeId, itemId: s.itemId, itemTitle: titleOf(s.itemId) })) },
     };
-    const build = buildRow(next, false, {
-      itemsAdded: itemsAdded.length,
-      itemsRemoved: itemsRemoved.length,
-      episodesAdded: added.length,
-      episodesRemoved: removed.length,
-    });
+    const counts = { itemsAdded: itemsAdded.length, itemsRemoved: itemsRemoved.length, episodesAdded: added.length, episodesRemoved: removed.length };
+    const build = buildRow(next, false, counts);
     this.store.recordCatalogBuild(build, changes);
     return build;
   }

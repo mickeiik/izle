@@ -52,8 +52,7 @@ try {
 
   const config = path.join(work, "izle.json");
   await writeFile(config, JSON.stringify({ listen: { host: "127.0.0.1", port: 0 }, dataDir: "./data", trustedProxies: ["127.0.0.1"] }));
-  const child = spawn(bin, ["--config", config], { env, stdio: ["ignore", "pipe", "pipe"] });
-  server = child;
+  const child = (server = spawn(bin, ["--config", config], { env, stdio: ["ignore", "pipe", "pipe"] }));
   /** @type {any[]} */
   const logs = [];
   let stderr = "";
@@ -92,14 +91,11 @@ try {
   check((await call("GET", "/healthz")).json?.ok === true, "GET /healthz");
   const page = await call("GET", "/admin/");
   const csp = page.res.headers.get("content-security-policy") ?? "";
-  check(
-    page.res.status === 200 && page.text.includes("app.js") && /script-src 'self'/.test(csp) && /media-src 'self'/.test(csp),
-    "the admin page is served with its CSP (same-origin scripts and media)",
-  );
+  const pageOk = page.res.status === 200 && page.text.includes("app.js") && /script-src 'self'/.test(csp) && /media-src 'self'/.test(csp);
+  check(pageOk, "the admin page is served with its CSP (same-origin scripts and media)");
   // Every module of the page (the packaging script copies the directory's top-level files) and the vendored hls.js:
   // one that is missing from the package or the allow-list would only show as a blank page.
-  const adminFiles = (await readdir(path.join(ROOT, "server", "admin"))).filter((n) => /\.(js|css|svg)$/.test(n)).sort();
-  adminFiles.push("vendor/hls.min.js");
+  const adminFiles = [...(await readdir(path.join(ROOT, "server", "admin"))).filter((n) => /\.(js|css|svg)$/.test(n)).sort(), "vendor/hls.min.js"];
   const unserved = [];
   for (const name of adminFiles) if ((await call("GET", `/admin/${name}`)).res.status !== 200) unserved.push(`not served: ${name}`);
   check(adminFiles.includes("app.js"), `the admin page's ${adminFiles.length} files, hls.js included, are served`, unserved);
@@ -141,10 +137,8 @@ try {
   const copy = new DatabaseSync(backupFile);
   const copied = copy.prepare("SELECT item_id FROM home_entries ORDER BY position").all().map((r) => r.item_id).join();
   copy.close();
-  check(
-    backup.startsWith(`backup written to ${backupFile} (`) && ((await stat(backupFile)).mode & 0o777) === 0o600 && copied === "caminandes,sintel",
-    "izle-server backup copies the running server's database (mode 0600, with the home list)",
-  );
+  const backupOk = backup.startsWith(`backup written to ${backupFile} (`) && ((await stat(backupFile)).mode & 0o777) === 0o600 && copied === "caminandes,sintel";
+  check(backupOk, "izle-server backup copies the running server's database (mode 0600, with the home list)");
 
   const before = logs.length;
   child.kill("SIGHUP");

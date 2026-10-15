@@ -6,7 +6,7 @@ import type { CatalogItem, Episode, Source } from "@izle/contract";
 import type { CatalogService, EpisodeRef } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
 
-export type LookupStatus = 400 | 403 | 404;
+type LookupStatus = 400 | 403 | 404;
 
 export function requireItem(catalog: CatalogService, itemId: string, status: LookupStatus, code: string): CatalogItem {
   const item = catalog.item(itemId);

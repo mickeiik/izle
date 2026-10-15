@@ -1,13 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clientAddress, compileTrustedProxies, normalizeIp } from "../src/clientip.ts";
-
-test("normalizeIp unwraps IPv4-mapped IPv6 addresses only", () => {
-  assert.equal(normalizeIp("::ffff:192.0.2.1"), "192.0.2.1");
-  assert.equal(normalizeIp("::FFFF:10.0.0.7"), "10.0.0.7");
-  assert.equal(normalizeIp("2001:db8::1"), "2001:db8::1");
-  assert.equal(normalizeIp("192.0.2.1"), "192.0.2.1");
-});
+import { clientAddress, compileTrustedProxies } from "../src/clientip.ts";
 
 test("compileTrustedProxies accepts addresses and CIDR ranges and names the first bad entry", () => {
   const { list, invalid } = compileTrustedProxies(["127.0.0.1", "::1", "172.16.0.0/12", "fd00::/8", "::ffff:10.1.1.1"]);
@@ -25,8 +18,10 @@ test("compileTrustedProxies accepts addresses and CIDR ranges and names the firs
 
 test("clientAddress walks X-Forwarded-For from the right through trusted proxies only", () => {
   const trusted = compileTrustedProxies(["127.0.0.1", "10.0.0.0/8"]).list;
-  // No trust configured: the header is ignored.
+  // No trust configured: the header is ignored. IPv4-mapped IPv6 addresses are unwrapped, and only those.
   assert.equal(clientAddress("127.0.0.1", "203.0.113.9", null), "127.0.0.1");
+  assert.equal(clientAddress("::FFFF:10.0.0.7", undefined, null), "10.0.0.7");
+  assert.equal(clientAddress("2001:db8::1", undefined, null), "2001:db8::1");
   // Direct client (not a proxy): its own header is ignored.
   assert.equal(clientAddress("198.51.100.4", "203.0.113.9", trusted), "198.51.100.4");
   // Through the local proxy.

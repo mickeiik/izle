@@ -20,8 +20,8 @@ import type { Device } from "../store.ts";
 export type Env = { Variables: { device: Device } };
 
 /** Failed admin authentications allowed per client address and window before the address is locked out. */
-export const ADMIN_AUTH_MAX_FAILURES = 10;
-export const ADMIN_AUTH_WINDOW_MS = 10 * 60_000;
+const ADMIN_AUTH_MAX_FAILURES = 10;
+const ADMIN_AUTH_WINDOW_MS = 10 * 60_000;
 const API_BODY_LIMIT = 64 * 1024;
 
 /** The address a request is counted under (pair/start, admin sign-ins): `X-Forwarded-For` only from trusted proxies. */
