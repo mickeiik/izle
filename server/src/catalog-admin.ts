@@ -29,18 +29,10 @@ export function catalogInfo(ctx: Pick<AppContext, "catalog" | "store" | "resolve
   // What the last real update brought: the baseline has no changes by definition.
   const latest = builds.find((b) => !b.baseline);
   return {
-    id: cur.manifest.catalogId,
-    buildId: cur.manifest.buildId,
-    builtAt: cur.manifest.builtAt,
-    name: cur.manifest.name,
-    loadedAt: iso(cur.loadedAt),
-    stats: cur.stats,
-    adapters: cur.manifest.adapters,
-    warnings: cur.warnings.map((w) => ({ file: w.file, path: w.path, message: w.message })),
-    resolver: resolverModule ? { sha256: resolverModule.sha256, adapters: [...resolverModule.adapters.keys()] } : null,
-    server: { version: VERSION },
-    builds: builds.map(buildJson),
-    changes: latest ? (store.getCatalogBuild(latest.catalogId, latest.buildId)?.changes ?? null) : null,
+    id: cur.manifest.catalogId, buildId: cur.manifest.buildId, builtAt: cur.manifest.builtAt, name: cur.manifest.name, loadedAt: iso(cur.loadedAt),
+    stats: cur.stats, adapters: cur.manifest.adapters, warnings: cur.warnings.map((w) => ({ file: w.file, path: w.path, message: w.message })),
+    resolver: resolverModule ? { sha256: resolverModule.sha256, adapters: [...resolverModule.adapters.keys()] } : null, server: { version: VERSION },
+    builds: builds.map(buildJson), changes: latest ? (store.getCatalogBuild(latest.catalogId, latest.buildId)?.changes ?? null) : null,
   };
 }
 

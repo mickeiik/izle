@@ -109,10 +109,8 @@ export class TvService {
       home.push({ item: itemCard(this.s.catalog, item), continue: cont, newEpisodes: this.newEpisodesFor(device.id, item, addedAt) });
     }
     return {
-      version: device.stateVersion,
-      device: { id: device.id, name: device.name, ...this.settings(device) },
-      catalog: { id: manifest.catalogId, buildId: manifest.buildId, name: manifest.name },
-      home,
+      version: device.stateVersion, device: { id: device.id, name: device.name, ...this.settings(device) },
+      catalog: { id: manifest.catalogId, buildId: manifest.buildId, name: manifest.name }, home,
     };
   }
 
@@ -168,16 +166,11 @@ export class TvService {
     this.s.store.setNowPlaying(device.id, { ...row, state: "starting", updatedAt: this.s.now(), playing: false, anchorAt: this.s.now() });
     this.nowWaiters.wake(device.id);
     return {
-      sessionId: r.session.id,
-      sourceId: r.source.id,
-      media: r.media,
+      sessionId: r.session.id, sourceId: r.source.id, media: r.media,
       subtitleTracks: r.subtitleTracks.map((t) => ({ url: t.url, language: t.language, format: t.format, label: t.label ?? null })),
-      languages: r.languages,
-      alternatives: r.alternatives,
-      next: next ? { episodeId: next.id, ...episodeSummary(next) } : null,
+      languages: r.languages, alternatives: r.alternatives, next: next ? { episodeId: next.id, ...episodeSummary(next) } : null,
       item: itemCard(this.s.catalog, item),
-      episode: { id: episode.id, index, count: item.episodes.length, ...episodeSummary(episode), durationMs: episode.durationMs ?? null },
-      resume,
+      episode: { id: episode.id, index, count: item.episodes.length, ...episodeSummary(episode), durationMs: episode.durationMs ?? null }, resume,
       expiresAt: r.expiresAt,
     };
   }

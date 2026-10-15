@@ -26,11 +26,8 @@ export const approveBody = ajv.compile<{ code: string; name?: string }>(object({
 
 export const devicePatchBody = ajv.compile<DevicePatch>({
   ...object({
-    name: NAME,
-    uiLanguage: { anyOf: [{ enum: ["tr", "en"] }, NULL] },
-    preferredAudioLanguage: LANGUAGE_TAG_OR_NULL,
-    subtitlesLanguage: LANGUAGE_TAG_OR_NULL,
-    autoplayOnStart: BOOLEAN,
+    name: NAME, uiLanguage: { anyOf: [{ enum: ["tr", "en"] }, NULL] }, preferredAudioLanguage: LANGUAGE_TAG_OR_NULL,
+    subtitlesLanguage: LANGUAGE_TAG_OR_NULL, autoplayOnStart: BOOLEAN,
   }),
   minProperties: 1,
 });

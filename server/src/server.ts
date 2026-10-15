@@ -81,18 +81,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const services = { config, store, catalog, events, notifier: new Notifier(store, events), resolver, sessions, problems, log, now };
   const tv = new TvService(services);
   const ctx: AppContext = {
-    ...services,
-    tv,
-    companion: new CompanionService(services),
-    pairing: new PairingService(store, log, now, opts.pairing),
-    proxy,
-    devices: new DeviceService({ ...services, tv, proxy }),
-    commands: new CommandService(services),
-    resolverModule,
-    adminToken,
-    pingMs: opts.pingMs ?? 20_000,
-    fetch: fetchUpstream,
-    adminUiDir: fileURLToPath(new URL("../admin", import.meta.url)),
+    ...services, tv, companion: new CompanionService(services), pairing: new PairingService(store, log, now, opts.pairing), proxy,
+    devices: new DeviceService({ ...services, tv, proxy }), commands: new CommandService(services), resolverModule, adminToken,
+    pingMs: opts.pingMs ?? 20_000, fetch: fetchUpstream, adminUiDir: fileURLToPath(new URL("../admin", import.meta.url)),
   };
 
   // One app with every area's routes, middleware first: access logs name the route template, so no sub-apps.

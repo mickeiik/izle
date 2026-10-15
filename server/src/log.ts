@@ -111,10 +111,7 @@ export function createLogger(
     write(JSON.stringify(line));
   };
   return {
-    debug: (m, f) => emit("debug", m, f),
-    info: (m, f) => emit("info", m, f),
-    warn: (m, f) => emit("warn", m, f),
-    error: (m, f) => emit("error", m, f),
-    child: (fields) => createLogger(opts, { ...bound, ...fields }),
+    debug: (m, f) => emit("debug", m, f), info: (m, f) => emit("info", m, f), warn: (m, f) => emit("warn", m, f),
+    error: (m, f) => emit("error", m, f), child: (fields) => createLogger(opts, { ...bound, ...fields }),
   };
 }

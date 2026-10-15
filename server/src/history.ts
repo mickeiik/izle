@@ -93,10 +93,7 @@ export class CatalogHistory {
         added: cap(itemsAdded).map((item) => ({ id: item.id, title: item.title, kind: item.kind })),
         removed: cap(itemsRemoved).map((id) => ({ id, title: titleOf(id) })),
       },
-      episodes: {
-        added: cap(added),
-        removed: cap(removed).map((s) => ({ id: s.episodeId, itemId: s.itemId, itemTitle: titleOf(s.itemId) })),
-      },
+      episodes: { added: cap(added), removed: cap(removed).map((s) => ({ id: s.episodeId, itemId: s.itemId, itemTitle: titleOf(s.itemId) })) },
     };
     const counts = { itemsAdded: itemsAdded.length, itemsRemoved: itemsRemoved.length, episodesAdded: added.length, episodesRemoved: removed.length };
     const build = buildRow(next, false, counts);

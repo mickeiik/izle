@@ -212,12 +212,8 @@ export class ResolveService {
     if (unavailable) return { ok: false, tried: unavailable, results: null, ms: 0 };
     // A source's stream from what resolved it (its own media, or an adapter's result), the source filling gaps.
     const stream = (r: ResolveResult): UpstreamStream => ({
-      media: r.media,
-      headers: r.headers ?? {},
-      languages: r.languages ?? source.languages,
-      subtitleTracks: r.subtitleTracks ?? source.subtitleTracks ?? [],
-      label: r.label ?? source.label ?? null,
-      expiresAt: r.expiresAt ?? null,
+      media: r.media, headers: r.headers ?? {}, languages: r.languages ?? source.languages,
+      subtitleTracks: r.subtitleTracks ?? source.subtitleTracks ?? [], label: r.label ?? source.label ?? null, expiresAt: r.expiresAt ?? null,
     });
     if (source.type === "direct") {
       const { kind, url, headers } = source.media;
@@ -272,9 +268,7 @@ export class ResolveService {
     return {
       media: { kind: m.kind, url },
       subtitleTracks: s.subtitleTracks.map((t, i) => ({
-        url: proxySubtitles[i] ? subtitlePath(token!, i, t.format) : t.url,
-        language: t.language,
-        format: t.format,
+        url: proxySubtitles[i] ? subtitlePath(token!, i, t.format) : t.url, language: t.language, format: t.format,
         ...(t.label !== undefined ? { label: t.label } : {}),
       })),
       delivery: proxyMain ? "proxy" : "direct",

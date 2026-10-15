@@ -50,15 +50,9 @@ function hostOf(url: string): string | null {
 function summarize(r: ResolveResult | UpstreamStream, proxyAlways: boolean) {
   const plan = deliveryPlan(r, proxyAlways);
   return {
-    kind: r.media.kind,
-    inline: "playlist" in r.media,
-    host: hostOf("playlist" in r.media ? r.media.baseUrl : r.media.url),
-    headerNames: Object.keys(r.headers ?? {}).sort(),
-    delivery: !plan.servable ? "unsupported" : plan.proxyMain ? "proxy" : "direct",
-    languages: r.languages ?? null,
-    subtitleTracks: r.subtitleTracks?.length ?? 0,
-    label: r.label ?? null,
-    expiresAt: r.expiresAt ?? null,
+    kind: r.media.kind, inline: "playlist" in r.media, host: hostOf("playlist" in r.media ? r.media.baseUrl : r.media.url),
+    headerNames: Object.keys(r.headers ?? {}).sort(), delivery: !plan.servable ? "unsupported" : plan.proxyMain ? "proxy" : "direct",
+    languages: r.languages ?? null, subtitleTracks: r.subtitleTracks?.length ?? 0, label: r.label ?? null, expiresAt: r.expiresAt ?? null,
   };
 }
 

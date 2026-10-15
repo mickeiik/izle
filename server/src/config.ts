@@ -42,10 +42,7 @@ export const LANGUAGE_TAG_PATTERN = "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$";
 
 /** A JSON Schema object with these properties (the `required` ones too) and no others. */
 export const objectSchema = (properties: object, required: string[] = []) => ({
-  type: "object",
-  ...(required.length > 0 ? { required } : {}),
-  properties,
-  additionalProperties: false,
+  type: "object", ...(required.length > 0 ? { required } : {}), properties, additionalProperties: false,
 });
 
 const NULL = { type: "null" };

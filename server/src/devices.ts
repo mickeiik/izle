@@ -20,16 +20,10 @@ export class DeviceService {
   /** A device as the admin API shows it: status, settings (stored and effective) and recent problems. */
   view(d: Device) {
     return {
-      id: d.id,
-      name: d.name,
-      status: d.tokenHash ? "active" : "pending",
-      online: this.s.events.isOnline(d.id),
-      createdAt: iso(d.createdAt),
-      lastSeenAt: iso(d.lastSeenAt),
-      stateVersion: d.stateVersion,
+      id: d.id, name: d.name, status: d.tokenHash ? "active" : "pending", online: this.s.events.isOnline(d.id), createdAt: iso(d.createdAt),
+      lastSeenAt: iso(d.lastSeenAt), stateVersion: d.stateVersion,
       settings: { uiLanguage: d.uiLanguage, preferredAudioLanguage: d.preferredAudioLanguage, subtitlesLanguage: d.subtitlesLanguage, autoplayOnStart: d.autoplayOnStart },
-      effective: this.s.tv.settings(d),
-      problems: this.s.problems.stats(d.id),
+      effective: this.s.tv.settings(d), problems: this.s.problems.stats(d.id),
     };
   }
 
