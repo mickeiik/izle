@@ -45,7 +45,7 @@ updates:
         patterns: ["*"]
         update-types: [minor, patch]
 
-  # The Dockerfile's tags carry only the major (`node:24-slim`), so every update is a major one with its own PR.
+  # No group: the Dockerfile's tags carry only the major (`node:24-slim`), so every update is a major one.
   - package-ecosystem: docker
     directory: /
     schedule:
@@ -54,7 +54,3 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: Deps
-    groups:
-      docker-minor-patch:
-        patterns: ["*"]
-        update-types: [minor, patch]
