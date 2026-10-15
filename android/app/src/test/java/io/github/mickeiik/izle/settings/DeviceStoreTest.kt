@@ -45,18 +45,8 @@ class DeviceStoreTest {
         assertEquals("{}", store.cachedState())
 
         store.setServer("http://192.168.1.10:8787/")
-        val s = store.current()
-        assertFalse(s.isPaired)
-        assertNull(store.cachedState())
-    }
-
-    @Test
-    fun forgettingThePairingKeepsTheServer() = runBlocking {
-        store.setServer("http://10.0.2.2:8787/")
-        store.savePairing("abcdefabcdef", "token")
-        store.forgetPairing()
-        assertEquals("http://10.0.2.2:8787/", store.current().serverUrl)
         assertFalse(store.current().isPaired)
+        assertNull(store.cachedState())
     }
 
     @Test
@@ -72,6 +62,7 @@ class DeviceStoreTest {
         assertEquals("the same server keeps it", "sintel", store.current().lastPlayedItemId)
         store.forgetPairing()
         assertNull(store.current().lastPlayedItemId)
+        assertEquals("forgetting the pairing keeps the server", "http://10.0.2.2:8787/", store.current().serverUrl)
 
         store.setLastPlayedItem("tears")
         store.setServer("http://192.168.1.10:8787/")

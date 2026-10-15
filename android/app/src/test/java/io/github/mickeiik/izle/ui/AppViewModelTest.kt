@@ -55,29 +55,20 @@ class AppViewModelTest {
     /** Server-sent events for the open `/tv/events` stream. */
     private val events = LinkedBlockingQueue<String>()
 
-    @Volatile
-    private var closing = false
-
-    @Volatile
-    private var home = listOf("a", "b", "c")
-
-    @Volatile
-    private var version = 1L
-
-    @Volatile
-    private var autoplayOnStart = false
+    @Volatile private var closing = false
+    @Volatile private var home = listOf("a", "b", "c")
+    @Volatile private var version = 1L
+    @Volatile private var autoplayOnStart = false
 
     /** `/tv/state` (and `/tv/events`) answer this status when it is not 200. */
-    @Volatile
-    private var stateCode = 200
+    @Volatile private var stateCode = 200
 
     /** Scripted answers to `pair/start` and `pair/wait`; when empty, a fresh code and `pending`. */
     private val pairStarts = ConcurrentLinkedQueue<MockResponse>()
     private val pairWaits = ConcurrentLinkedQueue<MockResponse>()
 
     /** `pair/start` drops the connection (an unreachable server) while set. */
-    @Volatile
-    private var pairStartDown = false
+    @Volatile private var pairStartDown = false
 
     private var commandId = 0L
 
@@ -90,10 +81,8 @@ class AppViewModelTest {
                 return when {
                     path == "/api/v1/tv/state" -> if (stateCode == 200) json(200, stateJson()) else json(stateCode, """{"error":"down"}""")
                     path == "/api/v1/tv/events" -> if (stateCode == 200) eventStream() else json(stateCode, """{"error":"down"}""")
-                    path == "/api/v1/pair/start" -> when {
-                        pairStartDown -> dropped()
-                        else -> pairStarts.poll() ?: json(200, """{"code":"999999","pairToken":"pt-9"}""")
-                    }
+                    path == "/api/v1/pair/start" ->
+                        if (pairStartDown) dropped() else pairStarts.poll() ?: json(200, """{"code":"999999","pairToken":"pt-9"}""")
                     path == "/api/v1/pair/wait" -> pairWaits.poll() ?: run {
                         Thread.sleep(20) // a long poll, shortened
                         json(200, """{"status":"pending"}""")

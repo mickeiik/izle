@@ -88,16 +88,10 @@ class RobolectricOffline(
 tasks.withType<Test>().configureEach {
     jvmArgumentProviders.add(RobolectricOffline(robolectricSdk))
     // On Java 17+ Robolectric needs these JDK internals opened (https://robolectric.org/getting-started/).
+    val opened = listOf("java.lang", "java.util", "java.io", "java.net", "java.security", "java.text", "jdk.internal.access")
     jvmArgs(
-        "--add-opens=java.base/java.lang=ALL-UNNAMED",
-        "--add-opens=java.base/java.util=ALL-UNNAMED",
-        "--add-opens=java.base/java.io=ALL-UNNAMED",
-        "--add-opens=java.base/java.net=ALL-UNNAMED",
-        "--add-opens=java.base/java.security=ALL-UNNAMED",
-        "--add-opens=java.base/java.text=ALL-UNNAMED",
-        "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",
-        "--add-opens=java.desktop/java.awt.font=ALL-UNNAMED",
-        "--add-opens=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED",
+        opened.map { "--add-opens=java.base/$it=ALL-UNNAMED" } +
+            listOf("--add-opens=java.desktop/java.awt.font=ALL-UNNAMED", "--add-opens=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED"),
     )
 }
 
