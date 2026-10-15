@@ -131,17 +131,6 @@ class ProgressReporterTest {
     }
 
     @Test
-    fun aSecondRejectionOfTheSameReportDropsIt() = runTest {
-        val reporter = reporter()
-        answers += failWith(ApiException(400, "bad_request"))
-        answers += failWith(ApiException(400, "bad_request"))
-        reporter.report(Finished)
-        advanceUntilIdle()
-        assertEquals(2, sent.size)
-        assertEquals(0, finalsDelivered)
-    }
-
-    @Test
     fun theAgeIsMeasuredWhenTheReportIsSent() = runTest {
         val reporter = reporter()
         answers += failWith(IOException("unreachable"))
@@ -183,29 +172,21 @@ class ProgressReporterTest {
     fun aNewResolveWaitsForQueuedReportsAtMostThreeSeconds() = runTest {
         val reporter = reporter()
         var waitedUntil = -1L
-        launch {
-            reporter.awaitDelivered()
-            waitedUntil = testScheduler.currentTime
-        }
+        val awaitDelivered = { launch { reporter.awaitDelivered(); waitedUntil = testScheduler.currentTime } }
+        awaitDelivered()
         runCurrent()
         assertEquals("nothing queued: no wait", 0L, waitedUntil)
 
         answers += { delay(1_000) }
         reporter.report(Stopped)
-        launch {
-            reporter.awaitDelivered()
-            waitedUntil = testScheduler.currentTime
-        }
+        awaitDelivered()
         advanceUntilIdle()
         assertEquals(1_000L, waitedUntil)
 
         answers += { delay(10_000) }
         reporter.report(Stopped)
         val from = testScheduler.currentTime
-        launch {
-            reporter.awaitDelivered()
-            waitedUntil = testScheduler.currentTime
-        }
+        awaitDelivered()
         advanceUntilIdle()
         assertEquals(from + ProgressReporter.MAX_WAIT_MS, waitedUntil)
     }

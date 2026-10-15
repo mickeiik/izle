@@ -67,7 +67,6 @@ class ProgressReporter(
         val final = q.report.status.isFinal
         val attempts = if (final) FINAL_REPORT_ATTEMPTS else 1
         var attempt = 0
-        var retriedWithoutAnchor = false
         while (attempt < attempts) {
             if (attempt > 0) delay(RETRY_STEP_MS * attempt)
             val report = stamp(q)
@@ -78,10 +77,10 @@ class ProgressReporter(
             } catch (e: IOException) {
                 attempt++ // retried for final reports
             } catch (e: ApiException) {
-                if (e.status == 400 && !retriedWithoutAnchor && (report.playing != null || report.ageMs != null)) {
-                    // A server from before "Listen along" rejects the anchor fields: resend without them, from now on.
+                if (e.status == 400 && (report.playing != null || report.ageMs != null)) {
+                    // A server from before "Listen along" rejects the anchor fields: resend without them, from now on
+                    // (a second 400 then finds none and drops the report).
                     legacyProgress = true
-                    retriedWithoutAnchor = true
                     continue
                 }
                 if (e.status < 500) return // unknown episode after a catalog change: nothing to save
