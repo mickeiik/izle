@@ -34,11 +34,10 @@ const outDir = path.resolve(args.out ?? at("dist"));
 
 const rootPackage = await readJson(at("package.json"));
 const serverPackage = await readJson(at("server", "package.json"));
-const version = serverPackage.version;
+const { version } = serverPackage;
 const nodeRange = rootPackage.engines.node;
-const minNode = /^>=(\d+)\.(\d+)$/.exec(nodeRange);
-if (!minNode) throw new Error(`unexpected engines.node "${nodeRange}" in package.json`);
-const [, major, minor] = minNode;
+const [, major, minor] = /^>=(\d+)\.(\d+)$/.exec(nodeRange) ?? [];
+if (!minor) throw new Error(`unexpected engines.node "${nodeRange}" in package.json`);
 
 const stage = path.join(await mkdtemp(path.join(tmpdir(), "izle-pack-")), "package");
 const to = (/** @type {string[]} */ ...p) => path.join(stage, ...p);
@@ -47,16 +46,10 @@ await mkdir(stage, { recursive: true });
 const result = await build({
   entryPoints: [at("server", "src", "cli.ts")],
   outfile: to("server", "dist", "izle-server.js"),
-  bundle: true,
-  platform: "node",
-  format: "esm",
-  target: `node${major}.${minor}`,
+  bundle: true, platform: "node", format: "esm", target: `node${major}.${minor}`, charset: "utf8", metafile: true, logLevel: "warning",
   // CommonJS dependencies (ajv) may require() Node built-ins; ES module output has no `require` of its own.
   banner: { js: 'import { createRequire as __izleCreateRequire } from "node:module";\nconst require = __izleCreateRequire(import.meta.url);' },
   legalComments: "none", // the notices are collected in THIRD_PARTY_LICENSES.md
-  charset: "utf8",
-  metafile: true,
-  logLevel: "warning",
 });
 
 /** Copies the files of `from` (not recursing) that `keep` accepts into `into`. */
@@ -120,17 +113,11 @@ await writeFile(
     `The admin page (\`server/admin/\`) vendors the following files; see \`server/admin/vendor/README.md\`.\n\n${vendored.join("\n\n")}\n`,
 );
 
+const { name, description, license } = serverPackage;
 const manifest = {
-  name: serverPackage.name,
-  version,
-  private: true, // never published to a registry; installed from the release tarball
-  description: serverPackage.description,
-  license: serverPackage.license,
-  repository: rootPackage.repository,
-  type: "module",
-  engines: { node: nodeRange },
-  bin: { "izle-server": "bin/izle-server.js" },
-  files: ["bin", "server", "sample-catalog", "deploy", "THIRD_PARTY_LICENSES.md"],
+  name, version, private: true, // never published to a registry; installed from the release tarball
+  description, license, repository: rootPackage.repository, type: "module", engines: { node: nodeRange },
+  bin: { "izle-server": "bin/izle-server.js" }, files: ["bin", "server", "sample-catalog", "deploy", "THIRD_PARTY_LICENSES.md"],
 };
 await writeFile(to("package.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
@@ -159,9 +146,8 @@ sample catalog's media and posters in [sample-catalog/NOTICE.md](sample-catalog/
 );
 
 await mkdir(outDir, { recursive: true });
-const [packed] = JSON.parse(
-  execFileSync("npm", ["pack", "--json", "--pack-destination", outDir], { cwd: stage, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] }),
-);
+const npmPack = execFileSync("npm", ["pack", "--json", "--pack-destination", outDir], { cwd: stage, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
+const [packed] = JSON.parse(npmPack);
 const tarball = path.join(outDir, packed.filename);
 const digest = createHash("sha256").update(await readFile(tarball)).digest("hex");
 const kib = (/** @type {number} */ n) => `${Math.round(n / 1024)} KiB`;
