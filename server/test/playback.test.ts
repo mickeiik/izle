@@ -51,7 +51,7 @@ test("cursor: without appended episodes, or with an ordinary cursor, the rules a
 test("cursor after a report: finished moves on (wrapping after the last), anything else stays; changes", () => {
   const at = (episodeId: string, wrapped = false) => ({ episodeId, wrapped });
   assert.deepEqual(cursorAfterReport(show, 0, "finished", at("show.e1")), { episodeId: "show.e2", wrapped: false, changed: true });
-  assert.deepEqual(cursorAfterReport(show, 1, "finished", at("show.e2")), { episodeId: "show.e4", wrapped: false, changed: true }, "the disallowed e3 is skipped; autoAdvance:false does not stop the cursor");
+  assert.deepEqual(cursorAfterReport(show, 1, "finished", at("show.e2")), { episodeId: "show.e4", wrapped: false, changed: true }, "e3 skipped; autoAdvance:false does not matter");
   assert.deepEqual(cursorAfterReport(show, 4, "finished", at("show.e5")), { episodeId: "show.e1", wrapped: true, changed: true }, "after the last: wrapped to the first");
   assert.deepEqual(cursorAfterReport(show, 3, "finished", null), { episodeId: "show.e5", wrapped: false, changed: true });
   assert.deepEqual(cursorAfterReport(show, 0, "playing", at("show.e1")), { episodeId: "show.e1", wrapped: false, changed: false }, "a heartbeat changes nothing");

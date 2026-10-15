@@ -37,34 +37,18 @@ export function fixtureItems(): Json {
   return {
     items: [
       {
-        id: "show",
-        kind: "series",
-        title: "Şov Dünyası",
-        originalTitle: "Show World",
-        poster: `assets/${TINY_PNG_NAME}`,
+        id: "show", kind: "series", title: "Şov Dünyası", originalTitle: "Show World", poster: `assets/${TINY_PNG_NAME}`,
         episodes: [
           {
-            id: "show.e1",
-            season: 1,
-            number: 1,
-            title: "Pilot",
-            durationMs: 1_200_000,
-            playbackAllowed: true,
+            id: "show.e1", season: 1, number: 1, title: "Pilot", durationMs: 1_200_000, playbackAllowed: true,
             sources: [direct("unknown", null), direct("en-orig", ["en"]), direct("tr-dub", ["tr"]), direct("multi", ["tr-TR", "en"])],
           },
-          {
-            id: "show.e2", season: 1, number: 2, title: "Season finale", playbackAllowed: true, autoAdvance: false, sources: [direct("main", ["tr"])],
-          },
+          { id: "show.e2", season: 1, number: 2, title: "Season finale", playbackAllowed: true, autoAdvance: false, sources: [direct("main", ["tr"])] },
           { id: "show.e3", season: 2, number: 1, playbackAllowed: false, sources: [] },
           {
-            id: "show.e4",
-            season: 2,
-            number: 2,
-            playbackAllowed: true,
+            id: "show.e4", season: 2, number: 2, playbackAllowed: true,
             sources: [
-              direct("needs-proxy", ["tr"], {
-                media: { kind: "hls", url: "https://media.example.test/needs-proxy.m3u8", headers: { Referer: "https://site.example.test/" } },
-              }),
+              direct("needs-proxy", ["tr"], { media: { kind: "hls", url: "https://media.example.test/needs-proxy.m3u8", headers: { Referer: "https://site.example.test/" } } }),
               { id: "via-adapter", type: "adapter", adapter: "example", ref: { secret: "ref-value" }, languages: lang(null, null) },
               direct("plain", ["tr"]),
             ],
@@ -73,20 +57,11 @@ export function fixtureItems(): Json {
         ],
       },
       {
-        id: "film",
-        kind: "movie",
-        title: "Film",
-        year: 1999,
-        poster: `assets/${TINY_PNG_NAME}`,
+        id: "film", kind: "movie", title: "Film", year: 1999, poster: `assets/${TINY_PNG_NAME}`,
         episodes: [
           {
-            id: "film.main",
-            durationMs: 5_400_000,
-            playbackAllowed: true,
-            sources: [
-              direct("a", ["en"], { subtitleTracks: [{ url: "https://media.example.test/a/tr.vtt", language: "tr", format: "vtt" }] }),
-              direct("b", ["de"]),
-            ],
+            id: "film.main", durationMs: 5_400_000, playbackAllowed: true,
+            sources: [direct("a", ["en"], { subtitleTracks: [{ url: "https://media.example.test/a/tr.vtt", language: "tr", format: "vtt" }] }), direct("b", ["de"])],
           },
         ],
       },
@@ -161,20 +136,16 @@ export interface TestServerOptions extends Partial<Omit<Parameters<typeof startS
 }
 
 export async function startTestServer(opts: TestServerOptions = {}): Promise<TestServer> {
+  const { bundleDir: givenBundle, configFile, ...startOptions } = opts;
   const root = await tempDir();
-  const bundleDir = opts.bundleDir ?? (await writeBundle(path.join(root, "bundle")));
+  const bundleDir = givenBundle ?? (await writeBundle(path.join(root, "bundle")));
   const configPath = path.join(root, "izle.json");
-  await writeFile(
-    configPath,
-    JSON.stringify({ listen: { host: "127.0.0.1", port: 0 }, dataDir: "./data", catalog: { dir: bundleDir }, ...opts.configFile }),
-  );
+  await writeFile(configPath, JSON.stringify({ listen: { host: "127.0.0.1", port: 0 }, dataDir: "./data", catalog: { dir: bundleDir }, ...configFile }));
   const config = loadConfig({ path: configPath, env: { IZLE_ADMIN_TOKEN: ADMIN_TOKEN } });
   const logs: string[] = [];
   const clock = fakeClock();
-  const srv = await startServer({
-    config, log: opts.log ?? createLogger({ level: "debug", write: (l) => void logs.push(l), now: clock.now }), now: opts.now ?? clock.now,
-    pingMs: opts.pingMs ?? 20_000, pairing: opts.pairing, fetch: opts.fetch,
-  });
+  const log = createLogger({ level: "debug", write: (l) => void logs.push(l), now: clock.now });
+  const srv = await startServer({ config, log, now: clock.now, ...startOptions });
   const base = srv.url;
 
   const call: TestServer["call"] = async (method, route, o = {}) => {

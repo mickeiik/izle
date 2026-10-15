@@ -11,8 +11,8 @@ function capture() {
 
 test("secret-looking keys are dropped whatever their casing", () => {
   const keys = (list: string[]) => Object.fromEntries(list.map((k) => [k, 1]));
-  const secret = ["url", "baseUrl", "posterURL", "headers", "Authorization", "set-cookie", "cookie", "deviceToken", "pair_token", "ref", "config", "resolverConfig", "playlist", "password", "body"];
-  assert.deepEqual(redact(keys(secret)), {});
+  const secret = ["url", "baseUrl", "posterURL", "headers", "Authorization", "set-cookie", "cookie", "deviceToken", "pair_token", "ref", "config"];
+  assert.deepEqual(redact(keys([...secret, "resolverConfig", "playlist", "password", "body"])), {});
   const plain = keys(["preferredAudioLanguage", "itemId", "episodeId", "status", "route", "ms", "referenceCount"]);
   assert.equal(Object.keys(redact(plain) as object).length, Object.keys(plain).length, "none dropped (long keys are scrubbed, not dropped)");
 });
