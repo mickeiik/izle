@@ -30,6 +30,10 @@ updates:
       gradle-minor-patch:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      # The framework jar must be the one the robolectric version names (libs.versions.toml): bumped by hand with it.
+      - dependency-name: "org.robolectric:android-all-instrumented"
+        update-types: ["version-update:semver-major"]
 
   # Actions are pinned by commit SHA with the release as a comment (`@<sha> # vX.Y.Z`); Dependabot updates both.
   - package-ecosystem: github-actions
