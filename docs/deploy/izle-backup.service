@@ -1,9 +1,5 @@
-# A copy of the izle database while the server keeps running, started daily by izle-backup.timer; setup in
-# docs/deploy/self-hosting.md (Updates and backups). Copies go to /var/lib/izle/backups/izle-YYYY-MM-DD.db (mode
-# 0600); copies older than 30 days are deleted. Copy that directory off the machine with your usual backup tool.
-#   sudo install -m 0644 izle-backup.service izle-backup.timer /etc/systemd/system/
-#   sudo systemctl daemon-reload && sudo systemctl enable --now izle-backup.timer
-#   sudo systemctl start izle-backup      # one backup now
+# Copies the izle database to /var/lib/izle/backups/izle-YYYY-MM-DD.db (mode 0600) while the server keeps running and
+# deletes copies older than 30 days; started daily by izle-backup.timer. Setup: docs/deploy/self-hosting.md (§10).
 
 [Unit]
 Description=izle database backup

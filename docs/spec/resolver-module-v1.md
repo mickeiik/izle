@@ -7,14 +7,14 @@ runnable example (module, a local stand-in upstream and a catalog) is in
 [`server/examples/resolver-example/`](../../server/examples/resolver-example/README.md).
 
 A resolver module is a small ES module, written and trusted by the owner, that turns the opaque `ref` of an
-`adapter` source in a [catalog bundle](catalog-bundle-v1.md) into a playable stream at play time. It exists for
-catalogs whose streams cannot be written into a bundle: signed and expiring URLs, playlists that need a
-`Referer`, upstreams that return playlist text instead of a URL.
+`adapter` source in a [catalog bundle](catalog-bundle-v1.md) into a playable stream at play time, for streams that
+cannot be written into a bundle: signed and expiring URLs, playlists that need a `Referer`, upstreams that return
+playlist text instead of a URL.
 
 ## Loading
 
 The server configuration names the module by a **local path** (`resolver.module`) plus a free-form
-`resolver.config` object. The server never downloads or installs modules. At startup it:
+`resolver.config` object; the server never downloads or installs modules. At startup it:
 
 1. imports the module with `await import(pathToFileURL(absolutePath).href)` and logs its SHA-256 (the first 16
    hex digits; the admin API and `check-resolver` show all of it);
@@ -24,14 +24,13 @@ The server configuration names the module by a **local path** (`resolver.module`
 4. checks that every id in the bundle manifest's `adapters` is provided, and refuses to start otherwise. A catalog
    reload that names an adapter the module does not provide is refused the same way (the previous catalog stays).
 
-Any failure stops the server with a message naming the module file and the error's class name — never the
-error's message. Without a configured module the server still starts; `adapter` sources are then unavailable.
-
+Any failure stops the server with a message naming the module file and the error's class name, never the error's
+message. Without a configured module the server still starts; `adapter` sources are then unavailable.
 `izle-server check-resolver [--config <file>]` performs the same steps, checks the configured catalog, and runs
 every adapter's `healthcheck` (15 s each); it exits with status 1 on any problem.
 
-The module is written in JavaScript (ES module). izle-server itself runs TypeScript through `tsx` in
-development, so a `.ts` module may load there, but deployments should point at plain `.js`.
+The module is JavaScript. In development izle-server runs TypeScript through `tsx`, so a `.ts` module may load
+there, but deployments should point at plain `.js`.
 
 ```ts
 export const RESOLVER_API_VERSION = 1;
@@ -66,14 +65,14 @@ export interface ResolveRequest {
 
 `resolve` returns candidates in preference order. The server uses the **first result it can serve** (see below) and
 ignores the rest; to fall back between distinct streams, list them as separate sources in the bundle, so the TV
-can exclude a failing one. An empty array means "nothing playable right now". Throwing (or rejecting) means
-failure; the server records only the adapter id, a code (`timeout`, `abort`, `error`, or `empty` for an empty
-array) and the error's `name`, **never its message**, because messages often contain URLs. A source whose adapter
-failed is moved behind the episode's other sources for 10 minutes, like a source the TV reported as failing.
+can exclude a failing one. An empty array means "nothing playable right now"; throwing (or rejecting) means
+failure. The server records only the adapter id, a code (`timeout`, `abort`, `error`, or `empty` for an empty
+array) and the error's `name`, **never its message**, which often contains URLs. A source whose adapter failed is
+moved behind the episode's other sources for 10 minutes, like a source the TV reported as failing.
 
-An adapter may be asked for the **same episode a second time while the TV is playing it**: the owner's phone
-resolves another source (or the same one) for "Listen along". Results must therefore be reproducible and side
-effects idempotent; a site that counts plays or rate-limits per title is the owner's concern.
+An adapter may be asked for the **same episode a second time while the TV is playing it** (the owner's phone
+resolves another source, or the same one, for "Listen along"), so results must be reproducible and side effects
+idempotent; a site that counts plays or rate-limits per title is the owner's concern.
 
 ## ResolveResult
 
@@ -107,17 +106,18 @@ Results are validated against `resolve-result.v1.schema.json`; an invalid result
 
 ## Execution model
 
-- Each `resolve` runs under `AbortSignal.any([requestSignal, AbortSignal.timeout(deadlineMs)])`; the default
-  deadline is 12 s per source (`resolver.deadlineMs`) within a 30 s budget per TV request (`resolver.budgetMs`).
+- Each `resolve` runs under `AbortSignal.any([requestSignal, deadline])`, the deadline being an ordinary timer of
+  `deadlineMs`: 12 s per source by default (`resolver.deadlineMs`) within a 30 s budget per TV request
+  (`resolver.budgetMs`).
   A call that ignores the signal is abandoned when its deadline passes (code `timeout`); sources left when the
   budget is used up are reported as `timeout` with the name `BudgetExhausted`. Synchronous throws are caught.
   `req.ref` is a copy: changing it does not change the catalog.
 - Direct bundle sources never reach adapters.
-- The module is in-process, owner-trusted code. There is no sandbox beyond deadlines and result validation.
-  Modules MUST honour `signal`, SHOULD avoid long synchronous work, and MUST NOT log URLs, headers or tokens
-  except through `ctx.log` (which redacts them).
-- Modules MUST NOT contain source-specific logic in izle itself: izle stays generic, the module lives with the
-  owner's catalog, out of tree.
+- The module is in-process, owner-trusted code, with no sandbox beyond deadlines and result validation. Modules
+  MUST honour `signal`, SHOULD avoid long synchronous work, and MUST NOT log URLs, headers or tokens except through
+  `ctx.log` (which redacts them).
+- Source-specific logic MUST NOT go into izle itself: izle stays generic, the module lives with the owner's catalog,
+  out of tree.
 
 ## Versioning
 

@@ -2,105 +2,103 @@
 
 What changed between izle releases, for the people who run it: the server package, the TV app and the admin page.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The server, the TV app and the
-contract share one version number. How to update (back up, update the server, then the TVs) is in the
+contract share one version number. How to update (back up, update the server, then the TVs):
 [self-hosting guide](docs/deploy/self-hosting.md#10-updates-and-backups).
 
 ## [Unreleased]
 
 ### Added
 
-- **Next and previous episode from the remote:** while playing, CH+/CH− and the media next/previous keys switch
-  episodes.
-- **Autoplay when the TV starts** (per TV, off by default): the show watched last, or else the first tile, starts
-  after a 10-second countdown.
-- **Problem reports.** The TV reports playback, resolve and network problems, and the server records its own resolve
-  and proxy failures. The admin page shows a TV's recent problems on its page and a warning in the TV list.
+- **Next and previous episode from the remote:** CH+/CH− and the media next/previous keys switch episodes while
+  playing.
+- **Autoplay when the TV starts** (per TV, off by default): the show watched last, else the first tile, starts after
+  a 10-second countdown.
+- **Problem reports:** the TV reports playback, resolve and network problems, the server records its own resolve
+  and proxy failures; the admin page shows them on the TV's page and a warning in the TV list.
 - **More remote control from the admin page:** pause, resume, seek, next and previous episode, and a message shown
   on the TV.
-- **`izle-server backup <file>`** writes a consistent copy of the database while the service runs; the self-hosting
-  guide's backup section uses it.
-- **New episodes on the TV's home tiles.** When a catalog reload adds episodes to a show on a TV's home screen, its
-  tile shows how many ("2 new") at the top of the poster until the TV plays any episode of the show. The count
-  starts when the TV last played the show, or when the show was put on that TV's home screen. The TV's admin page
-  shows the same count; in the API it is `newEpisodes` on each home entry.
-- **OK resumes a finished show at its first new episode:** when a show was watched to the end and a later catalog
-  adds episodes to it, OK plays the first new playable one instead of starting the show over.
+- **`izle-server backup <file>`** writes a consistent copy of the database while the service runs (used by the
+  self-hosting guide's backups).
+- **New episodes on the TV's home tiles:** when a catalog reload adds episodes to a show on a TV's home screen, its
+  tile shows how many ("2 new") until the TV plays any episode of the show, counting from when the TV last played
+  the show or the show was put on that home screen. Also on the TV's admin page, and `newEpisodes` in the API.
+- **OK resumes a finished show at its first new episode** (the first new playable one a later catalog added)
+  instead of starting it over.
 - **Catalog build history:** the server records every catalog build it loads, with the shows and episodes it added
-  and removed, and when each episode first appeared; the first load of a catalog is the starting point (nothing in
-  it counts as new). The admin page's Catalog tab lists the builds and what each one changed (new episodes by show,
-  new shows, removed shows and episodes). In the API, `GET /api/v1/admin/catalog` lists the builds (newest first, up
-  to 50) with the latest build's changes, and `GET /api/v1/admin/catalog/builds/<buildId>` returns any one of them.
-- **Self-hosting guide: publishing catalog builds.** A versioned catalog layout (one directory per build and a
-  `current` symlink on the active one) that makes publishing and rolling back a build one atomic swap and a reload,
-  and how to let a job on the host publish builds through the admin API, without sudo. The guide also says plainly
-  that `systemctl reload izle` re-reads the catalog only: a new resolver module needs `systemctl restart izle`.
-- **Pairing from the server's shell:** `izle-server pair pending` lists the codes waiting for approval and
-  `izle-server pair approve <code> [name]` approves one.
-- **Sign-in link for a phone:** `izle-server admin-token --link` prints a sign-in link for the admin page and the
-  same link as a QR code to scan. The guide also shows how to use a passphrase of 24 characters or more as the
-  admin token.
+  and removed and when each episode first appeared; the first load of a catalog is the baseline (nothing in it is
+  new). The admin page's Catalog tab lists the builds and their changes (new episodes by show, new shows, removed
+  shows and episodes); in the API, `GET /api/v1/admin/catalog` lists them (newest first, up to 50) with the latest
+  build's changes, and `GET /api/v1/admin/catalog/builds/<buildId>` returns any one.
+- **Self-hosting guide: publishing catalog builds:** one directory per build and a `current` symlink, so publishing
+  or rolling back is one atomic swap and a reload; a job on the host can publish through the admin API without sudo.
+  The guide also says that `systemctl reload izle` re-reads the catalog only: a new resolver module needs
+  `systemctl restart izle`.
+- **Pairing from the server's shell:** `izle-server pair pending` lists the waiting codes, `izle-server pair approve
+  <code> [name]` approves one.
+- **Sign-in link for a phone:** `izle-server admin-token --link` prints a sign-in link for the admin page and its QR
+  code. The guide shows how to use a passphrase of 24 characters or more as the admin token.
 - Compose UI tests for the TV's senior-path rules (development only).
 - Repository: this changelog, a [security policy](SECURITY.md) with private vulnerability reporting, GitHub Actions
   pinned by commit SHA and Dependabot version updates. The TV app had its first run on a real Android TV box.
 
 ### Changed
 
-- **Approving a TV no longer needs a name.** Without one it is called "TV" (then "TV 2", "TV 3", …) and can be
-  renamed later; `POST /api/v1/admin/pair/approve` answers with the name it gave.
+- **Approving a TV no longer needs a name:** it is called "TV" (then "TV 2", "TV 3", …) and can be renamed later;
+  `POST /api/v1/admin/pair/approve` answers with the name it gave.
 - **The TV's pairing screen shows the admin page's address**, where the code is approved, instead of the bare
-  server address. While no TV is waiting, the admin page shows the address to type on the TV.
-- **Failed admin sign-ins are throttled** per client address: 10 per 10 minutes. Behind a reverse proxy, set
-  `trustedProxies` so that each client is counted on its own.
+  server address; while no TV is waiting, the admin page shows the address to type on the TV.
+- **Failed admin sign-ins are throttled** per client address (10 per 10 minutes); behind a reverse proxy, set
+  `trustedProxies` so that each client counts on its own.
 - **Streams with an expiry time are refreshed a minute before they expire** instead of running into the expired
   link during playback.
-- **The admin page has a new look**: clearer buttons (one main action per card, red outlines on Stop, Remove,
-  Clear and Forget, a visible busy state that also stops a double click from sending twice), stronger borders and
-  contrast in light and dark mode, and a header that fits on a phone. Screen readers get named buttons per show,
-  labelled progress bars and announced search results.
+- **The admin page has a new look:** one main action per card, red outlines on Stop, Remove, Clear and Forget, a
+  visible busy state that also stops a double click from sending twice, stronger borders and contrast in light and
+  dark mode, a header that fits on a phone; for screen readers, named buttons per show, labelled progress bars and
+  announced search results.
 - **A TV's admin page has a section bar** under its name (Now playing, Home screen, Settings, Listen along, History,
   Problems) that stays in view while you scroll. "Now playing" shows its state as a badge, with Stop next to the
-  remote control. **"Add shows" searches as you type**; with nothing typed it shows a hint and a "Show all" button
+  remote control. **"Add shows" searches as you type**, and with nothing typed shows a hint and a "Show all" button
   instead of the whole catalog. The history and problems sections are called History and Problems; a film's page
   lists its sources without an "Episodes" heading.
-- **The TV's look.** One set of colours, margins and shapes on every screen, and nothing that matters in the outer
-  5 % of the picture, which many TVs crop. Buttons share one style: the focused one is white with a white border,
-  so it is always clear which one OK presses. In the hidden menu the focused row has the same white border instead
-  of a grey fill, and the panel no longer reaches into the screen's edge.
-- **Countdown bars on the TV's Up next, autoplay and "Can't play right now" screens**, and "Can't play right now"
-  now says when it goes back Home ("Home in 30 s"). The three screens and "The end" share one layout with the
-  show's poster always in the same place; "The end" shows the poster and the show's title.
-- **The owner's message no longer covers the clock or the tiles on the TV's Home screen.** It sits at the top,
-  beside the clock, and the tiles move down while it shows; a long one gets the full width under the clock, so all
-  200 characters fit. Over the video it still runs across the top.
-- **The TV's Home screen:** the chip saying what OK plays reads clearly on dark posters too, the new-episodes count is
+- **The TV's look:** one set of colours, margins and shapes on every screen, nothing that matters in the outer 5 %
+  of the picture (which many TVs crop), and one button style where the focused one is white with a white border. In
+  the hidden menu the focused row has the same white border instead of a grey fill, and the panel no longer reaches
+  into the screen's edge.
+- **Countdown bars on Up next, autoplay and "Can't play right now"**, which now says when it goes back Home ("Home in
+  30 s"). These three and "The end" share one layout with the show's poster always in the same place; "The end"
+  shows the poster and the show's title.
+- **The owner's message no longer covers the clock or the tiles on Home:** it sits at the top beside the clock and
+  the tiles move down; a long one gets the full width under the clock, so all 200 characters fit. Over the video it
+  still runs across the top.
+- **The TV's Home screen:** the chip saying what OK plays reads clearly on dark posters, the new-episodes count is
   shorter ("2 new"), "No connection" is a solid red chip, a further row of shows fades out at the bottom edge and
   comes up whole, title included, when the viewer moves down to it, and the hint says just "OK: Play" (Back does
   nothing on Home).
 
 ### Fixed
 
-- **The admin page no longer loses your place**: refreshing a TV's page or the TV list keeps the keyboard focus
-  where it was, also while you reorder the home screen with ▲ and ▼, and a half-typed name or message stays.
-- **The admin page stops refreshing a page you left**, also when you left it before it finished loading; the page of
-  a TV that no longer exists no longer sends you to the TV list after you already went elsewhere.
-- **When the server cannot be reached**, the admin page says so with a Retry button instead of showing "Loading…"
-  for ever, and a page that was open says "Not updated since …" until the server answers again. A show page no
-  longer says "This show is not in the catalog" when the server was only unreachable.
-- **The clock follows the TV's own 12/24-hour convention** when the TV has no explicit setting; it used to follow the
-  menu language (an English menu on a French TV showed "2:54 PM").
-- **Channel keys no longer leave izle.** Outside the player, CH+/CH− are consumed, so a press cannot throw the viewer
-  into the TV's Live TV app.
-- **A catalog reload that runs into an error no longer ends the server.** When `systemctl reload izle` (SIGHUP)
-  failed after reading the catalog, for example while the server was shutting down, the process ended with an
-  unhandled error; it now logs a warning (`catalog reload failed`).
-- **The TV's clock changes language at once** when the owner switches the menu language while Home shows; it kept
-  "PM" for up to a minute after a switch to Turkish.
+- **The admin page no longer loses your place:** refreshing a TV's page or the TV list keeps the keyboard focus,
+  also while you reorder the home screen with ▲ and ▼, and a half-typed name or message stays.
+- **The admin page stops refreshing a page you left**, also one you left before it finished loading; the page of a
+  TV that no longer exists no longer sends you to the TV list after you went elsewhere.
+- **When the server cannot be reached**, the admin page says so with a Retry button instead of "Loading…" for ever,
+  an open page says "Not updated since …" until the server answers again, and a show page no longer says "This show
+  is not in the catalog".
+- **The clock follows the TV's own 12/24-hour convention** when the TV has no explicit setting, not the menu
+  language (an English menu on a French TV showed "2:54 PM").
+- **Channel keys no longer leave izle:** outside the player, CH+/CH− are consumed instead of opening the TV's Live
+  TV app.
+- **A catalog reload that runs into an error no longer ends the server:** when `systemctl reload izle` (SIGHUP)
+  failed after reading the catalog, for example during shutdown, the process ended with an unhandled error; it now
+  logs a warning (`catalog reload failed`).
+- **The TV's clock changes language at once** when the owner switches the menu language while Home shows (it kept
+  "PM" for up to a minute after a switch to Turkish).
 
 ### Compatibility
 
-- **Database migrations 3 and 4.** The new server migrates the database on its first start, and an older server
-  refuses a migrated database. To go back, install the older package and restore the backup taken before the
-  update ([updates and backups](docs/deploy/self-hosting.md#10-updates-and-backups)).
+- **Database migrations 3 and 4**, applied on the first start; an older server refuses the migrated database. To go
+  back, install the older package and restore the backup taken before the update
+  ([updates and backups](docs/deploy/self-hosting.md#10-updates-and-backups)).
 - Update the server before the TVs. The new remote commands and autoplay need the new TV app; a 0.2.0 app ignores
   commands it does not know.
 
@@ -108,12 +106,11 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Added
 
-- **Listen along.** From the admin page, the owner's phone plays another source of the episode a TV is showing (a
-  dub in another language, or another audio language of the same stream) in sync with the picture, for listening
-  on earphones. For releases whose timing differs, an offset and a speed factor are saved per episode and source and
-  can be copied to the show's other episodes; each phone keeps its own small correction. The phone gets the stream
-  through the server's proxy, follows pauses, seeks and episode changes on the TV, and on Android keeps playing with
-  the screen off.
+- **Listen along:** from the admin page, the owner's phone plays another source of the episode a TV is showing (a
+  dub, or another audio language of the same stream) in sync with the picture, for earphones. An offset and a speed
+  factor for releases with different timing are saved per episode and source and can be copied to the show's other
+  episodes; each phone keeps its own small correction. The phone gets the stream through the server's proxy,
+  follows pauses, seeks and episode changes on the TV, and on Android keeps playing with the screen off.
 - Server API, additive: admin routes for Listen along, a long-poll on `GET /api/v1/admin/devices/:id/now` (`seq`,
   `wait`), and `playing`/`ageMs` on TV progress reports
   ([server API § Listen along](docs/spec/server-api-v1.md#listen-along)).
@@ -126,10 +123,10 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Compatibility
 
-- **Update the server before the TVs.** A 0.2.0 TV sends progress fields that a 0.1.0 server rejects; the app then
+- **Update the server before the TVs:** a 0.1.0 server rejects progress fields a 0.2.0 TV sends; the app then
   resends without them, but the first report after each start is lost.
-- **Database migration 2.** A 0.1.0 server refuses a database that 0.2.0 has migrated; to go back, restore the
-  backup taken before the update.
+- **Database migration 2:** a 0.1.0 server refuses a database 0.2.0 has migrated; to go back, restore the backup
+  taken before the update.
 
 ## [0.1.0] - 2026-10-10
 
@@ -137,41 +134,39 @@ The first release: everything needed to run izle at home with your own catalog.
 
 ### Added
 
-- **izle-server**, one dependency-free package (`izle-server-X.Y.Z.tgz`) that serves a catalog bundle from a local
+- **izle-server**, one dependency-free package (`izle-server-X.Y.Z.tgz`) serving a catalog bundle from a local
   directory (the bundled sample catalog by default): pairing with 6-digit codes, each TV's home list, progress and
-  "continue from", play order, menu, audio and subtitle languages, play and stop commands, and live updates to the
-  TVs. State lives in SQLite. The log is JSON lines and never contains stream URLs, upstream headers or tokens.
-  Commands: `admin-token` (`--rotate`), `validate-catalog`, `check-resolver`, `--version`; SIGHUP reloads the
-  catalog.
-- **The Android TV app**: one home screen of big poster tiles. OK plays the next unwatched episode or resumes the one
-  in progress, episodes advance on their own after a 10-second "Up next", and Back always returns to the home
-  screen. A failing source falls back to the next one, an expired stream link is resolved again, and every error ends
-  on the home screen by itself. While the server is unreachable, the tiles stay with a "No connection" notice. A
-  hidden menu (Menu key or hold OK) has episodes, start over, audio and subtitle tracks, settings and about. English
-  and Turkish.
+  "continue from", play order, menu, audio and subtitle languages, play and stop commands, live updates to the TVs.
+  State in SQLite; a JSON-lines log that never contains stream URLs, upstream headers or tokens. Commands:
+  `admin-token` (`--rotate`), `validate-catalog`, `check-resolver`, `--version`; SIGHUP reloads the catalog.
+- **The Android TV app**, English and Turkish: one home screen of big poster tiles; OK plays the next unwatched
+  episode or resumes the one in progress, episodes advance on their own after a 10-second "Up next", Back always
+  returns home. A failing source falls back to the next one, an expired stream link is resolved again, and every
+  error ends on the home screen by itself; while the server is unreachable the tiles stay with a "No connection"
+  notice. A hidden menu (Menu key or hold OK) has episodes, start over, audio and subtitle tracks, settings, about.
 - **The admin page** at `/admin/`, signed in with the admin token: approve pairing codes; per TV, the home list (add,
   order, remove, play), "continue from" an episode, languages, now playing with Stop, recently watched, forget the
   TV; the catalog's facts, "Reload from disk" and a test of every source of an episode. Strict
   Content-Security-Policy, no third-party code, usable on a phone.
 - **Bring your own catalog:** the catalog bundle contract v1 with its JSON Schema and the `izle-validate` checker
-  (`@izle/contract`), and the resolver module API v1 for streams resolved at play time: a module the owner writes,
-  loaded from a local path, with a deadline per call (`resolver.deadlineMs`) and a budget per request
-  (`resolver.budgetMs`), plus a runnable example.
-- **The media proxy** for streams that need upstream request headers or come as playlist text: HLS with rewritten,
-  signed links and MP4 with range requests, so those headers and the upstream URLs never reach the TV;
-  `proxy.always` sends every HLS and MP4 stream through it, and `proxy.alignTsSegments` repairs segments with junk
+  (`@izle/contract`), and the resolver module API v1 for streams resolved at play time (a module the owner writes,
+  loaded from a local path, with a deadline per call, `resolver.deadlineMs`, and a budget per request,
+  `resolver.budgetMs`), plus a runnable example.
+- **The media proxy** for streams that need upstream request headers or come as playlist text (HLS with rewritten,
+  signed links, MP4 with range requests), so those headers and the upstream URLs never reach the TV;
+  `proxy.always` sends every HLS and MP4 stream through it, `proxy.alignTsSegments` repairs segments with junk
   before the first TS packet.
 - **A sample catalog** of six openly licensed titles (Blender Foundation open movies and a public-domain film).
 - **Self-hosting:** a guide, a sandboxed systemd unit, a Caddy example (HTTPS, unbuffered live updates, an optional
-  LAN-only admin page), a Dockerfile, and `trustedProxies` so that the pairing rate limit counts each client behind
-  a reverse proxy.
+  LAN-only admin page), a Dockerfile, and `trustedProxies` so the pairing rate limit counts each client behind a
+  reverse proxy.
 - **Release files:** the server package, the TV app signed with the release key, a debug APK and `SHA256SUMS`.
 
 ### Fixed
 
 - Before the release: resolver adapter deadlines use an ordinary timer, so they also fire on Node 22 when nothing
-  else keeps the process busy. The Node 22 test runs had been cancelled because of it since resolver modules were
-  added; a running server was not affected, since an open request keeps Node busy.
+  else keeps the process busy. Node 22 test runs had been cancelled because of it since resolver modules were added;
+  a running server was not affected, since an open request keeps Node busy.
 
 ### Compatibility
 

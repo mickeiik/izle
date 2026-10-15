@@ -1,7 +1,7 @@
 # Releasing izle
 
 Pushing a git tag `vX.Y.Z` runs [`.github/workflows/release.yml`](../.github/workflows/release.yml), which
-publishes a GitHub release with:
+publishes a GitHub release with these files, installed by owners as in [deploy/self-hosting.md](deploy/self-hosting.md):
 
 | File | What |
 |---|---|
@@ -10,32 +10,21 @@ publishes a GitHub release with:
 | `izle-tv-X.Y.Z-debug.apk` | the debug build, always |
 | `SHA256SUMS` | checksums |
 
-Owners install them as described in [deploy/self-hosting.md](deploy/self-hosting.md).
-
 ## Cutting a release
 
-1. Set the version everywhere: the contract and server packages, the lockfile and the Android `versionName`.
-   The Android `versionCode` is derived from it (`1.2.3` → `10203`), so minor and patch stay below 100.
+1. Set the version everywhere (the contract and server packages, the lockfile and the Android `versionName`). The
+   Android `versionCode` is derived from it (`1.2.3` → `10203`), so minor and patch stay below 100.
    ```bash
    npm run version:set -- 0.2.0
    npm run version:check                 # prints 0.2.0
    ```
 2. In [`CHANGELOG.md`](../CHANGELOG.md), move the entries under `## [Unreleased]` to a new `## [0.2.0] - YYYY-MM-DD`
    heading, leave the Unreleased heading empty above it, and update the compare links at the bottom. Commit both
-   steps together:
-   ```bash
-   git commit -am "Release 0.2.0"
-   git push
-   ```
-3. Wait for CI to pass. Optionally do a dry run of the release workflow (same builds, artifacts attached to the run,
-   no release): `gh workflow run release.yml --ref main`, or Actions → Release → Run workflow.
-4. Tag and push:
-   ```bash
-   git tag -a v0.2.0 -m "izle 0.2.0"
-   git push origin v0.2.0
-   ```
-   The workflow refuses a tag that does not match the versions in the repository. A tag with a suffix
-   (`v0.2.0-rc.1`) becomes a pre-release.
+   steps together: `git commit -am "Release 0.2.0" && git push`.
+3. Wait for CI to pass. Optionally dry-run the release workflow (same builds, artifacts attached to the run, no
+   release): `gh workflow run release.yml --ref main`, or Actions → Release → Run workflow.
+4. Tag and push: `git tag -a v0.2.0 -m "izle 0.2.0" && git push origin v0.2.0`. The workflow refuses a tag that does
+   not match the versions in the repository; a tag with a suffix (`v0.2.0-rc.1`) becomes a pre-release.
 
 To build the same files locally: `npm ci && npm run pack:server && npm run smoke:server` for the server (into
 `dist/`), and `./gradlew :app:assembleDebug :app:assembleRelease` in `android/` for the APKs.
@@ -63,13 +52,13 @@ keyAlias=izle
 keyPassword=…
 ```
 
-Then `./gradlew :app:assembleRelease` writes `app/build/outputs/apk/release/app-release.apk`. Without the file (and
-without the environment variables below) the same task produces `app-release-unsigned.apk`, which Android does
-not install. Check a signature with `$ANDROID_HOME/build-tools/<version>/apksigner verify --print-certs <apk>`.
+Then `./gradlew :app:assembleRelease` writes `app/build/outputs/apk/release/app-release.apk`; without the file (and
+without the environment variables below) it produces `app-release-unsigned.apk`, which Android does not install.
+Check a signature with `$ANDROID_HOME/build-tools/<version>/apksigner verify --print-certs <apk>`.
 
-**Releases from CI** use four repository secrets, which the workflow turns into the `IZLE_SIGNING_STORE_FILE`,
-`IZLE_SIGNING_STORE_PASSWORD`, `IZLE_SIGNING_KEY_ALIAS` and `IZLE_SIGNING_KEY_PASSWORD` variables the Gradle build
-reads (only the release workflow's signing step sees them; pull requests from forks never get secrets):
+**Releases from CI** use four repository secrets, which the workflow's signing step (and nothing else; pull
+requests from forks never get secrets) turns into the `IZLE_SIGNING_STORE_FILE`, `IZLE_SIGNING_STORE_PASSWORD`,
+`IZLE_SIGNING_KEY_ALIAS` and `IZLE_SIGNING_KEY_PASSWORD` variables the Gradle build reads:
 
 ```bash
 base64 -w0 izle-release.jks | gh secret set ANDROID_KEYSTORE_BASE64
@@ -78,17 +67,11 @@ gh secret set ANDROID_KEY_ALIAS
 gh secret set ANDROID_KEY_PASSWORD
 ```
 
-**Moving a TV (or the emulator) from a debug to a release APK** needs an uninstall first, because the keys differ
-(otherwise: `INSTALL_FAILED_UPDATE_INCOMPATIBLE`):
-
-```bash
-adb uninstall io.github.mickeiik.izle
-adb install izle-tv-X.Y.Z.apk
-```
-
-The TV then pairs again as a new TV: set up its home screen and forget the old entry on the admin page. Release
-builds have no minification (R8 is off), start with an empty server address and ignore the debug-only `izle.server`
-launch extra.
+**Moving a TV (or the emulator) from a debug to a release APK** needs `adb uninstall io.github.mickeiik.izle` before
+`adb install izle-tv-X.Y.Z.apk`, because the keys differ (otherwise: `INSTALL_FAILED_UPDATE_INCOMPATIBLE`). The TV
+then pairs again as a new TV: set up its home screen and forget the old entry on the admin page. Release builds have
+no minification (R8 is off), start with an empty server address and ignore the debug-only `izle.server` launch
+extra.
 
 ## Make-public checklist
 
@@ -100,8 +83,7 @@ automated session) goes through this list.
   Expect none: the only known hit, a made-up token the log redaction tests use as a hostile fixture, is marked
   with an inline `gitleaks:allow` and listed in [`.gitleaksignore`](../.gitleaksignore).
 - [ ] **Private names.** Search the history for the names of your private catalogs, their sources, their hosts and
-  your private repositories. Only you know the list:
-  `git log -p --all | grep -n -i -E 'name-one|name-two|private-host'`.
+  your private repositories (only you know the list): `git log -p --all | grep -n -i -E 'name-one|name-two|private-host'`.
 - [ ] **Author identities.** `git log --all --format='%an <%ae>' | sort -u`: every address shown becomes public;
   rewrite them (e.g. to your GitHub `noreply` address) if needed.
 - [ ] **Tracked files.** Nothing like `*.token`, `*.db`, `*.jks`, `keystore.properties` or a local `izle.json`:
@@ -111,10 +93,9 @@ automated session) goes through this list.
   verification screenshots in earlier commits show only sample or generated content.
 - [ ] **If something must go**, rewrite the history (`git filter-repo`) before publishing, and rotate whatever
   leaked anyway.
-- [ ] **Pinned actions.** Every `uses:` in the workflows names a commit SHA, with the release it belongs to as a
-  comment (`actions/checkout@<40-hex SHA> # v7.0.1`). Dependabot's weekly `github-actions` updates
-  ([`.github/dependabot.yml`](../.github/dependabot.yml)) bump the SHA and the comment together, so keep the comment
-  on every pin and pin a new action the same way:
+- [ ] **Pinned actions.** Every `uses:` in the workflows names a commit SHA with its release as a comment
+  (`actions/checkout@<40-hex SHA> # v7.0.1`); Dependabot's weekly `github-actions` updates
+  ([`.github/dependabot.yml`](../.github/dependabot.yml)) bump both together, so pin a new action the same way:
   `grep -h 'uses:' .github/workflows/*.yml | grep -v -E '@[0-9a-f]{40} # v[0-9]'` prints nothing.
 - [ ] **Switch the visibility:** `gh repo edit mickeiik/izle --visibility public --accept-visibility-change-consequences`.
 - [ ] **After publishing**, in the repository's security settings: turn on Dependabot alerts and Dependabot security

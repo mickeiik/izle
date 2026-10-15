@@ -16,7 +16,6 @@ concurrency:
 
 jobs:
   server:
-    name: server package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -40,7 +39,6 @@ jobs:
           if-no-files-found: error
 
   android:
-    name: android APKs
     runs-on: ubuntu-latest
     env:
       # Secrets cannot be tested in `if:` directly; the signed release APK is built only when a key is configured.
@@ -76,7 +74,6 @@ jobs:
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
             cp app/build/outputs/apk/release/app-release.apk "../dist/izle-tv-$version.apk"
           fi
-          ls -l ../dist
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: izle-tv
@@ -84,7 +81,6 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: GitHub release
     needs: [server, android]
     runs-on: ubuntu-latest
     permissions:
@@ -94,13 +90,9 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Checksums
-        working-directory: dist
+      - name: Checksums and release notes
         run: |
-          sha256sum -- * > SHA256SUMS
-          cat SHA256SUMS
-      - name: Release notes
-        run: |
+          (cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
           signed=""
           for apk in dist/izle-tv-*.apk; do
             case "$apk" in *-debug.apk) ;; *) signed=yes ;; esac

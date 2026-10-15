@@ -1,14 +1,14 @@
 # Senior TV experience
 
 How the izle TV app behaves for its viewer: someone who knows classic TV (switch on, pick a channel, it plays)
-and should never need to read small text, browse or configure anything. Everything else is the owner's job,
-done remotely from the browser admin page (`/admin/` on the server) or, on the TV itself, behind a hidden menu.
+and should never need to read small text, browse or configure anything. Everything else is the owner's job, done
+remotely from the admin page (`/admin/` on the server) or, on the TV itself, behind a hidden menu.
 
 ## Principles
 
 1. **Home → OK → plays.** One screen of poster tiles. OK on a tile plays the right episode at the right place:
    the next unwatched episode, or the half-watched one where it was left.
-2. **Back always goes home**, and Back on Home does nothing — the viewer cannot fall out of the app. (The remote's
+2. **Back always goes home**, and Back on Home does nothing: the viewer cannot fall out of the app. (The remote's
    HOME button belongs to the system; when it is pressed the app saves the position and comes back on Home.)
 3. **Every error ends on Home by itself**, after a short, large message. Nothing waits for an answer.
 4. **Nothing small.** No text below 24 sp on the 960×540 dp TV canvas; high contrast; one focused element with a
@@ -23,70 +23,67 @@ done remotely from the browser admin page (`/admin/` on the server) or, on the T
 
 ### Home
 
-- Up to 12 poster tiles (190×285 dp, 2:3) in a 4-column grid inside the 5 % safe margins; one row (≤ 4 shows)
-  fits without scrolling. With more, the next row peeks in under the first and fades out at the bottom edge to show
-  there is more; moving down brings the focused row up to the top, its poster and title fully in view, and the row
-  above leaves the screen completely.
-- The focused tile scales to 110 % with a 4 dp white border; the others are dimmed. Its title sits clear of the
-  grown poster.
-- Under the poster: the title (24 sp bold, up to 2 lines). On the poster, at the bottom: a solid chip saying what
-  OK will do — mint for "New", the warm accent when OK resumes ("Continue", "Continue · Episode 2", with a progress
-  bar under it), light grey otherwise ("Episode 5", "Watch again") — so it reads on dark and bright posters alike.
-  A poster that is missing shows the show's title in its place.
+- Up to 12 poster tiles (190×285 dp, 2:3) in a 4-column grid inside the safe margins; one row (≤ 4 shows) fits
+  without scrolling. With more, the next row peeks in under the first and fades out at the bottom edge; moving down
+  brings the focused row up to the top, poster and title fully in view, and the row above leaves the screen.
+- The focused tile scales to 110 % with a 4 dp white border, its title clear of the grown poster; the others are
+  dimmed.
+- Under the poster: the title (24 sp bold, up to 2 lines). On the poster, at the bottom, a solid chip says what OK
+  will do, readable on dark and bright posters alike: mint for "New", the warm accent when OK resumes ("Continue",
+  "Continue · Episode 2", with a progress bar under it), light grey otherwise ("Episode 5", "Watch again"). A
+  missing poster shows the show's title in its place.
 - When episodes were added to a show since the viewer last watched it (or since it was put on Home), a small dark
   chip at the poster's top right counts them ("2 new", read out as "2 new episodes"; the server's `newEpisodes`).
-  It is quieter than the chip at the bottom and only informs: it takes no focus and never changes what OK plays; it
-  goes away once an episode of the show has been played.
+  Quieter than the bottom chip, it only informs: it takes no focus, never changes what OK plays, and goes away once
+  an episode of the show has been played.
 - Top right: a clock (24-hour or 12-hour following the TV's setting, or the TV's own language when that is unset).
   Bottom: the hint "OK: Play" (Back does nothing on Home, so it is not offered).
 - The tile played last gets the focus back; after a live reorder the focus stays on the same show.
 - No shows: "Nothing here yet" in large type.
 - Server unreachable: the last home screen stays (cached), a solid red "No connection" chip with dark text appears
-  top left, the TV retries every 10 s, and OK shows "No connection · Trying again…" for 5 s instead of trying to
-  play.
-- **Autoplay on start** (per TV, owner setting, off by default): when the app comes to the front on Home — the TV
-  is switched on, the app starts, or the viewer comes back from the launcher — and the first home state fetched
-  from the server in that moment says so, the show played last on this TV if it is on Home (else the first tile) is
-  offered over Home in the same panel as "Up next": its poster, title, what OK on its tile would play ("Episode 2",
+  top left, the TV retries every 10 s, and OK shows "No connection · Trying again…" for 5 s instead of playing.
+- **Autoplay on start** (per TV, owner setting, off by default): when the app comes to the front on Home (the TV is
+  switched on, the app starts, or the viewer comes back from the launcher) and the first home state fetched from the
+  server in that moment says so, the show played last on this TV if it is on Home (else the first tile) is offered
+  over Home in the "Up next" panel: its poster, title, what OK on its tile would play ("Episode 2",
   "Continue · Episode 2"), "Starts in 10 s" over a bar that runs down with it, **Play now** focused and **Not now**
   next to it. At 0 its tile's episode plays under the normal resume rules. OK presses the focused button; Back and
   every other key cancel it, do nothing else and leave the focus on that show. It never appears after in-app steps
   (Back from the player, "The end", the error screen, closing the hidden menu), from the offline cache, or once a
   key was pressed; the hidden menu and the tiles wait while it shows.
-- **Messages from the owner** appear as a banner (30 sp bold, stepping down to 24 sp only for the longest ones,
-  dark on yellow, up to 3 lines) for the time the owner chose, on Home and over the playing video (playback goes
-  on). On Home the banner takes its place in the top band, left of the clock, and covers nothing: the band grows to
-  fit it, the tiles move down while it shows and the hint makes room; a message that does not fit beside the clock
-  in three lines takes the band's full width under the clock. Over the video, and over the hidden menu or the
-  autoplay countdown on Home, it is drawn across the top. The banner takes no focus and has no buttons. Other
-  screens ignore messages.
+- **Messages from the owner** appear as a banner (30 sp bold, stepping down to 24 sp only for the longest ones, dark
+  on yellow, up to 3 lines, no focus, no buttons) for the time the owner chose, on Home and over the playing video
+  (playback goes on); other screens ignore them. On Home the banner sits in the top band, left of the clock, and
+  covers nothing: the band grows to fit it, the tiles move down and the hint makes room; a message that does not fit
+  beside the clock in three lines takes the band's full width under the clock. Over the video, the hidden menu or
+  the autoplay countdown it is drawn across the top.
 
 ### Player
 
-- Video only. Information appears for 4 s after a key press: title, episode, a progress bar and times, on a dark
-  shade that is solid behind the text; a small pause symbol stays in the corner while paused.
+- Video only. For 4 s after a key press: title, episode, a progress bar and times, on a dark shade that is solid
+  behind the text; a small pause symbol stays in the corner while paused.
 - Resolving/buffering before the first frame: black screen with a spinner, the title and the episode.
 - Up next, "The end" and "Can't play right now" (and autoplay on start over Home) share one panel: the show's
-  poster always at the same spot, left of the centre, and beside it the text in a fixed order, then the countdown
-  over a bar that runs down with it, then the buttons. The first button is focused.
-- At the end of an episode with a next one (and auto-advance allowed): **Up next** — poster, "Episode 3",
-  its title and "Starts in 10 s" with its bar; **Play now** is focused, **Home** next to it. The next episode starts
-  by itself.
-- At the end of the last episode (or an auto-advance boundary): "The end" with the show's poster and title for 8 s,
-  then Home. No buttons: nothing on it takes the focus.
+  poster always at the same spot, left of the centre, beside it the text in a fixed order, then the countdown over a
+  bar that runs down with it, then the buttons, the first one focused.
+- End of an episode with a next one (and auto-advance allowed): **Up next** with the poster, "Episode 3", its title
+  and "Starts in 10 s"; **Play now** focused, **Home** next to it; the next episode starts by itself.
+- End of the last episode (or an auto-advance boundary): "The end" with the show's poster and title for 8 s, then
+  Home. No buttons: nothing on it takes the focus.
 - Nothing playable: "Can't play right now" with the poster, "Home in 30 s" counting down over its bar, **Try
   again** focused and **Home**; Home after 30 s.
-- Subtitles (off unless the owner chose a language) are drawn large, white on a dark box, above the bottom edge, and
-  just above the information while it shows.
+- Subtitles (off unless the owner chose a language) are drawn large, white on a dark box, above the bottom edge,
+  and just above the information while it shows.
 - **CH+ / CH−** (and the remote's **|◀◀ / ▶▶|** keys) switch to the next / previous episode of the show, like
-  changing channels (see Episode keys under [Playback rules](#playback-rules)): the new one starts in the same
-  player (its name shows while it loads) under the normal resume rules. At the first or last episode only the
-  information appears. Holding the key steps once.
-- Expiring stream addresses (signed URLs) are renewed in the background ([Stream refresh](#playback-rules)): at
-  most a short spinner while the new stream buffers at the same place, paused or not.
-- The owner can pause, resume, jump (and show the information as if a key had been pressed), switch episodes
-  like CH+/CH−, stop, and show a message, all from the admin page. These act only while video shows; resume,
-  next and previous close the hidden menu if it is open.
+  changing channels (Episode keys under [Playback rules](#playback-rules)): the new one starts in the same player
+  (its name shows while it loads) under the normal resume rules. At the first or last episode only the information
+  appears. Holding the key steps once.
+- Expiring stream addresses (signed URLs) are renewed in the background (Stream refresh under
+  [Playback rules](#playback-rules)): at most a short spinner while the new stream buffers at the same place, paused
+  or not.
+- From the admin page the owner can pause, resume, jump (which shows the information as if a key had been pressed),
+  switch episodes like CH+/CH−, stop, and show a message. These act only while video shows; resume, next and
+  previous close the hidden menu if it is open.
 
 ### Hidden menu
 
@@ -110,8 +107,9 @@ and closes it.
    debug builds; Connect checks `/healthz`. Debug builds also accept
    `adb shell am start -n io.github.mickeiik.izle/.MainActivity --es izle.server <url>` to skip typing.
 2. **Pairing code**: "Pair this TV", the admin page's address to open on a phone, the 6-digit code in 96 sp,
-   "Waiting for approval…". The owner approves it from the admin side; the TV long-polls, then shows Home. Expired codes are replaced on their own; Back returns
-   to the address screen. If the owner later deletes the TV, it shows a new pairing code by itself.
+   "Waiting for approval…". The owner approves it from the admin side; the TV long-polls, then shows Home. Expired
+   codes are replaced on their own; Back returns to the address screen. If the owner later deletes the TV, it shows
+   a new pairing code by itself.
 
 ## Remote key map
 

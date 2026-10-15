@@ -1,7 +1,6 @@
-# izle behind Caddy: HTTPS with an automatic certificate, everything proxied to izle-server on 127.0.0.1:8787.
-# Replace izle.example.org with your domain; its DNS must point at this host and ports 80 and 443 must be open.
-# Do not turn on Caddy's access log for this site: request paths carry media proxy session tokens and pairing codes.
-# Do not add `encode` either: it would buffer the TVs' live event stream.
+# izle behind Caddy (HTTPS, automatic certificate); replace izle.example.org with your domain. Why each line is here:
+# docs/deploy/self-hosting.md (§6). No access log (request paths carry media proxy tokens and pairing codes) and no
+# `encode` (it would buffer the TVs' live event stream).
 
 izle.example.org {
 	header Strict-Transport-Security "max-age=31536000"

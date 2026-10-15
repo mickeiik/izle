@@ -29,17 +29,12 @@ Out of scope:
 - the demo CDNs and hosts that the sample catalog links to;
 - owners' private catalogs and resolver modules: the server runs a resolver module as trusted code in its own
   process;
-- deployments that ignore the [self-hosting guide](docs/deploy/self-hosting.md), such as port 8787 open to the
-  internet without TLS;
+- deployments that ignore the [self-hosting guide](docs/deploy/self-hosting.md) (HTTPS through a reverse proxy, the
+  admin page and API limited to private addresses by the Caddyfile's optional block, the systemd unit's sandbox,
+  `trustedProxies` so that rate limits see the real client), such as port 8787 open to the internet without TLS;
 - denial of service by a device that already holds a valid token.
 
 ## What to expect
 
 An acknowledgement within a week. A confirmed vulnerability is fixed in a normal release, listed in the changelog,
 and credited to you in the report and the release notes if you want.
-
-## Hardening
-
-The [self-hosting guide](docs/deploy/self-hosting.md) describes the expected setup: HTTPS through a reverse proxy,
-the admin page and admin API limited to private address ranges (the Caddyfile's optional block), the systemd unit's
-sandbox, and `trustedProxies` so that rate limits see the real client behind a proxy.
