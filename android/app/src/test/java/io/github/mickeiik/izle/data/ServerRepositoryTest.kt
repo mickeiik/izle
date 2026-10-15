@@ -47,11 +47,8 @@ class ServerRepositoryTest {
     private lateinit var store: DeviceStore
     private val paths = CopyOnWriteArrayList<String>()
 
-    @Volatile
-    private var stateCode = 200
-
-    @Volatile
-    private var eventsBody = ""
+    @Volatile private var stateCode = 200
+    @Volatile private var eventsBody = ""
 
     @Before
     fun setUp() {

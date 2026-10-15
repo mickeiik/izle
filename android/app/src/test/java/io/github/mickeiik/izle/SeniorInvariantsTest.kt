@@ -69,19 +69,14 @@ class SeniorInvariantsTest {
     private val requests = CopyOnWriteArrayList<RecordedRequest>()
 
     /** The home list the server hands out (show ids) and its state version. */
-    @Volatile
-    private var home = listOf("a", "b", "c")
-
-    @Volatile
-    private var version = 1L
+    @Volatile private var home = listOf("a", "b", "c")
+    @Volatile private var version = 1L
 
     /** Home entries that are not the default unstarted film ("Show X" playing `x.film`), by show id: the whole object. */
-    @Volatile
-    private var entries = emptyMap<String, String>()
+    @Volatile private var entries = emptyMap<String, String>()
 
     /** An owner's message (shown for 5 s) that the event stream hands out once, on the TV's next connection. */
-    @Volatile
-    private var message: String? = null
+    @Volatile private var message: String? = null
 
     @Before
     fun setUp() {
@@ -426,11 +421,9 @@ class SeniorInvariantsTest {
     }
 
     /** Gives a request the app should not send the time to arrive anyway. */
-    private fun settle() {
-        repeat(20) {
-            compose.waitForIdle()
-            Thread.sleep(10)
-        }
+    private fun settle() = repeat(20) {
+        compose.waitForIdle()
+        Thread.sleep(10)
     }
 
     private fun json(code: Int, body: String) =
