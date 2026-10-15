@@ -110,6 +110,8 @@ jobs:
             echo "- \`izle-tv-<version>-debug.apk\`: debug build for trying izle and for the emulator. It is signed with a"
             echo "  throwaway key, so a later APK cannot be installed over it: uninstall it first (the TV pairs again)."
             echo "- \`SHA256SUMS\`: checksums of the files above."
+            echo
+            echo "What izle is, with screenshots: https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/"
           } > notes.md
           cat notes.md
       - name: Publish the release
