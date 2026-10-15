@@ -120,33 +120,13 @@ object IzleBorders {
     fun outline(shape: Shape) = Border(BorderStroke(OutlineWidth, IzleColors.Outline), shape = shape)
 }
 
-// Material's defaults for tv-material components that are not styled explicitly: white focus, never the lavender
-// greys of the stock dark scheme.
+// What tv-material reads from the scheme here (every other colour of its components is set explicitly): `primary` for
+// the address field's text selection, `surface`/`onSurface`/`surfaceTint` for the poster tiles' cards.
 private val ColorScheme = darkColorScheme(
     primary = IzleColors.Focus,
-    onPrimary = IzleColors.OnFocus,
-    primaryContainer = IzleColors.SurfaceHigh,
-    onPrimaryContainer = IzleColors.OnSurface,
-    inversePrimary = IzleColors.OnFocus,
-    secondary = IzleColors.Accent,
-    onSecondary = IzleColors.OnAccent,
-    secondaryContainer = IzleColors.SurfaceHigh,
-    onSecondaryContainer = IzleColors.OnSurface,
-    tertiary = IzleColors.New,
-    onTertiary = IzleColors.OnNew,
-    background = IzleColors.Background,
-    onBackground = IzleColors.OnSurface,
     surface = IzleColors.Surface,
     onSurface = IzleColors.OnSurface,
-    surfaceVariant = IzleColors.SurfaceHigh,
-    onSurfaceVariant = IzleColors.Dim,
     surfaceTint = IzleColors.Surface,
-    inverseSurface = IzleColors.Focus,
-    inverseOnSurface = IzleColors.OnFocus,
-    error = IzleColors.Error,
-    border = IzleColors.Outline,
-    borderVariant = IzleColors.Hairline,
-    scrim = IzleColors.Scrim,
 )
 
 private fun style(size: Int, weight: FontWeight = FontWeight.Normal, lineHeight: Int = size + 8) =
