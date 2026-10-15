@@ -5,13 +5,10 @@ Status: **stable** (format version 1). Normative. The machine-readable form is t
 [`contract/src/bundle.ts`](../../contract/src/bundle.ts). The key words MUST, MUST NOT, SHOULD and MAY are used
 as in RFC 2119.
 
-A catalog bundle is how an owner hands their catalog to izle-server. It is **data only**: no code, no
-credentials. Anything needed to turn a catalog reference into a playable stream at play time (signed URLs,
-cookies, scraping) belongs in a [resolver module](resolver-module-v1.md), not in the bundle.
-
-## Layout
-
-A bundle is a directory:
+A catalog bundle is how an owner hands their catalog to izle-server: a directory, read from a local path only (the
+server never downloads one), holding **data only**, no code and no credentials. Anything needed to turn a catalog
+reference into a playable stream at play time (signed URLs, cookies, scraping) belongs in a
+[resolver module](resolver-module-v1.md).
 
 ```
 <bundle>/
@@ -19,8 +16,6 @@ A bundle is a directory:
 ├── items.json         all items
 └── assets/            posters, content-addressed: <sha256-of-content>.<jpg|png|webp>
 ```
-
-The server reads bundles from a local path only. It never downloads a bundle.
 
 ## bundle.json
 
@@ -83,28 +78,23 @@ Common fields:
 | `languages` | LanguageFacts | yes | What the stream is known to contain. |
 | `subtitleTracks` | SubtitleTrack[] | no | External subtitle files (in addition to any in-stream tracks). |
 
-`type: "direct"` adds `media: {kind: "hls"|"dash"|"mp4", url, headers?}`. `url` is http(s). `headers` are
-upstream request headers (e.g. `Referer`); media with headers is only ever played through the server proxy and
-the headers never reach the TV. `mp4` means any progressive file the player can sniff (MP4, QuickTime).
+`type: "direct"` adds `media: {kind: "hls"|"dash"|"mp4", url, headers?}`: `url` is http(s); `mp4` means any
+progressive file the player can sniff (MP4, QuickTime); `headers` are upstream request headers (e.g. `Referer`), and
+media with headers is only ever played through the server proxy, so they never reach the TV.
 
 `type: "adapter"` adds `adapter` (an id listed in the manifest's `adapters`) and `ref` (an object, opaque JSON
 for the adapter). The server passes `ref` to the adapter at play time and never logs it.
 
 ### LanguageFacts
 
-`{audio: LanguageTag[] | null, subtitles: LanguageTag[] | null}`; both keys are required.
+`{audio: LanguageTag[] | null, subtitles: LanguageTag[] | null}`, both keys required: the BCP 47 tags of the tracks
+the stream carries (in-stream or via `subtitleTracks`); `null` = **unknown** (exporters MUST use `null` rather than
+guess); `[]` = known to have none (for `audio`, "no spoken dialogue", e.g. a dialogue-free animation, which the
+server treats as matching every preferred language).
 
-- `null` = **unknown**. Exporters MUST use `null` rather than guess.
-- `[]` = known to have none. For `audio`, `[]` means "no spoken dialogue" (e.g. a dialogue-free animation); the
-  server treats it as matching every preferred language.
-- Otherwise the BCP 47 tags of the tracks the stream carries (in-stream or via `subtitleTracks`).
+### SubtitleTrack and shared types
 
-### SubtitleTrack
-
-`{url, language: LanguageTag, format: "vtt"|"srt"|"ttml", label?}`.
-
-### Shared types
-
+- **SubtitleTrack** — `{url, language: LanguageTag, format: "vtt"|"srt"|"ttml", label?}`.
 - **Id** — `^[A-Za-z0-9][A-Za-z0-9._~-]{0,119}$`: URL-path safe, case-sensitive, ≤ 120 characters.
 - **LanguageTag** — simplified BCP 47, `^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$` (e.g. `en`, `tr`, `pt-BR`, `und`).
 
@@ -135,18 +125,16 @@ and image type, valid calendar date in `builtAt`, parseable http(s) URLs. Warnin
 adapters, items without any playable episode, unreferenced or oversized assets. `--probe` additionally
 range-GETs every direct media and subtitle URL (`Range: bytes=0-0`, redirects followed) and reports anything
 other than 200/206; `--json` prints a machine-readable report. Exit status 0 = valid, 1 = invalid or
-unreachable, 2 = usage error.
-
-Programmatic use: `validateBundle(dir)` returns `{ok, issues, bundle?, stats?}`; `loadBundle(dir)` returns the
-bundle or throws `BundleValidationError`.
+unreachable, 2 = usage error. Programmatic use: `validateBundle(dir)` returns `{ok, issues, bundle?, stats?}`;
+`loadBundle(dir)` returns `{bundle, warnings, stats}` or throws `BundleValidationError`.
 
 ## Versioning
 
 Within format version 1 only **additive, optional** changes are allowed: new optional properties with a
 documented default, recorded in the changelog below. Consumers built for an earlier 1.x text MUST keep working
-(they reject unknown non-`x-` properties, so producers SHOULD NOT emit new optional properties until the
-consumer side supports them). Anything else — a new required property, a changed meaning, a removed value —
-requires `formatVersion: 2`.
+(they reject unknown non-`x-` properties, so producers SHOULD NOT emit new optional properties until the consumer
+side supports them). Anything else (a new required property, a changed meaning, a removed value) requires
+`formatVersion: 2`.
 
 ## Changelog
 

@@ -6,18 +6,18 @@ fields, new routes); clients MUST ignore unknown response fields.
 ## Conventions
 
 - Base path `/api/v1`. JSON request and response bodies (`Content-Type: application/json`), request bodies ≤ 64 KiB.
-- **TV routes** (`/api/v1/tv/*`) need `Authorization: Bearer <deviceToken>`; **admin routes**
-  (`/api/v1/admin/*`) need `Authorization: Bearer <adminToken>`. A missing or wrong token answers `401` with a
-  `WWW-Authenticate: Bearer` header (on admin routes, `429` after repeated failures: see
-  [Authentication model](#authentication-model)). Device tokens never work on admin routes and vice versa.
+- **TV routes** (`/api/v1/tv/*`) need `Authorization: Bearer <deviceToken>`, **admin routes** (`/api/v1/admin/*`)
+  `Authorization: Bearer <adminToken>`; neither token works on the other's routes. A missing or wrong token answers
+  `401` with a `WWW-Authenticate: Bearer` header (on admin routes `429` after repeated failures, see
+  [Authentication model](#authentication-model)).
 - Errors: `{"error": "<code>", "message"?: "<human text>", …details}` with an HTTP status; codes are listed per
   route. `400 invalid_json`, `400 invalid_request` (with `details: [{path, message}]`), `413 body_too_large` and
   `500 internal` can happen anywhere.
 - Timestamps are ISO 8601 strings; positions and durations are integer milliseconds.
 - All ids are catalog ids (`^[A-Za-z0-9][A-Za-z0-9._~-]{0,119}$`) except device ids (12 alphanumeric
   characters) and playback session ids (16 alphanumeric characters).
-- API responses carry `Cache-Control: no-store`. There is no CORS: the admin UI is served by the same origin.
-  TLS is the reverse proxy's job; plain HTTP is fine on a LAN.
+- API responses carry `Cache-Control: no-store`. No CORS: the admin UI is served by the same origin. TLS is the
+  reverse proxy's job; plain HTTP is fine on a LAN.
 - One catalog per server in v1, but every stored reference is scoped by `catalogId`, so switching bundles never
   mixes progress.
 
@@ -29,47 +29,46 @@ fields, new routes); clients MUST ignore unknown response fields.
 | Pair token | `POST /pair/start`, 32 random bytes base64url | sha256 |
 | Device token | handed out once by `GET /pair/wait` after approval, 32 random bytes base64url | sha256 |
 
-Tokens are compared in constant time. They never appear in logs (see [Logging](#logging)).
+Tokens are compared in constant time and never logged ([Logging](#logging)).
 
-Failed admin authentications (a missing or wrong token on `/api/v1/admin/*`) are counted per client address (see
-`trustedProxies` in [Configuration](#configuration)): after 10 within 10 minutes of the first, every admin request
-from that address — even with the right token — answers `429 too_many_attempts` with a `Retry-After` header until
-those 10 minutes are over. Successful requests are never counted. Each failure is logged as a warning with the client
-address and the route template, never the presented token. TV routes and pairing are not affected.
+Failed admin authentications (a missing or wrong token on `/api/v1/admin/*`) are counted per client address
+(`trustedProxies`, [Configuration](#configuration)): after 10 within 10 minutes of the first, every admin request
+from that address, even with the right token, answers `429 too_many_attempts` with `Retry-After` until those 10
+minutes are over. Successes are never counted. Each failure is logged as a warning with the client address and the
+route template, never the presented token. TV routes and pairing are not affected.
 
 ## Pairing
 
-The TV shows a 6-digit code; the owner approves it from the admin API; the TV's long-poll then receives its
+The TV shows a 6-digit code; the owner approves it through the admin API; the TV's long-poll then receives its
 device token.
 
 ### `POST /api/v1/pair/start`
 
-No body. → `200 {"code": "483920", "pairToken": "<secret>", "expiresAt": "…"}`. Codes live 10 minutes. Errors:
-`429 rate_limited` (more than 10 starts per client address in 10 minutes; `Retry-After` header; behind a reverse
-proxy see `trustedProxies` in [Configuration](#configuration)), `429 too_many_pending` (5 codes are already open).
+No body. → `200 {"code": "483920", "pairToken": "<secret>", "expiresAt": "…"}`; codes live 10 minutes. Errors:
+`429 rate_limited` (more than 10 starts per client address in 10 minutes; `Retry-After`; behind a reverse proxy see
+`trustedProxies`), `429 too_many_pending` (5 codes are already open).
 
 ### `GET /api/v1/pair/wait?code=<6 digits>[&wait=<0..25>]`
 
 `Authorization: Bearer <pairToken>`. Long-polls up to `wait` seconds (default 25) for the approval.
 
-- `200 {"status": "pending"}` — not approved yet; poll again.
-- `200 {"status": "approved", "deviceId": "…", "deviceToken": "<secret>"}` — **exactly once**; the TV stores the
-  token. The server keeps only its hash.
-- `410 {"error": "expired", "status": "expired"}` — expired or already delivered; start over.
-- `404 not_found` — unknown code or wrong pair token (indistinguishable on purpose).
+- `200 {"status": "pending"}`: not approved yet; poll again.
+- `200 {"status": "approved", "deviceId": "…", "deviceToken": "<secret>"}`: **exactly once**; the server keeps
+  only the token's hash.
+- `410 {"error": "expired", "status": "expired"}`: expired or already delivered; start over.
+- `404 not_found`: unknown code or wrong pair token (indistinguishable on purpose).
 
 ### `POST /api/v1/admin/pair/approve`
 
-`{"code": "483920", "name"?: "Living room"}` (name 1–60 characters; without one the TV is called `TV`, or the first
-free `TV 2`, `TV 3`, …) → `200 {"deviceId": "…", "name": "…"}`. The device exists from now on (status `pending`) and
-can be configured before the TV collects its token. If the code expires uncollected, the pending device is removed.
-`izle-server pair approve <code> [name…]` calls this route on the running server (and `pair pending` the next one).
-
-Errors: `404 unknown_code`, `409 already_approved`.
+`{"code": "483920", "name"?: "Living room"}` (1–60 characters; without a name the TV is called `TV`, or the first
+free `TV 2`, `TV 3`, …) → `200 {"deviceId": "…", "name": "…"}`. The device exists from now on (status `pending`)
+and can be configured before the TV collects its token; if the code expires uncollected, it is removed. Errors:
+`404 unknown_code`, `409 already_approved`. `izle-server pair approve <code> [name…]` calls this route on the running
+server, `pair pending` the next one.
 
 ### `GET /api/v1/admin/pair/pending`
 
-→ `{"codes": [{"code", "createdAt", "expiresAt", "approved"}]}` — open (unexpired, undelivered) codes.
+→ `{"codes": [{"code", "createdAt", "expiresAt", "approved"}]}`: open (unexpired, undelivered) codes.
 
 ## TV API
 
@@ -95,57 +94,53 @@ Everything the home screen needs:
 }
 ```
 
-- `version` is the device's state version. It increases whenever something the TV shows changes (home list,
-  settings, cursor, catalog reload, a stopped/finished episode). The TV re-fetches this document when the
-  `state` event announces a higher version.
+- `version`: the device's state version. It increases whenever something the TV shows changes (home list,
+  settings, cursor, catalog reload, a stopped/finished episode); the TV re-fetches this document when a `state`
+  event announces a higher one.
 - `device.*Language` are **effective** values: the device's own setting, else the server's `defaults`, else the
   catalog's `defaults` hints, else `uiLanguage: "en"` / `preferredAudioLanguage: null`. `subtitlesLanguage: null`
   means subtitles off.
-- `device.autoplayOnStart` (owner setting, default false): when the app opens, the show the viewer watched last
-  (else the first tile) starts after a 10-second countdown that any key stops. The TV decides what "last" is.
-- `home` is the owner's list in the owner's order (at most 12 entries). Items that vanished from the catalog or
-  have no episode with `playbackAllowed` are left out.
-- `posterUrl` is relative to the server's base URL (null when the item has no poster).
-- `continue` is what OK plays: the item's cursor episode (see [Play order](#play-order-and-the-cursor)).
-  `status`: `new` (never started), `watching` (`positionMs` is the saved position), `finished` (`positionMs` is
-  0: it starts over). `index`/`count` are the position in the item's play order.
-- `newEpisodes` (integer, 0 when none): episodes with `playbackAllowed` that entered the catalog (a reload that
-  first carried them) after the later of the TV's last progress report on this item and the moment the item was put
-  on this home list. Episodes present when the server first loaded this catalog never count. It returns to 0 as soon
-  as the TV reports progress on any episode of the item.
+- `device.autoplayOnStart` (owner setting, default false): when the app opens, the show watched last (else the
+  first tile; the TV decides what "last" is) starts after a 10-second countdown that any key stops.
+- `home`: the owner's list in the owner's order (≤ 12), without items that left the catalog or have no
+  `playbackAllowed` episode. `posterUrl` is relative to the server's base URL (null without a poster).
+- `continue`: what OK plays, the item's cursor episode ([Play order](#play-order-and-the-cursor)). `status`: `new`
+  (never started), `watching` (`positionMs` is the saved position), `finished` (`positionMs` 0: it starts over).
+  `index`/`count`: the position in the item's play order.
+- `newEpisodes` (0 when none): `playbackAllowed` episodes that entered the catalog (a reload that first carried
+  them) after the later of the TV's last progress report on this item and the moment the item was put on this home
+  list. Episodes present when the server first loaded this catalog never count. Back to 0 as soon as the TV reports
+  progress on any episode of the item.
 
 ### `GET /api/v1/tv/events`
 
 Server-sent events (`text/event-stream`, `X-Accel-Buffering: no`; reverse proxies must not buffer it).
 
-- On connect: `event: state` with `{"version": n}` (id `s<n>`, `retry: 5000`), then every unacknowledged command
-  younger than 2 minutes.
-- `event: state` `{"version": n}` whenever the state version changes.
+- On connect: `event: state` `{"version": n}` (id `s<n>`, `retry: 5000`), then every unacknowledged command younger
+  than 2 minutes. Later, `event: state` whenever the state version changes.
 - `event: command` `{"id": 12, "type": "play", "payload": {"itemId": "…", "episodeId": "…"}}` (id `c<id>`), one of
-  the [commands](#commands) below. The TV acknowledges every command it receives, also those it ignores, with
-  `POST /tv/commands/:id/ack`; unacknowledged commands are replayed on reconnect for 2 minutes (and deleted after
-  7 days).
+  the [commands](#commands). The TV acknowledges every command it receives, also those it ignores, with
+  `POST /tv/commands/:id/ack`; unacknowledged ones are replayed on reconnect for 2 minutes (deleted after 7 days).
 - A `: ping` comment every 20 seconds. The TV should treat 60 s of silence as a dead connection, reconnect with
-  backoff, and additionally poll `/tv/state` every 60 s and when it comes to the foreground.
+  backoff, and also poll `/tv/state` every 60 s and when it comes to the foreground.
 
 #### Commands
 
-The owner sends them with `POST /api/v1/admin/devices/:id/commands` (the body is the `type` plus the request fields
-below); the TV gets `{"id", "type", "payload"}`. What a command does is the TV's business:
+The owner sends them with `POST /api/v1/admin/devices/:id/commands` (body: `type` plus the request fields below);
+the TV gets `{"id", "type", "payload"}`. What a command does is the TV's business:
 
 | `type` | Request fields | `payload` | On the TV |
 |---|---|---|---|
 | `play` | `episodeId` (allowed episode) | `{"itemId", "episodeId"}` | plays that episode (from its saved position) |
-| `stop` | | `{}` | in the player: saves and goes home |
-| `pause` | | `{}` | in the player: pauses |
-| `resume` | | `{}` | in the player: plays on |
-| `seek` | exactly one of `deltaMs` (integer −3 600 000…3 600 000) and `positionMs` (integer 0…10¹²) | `{"deltaMs"}` or `{"positionMs"}` | in the player: jumps by `deltaMs` (negative: back), or to `positionMs` |
-| `next` / `previous` | | `{}` | in the player: switches to the nearest `playbackAllowed` episode after / before the current one in play order, if there is one |
-| `message` | `text` (1–200 characters with a non-space; leading and trailing white space is trimmed), `durationSec`? (integer 3–120, default 15) | `{"text", "durationSec"}` (default applied by the server) | shows `text` as a large banner, on Home and in the player, for `durationSec` seconds |
+| `stop` | | `{}` | saves and goes home |
+| `pause` / `resume` | | `{}` | pauses / plays on |
+| `seek` | exactly one of `deltaMs` (integer −3 600 000…3 600 000) and `positionMs` (integer 0…10¹²) | `{"deltaMs"}` or `{"positionMs"}` | jumps by `deltaMs` (negative: back), or to `positionMs` |
+| `next` / `previous` | | `{}` | switches to the nearest `playbackAllowed` episode after / before the current one in play order, if any |
+| `message` | `text` (1–200 characters with a non-space; trimmed), `durationSec`? (integer 3–120, default 15) | `{"text", "durationSec"}` (default applied by the server) | shows `text` as a large banner, on Home and in the player, for `durationSec` seconds |
 
-Transport commands (`stop`, `pause`, `resume`, `seek`, `next`, `previous`) act only while the TV is in the player;
-otherwise they are acknowledged and ignored. A TV acknowledges and ignores command types it does not know, so new
-types can be added within v1; the server refuses unknown types (`400 invalid_request`).
+The transport commands (`stop`, `pause`, `resume`, `seek`, `next`, `previous`) act only while the TV is in the
+player; otherwise they are acknowledged and ignored. A TV also acknowledges and ignores command types it does not
+know, so new types can be added within v1; the server refuses unknown types (`400 invalid_request`).
 
 ### `GET /api/v1/tv/items/:itemId`
 
@@ -190,39 +185,39 @@ Source selection:
 2. Candidates are the episode's sources minus `exclude` (or only `sourceId` when given), in bundle order,
    stable-sorted by the device's preferred audio language: **match** (some `languages.audio` tag has the same
    primary subtag, or `audio: []` = no dialogue, or no preference) **> unknown** (`audio: null`) **> known
-   mismatch**. Sources the TV reported as failing (by listing them in `exclude`) in the last 10 minutes move to
-   the end.
-3. Candidates are tried in order. Direct sources succeed immediately. `adapter` sources are resolved by the
+   mismatch**. Sources the TV listed in `exclude` (as failing) in the last 10 minutes move to the end.
+3. Candidates are tried in order. Direct sources succeed immediately. `adapter` sources go through the
    [resolver module](resolver-module-v1.md) under a per-source deadline (`resolver.deadlineMs`, 12 s) within a
-   budget for the whole request (`resolver.budgetMs`, 30 s), so a TV client should allow ~35 s for this call.
-   An adapter source that fails is skipped (and moved last for 10 minutes); the next candidate is tried.
-4. How the TV gets the stream: a plain URL without upstream headers goes to the TV as-is. Media that needs
-   upstream `headers` (bundle `media.headers` or an adapter result's `headers`), and inline playlists, come back
-   as a **server-relative** proxy URL, `/p/<token>/index.m3u8` (HLS) or `/p/<token>/video.mp4` (MP4), which the
-   TV resolves against its server base URL; upstream headers never leave the server. Subtitle tracks that need
-   headers come back as `/p/<token>/sub/<n>.<ext>`. With `proxy.always`, every HLS/MP4 stream and subtitle track
-   is proxied. DASH is never proxied in v1: DASH that needs headers cannot be served.
+   budget for the whole request (`resolver.budgetMs`, 30 s), so a TV should allow ~35 s for this call. An adapter
+   source that fails is skipped (and moved last for 10 minutes) and the next candidate is tried.
+4. A plain URL without upstream headers goes to the TV as-is. Media that needs upstream `headers` (bundle
+   `media.headers` or an adapter result's `headers`) and inline playlists come back as a **server-relative** proxy
+   URL, `/p/<token>/index.m3u8` (HLS) or `/p/<token>/video.mp4` (MP4), which the TV resolves against its server base
+   URL; upstream headers never leave the server. Subtitle tracks that need headers come back as
+   `/p/<token>/sub/<n>.<ext>`. With `proxy.always`, every HLS/MP4 stream and subtitle track is proxied. DASH is
+   never proxied in v1, so DASH that needs headers cannot be served.
 5. Nothing playable → `502 no_playable_source` with `tried: [{sourceId, code, adapterId?, name?}]`. Codes:
    `adapter_unavailable` (no resolver module provides the adapter), `unsupported` (DASH that needs headers),
    `timeout`, `abort`, `error`, `empty` (the adapter returned no result). `name` is the error's class name (never
-   its message), `InvalidResult` for a result that fails validation, `BudgetExhausted` for sources skipped
-   because the request's time budget ran out.
+   its message): `InvalidResult` for a result that fails validation, `BudgetExhausted` for sources skipped because
+   the request's time budget ran out.
 
-`alternatives` are the remaining playable candidates in order: on a player error the TV re-resolves with the
-failed source in `exclude` and continues at the same position. `next` is the episode auto-next would start (next
-`playbackAllowed` episode in play order), or null at the end of the item or when the episode (or item) has
-`autoAdvance: false`. `resume` is the saved position when the episode is being watched (the TV applies its own
-resume threshold), else null. `sessionId` identifies this playback in progress reports. `expiresAt` is the
-adapter's validity hint for the stream (ISO 8601), or null. `languages` and `subtitleTracks` are the adapter
-result's when it gives them, else the bundle source's.
+- `alternatives`: the remaining playable candidates in order. On a player error the TV re-resolves with the failed
+  source in `exclude` and continues at the same position.
+- `next`: the episode auto-next would start (next `playbackAllowed` episode in play order), or null at the end of
+  the item or when the episode (or item) has `autoAdvance: false`.
+- `resume`: the saved position when the episode is being watched (the TV applies its own resume threshold), else
+  null. `sessionId` identifies this playback in progress reports.
+- `expiresAt`: the adapter's validity hint for the stream (ISO 8601), or null. `languages` and `subtitleTracks` are
+  the adapter result's when it gives them, else the bundle source's.
 
 ## Media proxy
 
 `GET /p/<token>/…` serves header-bound and inline-playlist streams. The token (32 random bytes, base64url) is the
-credential: the TV's media player sends no device token. Sessions live in memory only, slide with use
-(`proxy.sessionTtlSec`, 6 h) up to 12 h, and an owner keeps at most two (resolving a third ends the oldest). Owners
-are a TV (its device id) and, separately, a TV's [Listen along](#listen-along) scope, so the phone never ends the
-TV's sessions.
+credential; the TV's media player sends no device token. Sessions live in memory only and slide with use
+(`proxy.sessionTtlSec`, 6 h) up to 12 h; an owner keeps at most two (resolving a third ends the oldest). Owners are a
+TV (its device id) and, separately, a TV's [Listen along](#listen-along) scope, so the phone never ends the TV's
+sessions.
 
 | Route | |
 |---|---|
@@ -233,45 +228,40 @@ TV's sessions.
 
 - **Rewriting** is generic HLS: URI lines and `URI="…"` attributes (`EXT-X-KEY`, `EXT-X-MAP`, `EXT-X-MEDIA`,
   `EXT-X-I-FRAME-STREAM-INF`, `EXT-X-SESSION-KEY`, `EXT-X-PART`, `EXT-X-PRELOAD-HINT`, `EXT-X-RENDITION-REPORT`, …)
-  are resolved against the playlist's own URL (after redirects) or the inline `baseUrl`, and written as relative
-  `u/<ref>` links. `data:` and other non-HTTP URIs are left alone.
+  are resolved against the playlist's own URL (after redirects) or the inline `baseUrl` and written as relative
+  `u/<ref>` links. `data:` and other non-HTTP URIs are left alone. DASH manifests are not rewritten (v1).
 - **`<ref>`** = `<p|r>.<base64url of the URL>.<HMAC>[.<extension>]`, signed with a per-session key: only URLs the
-  proxy wrote itself can be fetched, so a session cannot be used to reach other hosts. A wrong or foreign ref
-  answers `404`. The extension is a hint for players that infer the format from the path.
-- **Streaming:** segments and MP4 bodies are passed through as they arrive, never buffered; a TV that disconnects
-  cancels the upstream request. Only `Content-Type`, `Content-Length`, `Content-Range`, `Accept-Ranges`,
-  `Last-Modified` and `ETag` are passed back; cookies, redirects and other upstream headers are not.
+  proxy wrote itself can be fetched, so a session cannot reach other hosts. A wrong or foreign ref answers `404`. The
+  extension is a hint for players that infer the format from the path.
+- **Streaming:** segments and MP4 bodies pass through as they arrive, never buffered; a TV that disconnects cancels
+  the upstream request. Only `Content-Type`, `Content-Length`, `Content-Range`, `Accept-Ranges`, `Last-Modified` and
+  `ETag` are passed back; cookies, redirects and other upstream headers are not.
 - **Errors:** unknown or expired session `410 {"error":"gone"}`. An upstream `401`/`403`/`410` marks the session
-  **stale**: this and every later request answer `410 {"error":"stale"}`, so the TV re-resolves (the same
-  source first when the playback ran for more than 5 minutes: an expired signed URL). Upstream `404` → `404`, other
-  upstream errors → `502`, unreachable → `502`, no headers within 20 s → `504`.
-- **`proxy.alignTsSegments`** (off by default): for segments of proxied HLS (no `Range`, not `.m4s/.mp4/.aac/.vtt/…`),
-  junk before the first MPEG-TS packet — up to 4 KiB, recognized by five 0x47 sync bytes 188 bytes apart — is cut
-  off and the type is set to `video/mp2t`. Some sites prefix segments with such bytes; Media3 rejects segments
-  with more than a few hundred junk bytes ("Cannot find sync byte").
-- DASH manifests are not rewritten (v1).
+  **stale**: this and every later request answer `410 {"error":"stale"}`, so the TV re-resolves (the same source
+  first when the playback ran for more than 5 minutes: an expired signed URL). Upstream `404` → `404`, other upstream
+  errors or unreachable → `502`, no headers within 20 s → `504`.
+- **`proxy.alignTsSegments`** (off by default): for segments of proxied HLS (no `Range`, not
+  `.m4s/.mp4/.aac/.vtt/…`), junk before the first MPEG-TS packet (up to 4 KiB, recognized by five 0x47 sync bytes
+  188 bytes apart) is cut off and the type set to `video/mp2t`. Some sites prefix segments with such bytes; Media3
+  rejects segments with more than a few hundred junk bytes ("Cannot find sync byte").
 
 ### `POST /api/v1/tv/progress`
 
 `{"sessionId"?: "…", "episodeId": "…", "positionMs": 90000, "durationMs"?: 1200000, "status": "playing",
-"playing"?: true, "ageMs"?: 0}` → `{"ok": true, "version": 8}`.
+"playing"?: true, "ageMs"?: 0}` → `{"ok": true, "version": 8}`; `404 unknown_episode`.
 
-`status` is one of `playing`, `paused`, `stopped` (left the player), `finished` (ended, or stopped within the
-TV's end threshold). The TV sends one every 15 s while playing and on pause, seek, stop, end, every rebuffer stall
-and its end, and when the app goes to the background.
-
-`playing` (optional, default `status === "playing"`) says whether the player was actually advancing when it sampled
-`positionMs`: a rebuffer stall is `status: "playing", playing: false`. `ageMs` (optional, 0–60000) is how long
-before sending the position was sampled (a queued report). The server anchors the TV's timeline on them for
-[Listen along](#listen-along): `anchor.atMs = receipt time − ageMs`.
-
+- `status`: `playing`, `paused`, `stopped` (left the player) or `finished` (ended, or stopped within the TV's end
+  threshold). The TV reports every 15 s while playing and on pause, seek, stop, end, every rebuffer stall and its
+  end, and when the app goes to the background.
+- `playing` (default `status === "playing"`): whether the player was actually advancing when it sampled
+  `positionMs` (a rebuffer stall is `status: "playing", playing: false`). `ageMs` (0–60000): how long before sending
+  the position was sampled (a queued report). They anchor the TV's timeline for [Listen along](#listen-along):
+  `anchor.atMs = receipt time − ageMs`.
 - `playing`/`paused`/`stopped` save the position (status `watching`) and point the item's cursor at this episode.
-- `finished` marks the episode finished and moves the cursor to the next `playbackAllowed` episode in play order
-  — regardless of `autoAdvance`, which only governs automatic playback — wrapping to the first allowed episode
-  after the last one (a wrapped cursor, see [Play order](#play-order-and-the-cursor)).
+- `finished` marks the episode finished and moves the cursor to the next `playbackAllowed` episode in play order,
+  regardless of `autoAdvance` (which only governs automatic playback), wrapping to the first allowed episode after
+  the last one (a wrapped cursor, see [Play order](#play-order-and-the-cursor)).
 - `stopped`, `finished` and cursor moves bump the state version; plain heartbeats do not.
-
-Errors: `404 unknown_episode`.
 
 ### `POST /api/v1/tv/commands/:id/ack`
 
@@ -288,29 +278,26 @@ owner sees it on the admin page ([Problem reports](#problem-reports)).
   "detail": "InvalidResponseCodeException: Response code: 403", "appVersion": "0.3.0" }
 ```
 
-→ `202 {"ok": true}`.
+→ `202 {"ok": true}`; `429 too_many_problems` (more than 30 reports in 10 minutes from one TV; `Retry-After`). A
+report for an episode the catalog does not have is stored all the same.
 
-- `kind` (required): `playback`, `resolve`, `network` or `other`. `code` (required): 1–64 characters of
-  `A-Z a-z 0-9 _ . : -`.
-- `ageMs` (0–86 400 000): how long ago it happened, for a report the TV had to queue; stored time = receipt − `ageMs`.
-- `episodeId`, `sourceId` (catalog ids), `sessionId` (≤ 64 characters: the resolve's `sessionId`; when it names this
-  TV's playback session, a missing `episodeId`/`sourceId` is taken from it), `positionMs` (≥ 0), `httpStatus`
-  (100–599), `detail` (≤ 500 characters), `appVersion` (≤ 40 characters) are optional; no other fields, and no
-  `null`s.
+- Required: `kind` (`playback`, `resolve`, `network` or `other`) and `code` (1–64 characters of
+  `A-Z a-z 0-9 _ . : -`).
+- Optional, no other fields and no `null`s: `ageMs` (0–86 400 000: how long ago it happened, for a queued report;
+  stored time = receipt − `ageMs`), `episodeId`, `sourceId` (catalog ids), `sessionId` (≤ 64 characters: the
+  resolve's `sessionId`; when it names this TV's playback session, a missing `episodeId`/`sourceId` is taken from
+  it), `positionMs` (≥ 0), `httpStatus` (100–599), `detail` (≤ 500 characters), `appVersion` (≤ 40 characters).
 - `code`, `detail` and `appVersion` are redacted before they are stored: URLs become `<url host>`, runs of 20 or more
   letters, digits, `_` and `-` become `<token>` unless they read as an identifier (`SCREAMING_SNAKE`, `snake_case`,
   `CamelCase` without digits, such as player error names).
 
-Errors: `429 too_many_problems` (more than 30 reports in 10 minutes from one TV; `Retry-After` header). A report
-for an episode the catalog does not have is stored all the same.
-
 ## Play order and the cursor
 
 Each device has, per item, a **cursor**: the episode OK plays (with the one exception below). The server maintains
-it from progress reports (above), and the owner can overwrite it (`PUT …/cursor`). Without a cursor, OK plays the
-first allowed episode that is not finished (or the first allowed one when all are). A cursor pointing at an episode
-that is no longer allowed moves to the next allowed one. Episode array order in the bundle is the play order;
-`season`/`number` are display only.
+it from progress reports and the owner can overwrite it (`PUT …/cursor`). Without a cursor, OK plays the first
+allowed episode that is not finished (or the first allowed one when all are). A cursor on an episode that is no
+longer allowed moves to the next allowed one. Episode array order in the bundle is the play order; `season`/`number`
+are display only.
 
 **Episodes appended to a finished item.** A cursor the server placed by wrapping (a `finished` report on the item's
 last allowed episode) marks the item as watched to the end. When a later catalog reload adds episodes to the item
@@ -327,36 +314,35 @@ last allowed episode) marks the item as watched to the end. When a later catalog
 | Route | Body | Response |
 |---|---|---|
 | `GET /api/v1/admin/devices` | | `{"devices": [Device & {"homeCount"}]}` |
-| `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "missing", "continue", "newEpisodes"}], "homeMax": 12}` — `continue` and `newEpisodes` as in [`GET /tv/state`](#get-apiv1tvstate) (`null` and 0 for a missing item) |
+| `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "missing", "continue", "newEpisodes"}], "homeMax": 12}`; `continue` and `newEpisodes` as in [`GET /tv/state`](#get-apiv1tvstate) (`null` and 0 for a missing item) |
 | `PATCH /api/v1/admin/devices/:id` | any of `name`, `uiLanguage` (`"tr"`/`"en"`/null), `preferredAudioLanguage` (tag/null), `subtitlesLanguage` (tag/null = off), `autoplayOnStart` (boolean) | `{"device": Device}` |
-| `DELETE /api/v1/admin/devices/:id` | | `204` — the TV must pair again |
+| `DELETE /api/v1/admin/devices/:id` | | `204`; the TV must pair again |
 | `PUT /api/v1/admin/devices/:id/home` | `{"itemIds": [...]}` (≤ 12, in display order) | `{"version", "home"}` |
 | `PUT /api/v1/admin/devices/:id/cursor` | `{"itemId", "episodeId"}` | `{"version"}` |
 | `GET /api/v1/admin/devices/:id/progress` | | `{"cursors": [...], "progress": [...]}` with `itemTitle`, `kind`, `season`, `number`, `episodeTitle` (or `missing: true`) |
-| `GET /api/v1/admin/devices/:id/now?seq=&wait=` | | `{"online", "serverNowMs", "seq", "nowPlaying": {itemId, episodeId, sourceId, itemTitle, episodeTitle, positionMs, durationMs, state, updatedAt, playing} \| null, "anchor": {positionMs, atMs, playing, rate} \| null}` — with `seq` equal to the current `seq` and `wait` (0–25 s, default 0) the answer waits for the next resolve or progress report (long-poll); see [Listen along](#listen-along) |
-| `POST /api/v1/admin/devices/:id/commands` | `{"type": "play", "episodeId"}`, `{"type": "stop"}`, `pause`, `resume`, `next`, `previous`, `{"type": "seek", "deltaMs" \| "positionMs"}`, `{"type": "message", "text", "durationSec"?}` — see [Commands](#commands) | `202 {"id", "online"}` — `online: false`: queued, the TV gets it if it connects within 2 minutes |
-| `GET /api/v1/admin/devices/:id/problems?limit=` | | `{"problems": [Problem]}`, newest first (`limit` default 50, at most 100) — see [Problem reports](#problem-reports) |
-| `DELETE /api/v1/admin/devices/:id/problems` | | `204` — forgets the TV's problems |
+| `GET /api/v1/admin/devices/:id/now?seq=&wait=` | | `{"online", "serverNowMs", "seq", "nowPlaying": {itemId, episodeId, sourceId, itemTitle, episodeTitle, positionMs, durationMs, state, updatedAt, playing} \| null, "anchor": {positionMs, atMs, playing, rate} \| null}`; with `seq` equal to the current `seq` and `wait` (0–25 s, default 0) the answer waits for the next resolve or progress report (long-poll), see [Listen along](#listen-along) |
+| `POST /api/v1/admin/devices/:id/commands` | `{"type": "play", "episodeId"}`, `{"type": "stop"}`, `pause`, `resume`, `next`, `previous`, `{"type": "seek", "deltaMs" \| "positionMs"}`, `{"type": "message", "text", "durationSec"?}`, see [Commands](#commands) | `202 {"id", "online"}`; `online: false`: queued, the TV gets it if it connects within 2 minutes |
+| `GET /api/v1/admin/devices/:id/problems?limit=` | | `{"problems": [Problem]}`, newest first (`limit` default 50, at most 100), see [Problem reports](#problem-reports) |
+| `DELETE /api/v1/admin/devices/:id/problems` | | `204`; forgets the TV's problems |
 
 `Device` = `{"id", "name", "status": "pending"|"active", "online", "createdAt", "lastSeenAt", "stateVersion",
 "settings": {stored values, null = default}, "effective": {resolved values}, "problems": {"recent", "lastAt"}}`.
 `settings`/`effective` hold `uiLanguage`, `preferredAudioLanguage`, `subtitlesLanguage` and `autoplayOnStart`
-(a boolean, false by default; no server default exists, so both show the stored value). `problems.recent` is the
-number of problems in the last 24 hours, `lastAt` when the latest stored one happened (ISO, or null).
+(boolean, false by default; with no server default, both show the stored value). `problems.recent`: problems in the
+last 24 hours; `lastAt`: when the latest stored one happened (ISO, or null).
 
-Home list errors: `400 too_many_items` (`max`), `duplicate_item`, `unknown_item`, `not_playable` (`itemId`).
-Cursor errors: `404 unknown_item`, `400 unknown_episode` (not in this item), `400 not_allowed`; setting the cursor
-also forgets that episode's saved position, so "continue from episode X" starts X from the beginning.
-Command errors: `400 unknown_episode`, `400 not_allowed` (play), `400 invalid_request` (unknown type, a seek with
-both or neither field, a blank or too long message, `durationSec` out of range). All `:id` routes answer
-`404 unknown_device`.
+Errors. Home list: `400 too_many_items` (`max`), `duplicate_item`, `unknown_item`, `not_playable` (`itemId`).
+Cursor: `404 unknown_item`, `400 unknown_episode` (not in this item), `400 not_allowed`; setting the cursor also
+forgets that episode's saved position, so "continue from episode X" starts X from the beginning. Commands:
+`400 unknown_episode`, `400 not_allowed` (play), `400 invalid_request` (unknown type, a seek with both or neither
+field, a blank or too long message, `durationSec` out of range). Every `:id` route: `404 unknown_device`.
 
 Every change that affects the TV bumps the device's state version and emits a `state` event.
 
 ### Problem reports
 
-What went wrong on a TV, kept for the owner: the TV's own reports (`origin: "tv"`, [`POST
-/tv/problems`](#post-apiv1tvproblems)) and the problems the server ran into for it (`origin: "server"`):
+What went wrong on a TV, kept for the owner: the TV's own reports (`origin: "tv"`,
+[`POST /tv/problems`](#post-apiv1tvproblems)) and what the server ran into for it (`origin: "server"`):
 
 | `kind` · `code` | Recorded when | Also |
 |---|---|---|
@@ -372,7 +358,7 @@ the list. [Listen along](#listen-along) resolves and companion proxy sessions ar
 TV's problems. `kind` values overall: `playback`, `resolve`, `proxy`, `network`, `other`.
 
 `Problem` = `{"id", "at", "origin": "tv"|"server", "kind", "code", "itemId", "itemTitle", "itemKind", "episodeId",
-"episodeTitle", "season", "number", "sourceId", "positionMs", "httpStatus", "detail", "appVersion", "missing"}` —
+"episodeTitle", "season", "number", "sourceId", "positionMs", "httpStatus", "detail", "appVersion", "missing"}`:
 `at` is when it happened (ISO); titles come from the current catalog; `missing: true` (with null titles) when the
 episode is not in the catalog (any more). Each TV keeps its newest 100 problems; problems older than 30 days are
 deleted.
@@ -381,10 +367,10 @@ deleted.
 
 | Route | Response |
 |---|---|
-| `GET /api/v1/admin/catalog` | `{"id", "buildId", "builtAt", "name", "loadedAt", "stats", "adapters", "warnings", "resolver", "server", "builds", "changes"}` — `resolver` is `{"sha256", "adapters"}` of the loaded module, or null; `server` is `{"version"}` of the running server; `builds` is the loaded catalog's [history](#catalog-history), `[Build]` newest first, at most 50; `changes` is the `Changes` of the newest build that is not the baseline, or null |
-| `GET /api/v1/admin/catalog/builds/:buildId` | `{"build": Build, "changes": Changes}` — any build in the loaded catalog's history (also one beyond the 50 listed); `404 unknown_build` |
-| `GET /api/v1/admin/catalog/search?q=&limit=` | `{"items": [{"id", "kind", "title", "year", "posterUrl", "episodeCount", "playableCount"}]}` — case-, accent- and dotless-ı-insensitive match on title, original title and id; empty `q` lists everything (by title, `limit` ≤ 200, default 50) |
-| `GET /api/v1/admin/catalog/items/:id` | the item with all episodes; sources as `{id, type, label, languages, kind, needsProxy}` or `{…, adapter}` — upstream URLs, headers and refs are not exposed |
+| `GET /api/v1/admin/catalog` | `{"id", "buildId", "builtAt", "name", "loadedAt", "stats", "adapters", "warnings", "resolver", "server", "builds", "changes"}`: `resolver` is `{"sha256", "adapters"}` of the loaded module, or null; `server` is `{"version"}` of the running server; `builds` is the loaded catalog's [history](#catalog-history), `[Build]` newest first, at most 50; `changes` is the `Changes` of the newest build that is not the baseline, or null |
+| `GET /api/v1/admin/catalog/builds/:buildId` | `{"build": Build, "changes": Changes}` for any build in the loaded catalog's history (also one beyond the 50 listed); `404 unknown_build` |
+| `GET /api/v1/admin/catalog/search?q=&limit=` | `{"items": [{"id", "kind", "title", "year", "posterUrl", "episodeCount", "playableCount"}]}`: case-, accent- and dotless-ı-insensitive match on title, original title and id; empty `q` lists everything (by title, `limit` ≤ 200, default 50) |
+| `GET /api/v1/admin/catalog/items/:id` | the item with all episodes; sources as `{id, type, label, languages, kind, needsProxy}` or `{…, adapter}`; upstream URLs, headers and refs are not exposed |
 | `POST /api/v1/admin/catalog/reload` | re-reads the bundle from `catalog.dir` (a symlink there is followed anew on each reload): `200 {"catalog"}` (the object `GET /admin/catalog` returns), or `422 {"error": "invalid_catalog", "issues"}` and the previous catalog stays active (also when the bundle needs an adapter the resolver module does not provide). The whole bundle is validated, including a hash of every poster, so a large catalog takes a while. `SIGHUP` does the same. After a successful reload all devices get a new state version. The resolver module is not re-read: a new module needs a restart. |
 
 #### Catalog history
@@ -393,26 +379,25 @@ The server records each build of a catalog id that it loads, at start and on eve
 recorded last (a restart, a reload of the same bundle) records nothing.
 
 `Build` = `{"buildId", "builtAt", "loadedAt", "baseline", "counts": {"items", "episodes"}, "added": {"items",
-"episodes"}, "removed": {"items", "episodes"}}` — `builtAt` comes from the bundle, `loadedAt` (ISO) is when this
+"episodes"}, "removed": {"items", "episodes"}}`: `builtAt` comes from the bundle, `loadedAt` (ISO) is when this
 server loaded it; `counts` is what the build holds, `added`/`removed` what changed against the build loaded before it
 (exact counts). `baseline: true` marks the first build the server loaded for this catalog id: everything in it was
 already there, nothing counts as new, and its `added`/`removed` are 0.
 
 `Changes` = `{"items": {"added": [{"id", "title", "kind"}], "removed": [{"id", "title"}]}, "episodes": {"added":
 [{"id", "itemId", "itemTitle", "season", "number", "label", "playbackAllowed"}], "removed": [{"id", "itemId",
-"itemTitle"}]}}` — each list holds at most 500 entries. Added ones are in catalog order (play order within an item),
-removed ones by item id, then episode id. An item counts as added when none of its episodes was in the catalog before
-(also when it comes back); an episode that comes back is not listed as added. A removed entry's `title`/`itemTitle`
-is null when the catalog loaded before was not in memory (a restart onto a changed bundle). The baseline's lists are
-empty.
+"itemTitle"}]}}`, each list at most 500 entries. Added ones are in catalog order (play order within an item), removed
+ones by item id, then episode id. An item counts as added when none of its episodes was in the catalog before (also
+when it comes back); an episode that comes back is not listed as added. A removed entry's `title`/`itemTitle` is null
+when the catalog loaded before was not in memory (a restart onto a changed bundle). The baseline's lists are empty.
 
 ### Diagnostics
 
 `POST /api/v1/admin/diagnostics/resolve` `{"episodeId", "sourceId"?, "preferredAudioLanguage"?, "probe"?: true}`
-runs every source of the episode (or only `sourceId`), in bundle order, through the same path as a TV resolve —
-adapters, deadlines, validation — without creating sessions, and by default probes the upstream (an HLS playlist
-is fetched and summarized; MP4/DASH get `Range: bytes=0-1023`). Nothing secret is returned: hosts and header
-*names* only, never URLs, header values, refs or playlist text.
+runs every source of the episode (or only `sourceId`), in bundle order, through the same path as a TV resolve
+(adapters, deadlines, validation) without creating sessions, and by default probes the upstream (an HLS playlist is
+fetched and summarized; MP4/DASH get `Range: bytes=0-1023`). Nothing secret is returned: hosts and header *names*
+only, never URLs, header values, refs or playlist text.
 
 ```json
 { "itemId": "proxy-demo", "episodeId": "proxy-demo.film", "playbackAllowed": true, "sources": [
@@ -435,23 +420,23 @@ language inside the same multi-audio stream) in sync with the picture, from the 
 - **Anchor.** `GET …/now` carries `serverNowMs` (the server clock), `seq` (bumped on every now-playing write) and
   `anchor`: the TV's `positionMs` as of `atMs` (server clock, = receipt of the report − its `ageMs`), advancing at
   `rate` (1) while `playing`. The phone extrapolates `tv = positionMs + (serverNow − atMs)` and estimates its clock
-  offset from `serverNowMs` and the round trip. `?seq=<current>&wait=25` returns on the next write, so a pause,
-  seek or stall reaches the phone within a round trip.
-- **Links** (device-independent: timing belongs to the two releases, not to a TV): per episode and source,
-  `offsetMs` (companion position when the TV is at 0, ±6 h), `rate` (companion seconds per TV second, 0.5–2; a
-  PAL transfer against a film-rate source is 1.0427) and `language` (audio language to pick inside the stream, or
-  null). The companion target is `rate · tv + offsetMs`. Earphone latency is a per-phone nudge kept in the browser.
+  offset from `serverNowMs` and the round trip. `?seq=<current>&wait=25` returns on the next write, so a pause, seek
+  or stall reaches the phone within a round trip.
+- **Links** (device-independent: timing belongs to the two releases, not to a TV), per episode and source:
+  `offsetMs` (companion position when the TV is at 0, ±6 h), `rate` (companion seconds per TV second, 0.5–2; a PAL
+  transfer against a film-rate source is 1.0427) and `language` (audio language to pick inside the stream, or null).
+  The companion target is `rate · tv + offsetMs`. Earphone latency is a per-phone nudge kept in the browser.
 - **Companion media is always proxied** (`/p/<token>/…`, under the owner key `companion:<deviceId>` with its own
-  two-session limit), so the page only loads same-origin media (plus `blob:` object URLs when hls.js feeds the
-  element through Media Source Extensions). DASH cannot be proxied and is refused. A companion
-  resolve never writes `now_playing`, creates no TV playback session and never penalizes a source for the TV.
+  two-session limit), so the page only loads same-origin media (plus `blob:` object URLs when hls.js feeds the element
+  through Media Source Extensions). DASH cannot be proxied and is refused. A companion resolve never writes
+  `now_playing`, creates no TV playback session and never penalizes a source for the TV.
 
 | Route | Body | Response |
 |---|---|---|
-| `GET /api/v1/admin/devices/:id/companion` | | `{"nowPlaying": {itemId, itemKind, episodeId, sourceId, itemTitle, episodeTitle, state} \| null, "candidates": [{sourceId, type, kind, label, languages, current, supported, reason, link}]}` — the sources of the episode now playing (`kind` for direct sources, `supported: false, reason: "dash"` for DASH), each with its stored link or the defaults; no URLs, headers or refs |
+| `GET /api/v1/admin/devices/:id/companion` | | `{"nowPlaying": {itemId, itemKind, episodeId, sourceId, itemTitle, episodeTitle, state} \| null, "candidates": [{sourceId, type, kind, label, languages, current, supported, reason, link}]}`: the sources of the episode now playing (`kind` for direct sources, `supported: false, reason: "dash"` for DASH), each with its stored link or the defaults; no URLs, headers or refs |
 | `POST /api/v1/admin/devices/:id/companion/resolve` | `{"episodeId", "sourceId", "language"?}` | `{"episodeId", "sourceId", "media": {"kind", "url": "/p/…"}, "languages", "expiresAt", "link"}` |
 | `PUT /api/v1/admin/companion/links/:episodeId/:sourceId` | `{"offsetMs", "rate", "language"?}` | `{"link": {episodeId, sourceId, offsetMs, rate, language, updatedAt}}` |
-| `POST /api/v1/admin/companion/links/:episodeId/:sourceId/copy-to-item` | | `{"updated", "episodeIds"}` — the same values written for every other episode of the item that has a source with that id |
+| `POST /api/v1/admin/companion/links/:episodeId/:sourceId/copy-to-item` | | `{"updated", "episodeIds"}`: the same values written for every other episode of the item that has a source with that id |
 
 `link` = `{"offsetMs", "rate", "language", "updatedAt"}` (`updatedAt` null = defaults, nothing stored). Errors:
 `404 unknown_episode`, `404 unknown_source`, `403 not_allowed`, `400 unsupported_media` (DASH), `404 no_link`
@@ -463,23 +448,24 @@ language inside the same multi-audio stream) in sync with the picture, from the 
 |---|---|
 | `GET /healthz` | `{"ok": true}` |
 | `GET /assets/<sha256>.<jpg\|png\|webp>` | catalog posters, `Cache-Control: public, max-age=31536000, immutable` |
-| `GET /admin/` | the admin UI: `index.html` plus the allow-list `ADMIN_FILES` in `server/src/admin-files.ts` (the ES modules flat in `server/admin/`, entry `app.js`; `style.css`, `icon.svg`, and the pinned hls.js build `vendor/hls.min.js`, see `server/admin/vendor/README.md`); anything else under `/admin/` is `404`; `Cache-Control: no-cache`, `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; …` |
-| `GET /p/<token>/…` | media proxy (see [Media proxy](#media-proxy)) |
+| `GET /admin/` | the admin UI (`/` and `/admin` redirect here): `index.html` plus the allow-lists `ADMIN_FILES` and `ADMIN_VENDOR_FILES` in `server/src/admin-files.ts` (the ES modules flat in `server/admin/`, entry `app.js`; `style.css`, `icon.svg`, and the pinned hls.js build `vendor/hls.min.js`, see `server/admin/vendor/README.md`); anything else under `/admin/` is `404`; `Cache-Control: no-cache`, `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; …` |
+| `GET /p/<token>/…` | [media proxy](#media-proxy) |
 
 ## Logging
 
-One JSON object per line on stdout: `time`, `level`, `msg` and fields. Every line passes through one redaction
-step: fields whose name contains a word like `url`, `headers`, `authorization`, `cookie`, `token`, `ref`,
-`config`, `playlist`, `password`, `secret` or `body` are dropped; `scheme://…` in strings becomes
-`<url host>`; runs of 20 or more base64url characters become `<token>`; errors are reduced to their class name
-(and a short `code`). The access log records the **route template** (e.g. `/api/v1/tv/items/:itemId`), status,
-duration and device id — never the raw path or query. Successful proxy requests (a steady stream of segments) are
-logged at `debug` level only; proxy errors at `info`. Commands are logged with their type and ids (never a
-message's text), problem reports with their kind and code (never their detail).
+One JSON object per line on stdout: `time`, `level`, `msg` and fields. Every line passes through one redaction step:
+fields whose name contains a word like `url`, `headers`, `authorization`, `cookie`, `token`, `ref`, `config`,
+`playlist`, `password`, `secret` or `body` are dropped; `scheme://…` in strings becomes `<url host>`; runs of 20 or
+more base64url characters become `<token>`; errors are reduced to their class name (and a short `code`). The access
+log records the **route template** (e.g. `/api/v1/tv/items/:itemId`), status, duration and device id, never the raw
+path or query; health checks and successful proxy requests (a steady stream of segments) at `debug` level only,
+proxy errors at `info`. Commands are logged with their type and ids (never a message's text), problem reports with
+their kind and code (never their detail).
 
 ## Configuration
 
-`izle-server --config izle.json` (relative paths inside resolve against the file's directory):
+`izle-server --config izle.json`; every key is optional, unknown keys are errors, and relative paths resolve against
+the file's directory:
 
 ```json
 {
@@ -496,20 +482,25 @@ message's text), problem reports with their kind and code (never their detail).
 }
 ```
 
-Every key is optional. Without a file the server listens on `0.0.0.0:8787`, serves the sample catalog shipped with
-the server and keeps its data in `./data` (`izle.db`, `admin.token`). Unknown keys are errors. Deployment examples
-(systemd, Caddy, Docker) are in [deploy/self-hosting.md](../deploy/self-hosting.md).
+Without a file the server listens on `0.0.0.0:8787`, serves the sample catalog shipped with it and keeps its data
+in `./data` (`izle.db`, `admin.token`). Deployment (systemd, Caddy, Docker): [self-hosting](../deploy/self-hosting.md).
 
+- `publicUrl` (default null): the address izle is reached at; `izle-server admin-token --link` builds the admin
+  sign-in link on it.
 - `trustedProxies` (default `[]`): IP addresses or CIDR ranges (IPv4 or IPv6) of reverse proxies in front of the
-  server. For a request whose socket address is in the list, the client address is taken from
-  `X-Forwarded-For`, walking from the right past further trusted hops; entries left of the first untrusted hop are
-  ignored. The client address is only used for the `pair/start` rate limit and the admin sign-in throttle. Without
-  the setting the header is ignored, so behind a proxy all clients share one limit (and one admin lockout).
-
+  server. For a request whose socket address is in the list, the client address is taken from `X-Forwarded-For`,
+  walking from the right past further trusted hops; entries left of the first untrusted hop are ignored. The client
+  address is used only for the `pair/start` rate limit and the admin sign-in throttle. Without the setting the header
+  is ignored, so behind a proxy all clients share one limit (and one admin lockout).
+- `catalog.dir` (default: the sample catalog): the bundle directory, read from a local path only.
 - `resolver` (default null): `module` is a **local path** to the owner's resolver module (never downloaded);
-  `config` is handed to it as `ctx.config` and never logged; `deadlineMs` (100–120000, default 12000) bounds one
-  adapter call, `budgetMs` (default 30000) one TV resolve request. The module gets `<dataDir>/resolver` as its
-  own directory.
+  `config` is handed to it as `ctx.config` and never logged; `deadlineMs` (default 12000) bounds one adapter call,
+  `budgetMs` (default 30000) one TV resolve request, both 100–120000. The module gets `<dataDir>/resolver` as its own
+  directory.
+- `admin.tokenFile` (default `<dataDir>/admin.token`); `IZLE_ADMIN_TOKEN` in the environment wins over it.
 - `proxy.always` sends every HLS/MP4 stream through the proxy (the TV never contacts upstream hosts);
-  `proxy.sessionTtlSec` (60–86400) is the sliding session lifetime; `proxy.alignTsSegments` see
+  `proxy.sessionTtlSec` (60–86400) is the sliding session lifetime; `proxy.alignTsSegments`: see
   [Media proxy](#media-proxy).
+- `defaults` (default null each): `uiLanguage` (`tr`/`en`) and `preferredAudioLanguage` (a language tag) for devices
+  without their own setting; null falls back to the catalog's hints.
+- `log.level`: `debug`, `info` (default), `warn` or `error`.
