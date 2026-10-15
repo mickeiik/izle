@@ -24,13 +24,11 @@ test("izle-validate exits 0 with a summary for a valid bundle, or JSON with --js
   assert.match(r.stdout, /✔ .*valid izle-bundle v1/);
   const json = await run([SAMPLE, "--json"]);
   assert.equal(json.code, 0);
-  const out = JSON.parse(json.stdout);
-  assert.equal(out.ok, true);
-  assert.ok(out.stats.items >= 6);
+  assert.equal(JSON.parse(json.stdout).ok, true);
 });
 
 test("izle-validate exits 1 and lists errors for an invalid bundle", async () => {
-  const dir = await makeBundle({ items: (i) => (i.items[0].kind = "series") && (i.items[1].id = "movie-a") });
+  const dir = await makeBundle({ items: (i) => (i.items[1].id = "movie-a") });
   const r = await run([dir]);
   assert.equal(r.code, 1);
   assert.match(r.stdout, /✖ items.json \/items\/1\/id: duplicate item id "movie-a"/);

@@ -2,7 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import type { AddressInfo } from "node:net";
-import { probeBundle, type Bundle } from "../src/index.ts";
+import type { Bundle } from "../src/index.ts";
+import { probeBundle } from "../src/probe.ts";
 
 test("probe range-GETs direct media and subtitles, follows redirects, forwards headers", async () => {
   const seen: Array<{ url: string; headers: IncomingHttpHeaders; method: string }> = [];

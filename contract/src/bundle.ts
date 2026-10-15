@@ -1,8 +1,6 @@
 // Catalog bundle contract v1. Normative text: docs/spec/catalog-bundle-v1.md.
 // Mirrored by schema/{common,bundle,items}.v1.schema.json; keep both in sync.
 
-export const BUNDLE_FORMAT = "izle-bundle";
-export const BUNDLE_FORMAT_VERSION = 1;
 export const BUNDLE_MANIFEST_FILE = "bundle.json";
 export const BUNDLE_ITEMS_FILE = "items.json";
 export const BUNDLE_ASSETS_DIR = "assets";
@@ -16,12 +14,9 @@ export type LanguageTag = string;
 
 export type MediaKind = "hls" | "dash" | "mp4";
 
-/** Extension properties: any object in a bundle may carry keys starting with "x-" (ignored by izle). */
-export type Extensions = { [key: `x-${string}`]: unknown };
-
 export interface BundleManifest {
-  format: typeof BUNDLE_FORMAT;
-  formatVersion: typeof BUNDLE_FORMAT_VERSION;
+  format: "izle-bundle";
+  formatVersion: 1;
   catalogId: Id;
   buildId: string;
   /** ISO 8601 date-time with offset. */
@@ -95,16 +90,14 @@ interface SourceBase {
   subtitleTracks?: SubtitleTrack[];
 }
 
-export interface DirectMedia {
-  kind: MediaKind;
-  url: string;
-  /** Upstream request headers. Media with headers is only ever played through the server proxy. */
-  headers?: Record<string, string>;
-}
-
 export interface DirectSource extends SourceBase {
   type: "direct";
-  media: DirectMedia;
+  media: {
+    kind: MediaKind;
+    url: string;
+    /** Upstream request headers. Media with headers is only ever played through the server proxy. */
+    headers?: Record<string, string>;
+  };
 }
 
 export interface AdapterSource extends SourceBase {

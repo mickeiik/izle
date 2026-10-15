@@ -46,10 +46,10 @@ test("semantic, schema and file errors are reported where they are", async () =>
       { path: "/items/0/episodes/0/sources/1/id", message: /duplicate source id/ },
     ],
     [
-      { noPoster: true, files: { [`assets/${TINY_PNG_NAME}`]: Buffer.concat([TINY_PNG, Buffer.from([0])]) } },
+      { files: { [`assets/${TINY_PNG_NAME}`]: Buffer.concat([TINY_PNG, Buffer.from([0])]) } },
       { file: `assets/${TINY_PNG_NAME}`, message: /sha256 of the content/ },
     ],
-    [{ noPoster: true }, { path: "/items/0/poster", message: /is missing/ }],
+    [{ items: (i) => (i.items[0].poster = `assets/${"0".repeat(64)}.png`) }, { path: "/items/0/poster", message: /is missing/ }],
     [
       { items: (i) => (i.items[0].poster = `assets/${JPG_NAME}`), files: { [`assets/${JPG_NAME}`]: TINY_PNG } },
       { message: /content is not a jpg image/ },

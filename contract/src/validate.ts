@@ -82,7 +82,7 @@ function matching<T>(value: unknown, check: ValidateFunction<T>, file: string, i
 }
 
 /** Calendar check on top of the schema's ISO 8601 pattern (Date.parse accepts e.g. February 31st). */
-export function isValidDateTime(value: string): boolean {
+function isValidDateTime(value: string): boolean {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-](\d{2}):(\d{2}))$/.exec(value);
   if (!m) return false;
   const [y, mo, d, h, mi, s = "0", oh = "0", om = "0"] = m.slice(1);
@@ -91,11 +91,6 @@ export function isValidDateTime(value: string): boolean {
     Number(mo) >= 1 && Number(mo) <= 12 && Number(d) >= 1 && Number(d) <= daysInMonth &&
     Number(h) <= 23 && Number(mi) <= 59 && Number(s) <= 59 && Number(oh) <= 23 && Number(om) <= 59
   );
-}
-
-function checkUrl(url: string, file: string, pointer: string, issues: ValidationIssue[]): void {
-  const ok = ["http:", "https:"].includes(URL.parse(url)?.protocol ?? "");
-  if (!ok) issues.push(issue("error", file, pointer, "not a valid http(s) URL"));
 }
 
 /** Validates a bundle directory: JSON Schema plus the semantic rules of catalog-bundle-v1. */
@@ -136,7 +131,10 @@ export async function validateBundle(dir: string): Promise<ValidationResult> {
  * with the JSON pointers that reference it, and the adapter ids the sources use.
  */
 function checkItems(manifest: BundleManifest, items: CatalogItem[], issues: ValidationIssue[]) {
-  const F = BUNDLE_ITEMS_FILE;
+  const error = (pointer: string, message: string) => void issues.push(issue("error", BUNDLE_ITEMS_FILE, pointer, message));
+  const checkUrl = (url: string, pointer: string) => {
+    if (!["http:", "https:"].includes(URL.parse(url)?.protocol ?? "")) error(pointer, "not a valid http(s) URL");
+  };
   const stats: BundleStats = { items: items.length, movies: 0, series: 0, episodes: 0, playableEpisodes: 0, sources: 0, posters: 0 };
   const itemIds = new Map<string, number>();
   const episodeOwners = new Map<string, string>();
@@ -149,11 +147,11 @@ function checkItems(manifest: BundleManifest, items: CatalogItem[], issues: Vali
     stats[item.kind === "movie" ? "movies" : "series"]++;
 
     const firstIndex = itemIds.get(item.id);
-    if (firstIndex !== undefined) issues.push(issue("error", F, `${ip}/id`, `duplicate item id "${item.id}" (also /items/${firstIndex})`));
+    if (firstIndex !== undefined) error(`${ip}/id`, `duplicate item id "${item.id}" (also /items/${firstIndex})`);
     else itemIds.set(item.id, i);
 
     if (item.kind === "movie" && item.episodes.length !== 1) {
-      issues.push(issue("error", F, `${ip}/episodes`, `a movie must have exactly one episode (found ${item.episodes.length})`));
+      error(`${ip}/episodes`, `a movie must have exactly one episode (found ${item.episodes.length})`);
     }
     if (item.poster) posters.set(item.poster, [...(posters.get(item.poster) ?? []), `${ip}/poster`]);
 
@@ -164,32 +162,26 @@ function checkItems(manifest: BundleManifest, items: CatalogItem[], issues: Vali
       if (ep.playbackAllowed) playable++;
 
       const owner = episodeOwners.get(ep.id);
-      if (owner !== undefined) {
-        const why = `episode ids must be unique in the bundle; also used in item "${owner}"`;
-        issues.push(issue("error", F, `${ep_}/id`, `duplicate episode id "${ep.id}" (${why})`));
-      } else {
-        episodeOwners.set(ep.id, item.id);
-      }
-      if (ep.sources.length === 0 && ep.playbackAllowed) issues.push(issue("error", F, `${ep_}/playbackAllowed`, "must be false when sources is empty"));
+      if (owner !== undefined) error(`${ep_}/id`, `duplicate episode id "${ep.id}" (episode ids must be unique in the bundle; also used in item "${owner}")`);
+      else episodeOwners.set(ep.id, item.id);
+      if (ep.sources.length === 0 && ep.playbackAllowed) error(`${ep_}/playbackAllowed`, "must be false when sources is empty");
 
       const sourceIds = new Set<string>();
       ep.sources.forEach((src, s) => {
         const sp = `${ep_}/sources/${s}`;
         stats.sources++;
-        if (sourceIds.has(src.id)) issues.push(issue("error", F, `${sp}/id`, `duplicate source id "${src.id}" within the episode`));
+        if (sourceIds.has(src.id)) error(`${sp}/id`, `duplicate source id "${src.id}" within the episode`);
         sourceIds.add(src.id);
-        if (src.type === "direct") checkUrl(src.media.url, F, `${sp}/media/url`, issues);
+        if (src.type === "direct") checkUrl(src.media.url, `${sp}/media/url`);
         else {
           adapters.add(src.adapter);
-          if (!declaredAdapters.has(src.adapter)) {
-            issues.push(issue("error", F, `${sp}/adapter`, `adapter "${src.adapter}" is not listed in ${BUNDLE_MANIFEST_FILE} "adapters"`));
-          }
+          if (!declaredAdapters.has(src.adapter)) error(`${sp}/adapter`, `adapter "${src.adapter}" is not listed in ${BUNDLE_MANIFEST_FILE} "adapters"`);
         }
-        src.subtitleTracks?.forEach((t, k) => checkUrl(t.url, F, `${sp}/subtitleTracks/${k}/url`, issues));
+        src.subtitleTracks?.forEach((t, k) => checkUrl(t.url, `${sp}/subtitleTracks/${k}/url`));
       });
     });
     stats.playableEpisodes += playable;
-    if (playable === 0) issues.push(issue("warning", F, ip, `item "${item.id}" has no episode with playbackAllowed: true`));
+    if (playable === 0) issues.push(issue("warning", BUNDLE_ITEMS_FILE, ip, `item "${item.id}" has no episode with playbackAllowed: true`));
   });
 
   return { stats, posters, adapters };

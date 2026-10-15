@@ -18,36 +18,21 @@ export interface ProbeResult {
   ms: number;
 }
 
-export interface ProbeOptions {
-  concurrency?: number;
-  timeoutMs?: number;
-  fetch?: typeof fetch;
-}
-
-/** Every direct media URL and subtitle URL in the bundle. Adapter sources need a resolver and are skipped. */
-export function probeTargets(bundle: Bundle): ProbeTarget[] {
+/**
+ * Range-GETs one byte of every direct media and subtitle URL in the bundle (HEAD is not used: some hosts answer it
+ * with errors) and reports 200/206 as reachable. Redirects are followed. Adapter sources need a resolver: skipped.
+ */
+export async function probeBundle(bundle: Bundle, { concurrency = 4 } = {}): Promise<ProbeResult[]> {
   const targets: ProbeTarget[] = [];
   for (const item of bundle.items) {
     for (const ep of item.episodes) {
       for (const src of ep.sources) {
         const base = { itemId: item.id, episodeId: ep.id, sourceId: src.id };
-        if (src.type === "direct") {
-          targets.push({ ...base, what: "media", url: src.media.url, ...(src.media.headers ? { headers: src.media.headers } : {}) });
-        }
+        if (src.type === "direct") targets.push({ ...base, what: "media", url: src.media.url, headers: src.media.headers });
         for (const t of src.subtitleTracks ?? []) targets.push({ ...base, what: "subtitle", url: t.url });
       }
     }
   }
-  return targets;
-}
-
-/**
- * Range-GETs one byte of every target (HEAD is not used: some hosts answer it with errors) and reports 200/206 as
- * reachable. Redirects are followed.
- */
-export async function probeBundle(bundle: Bundle, opts: ProbeOptions = {}): Promise<ProbeResult[]> {
-  const targets = probeTargets(bundle);
-  const doFetch = opts.fetch ?? fetch;
   const results: ProbeResult[] = new Array(targets.length);
   let next = 0;
   const worker = async (): Promise<void> => {
@@ -56,12 +41,8 @@ export async function probeBundle(bundle: Bundle, opts: ProbeOptions = {}): Prom
       const target = targets[index]!;
       const started = Date.now();
       try {
-        const res = await doFetch(target.url, {
-          method: "GET",
-          redirect: "follow",
-          headers: { "User-Agent": "izle-validate/1", ...target.headers, Range: "bytes=0-0" },
-          signal: AbortSignal.timeout(opts.timeoutMs ?? 20_000),
-        });
+        const headers = { "User-Agent": "izle-validate/1", ...target.headers, Range: "bytes=0-0" };
+        const res = await fetch(target.url, { headers, signal: AbortSignal.timeout(20_000) });
         await res.body?.cancel().catch(() => {});
         results[index] = { target, ok: res.status === 200 || res.status === 206, status: res.status, ms: Date.now() - started };
       } catch (err) {
@@ -69,6 +50,6 @@ export async function probeBundle(bundle: Bundle, opts: ProbeOptions = {}): Prom
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, opts.concurrency ?? 4) }, worker));
+  await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
   return results;
 }

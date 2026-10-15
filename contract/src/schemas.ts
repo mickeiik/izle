@@ -3,13 +3,6 @@ import { Ajv2020, type ErrorObject, type ValidateFunction } from "ajv/dist/2020.
 import type { BundleManifest, ItemsFile } from "./bundle.ts";
 import type { ResolveResult } from "./resolver.ts";
 
-export const SCHEMA_IDS = {
-  common: "urn:izle:schema:common:v1",
-  bundle: "urn:izle:schema:bundle:v1",
-  items: "urn:izle:schema:items:v1",
-  resolveResult: "urn:izle:schema:resolve-result:v1",
-} as const;
-
 const loadSchema = (file: string): Record<string, unknown> =>
   JSON.parse(readFileSync(new URL(`../schema/${file}`, import.meta.url), "utf8"));
 
