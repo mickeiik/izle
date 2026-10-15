@@ -5,9 +5,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig, type ServerConfig } from "../src/config.ts";
 import { createLogger } from "../src/log.ts";
-import { startServer, type RunningServer, type StartOptions } from "../src/server.ts";
+import { startServer } from "../src/server.ts";
 
 export const ADMIN_TOKEN = "test-admin-token-0123456789abcdef";
+
+/** A logger that discards everything. */
+export const silentLogger = createLogger({ write: () => {} });
 
 /** The tests' resolver module: the example module's adapters plus a "test" adapter with hostile behaviours. */
 export const TEST_RESOLVER = fileURLToPath(new URL("./fixtures/test-resolver.js", import.meta.url));
@@ -150,7 +153,7 @@ export function fakeClock(start = Date.parse("2026-10-10T12:00:00Z")) {
 type Answer = { status: number; json: Json; headers: Headers };
 
 export interface TestServer {
-  srv: RunningServer;
+  srv: Awaited<ReturnType<typeof startServer>>;
   base: string;
   config: ServerConfig;
   bundleDir: string;
@@ -162,7 +165,7 @@ export interface TestServer {
   close(): Promise<void>;
 }
 
-export interface TestServerOptions extends Partial<Omit<StartOptions, "config">> {
+export interface TestServerOptions extends Partial<Omit<Parameters<typeof startServer>[0], "config">> {
   bundleDir?: string;
   configFile?: Json;
 }

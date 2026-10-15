@@ -28,7 +28,7 @@ import { Store } from "./store.ts";
 import { TvService } from "./tv.ts";
 import { VERSION } from "./version.ts";
 
-export interface StartOptions {
+interface StartOptions {
   config: ServerConfig;
   log?: Logger;
   /** Clock override (tests). */
@@ -40,7 +40,7 @@ export interface StartOptions {
   fetch?: typeof fetch;
 }
 
-export interface RunningServer {
+interface RunningServer {
   url: string;
   ctx: AppContext;
   close(): Promise<void>;

@@ -1,24 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { CatalogItem, Source } from "@izle/contract";
-import {
-  audioRank,
-  autoNextIndex,
-  cursorAfterFinished,
-  cursorAfterReport,
-  cursorIndex,
-  firstAllowedIndex,
-  isPlayable,
-  orderSources,
-} from "../src/playback.ts";
+import { autoNextIndex, cursorAfterReport, cursorIndex, isPlayable, orderSources } from "../src/playback.ts";
 import { fixtureItems } from "./helpers.ts";
 
 const items = fixtureItems().items as CatalogItem[];
 const show = items.find((i) => i.id === "show")!;
 const locked = items.find((i) => i.id === "locked")!;
 /** Saved positions with these episodes finished. */
-const finished = (...ids: string[]) =>
-  new Map(ids.map((id) => [id, { episodeId: id, positionMs: 0, durationMs: null, status: "finished" as const }]));
+const finished = (...ids: string[]) => new Map(ids.map((id) => [id, { status: "finished" as const }]));
 const watched = finished("show.e1", "show.e2", "show.e4", "show.e5");
 
 test("cursor: without one, the first allowed unfinished episode (else the first); a given one wins or moves on", () => {
@@ -60,17 +50,10 @@ test("cursor: without appended episodes, or with an ordinary cursor, the rules a
   assert.equal(cursorIndex(grown, { episodeId: "show.e3", wrapped: true }, watched, new Set(["show.e6"])), 3, "a disallowed cursor moves on as before");
 });
 
-test("finishing an episode advances the cursor to the next allowed one and wraps after the last", () => {
-  assert.equal(cursorAfterFinished(show, 0), 1);
-  assert.equal(cursorAfterFinished(show, 1), 3, "autoAdvance:false does not stop the cursor; e3 is skipped");
-  assert.equal(cursorAfterFinished(show, 4), 0);
-  assert.equal(firstAllowedIndex(show), 0);
-});
-
 test("cursor after a report: finished moves on (wrapping after the last), anything else stays; changes", () => {
   const at = (episodeId: string, wrapped = false) => ({ episodeId, wrapped });
   assert.deepEqual(cursorAfterReport(show, 0, "finished", at("show.e1")), { episodeId: "show.e2", wrapped: false, changed: true });
-  assert.deepEqual(cursorAfterReport(show, 1, "finished", at("show.e2")), { episodeId: "show.e4", wrapped: false, changed: true }, "the disallowed e3 is skipped");
+  assert.deepEqual(cursorAfterReport(show, 1, "finished", at("show.e2")), { episodeId: "show.e4", wrapped: false, changed: true }, "the disallowed e3 is skipped; autoAdvance:false does not stop the cursor");
   assert.deepEqual(cursorAfterReport(show, 4, "finished", at("show.e5")), { episodeId: "show.e1", wrapped: true, changed: true }, "after the last: wrapped to the first");
   assert.deepEqual(cursorAfterReport(show, 3, "finished", null), { episodeId: "show.e5", wrapped: false, changed: true });
   assert.deepEqual(cursorAfterReport(show, 0, "playing", at("show.e1")), { episodeId: "show.e1", wrapped: false, changed: false }, "a heartbeat changes nothing");
@@ -93,18 +76,14 @@ test("auto-next respects play order, playbackAllowed and autoAdvance boundaries"
   assert.equal(autoNextIndex({ ...show, autoAdvance: false, episodes: show.episodes.map((e, i) => (i === 0 ? { ...e, autoAdvance: true } : e)) }, 0), 1);
 });
 
-test("audio rank: match (or no dialogue, or no preference) < unknown < mismatch", () => {
-  assert.equal(audioRank({ audio: ["tr-TR"], subtitles: [] }, "tr"), 0);
-  assert.equal(audioRank({ audio: ["en"], subtitles: [] }, "pt-BR"), 2);
-  assert.equal(audioRank({ audio: ["pt"], subtitles: [] }, "pt-BR"), 0);
-  assert.equal(audioRank({ audio: null, subtitles: null }, "tr"), 1);
-  assert.equal(audioRank({ audio: [], subtitles: [] }, "tr"), 0);
-  assert.equal(audioRank({ audio: ["en"], subtitles: [] }, null), 0);
-});
-
-test("source order: audio match > unknown > mismatch, stable, exclusions removed, failures last", () => {
+test("source order: audio match (or no dialogue) > unknown > mismatch, stable, exclusions removed, failures last", () => {
   const sources = show.episodes[0]!.sources as Source[];
   const ids = (s: Source[]) => s.map((x) => x.id);
+  // Languages match on their primary subtag, either way round.
+  const langs = (id: string, audio: string[] | null) => ({ id, languages: { audio, subtitles: [] } }) as unknown as Source;
+  const pt = [langs("en", ["en"]), langs("unknown", null), langs("silent", []), langs("pt", ["pt"]), langs("tr", ["tr-TR"])];
+  assert.deepEqual(ids(orderSources(pt, { preferredAudioLanguage: "pt-BR" })), ["silent", "pt", "unknown", "en", "tr"]);
+  assert.deepEqual(ids(orderSources(pt, { preferredAudioLanguage: "tr" })), ["silent", "tr", "unknown", "en", "pt"]);
   assert.deepEqual(ids(orderSources(sources, { preferredAudioLanguage: "tr" })), ["tr-dub", "multi", "unknown", "en-orig"]);
   assert.deepEqual(ids(orderSources(sources, { preferredAudioLanguage: "en" })), ["en-orig", "multi", "unknown", "tr-dub"]);
   assert.deepEqual(ids(orderSources(sources, { preferredAudioLanguage: null })), ["unknown", "en-orig", "tr-dub", "multi"]);

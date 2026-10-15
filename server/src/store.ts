@@ -22,7 +22,7 @@ export interface Device {
   autoplayOnStart: boolean;
 }
 
-export interface PairCode {
+interface PairCode {
   code: string;
   pairTokenHash: string;
   deviceId: string | null;
@@ -42,7 +42,7 @@ export interface Progress {
   updatedAt: number;
 }
 
-export interface Cursor {
+interface Cursor {
   catalogId: string;
   itemId: string;
   episodeId: string;

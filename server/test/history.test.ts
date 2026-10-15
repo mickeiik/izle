@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { CatalogService, type CatalogLoadedHook } from "../src/catalog.ts";
-import { CatalogHistory, CHANGES_CAP } from "../src/history.ts";
+import { CatalogService, type LoadedCatalog } from "../src/catalog.ts";
+import { CatalogHistory } from "../src/history.ts";
 import { createLogger } from "../src/log.ts";
 import { Store } from "../src/store.ts";
 import { fakeClock, fixtureItems, publishBuild, tempDir, writeBundle, type Json } from "./helpers.ts";
@@ -19,7 +19,7 @@ async function setup(t: { after(fn: () => unknown): void }) {
   const history = new CatalogHistory(store, log);
   const bundleDir = await writeBundle(path.join(root, "bundle"));
   /** A catalog service on the test bundle whose loads are recorded (a new one = a server restart). */
-  const service = (onLoaded: CatalogLoadedHook = (next, previous) => void history.record(next, previous)) =>
+  const service = (onLoaded = (next: LoadedCatalog, previous: LoadedCatalog | null) => void history.record(next, previous)) =>
     new CatalogService(bundleDir, log, clock.now, null, { onLoaded });
   const publish = publishBuild.bind(null, bundleDir);
   const builds = (catalogId = CATALOG) => store.listCatalogBuilds(catalogId, 50);
@@ -177,17 +177,17 @@ test("two catalog ids keep independent histories", async (t) => {
   assert.equal(seenAt("show.e6", "other"), undefined);
 });
 
-test(`changes lists are capped at ${CHANGES_CAP}; the counts stay exact`, async (t) => {
+test("changes lists are capped at 500; the counts stay exact", async (t) => {
   const { store, clock, service, publish } = await setup(t);
   const catalog = service();
   await catalog.load();
   clock.advance(1_000);
-  const big = { id: "big", kind: "series", title: "Big", poster: null, episodes: Array.from({ length: CHANGES_CAP + 100 }, (_, i) => episode(`big.e${i + 1}`, i + 1)) };
+  const big = { id: "big", kind: "series", title: "Big", poster: null, episodes: Array.from({ length: 600 }, (_, i) => episode(`big.e${i + 1}`, i + 1)) };
   await publish("fixture-2", (items) => [...items, big]);
   await catalog.reload();
   const { build, changes } = store.getCatalogBuild(CATALOG, "fixture-2")!;
-  assert.equal(build.episodesAdded, CHANGES_CAP + 100);
-  assert.equal(changes.episodes.added.length, CHANGES_CAP);
+  assert.equal(build.episodesAdded, 600);
+  assert.equal(changes.episodes.added.length, 500);
   assert.equal(changes.episodes.added[0]?.id, "big.e1");
 });
 

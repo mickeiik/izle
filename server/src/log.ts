@@ -18,7 +18,7 @@ const MAX_DEPTH = 6;
 const MAX_STRING = 500;
 const MAX_ARRAY = 50;
 
-export function isSecretKey(key: string): boolean {
+function isSecretKey(key: string): boolean {
   const words = key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[^A-Za-z0-9]+/);
   return words.some((w) => SECRET_WORDS.has(w.toLowerCase()));
 }
@@ -37,7 +37,7 @@ function scrub(value: string, token: (run: string) => string): string {
   return out.length > MAX_STRING ? `${out.slice(0, MAX_STRING)}…` : out;
 }
 
-export function redactString(value: string): string {
+function redactString(value: string): string {
   return scrub(value, () => "<token>");
 }
 
@@ -118,6 +118,3 @@ export function createLogger(
     child: (fields) => createLogger(opts, { ...bound, ...fields }),
   };
 }
-
-/** A logger that discards everything (tests). */
-export const silentLogger: Logger = createLogger({ write: () => {} });

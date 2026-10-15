@@ -90,7 +90,7 @@ interface ConfigFile {
   log?: { level?: Level };
 }
 
-export interface LoadConfigOptions {
+interface LoadConfigOptions {
   /** Config file path; relative paths inside it resolve against its directory. */
   path?: string | null;
   env?: NodeJS.ProcessEnv;

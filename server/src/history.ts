@@ -3,7 +3,7 @@ import type { Logger } from "./log.ts";
 import type { CatalogBuild, CatalogChanges, SeenEpisode, Store } from "./store.ts";
 
 /** The longest each list in a build's changes gets; the counts on the build stay exact. */
-export const CHANGES_CAP = 500;
+const CHANGES_CAP = 500;
 
 const cap = <T>(list: T[]): T[] => list.slice(0, CHANGES_CAP);
 

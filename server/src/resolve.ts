@@ -9,7 +9,7 @@ import { entryPath, subtitlePath, type ProxyService } from "./proxy.ts";
 import { runAdapter, type AdapterFailureCode } from "./resolver.ts";
 
 const FAILURE_PENALTY_MS = 10 * 60_000;
-export const PLAYBACK_SESSION_TTL_MS = 12 * 60 * 60_000;
+const PLAYBACK_SESSION_TTL_MS = 12 * 60 * 60_000;
 
 export interface ResolveInput {
   episodeId: string;

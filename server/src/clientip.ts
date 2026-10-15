@@ -1,7 +1,7 @@
 import { BlockList, isIP } from "node:net";
 
 /** `::ffff:192.0.2.1` (an IPv4 client on a dual-stack socket) → `192.0.2.1`; anything else unchanged. */
-export function normalizeIp(address: string): string {
+function normalizeIp(address: string): string {
   const m = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(address);
   return m ? m[1]! : address;
 }

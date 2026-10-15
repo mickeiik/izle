@@ -4,9 +4,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadAdminToken, newId } from "../src/auth.ts";
 import { ConfigError, loadConfig, SAMPLE_CATALOG_DIR } from "../src/config.ts";
-import { silentLogger } from "../src/log.ts";
 import { isId } from "../src/validation.ts";
-import { tempDir } from "./helpers.ts";
+import { silentLogger, tempDir } from "./helpers.ts";
 
 test("defaults without a config file", () => {
   const c = loadConfig({ cwd: "/srv/izle", env: {} });

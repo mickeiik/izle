@@ -32,12 +32,12 @@ export interface LoadedCatalog {
 export type ReloadResult = { ok: true; catalog: LoadedCatalog } | { ok: false; issues: ValidationIssue[] };
 
 /** Called after every successful load with the catalog now active and the one it replaced (null at start). */
-export type CatalogLoadedHook = (next: LoadedCatalog, previous: LoadedCatalog | null) => void;
+type CatalogLoadedHook = (next: LoadedCatalog, previous: LoadedCatalog | null) => void;
 
 const POSTER_FILE = /^[0-9a-f]{64}\.(jpg|png|webp)$/;
 
 /** Case-, accent- and Turkish-dotless-i-insensitive form used for catalog search. */
-export function fold(text: string): string {
+function fold(text: string): string {
   return text.normalize("NFD").replace(/\p{M}/gu, "").replace(/ı/g, "i").toLowerCase();
 }
 

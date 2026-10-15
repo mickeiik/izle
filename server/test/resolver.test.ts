@@ -8,9 +8,9 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { BundleValidationError, type Adapter } from "@izle/contract";
 import { DEFAULT_API_KEY, startUpstream } from "../examples/resolver-example/upstream.js";
-import { createLogger, silentLogger } from "../src/log.ts";
+import { createLogger } from "../src/log.ts";
 import { healthcheckAll, loadResolver, ResolverLoadError, runAdapter } from "../src/resolver.ts";
-import { fixtureItems, fixtureManifest, startTestServer, tempDir, TEST_RESOLVER, writeBundle, type Json } from "./helpers.ts";
+import { fixtureItems, fixtureManifest, silentLogger, startTestServer, tempDir, TEST_RESOLVER, writeBundle, type Json } from "./helpers.ts";
 
 const BIN = fileURLToPath(new URL("../bin/izle-server.js", import.meta.url));
 const EXAMPLE = fileURLToPath(new URL("../examples/resolver-example/index.js", import.meta.url));

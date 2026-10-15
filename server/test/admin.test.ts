@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CATALOG_BUILDS_LISTED, reloadOnSignal } from "../src/catalog-admin.ts";
+import { reloadOnSignal } from "../src/catalog-admin.ts";
 import { HOME_MAX_ITEMS } from "../src/tv.ts";
 import { openEvents, publishBuild, startTestServer, type Json } from "./helpers.ts";
 
@@ -371,15 +371,15 @@ test("catalog builds: the baseline, then each reload's changes newest first; one
   // The list holds the newest builds only; older ones are still readable by id.
   const store = s.srv.ctx.store;
   const empty = { items: { added: [], removed: [] }, episodes: { added: [], removed: [] } };
-  for (let i = 0; i < CATALOG_BUILDS_LISTED; i++) {
+  for (let i = 0; i < 50; i++) {
     store.recordCatalogBuild(
       { catalogId: "fixture", buildId: `old-${i}`, builtAt: "2026-10-01T00:00:00Z", loadedAt: s.clock.now() + 1000 + i, baseline: false, items: 16, episodes: 21, itemsAdded: 0, itemsRemoved: 0, episodesAdded: 0, episodesRemoved: 0 },
       empty,
     );
   }
   const capped = await s.admin("GET", "/catalog");
-  assert.equal(capped.json.builds.length, CATALOG_BUILDS_LISTED);
-  assert.equal(capped.json.builds[0].buildId, `old-${CATALOG_BUILDS_LISTED - 1}`, "newest first");
+  assert.equal(capped.json.builds.length, 50);
+  assert.equal(capped.json.builds[0].buildId, "old-49", "newest first");
   assert.ok(!capped.json.builds.some((b: Json) => b.baseline), "the baseline fell off the list");
   assert.deepEqual(capped.json.changes, empty, "the latest build's changes");
   assert.equal((await s.admin("GET", "/catalog/builds/fixture-1")).status, 200);

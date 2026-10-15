@@ -12,7 +12,7 @@ import type { CatalogBuild } from "./store.ts";
 import { VERSION } from "./version.ts";
 
 /** Builds listed by `GET /admin/catalog`, newest first; older ones stay readable by id. */
-export const CATALOG_BUILDS_LISTED = 50;
+const CATALOG_BUILDS_LISTED = 50;
 
 export function buildJson(b: CatalogBuild) {
   return {
