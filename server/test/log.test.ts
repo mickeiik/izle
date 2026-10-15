@@ -83,10 +83,7 @@ test("levels filter and child loggers bind fields", () => {
 
 test("redact copes with odd values", () => {
   assert.deepEqual(redact({ a: undefined, b: () => 1, c: 10n, d: new Date(0), e: new Map(), f: Buffer.from("x") }), {
-    c: "10",
-    d: "1970-01-01T00:00:00.000Z",
-    e: "<Map>",
-    f: "<Buffer>",
+    c: "10", d: "1970-01-01T00:00:00.000Z", e: "<Map>", f: "<Buffer>",
   });
   let deep: Record<string, unknown> = {};
   const root = deep;

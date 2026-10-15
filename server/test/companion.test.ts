@@ -2,16 +2,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import path from "node:path";
-import { fixtureItems, fixtureManifest, startTestServer, tempDir, writeBundle, type Json } from "./helpers.ts";
+import { fixtureItems, fixtureManifest, listen, startTestServer, tempDir, writeBundle, type Json } from "./helpers.ts";
 
 const PROXY_MP4 = /^\/p\/([A-Za-z0-9_-]{43})\/video\.mp4$/;
 const PROXY_HLS = /^\/p\/([A-Za-z0-9_-]{43})\/index\.m3u8$/;
 const REFERER = "https://site.example.test/";
 
 /** A local upstream: a plain MP4 anybody may fetch, and an HLS playlist that needs a Referer. */
-async function startUpstream() {
+function startUpstream() {
   const mp4 = Buffer.alloc(4096, 7);
   const server = createServer((req, res) => {
     if (req.url === "/plain/video.mp4") return void res.writeHead(200, { "Content-Type": "video/mp4" }).end(mp4);
@@ -22,11 +21,7 @@ async function startUpstream() {
     }
     res.writeHead(404).end();
   });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return {
-    url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
-    close: () => new Promise<void>((resolve) => server.close(() => resolve())),
-  };
+  return listen(server);
 }
 
 const direct = (id: string, audio: string[], media: Json) => ({ id, type: "direct", languages: { audio, subtitles: [] }, media });
@@ -230,11 +225,7 @@ test("companion resolve: forced source, always proxied, own session scope, DASH 
   const cand = await s.admin("GET", `/devices/${tv.deviceId}/companion`);
   assert.deepEqual(
     cand.json.candidates.map((x: Json) => [x.sourceId, x.kind, x.current, x.supported, x.reason]),
-    [
-      ["tv-hls", "hls", true, true, null],
-      ["fr-mp4", "mp4", false, true, null],
-      ["dash-only", "dash", false, false, "dash"],
-    ],
+    [["tv-hls", "hls", true, true, null], ["fr-mp4", "mp4", false, true, null], ["dash-only", "dash", false, false, "dash"]],
   );
   assert.ok(!JSON.stringify(cand.json).includes(up.url));
 

@@ -53,11 +53,7 @@ test("admin auth: ten failures lock the address out until the window ends, even 
   assert.ok(failed.every((l) => l.level === "warn" && l.client === "127.0.0.1"));
   assert.deepEqual(
     failed.slice(0, 3).map((l) => [l.route, l.reason]),
-    [
-      ["/api/v1/admin/pair/approve", "wrong token"],
-      ["/api/v1/admin/pair/approve", "wrong token"],
-      ["/api/v1/admin/devices", "no token"],
-    ],
+    [["/api/v1/admin/pair/approve", "wrong token"], ["/api/v1/admin/pair/approve", "wrong token"], ["/api/v1/admin/devices", "no token"]],
     "the route template and what was wrong",
   );
   const locked = logged(s, "admin auth locked out");
@@ -87,10 +83,7 @@ test("admin auth: behind a trusted reverse proxy each X-Forwarded-For client is 
   assert.equal(await devices("203.0.113.2", GUESS), 401, "and has a count of its own");
   assert.equal(await devices(null, ADMIN_TOKEN), 200, "nor is the proxy's own address (the shell's loopback calls)");
 
-  assert.deepEqual(
-    logged(s, "admin auth failed").map((l) => l.client),
-    [...Array<string>(10).fill("203.0.113.1"), "203.0.113.2"],
-  );
+  assert.deepEqual(logged(s, "admin auth failed").map((l) => l.client), [...Array<string>(10).fill("203.0.113.1"), "203.0.113.2"]);
   assert.deepEqual(logged(s, "admin auth locked out").map((l) => l.client), ["203.0.113.1"]);
   assert.ok(!s.logs.some((l) => l.includes(GUESS) || l.includes(ADMIN_TOKEN)));
 });

@@ -20,11 +20,7 @@ async function continueOf(as: Awaited<ReturnType<typeof setup>>["as"], itemId: s
 
 /** A playable episode shaped like the fixture's last episode of "show"; `allowed: false` makes it not playable. */
 const extraEpisode = (id: string, number: number, allowed = true): Json => ({
-  ...fixtureItems().items[0].episodes.at(-1),
-  id,
-  season: 3,
-  number,
-  ...(allowed ? {} : { playbackAllowed: false, sources: [] }),
+  ...fixtureItems().items[0].episodes.at(-1), id, season: 3, number, ...(allowed ? {} : { playbackAllowed: false, sources: [] }),
 });
 
 /** Publishes the fixture with `episodes` appended to "show" as build `buildId` and reloads the server's catalog. */
@@ -56,12 +52,7 @@ test("state: home list in owner order with continue info; settings fall back to 
   let state = await as("GET", "/state");
   assert.deepEqual(state.json.home, []);
   assert.deepEqual(state.json.device, {
-    id: tv.deviceId,
-    name: "Salon",
-    uiLanguage: "tr",
-    preferredAudioLanguage: "tr",
-    subtitlesLanguage: null,
-    autoplayOnStart: false,
+    id: tv.deviceId, name: "Salon", uiLanguage: "tr", preferredAudioLanguage: "tr", subtitlesLanguage: null, autoplayOnStart: false,
   });
   assert.deepEqual(state.json.catalog, { id: "fixture", buildId: "fixture-1", name: "Fixture catalog" });
 
@@ -71,16 +62,7 @@ test("state: home list in owner order with continue info; settings fall back to 
   const show = state.json.home[1];
   assert.match(show.item.posterUrl, /^\/assets\/[0-9a-f]{64}\.png$/);
   assert.deepEqual(show.continue, {
-    episodeId: "show.e1",
-    season: 1,
-    number: 1,
-    title: "Pilot",
-    label: null,
-    index: 0,
-    count: 5,
-    positionMs: 0,
-    durationMs: 1_200_000,
-    status: "new",
+    episodeId: "show.e1", season: 1, number: 1, title: "Pilot", label: null, index: 0, count: 5, positionMs: 0, durationMs: 1_200_000, status: "new",
   });
   assert.equal(state.json.home[2].item.posterUrl, null);
 });

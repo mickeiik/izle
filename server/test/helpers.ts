@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,10 +17,7 @@ export const silentLogger = createLogger({ write: () => {} });
 /** The tests' resolver module: the example module's adapters plus a "test" adapter with hostile behaviours. */
 export const TEST_RESOLVER = fileURLToPath(new URL("./fixtures/test-resolver.js", import.meta.url));
 
-const TINY_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==",
-  "base64",
-);
+const TINY_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
 const TINY_PNG_NAME = `${createHash("sha256").update(TINY_PNG).digest("hex")}.png`;
 
 const lang = (audio: string[] | null, subtitles: string[] | null = []) => ({ audio, subtitles });
@@ -51,21 +50,10 @@ export function fixtureItems(): Json {
             title: "Pilot",
             durationMs: 1_200_000,
             playbackAllowed: true,
-            sources: [
-              direct("unknown", null),
-              direct("en-orig", ["en"]),
-              direct("tr-dub", ["tr"]),
-              direct("multi", ["tr-TR", "en"]),
-            ],
+            sources: [direct("unknown", null), direct("en-orig", ["en"]), direct("tr-dub", ["tr"]), direct("multi", ["tr-TR", "en"])],
           },
           {
-            id: "show.e2",
-            season: 1,
-            number: 2,
-            title: "Season finale",
-            playbackAllowed: true,
-            autoAdvance: false,
-            sources: [direct("main", ["tr"])],
+            id: "show.e2", season: 1, number: 2, title: "Season finale", playbackAllowed: true, autoAdvance: false, sources: [direct("main", ["tr"])],
           },
           { id: "show.e3", season: 2, number: 1, playbackAllowed: false, sources: [] },
           {
@@ -114,16 +102,8 @@ export function fixtureItems(): Json {
 
 export function fixtureManifest(): Json {
   return {
-    format: "izle-bundle",
-    formatVersion: 1,
-    catalogId: "fixture",
-    buildId: "fixture-1",
-    builtAt: "2026-10-10T12:00:00Z",
-    name: "Fixture catalog",
-    defaults: { uiLanguage: "tr", preferredAudioLanguage: "tr" },
-    adapters: ["example"],
-    items: "items.json",
-    assetsDir: "assets",
+    format: "izle-bundle", formatVersion: 1, catalogId: "fixture", buildId: "fixture-1", builtAt: "2026-10-10T12:00:00Z", name: "Fixture catalog",
+    defaults: { uiLanguage: "tr", preferredAudioLanguage: "tr" }, adapters: ["example"], items: "items.json", assetsDir: "assets",
   };
 }
 
@@ -142,6 +122,16 @@ export function publishBuild(dir: string, buildId: string, edit = (items: Json[]
 
 export async function tempDir(prefix = "izle-test-"): Promise<string> {
   return mkdtemp(path.join(tmpdir(), prefix));
+}
+
+/** Starts a local HTTP server on a free loopback port: its base URL, and a close that ends its connections. */
+export async function listen(server: Server) {
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const close = () => {
+    server.closeAllConnections();
+    return new Promise<void>((resolve) => server.close(() => resolve()));
+  };
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, close };
 }
 
 /** A controllable clock. */
@@ -182,12 +172,8 @@ export async function startTestServer(opts: TestServerOptions = {}): Promise<Tes
   const logs: string[] = [];
   const clock = fakeClock();
   const srv = await startServer({
-    config,
-    log: opts.log ?? createLogger({ level: "debug", write: (l) => void logs.push(l), now: clock.now }),
-    now: opts.now ?? clock.now,
-    pingMs: opts.pingMs ?? 20_000,
-    pairing: opts.pairing,
-    fetch: opts.fetch,
+    config, log: opts.log ?? createLogger({ level: "debug", write: (l) => void logs.push(l), now: clock.now }), now: opts.now ?? clock.now,
+    pingMs: opts.pingMs ?? 20_000, pairing: opts.pairing, fetch: opts.fetch,
   });
   const base = srv.url;
 

@@ -27,9 +27,7 @@ test("cursor: without one, the first allowed unfinished episode (else the first)
 const grown: CatalogItem = {
   ...show,
   episodes: [
-    ...show.episodes,
-    { ...show.episodes[4]!, id: "show.e6", playbackAllowed: false, sources: [] },
-    { ...show.episodes[4]!, id: "show.e7" },
+    ...show.episodes, { ...show.episodes[4]!, id: "show.e6", playbackAllowed: false, sources: [] }, { ...show.episodes[4]!, id: "show.e7" },
     { ...show.episodes[4]!, id: "show.e8" },
   ],
 };

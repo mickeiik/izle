@@ -43,17 +43,8 @@ test("baseline: the first load of a catalog id records every episode as always t
 
   assert.deepEqual(builds(), [
     {
-      catalogId: CATALOG,
-      buildId: "fixture-1",
-      builtAt: "2026-10-10T12:00:00Z",
-      loadedAt: clock.now(),
-      baseline: true,
-      items: fixture.length,
-      episodes,
-      itemsAdded: 0,
-      itemsRemoved: 0,
-      episodesAdded: 0,
-      episodesRemoved: 0,
+      catalogId: CATALOG, buildId: "fixture-1", builtAt: "2026-10-10T12:00:00Z", loadedAt: clock.now(), baseline: true, items: fixture.length,
+      episodes, itemsAdded: 0, itemsRemoved: 0, episodesAdded: 0, episodesRemoved: 0,
     },
   ]);
   assert.deepEqual(store.getCatalogBuild(CATALOG, "fixture-1")?.changes, { items: { added: [], removed: [] }, episodes: { added: [], removed: [] } });

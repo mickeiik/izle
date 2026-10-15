@@ -143,10 +143,7 @@ test("shell helpers: local address, link base and link format", () => {
   const interfaces = () =>
     ({
       lo: [{ address: "127.0.0.1", family: "IPv4", internal: true }],
-      eth0: [
-        { address: "fe80::1", family: "IPv6", internal: false },
-        { address: "192.168.1.54", family: "IPv4", internal: false },
-      ],
+      eth0: [{ address: "fe80::1", family: "IPv6", internal: false }, { address: "192.168.1.54", family: "IPv4", internal: false }],
     }) as any;
   assert.deepEqual(linkBase(config({ host: "0.0.0.0", port: 8787 }, "https://izle.example.org"), interfaces), { url: "https://izle.example.org", source: "publicUrl" });
   assert.deepEqual(linkBase(config({ host: "192.168.1.54", port: 8787 }), interfaces), { url: "http://192.168.1.54:8787", source: "listen.host" });

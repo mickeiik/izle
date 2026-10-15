@@ -114,17 +114,10 @@ test("commands: every type is validated and stored with its payload; the log nev
   const send = (body: unknown) => s.admin("POST", `/devices/${tv.deviceId}/commands`, body);
   const TEXT = "Yemek hazır, anneanne!";
   const good: Array<[unknown, Record<string, unknown>]> = [
-    [{ type: "stop" }, {}],
-    [{ type: "pause" }, {}],
-    [{ type: "resume" }, {}],
-    [{ type: "next" }, {}],
-    [{ type: "previous" }, {}],
-    [{ type: "seek", deltaMs: -30_000 }, { deltaMs: -30_000 }],
-    [{ type: "seek", deltaMs: 3_600_000 }, { deltaMs: 3_600_000 }],
-    [{ type: "seek", deltaMs: -3_600_000 }, { deltaMs: -3_600_000 }],
-    [{ type: "seek", positionMs: 0 }, { positionMs: 0 }],
-    [{ type: "seek", positionMs: 754_000 }, { positionMs: 754_000 }],
-    [{ type: "message", text: `  ${TEXT}\n` }, { text: TEXT, durationSec: 15 }],
+    [{ type: "stop" }, {}], [{ type: "pause" }, {}], [{ type: "resume" }, {}], [{ type: "next" }, {}], [{ type: "previous" }, {}],
+    [{ type: "seek", deltaMs: -30_000 }, { deltaMs: -30_000 }], [{ type: "seek", deltaMs: 3_600_000 }, { deltaMs: 3_600_000 }],
+    [{ type: "seek", deltaMs: -3_600_000 }, { deltaMs: -3_600_000 }], [{ type: "seek", positionMs: 0 }, { positionMs: 0 }],
+    [{ type: "seek", positionMs: 754_000 }, { positionMs: 754_000 }], [{ type: "message", text: `  ${TEXT}\n` }, { text: TEXT, durationSec: 15 }],
     [{ type: "message", text: "x".repeat(200), durationSec: 3 }, { text: "x".repeat(200), durationSec: 3 }],
     [{ type: "message", text: "Bye", durationSec: 120 }, { text: "Bye", durationSec: 120 }],
   ];
@@ -142,30 +135,13 @@ test("commands: every type is validated and stored with its payload; the log nev
   );
 
   const bad: unknown[] = [
-    { type: "play" },
-    { type: "stop", episodeId: "show.e1" },
-    { type: "seek" },
-    { type: "seek", deltaMs: 30_000, positionMs: 10_000 },
-    { type: "seek", deltaMs: 3_600_001 },
-    { type: "seek", deltaMs: -3_600_001 },
-    { type: "seek", deltaMs: 1.5 },
-    { type: "seek", positionMs: -1 },
-    { type: "seek", positionMs: "10" },
-    { type: "message" },
-    { type: "message", text: "" },
-    { type: "message", text: "   " },
-    { type: "message", text: "\n\t" },
-    { type: "message", text: "x".repeat(201) },
-    { type: "message", text: 42 },
-    { type: "message", text: "Hi", durationSec: 2 },
-    { type: "message", text: "Hi", durationSec: 121 },
-    { type: "message", text: "Hi", durationSec: 10.5 },
-    { type: "message", text: "Hi", extra: true },
-    { type: "pause", episodeId: "show.e1" },
-    { type: "next", deltaMs: 1000 },
-    { type: "rewind" },
-    { type: "PAUSE" },
-    {},
+    { type: "play" }, { type: "stop", episodeId: "show.e1" }, { type: "seek" }, { type: "seek", deltaMs: 30_000, positionMs: 10_000 },
+    { type: "seek", deltaMs: 3_600_001 }, { type: "seek", deltaMs: -3_600_001 }, { type: "seek", deltaMs: 1.5 }, { type: "seek", positionMs: -1 },
+    { type: "seek", positionMs: "10" }, { type: "message" }, { type: "message", text: "" }, { type: "message", text: "   " },
+    { type: "message", text: "\n\t" }, { type: "message", text: "x".repeat(201) }, { type: "message", text: 42 },
+    { type: "message", text: "Hi", durationSec: 2 }, { type: "message", text: "Hi", durationSec: 121 },
+    { type: "message", text: "Hi", durationSec: 10.5 }, { type: "message", text: "Hi", extra: true }, { type: "pause", episodeId: "show.e1" },
+    { type: "next", deltaMs: 1000 }, { type: "rewind" }, { type: "PAUSE" }, {},
   ];
   for (const body of bad) {
     const r = await send(body);
@@ -246,9 +222,7 @@ test("diagnostics: the probe reaches upstreams through the server's fetch", asyn
   const { ms, ...probe } = d.json.sources[0].probe;
   assert.equal(typeof ms, "number");
   assert.deepEqual(probe, {
-    ok: true,
-    status: 200,
-    contentType: "application/vnd.apple.mpegurl",
+    ok: true, status: 200, contentType: "application/vnd.apple.mpegurl",
     playlist: { master: true, variants: 1, renditions: 0, segments: 0, endList: false },
   });
   assert.deepEqual(asked, [["https://media.example.test/tr-dub/master.m3u8", {}]], "no Range for a playlist, no upstream headers");
@@ -301,13 +275,8 @@ test("catalog reload on SIGHUP: bumps every TV like the route; a reload that thr
 test("catalog builds: the baseline, then each reload's changes newest first; one build by id; unknown build", async (t) => {
   const { s } = await setup(t);
   const baseline = {
-    buildId: "fixture-1",
-    builtAt: "2026-10-10T12:00:00Z",
-    loadedAt: "2026-10-10T12:00:00.000Z",
-    baseline: true,
-    counts: { items: 16, episodes: 20 },
-    added: { items: 0, episodes: 0 },
-    removed: { items: 0, episodes: 0 },
+    buildId: "fixture-1", builtAt: "2026-10-10T12:00:00Z", loadedAt: "2026-10-10T12:00:00.000Z", baseline: true, counts: { items: 16, episodes: 20 },
+    added: { items: 0, episodes: 0 }, removed: { items: 0, episodes: 0 },
   };
   const first = await s.admin("GET", "/catalog");
   assert.deepEqual(first.json.builds, [baseline]);
@@ -322,13 +291,8 @@ test("catalog builds: the baseline, then each reload's changes newest first; one
   assert.deepEqual(reload.json.catalog.builds.map((b: { buildId: string }) => b.buildId), ["fixture-2", "fixture-1"], "the reload answers with the new history");
   const second = await s.admin("GET", "/catalog");
   const build2 = {
-    buildId: "fixture-2",
-    builtAt: "2026-10-10T12:00:00Z",
-    loadedAt: "2026-10-10T13:00:00.000Z",
-    baseline: false,
-    counts: { items: 15, episodes: 19 },
-    added: { items: 0, episodes: 0 },
-    removed: { items: 1, episodes: 1 },
+    buildId: "fixture-2", builtAt: "2026-10-10T12:00:00Z", loadedAt: "2026-10-10T13:00:00.000Z", baseline: false, counts: { items: 15, episodes: 19 },
+    added: { items: 0, episodes: 0 }, removed: { items: 1, episodes: 1 },
   };
   assert.deepEqual(second.json.builds, [build2, baseline]);
   const changes2 = {
