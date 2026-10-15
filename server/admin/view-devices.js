@@ -11,13 +11,8 @@ export function devicesView(scope) {
   const pendingSlot = slot();
   const devicesSlot = slot();
   const pendingList = h("div", { class: "list" });
-  const pendingEmpty = h(
-    "p",
-    { class: "muted" },
-    "No TV is waiting. Open izle on the TV and enter ",
-    h("code", null, serverAddress(location.origin, location.pathname)),
-    " as the server address: it then shows a 6-digit code.",
-  );
+  const address = h("code", null, serverAddress(location.origin, location.pathname));
+  const pendingEmpty = h("p", { class: "muted" }, "No TV is waiting. Open izle on the TV and enter ", address, " as the server address: it then shows a 6-digit code.");
   const devicesList = h("div", { class: "list" });
   const devicesEmpty = h("p", { class: "muted" }, "No TV is paired yet.");
 

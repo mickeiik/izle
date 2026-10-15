@@ -26,14 +26,11 @@ async function signInFromLink() {
   const linked = tokenFromHash(location.hash);
   if (!linked) return;
   history.replaceState(null, "", `${location.pathname}${location.search}#/devices`);
-  let remembered;
   try {
-    remembered = await signIn(linked);
+    if (await signIn(linked)) toast("Signed in.");
   } catch (err) {
     toast(isUnauthorized(err) ? "This sign-in link is not valid any more. Print a new one with izle-server admin-token --link." : errorText(err), "error");
-    return;
   }
-  if (remembered) toast("Signed in.");
 }
 
 /** @param {import("./router.js").Scope} scope */
@@ -41,16 +38,8 @@ function loginView(scope) {
   const input = h("input", { type: "password", id: "token", autocomplete: "current-password", required: true, spellcheck: "false", "aria-describedby": "token-error" });
   const error = h("p", { class: "error", id: "token-error", role: "alert", hidden: true });
   const button = h("button", { type: "submit", class: "primary" }, "Sign in");
-  const form = h(
-    "form",
-    { class: "card narrow" },
-    h("h1", null, "Sign in"),
-    h("p", null, "Paste the admin token of this izle server. Print it on the server with ", h("code", null, "izle-server admin-token"), "."),
-    h("label", { for: "token" }, "Admin token"),
-    input,
-    error,
-    h("div", { class: "actions" }, button),
-  );
+  const intro = h("p", null, "Paste the admin token of this izle server. Print it on the server with ", h("code", null, "izle-server admin-token"), ".");
+  const form = h("form", { class: "card narrow" }, h("h1", null, "Sign in"), intro, h("label", { for: "token" }, "Admin token"), input, error, h("div", { class: "actions" }, button));
   onSubmit(form, button, () => {
     const value = input.value.trim();
     return async () => {
@@ -76,9 +65,7 @@ startRouter({
   pick([section, id, itemId]) {
     if (!getToken() || section === "login") return { view: loginView };
     if (section === "devices" && id) return { view: (scope) => deviceView(scope, id), nav: "#/devices" };
-    if (section === "catalog" && id === "items" && itemId) {
-      return { view: (scope) => itemView(scope, itemId), nav: "#/catalog" };
-    }
+    if (section === "catalog" && id === "items" && itemId) return { view: (scope) => itemView(scope, itemId), nav: "#/catalog" };
     if (section === "catalog") return { view: catalogView, nav: "#/catalog" };
     return { view: devicesView, nav: "#/devices" };
   },

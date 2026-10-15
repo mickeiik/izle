@@ -68,12 +68,8 @@ export function homeCard(ctx) {
       syncPickers();
     });
     const remove = actionButton("✕", { class: "danger icon", "data-control": "remove" }, () => save(ids().filter((x) => x !== itemId), `${name()} removed.`));
-    const element = h(
-      "li",
-      null,
-      h("div", { class: "row" }, art, h("div", { class: "grow" }, title, line, barBox), h("div", { class: "buttons" }, up, down, play, toggle, remove)),
-      picker.element,
-    );
+    const buttons = h("div", { class: "buttons" }, up, down, play, toggle, remove);
+    const element = h("li", null, h("div", { class: "row" }, art, h("div", { class: "grow" }, title, line, barBox), buttons), picker.element);
 
     const syncPicker = () => {
       toggle.setAttribute("aria-expanded", String(openPicker === itemId));
@@ -187,13 +183,7 @@ export function homeCard(ctx) {
 
   const element = card(
     { title: "Home screen", aside: counter, intro: "What the TV shows, in this order. The first four fit on the screen without scrolling." },
-    empty,
-    list,
-    h("h3", null, h("label", { for: searchId }, "Add shows")),
-    search,
-    hint,
-    summary,
-    resultsArea,
+    empty, list, h("h3", null, h("label", { for: searchId }, "Add shows")), search, hint, summary, resultsArea,
   );
   return { element, update };
 }
@@ -231,19 +221,12 @@ function episodePicker(ctx, itemId, continued) {
     const rows = states.map((s) => {
       const e = s.episode;
       const label = episodeName(e, kind);
-      return h(
-        "li",
-        { class: s.current ? "current" : "" },
-        h("span", { class: "grow" }, label),
-        chip(episodeStateLabel(s), s.current ? "ok" : ""),
-        e.playbackAllowed && !s.current
-          ? actionButton("Continue from here", { "data-focus": `continue:${e.id}`, "aria-label": `Continue from here: ${label}` }, async () => {
-              const r = await attempt(() => api("PUT", `${ctx.path}/cursor`, { itemId, episodeId: e.id }), `${entry.title ?? itemId} continues from ${label}.`);
-              if (r.ok) await continued();
-            })
-          : null,
-        e.playbackAllowed ? actionButton("Play now", { "data-focus": `now:${e.id}`, "aria-label": `Play now: ${label}` }, () => ctx.send({ type: "play", episodeId: e.id }, "Play")) : null,
-      );
+      const continueHere = e.playbackAllowed && !s.current ? actionButton("Continue from here", { "data-focus": `continue:${e.id}`, "aria-label": `Continue from here: ${label}` }, async () => {
+        const r = await attempt(() => api("PUT", `${ctx.path}/cursor`, { itemId, episodeId: e.id }), `${entry.title ?? itemId} continues from ${label}.`);
+        if (r.ok) await continued();
+      }) : null;
+      const playNow = e.playbackAllowed ? actionButton("Play now", { "data-focus": `now:${e.id}`, "aria-label": `Play now: ${label}` }, () => ctx.send({ type: "play", episodeId: e.id }, "Play")) : null;
+      return h("li", { class: s.current ? "current" : "" }, h("span", { class: "grow" }, label), chip(episodeStateLabel(s), s.current ? "ok" : ""), continueHere, playNow);
     });
     await keepFocus(() =>
       element.replaceChildren(

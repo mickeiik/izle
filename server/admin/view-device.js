@@ -197,13 +197,8 @@ function nowPlayingCard(ctx) {
   const messageText = h("input", { type: "text", id: "m-text", maxlength: 200, autocomplete: "off", placeholder: "e.g. Dinner is ready!", "aria-describedby": "m-hint" });
   const messageSend = h("button", { type: "submit", class: "primary" }, "Send");
   setOff(messageSend, true);
-  const messageForm = h(
-    "form",
-    { class: "message" },
-    h("label", { for: "m-text" }, "Message to the TV"),
-    h("div", { class: "row" }, messageText, messageSend),
-    h("p", { class: "hint", id: "m-hint" }, "Shown in large letters for 15 seconds, on the home screen or over the picture."),
-  );
+  const messageHint = h("p", { class: "hint", id: "m-hint" }, "Shown in large letters for 15 seconds, on the home screen or over the picture.");
+  const messageForm = h("form", { class: "message" }, h("label", { for: "m-text" }, "Message to the TV"), h("div", { class: "row" }, messageText, messageSend), messageHint);
   onSubmit(messageForm, messageSend, () => {
     const text = messageText.value.trim();
     if (!text) return toast("Type a message first.", "info");
@@ -293,20 +288,9 @@ function settingsCard(ctx) {
     });
   });
 
-  const form = h(
-    "form",
-    { class: "form" },
-    h("label", { for: "s-name" }, "Name"),
-    name,
-    h("label", { for: "s-ui" }, "Menu language"),
-    ui,
-    h("label", { for: "s-audio" }, "Preferred audio language"),
-    audio,
-    h("p", { class: "hint", id: "s-audio-hint" }, "Sources with this audio language are tried first, and the player picks it when a stream has several."),
-    h("label", { for: "s-subs" }, "Subtitles"),
-    subs,
-    h("div", { class: "actions" }, save),
-  );
+  const field = (/** @type {HTMLElement} */ control, /** @type {string} */ text) => [h("label", { for: control.id }, text), control];
+  const audioHint = h("p", { class: "hint", id: "s-audio-hint" }, "Sources with this audio language are tried first, and the player picks it when a stream has several.");
+  const form = h("form", { class: "form" }, field(name, "Name"), field(ui, "Menu language"), field(audio, "Preferred audio language"), audioHint, field(subs, "Subtitles"), h("div", { class: "actions" }, save));
   // "Save settings": what differs from the TV's settings is saved in one request.
   onSubmit(form, save, () => {
     if (!device) return;
@@ -326,35 +310,26 @@ function settingsCard(ctx) {
       await ctx.reload().catch(() => {});
     };
   });
-  const toggle = h(
-    "div",
-    { class: "toggle" },
-    h("label", { class: "check", for: "s-autoplay" }, autoplay, "Autoplay when the TV starts"),
-    h("p", { class: "hint", id: "s-autoplay-hint" }, "When the app opens, the show the viewer watched last (else the first tile) starts after a 10-second countdown. Any key stops the countdown."),
-  );
+  const autoplayHint = h("p", { class: "hint", id: "s-autoplay-hint" }, "When the app opens, the show the viewer watched last (else the first tile) starts after a 10-second countdown. Any key stops the countdown.");
+  const toggle = h("div", { class: "toggle" }, h("label", { class: "check", for: "s-autoplay" }, autoplay, "Autoplay when the TV starts"), autoplayHint);
   return { element: card("Settings", form, toggle), update };
 }
 
 /** @param {DeviceContext} ctx @returns {Section} */
 function historyCard(ctx) {
-  const th = (/** @type {string} */ text) => h("th", { scope: "col" }, text);
   const shown = slot();
   const list = rebuiltOnChange();
   const refresh = async () => {
     const rows = (await ctx.scope.read(`${ctx.path}/progress`)).progress.slice(0, 30);
     const content = list.content(rows, (time) => {
       if (rows.length === 0) return h("p", { class: "muted" }, "Nothing watched yet.");
-      const tr = (/** @type {any} */ r) =>
-        h(
-          "tr",
-          null,
-          h("td", null, r.itemTitle ?? r.itemId),
-          h("td", null, r.missing ? "(no longer in the catalog)" : episodeName({ season: r.season, number: r.number, title: r.episodeTitle }, r.kind)),
-          h("td", null, r.status === "finished" ? "watched" : `${formatClock(r.positionMs)} / ${formatClock(r.durationMs)}`),
-          time(h("td", { class: "muted" }), () => formatRelative(r.updatedAt)),
-        );
+      const tr = (/** @type {any} */ r) => {
+        const episode = r.missing ? "(no longer in the catalog)" : episodeName({ season: r.season, number: r.number, title: r.episodeTitle }, r.kind);
+        const where = r.status === "finished" ? "watched" : `${formatClock(r.positionMs)} / ${formatClock(r.durationMs)}`;
+        return h("tr", null, [r.itemTitle ?? r.itemId, episode, where].map((t) => h("td", null, t)), time(h("td", { class: "muted" }), () => formatRelative(r.updatedAt)));
+      };
       const caption = h("caption", null, "The last 30 episodes this TV played, the latest first.");
-      const head = h("thead", null, h("tr", null, ["Show", "Episode", "Where", "When"].map(th)));
+      const head = h("thead", null, h("tr", null, ["Show", "Episode", "Where", "When"].map((t) => h("th", { scope: "col" }, t))));
       const table = h("table", null, caption, head, h("tbody", null, rows.map(tr)));
       return h("div", { class: "table-wrap", tabindex: "0", role: "region", "aria-label": "History" }, table);
     });
@@ -383,13 +358,8 @@ function problemsCard(ctx) {
         const at = new Date(p.at).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
         const when = time(h("time", { class: "muted", datetime: p.at }), () => `${formatRelative(p.at)} · ${at}`);
         const origin = chip(p.origin === "tv" ? "TV" : p.origin, p.origin === "server" ? "server" : "");
-        return h(
-          "li",
-          null,
-          h("div", { class: "row" }, origin, h("strong", { class: "grow" }, `${p.kind} · ${p.code}`), when),
-          context ? h("div", null, context) : null,
-          p.detail ? h("div", { class: "muted detail" }, p.detail) : null,
-        );
+        const row = h("div", { class: "row" }, origin, h("strong", { class: "grow" }, `${p.kind} · ${p.code}`), when);
+        return h("li", null, row, context ? h("div", null, context) : null, p.detail ? h("div", { class: "muted detail" }, p.detail) : null);
       };
       return h("ul", { class: "list problems" }, problems.map(li));
     });
