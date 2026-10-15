@@ -62,11 +62,7 @@ const CONFIG_SCHEMA = objectSchema({
   catalog: objectSchema({ dir: TEXT }, ["dir"]),
   resolver: { anyOf: [RESOLVER, NULL] },
   admin: objectSchema({ tokenFile: TEXT }),
-  proxy: objectSchema({
-    always: { type: "boolean" },
-    sessionTtlSec: { type: "integer", minimum: 60, maximum: 86400 },
-    alignTsSegments: { type: "boolean" },
-  }),
+  proxy: objectSchema({ always: { type: "boolean" }, sessionTtlSec: { type: "integer", minimum: 60, maximum: 86400 }, alignTsSegments: { type: "boolean" } }),
   // Unlike the API's, the config file's language tags have no length limit.
   defaults: objectSchema({
     uiLanguage: { anyOf: [{ enum: ["tr", "en"] }, NULL] },
@@ -128,19 +124,15 @@ function readConfigFile(configPath: string): ConfigFile {
     throw new ConfigError(`cannot read config file ${configPath}`);
   }
   if (!validateConfigFile(parsed)) {
-    const details = (validateConfigFile.errors ?? [])
-      .filter((e) => e.keyword !== "anyOf")
-      .map((e) => {
-        const extra = (e.params as { additionalProperty?: string }).additionalProperty;
-        return `${e.instancePath || "/"} ${extra ? `has unknown property "${extra}"` : e.message}`;
-      });
+    const details = (validateConfigFile.errors ?? []).filter((e) => e.keyword !== "anyOf").map((e) => {
+      const extra = (e.params as { additionalProperty?: string }).additionalProperty;
+      return `${e.instancePath || "/"} ${extra ? `has unknown property "${extra}"` : e.message}`;
+    });
     throw new ConfigError(`invalid config file ${configPath}: ${[...new Set(details)].join("; ")}`);
   }
   const file = parsed as ConfigFile;
   const { invalid } = compileTrustedProxies(file.trustedProxies ?? []);
-  if (invalid !== null) {
-    throw new ConfigError(`invalid config file ${configPath}: /trustedProxies "${invalid}" is not an IP address or CIDR range`);
-  }
+  if (invalid !== null) throw new ConfigError(`invalid config file ${configPath}: /trustedProxies "${invalid}" is not an IP address or CIDR range`);
   return file;
 }
 
@@ -150,6 +142,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
   const file: ConfigFile = configPath ? readConfigFile(configPath) : {};
   const resolve = (p: string) => path.resolve(configPath ? path.dirname(configPath) : cwd, p);
   const dataDir = resolve(file.dataDir ?? "./data");
+  const r = file.resolver;
   return {
     configPath,
     listen: { host: "0.0.0.0", port: DEFAULT_PORT, ...file.listen },
@@ -157,13 +150,8 @@ export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
     trustedProxies: file.trustedProxies ?? [],
     dataDir,
     catalog: { dir: file.catalog ? resolve(file.catalog.dir) : SAMPLE_CATALOG_DIR },
-    resolver: file.resolver
-      ? {
-          module: resolve(file.resolver.module),
-          config: file.resolver.config ?? {},
-          deadlineMs: file.resolver.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,
-          budgetMs: file.resolver.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
-        }
+    resolver: r
+      ? { module: resolve(r.module), config: r.config ?? {}, deadlineMs: r.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS, budgetMs: r.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS }
       : null,
     admin: {
       tokenFile: file.admin?.tokenFile ? resolve(file.admin.tokenFile) : path.join(dataDir, "admin.token"),

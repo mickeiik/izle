@@ -6,17 +6,8 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  ID_PATTERN,
-  MAX_INLINE_PLAYLIST_BYTES,
-  RESOLVER_API_VERSION,
-  validateResolveResultsSchema,
-  type Adapter,
-  type AdapterContext,
-  type LogLevel,
-  type ResolveRequest,
-  type ResolveResult,
-} from "@izle/contract";
+import { ID_PATTERN, MAX_INLINE_PLAYLIST_BYTES, RESOLVER_API_VERSION, validateResolveResultsSchema } from "@izle/contract";
+import type { Adapter, AdapterContext, LogLevel, ResolveRequest, ResolveResult } from "@izle/contract";
 import { errorName } from "./errors.ts";
 import { isPlaylistText } from "./hls.ts";
 import type { Logger } from "./log.ts";
@@ -87,13 +78,9 @@ export async function loadResolver(opts: {
   const mod = (ns.default ?? ns) as Record<string, unknown>;
   if (mod.apiVersion !== RESOLVER_API_VERSION) {
     const declared = typeof mod.apiVersion === "number" ? String(mod.apiVersion) : "none";
-    throw new ResolverLoadError(
-      `resolver module ${file} declares apiVersion ${declared}; this server implements resolver API ${RESOLVER_API_VERSION}`,
-    );
+    throw new ResolverLoadError(`resolver module ${file} declares apiVersion ${declared}; this server implements resolver API ${RESOLVER_API_VERSION}`);
   }
-  if (typeof mod.createAdapters !== "function") {
-    throw new ResolverLoadError(`resolver module ${file} does not export createAdapters()`);
-  }
+  if (typeof mod.createAdapters !== "function") throw new ResolverLoadError(`resolver module ${file} does not export createAdapters()`);
 
   const dataDir = path.join(opts.dataDir, "resolver");
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
@@ -150,10 +137,8 @@ export async function runAdapter(
   const ms = stopwatch();
   const fail = (code: AdapterFailureCode, name: string | null): AdapterOutcome => ({ ok: false, code, name, ms: ms() });
   const deadlineController = new AbortController();
-  const timer = setTimeout(
-    () => deadlineController.abort(new DOMException("The operation was aborted due to timeout", "TimeoutError")),
-    Math.max(1, opts.deadlineMs),
-  );
+  const timeoutError = new DOMException("The operation was aborted due to timeout", "TimeoutError");
+  const timer = setTimeout(() => deadlineController.abort(timeoutError), Math.max(1, opts.deadlineMs));
   const deadline = deadlineController.signal;
   const signal = opts.signal ? AbortSignal.any([opts.signal, deadline]) : deadline;
   let onAbort: (() => void) | undefined;
@@ -201,9 +186,7 @@ export async function healthcheckAll(resolver: LoadedResolver): Promise<HealthOu
         return { adapterId: adapter.id, ok: true, ms: ms(), skipped: false };
       } catch (err) {
         const timedOut = signal.aborted || (err instanceof DOMException && err.name === "TimeoutError");
-        return timedOut
-          ? { adapterId: adapter.id, ok: false, code: "timeout", name: "TimeoutError", ms: ms() }
-          : { adapterId: adapter.id, ok: false, code: "error", name: errorName(err), ms: ms() };
+        return { adapterId: adapter.id, ok: false, ...(timedOut ? { code: "timeout", name: "TimeoutError" } : { code: "error", name: errorName(err) }), ms: ms() };
       }
     }),
   );

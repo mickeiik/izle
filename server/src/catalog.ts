@@ -1,14 +1,5 @@
 import path from "node:path";
-import {
-  loadBundle,
-  type BundleManifest,
-  type BundleStats,
-  type CatalogItem,
-  type Episode,
-  type ValidationIssue,
-  BundleValidationError,
-  formatIssue,
-} from "@izle/contract";
+import { BundleValidationError, formatIssue, loadBundle, type BundleManifest, type BundleStats, type CatalogItem, type Episode, type ValidationIssue } from "@izle/contract";
 import type { Logger } from "./log.ts";
 
 export interface EpisodeRef {
@@ -71,12 +62,8 @@ export class CatalogService {
   private async read(): Promise<LoadedCatalog> {
     const { bundle, warnings, stats } = await loadBundle(this.dir);
     const missing = this.adapters ? bundle.manifest.adapters.filter((a) => !this.adapters!.has(a)) : [];
-    if (missing.length > 0) {
-      throw new BundleValidationError(
-        this.dir,
-        missing.map((a) => ({ severity: "error" as const, file: "bundle.json", path: "/adapters", message: `adapter "${a}" is not provided by the resolver module` })),
-      );
-    }
+    const issue = (a: string) => ({ severity: "error" as const, file: "bundle.json", path: "/adapters", message: `adapter "${a}" is not provided by the resolver module` });
+    if (missing.length > 0) throw new BundleValidationError(this.dir, missing.map(issue));
     const itemsById = new Map<string, CatalogItem>();
     const episodesById = new Map<string, EpisodeRef>();
     for (const item of bundle.items) {
@@ -90,9 +77,7 @@ export class CatalogService {
     this.log.info(msg, { catalogId: c.manifest.catalogId, buildId: c.manifest.buildId, items: c.stats.items, episodes: c.stats.episodes });
     for (const w of c.warnings) this.log.warn("catalog warning", { issue: formatIssue(w) });
     if (this.adapters === null && c.manifest.adapters.length > 0) {
-      this.log.warn("catalog references adapters but no resolver module is configured; their sources are unavailable", {
-        adapters: c.manifest.adapters,
-      });
+      this.log.warn("catalog references adapters but no resolver module is configured; their sources are unavailable", { adapters: c.manifest.adapters });
     }
   }
 
@@ -159,9 +144,7 @@ export class CatalogService {
 
   search(query: string, limit: number): CatalogItem[] {
     const q = fold(query.trim());
-    const items = this.current.items.filter(
-      (i) => q === "" || fold(i.title).includes(q) || (i.originalTitle && fold(i.originalTitle).includes(q)) || fold(i.id).includes(q),
-    );
-    return items.sort((a, b) => a.title.localeCompare(b.title)).slice(0, limit);
+    const matches = (i: CatalogItem) => q === "" || fold(i.title).includes(q) || (i.originalTitle && fold(i.originalTitle).includes(q)) || fold(i.id).includes(q);
+    return this.current.items.filter(matches).sort((a, b) => a.title.localeCompare(b.title)).slice(0, limit);
   }
 }

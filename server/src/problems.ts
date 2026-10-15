@@ -84,16 +84,10 @@ export class ProblemService {
     this.proxyProblems = new RateLimiter(1, PROXY_PROBLEM_INTERVAL_MS, opts.now);
   }
 
-  private insert(
-    deviceId: string,
-    origin: ProblemOrigin,
-    p: Omit<Problem, "id" | "deviceId" | "origin" | "catalogId" | "itemId">,
-  ): Problem {
+  private insert(deviceId: string, origin: ProblemOrigin, p: Omit<Problem, "id" | "deviceId" | "origin" | "catalogId" | "itemId">): Problem {
     const ref = p.episodeId ? this.o.catalog.episode(p.episodeId) : undefined;
-    return this.o.store.insertProblem(
-      { ...p, deviceId, origin, catalogId: ref ? this.o.catalog.catalogId : null, itemId: ref?.item.id ?? null },
-      PROBLEMS_KEPT,
-    );
+    const catalogId = ref ? this.o.catalog.catalogId : null;
+    return this.o.store.insertProblem({ ...p, deviceId, origin, catalogId, itemId: ref?.item.id ?? null }, PROBLEMS_KEPT);
   }
 
   /** A TV's own report. Free text is redacted before it is stored; 429 beyond the rate limit. */
@@ -104,15 +98,9 @@ export class ProblemService {
     const session = this.o.sessions.owned(body.sessionId, device.id, body.episodeId);
     const text = (value: string | undefined) => (value === undefined || value.trim() === "" ? null : redactReportText(value));
     const problem = this.insert(device.id, "tv", {
-      at: this.o.now() - (body.ageMs ?? 0),
-      kind: body.kind,
-      code: redactReportText(body.code),
-      episodeId: body.episodeId ?? session?.episodeId ?? null,
-      sourceId: body.sourceId ?? session?.sourceId ?? null,
-      positionMs: body.positionMs ?? null,
-      httpStatus: body.httpStatus ?? null,
-      detail: text(body.detail),
-      appVersion: text(body.appVersion),
+      at: this.o.now() - (body.ageMs ?? 0), kind: body.kind, code: redactReportText(body.code),
+      episodeId: body.episodeId ?? session?.episodeId ?? null, sourceId: body.sourceId ?? session?.sourceId ?? null,
+      positionMs: body.positionMs ?? null, httpStatus: body.httpStatus ?? null, detail: text(body.detail), appVersion: text(body.appVersion),
     });
     // Kind and code only: the detail may hold anything the TV saw.
     this.o.log.info("problem reported", { deviceId: device.id, kind: problem.kind, code: problem.code });
@@ -122,17 +110,9 @@ export class ProblemService {
   /** A problem the server saw for a TV. Never throws: recording must not break the request that ran into it. */
   record(deviceId: string, p: ServerProblem): void {
     try {
-      this.insert(deviceId, "server", {
-        at: this.o.now(),
-        kind: p.kind,
-        code: p.code,
-        episodeId: p.episodeId ?? null,
-        sourceId: p.sourceId ?? null,
-        positionMs: null,
-        httpStatus: p.httpStatus ?? null,
-        detail: p.detail ? cap(p.detail) : null,
-        appVersion: null,
-      });
+      const { kind, code, episodeId = null, sourceId = null, httpStatus = null } = p;
+      const detail = p.detail ? cap(p.detail) : null;
+      this.insert(deviceId, "server", { at: this.o.now(), kind, code, episodeId, sourceId, positionMs: null, httpStatus, detail, appVersion: null });
       this.o.log.debug("problem recorded", { deviceId, kind: p.kind, code: p.code });
     } catch (err) {
       this.o.log.warn("problem not recorded", { deviceId, kind: p.kind, code: p.code, error: err });
@@ -157,27 +137,11 @@ export class ProblemService {
     const { catalog } = this.o;
     return this.o.store.listProblems(deviceId, limit).map((p) => {
       const ref = p.episodeId && (p.catalogId === null || p.catalogId === catalog.catalogId) ? catalog.episode(p.episodeId) : undefined;
-      return {
-        id: p.id,
-        at: iso(p.at),
-        origin: p.origin,
-        kind: p.kind,
-        code: p.code,
-        itemId: ref?.item.id ?? p.itemId,
-        itemTitle: ref?.item.title ?? null,
-        // Item kind, for naming the episode (films have none to show).
-        itemKind: ref?.item.kind ?? null,
-        episodeId: p.episodeId,
-        episodeTitle: ref?.episode.title ?? null,
-        season: ref?.episode.season ?? null,
-        number: ref?.episode.number ?? null,
-        sourceId: p.sourceId,
-        positionMs: p.positionMs,
-        httpStatus: p.httpStatus,
-        detail: p.detail,
-        appVersion: p.appVersion,
-        missing: p.episodeId !== null && !ref,
-      };
+      const { id, origin, kind, code, episodeId, sourceId, positionMs, httpStatus, detail, appVersion } = p;
+      // The item kind names the episode (films have none to show).
+      const item = { itemId: ref?.item.id ?? p.itemId, itemTitle: ref?.item.title ?? null, itemKind: ref?.item.kind ?? null };
+      const episode = { episodeId, episodeTitle: ref?.episode.title ?? null, season: ref?.episode.season ?? null, number: ref?.episode.number ?? null };
+      return { id, at: iso(p.at), origin, kind, code, ...item, ...episode, sourceId, positionMs, httpStatus, detail, appVersion, missing: episodeId !== null && !ref };
     });
   }
 

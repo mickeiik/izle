@@ -27,12 +27,7 @@ export class DeviceService {
       createdAt: iso(d.createdAt),
       lastSeenAt: iso(d.lastSeenAt),
       stateVersion: d.stateVersion,
-      settings: {
-        uiLanguage: d.uiLanguage,
-        preferredAudioLanguage: d.preferredAudioLanguage,
-        subtitlesLanguage: d.subtitlesLanguage,
-        autoplayOnStart: d.autoplayOnStart,
-      },
+      settings: { uiLanguage: d.uiLanguage, preferredAudioLanguage: d.preferredAudioLanguage, subtitlesLanguage: d.subtitlesLanguage, autoplayOnStart: d.autoplayOnStart },
       effective: this.s.tv.settings(d),
       problems: this.s.problems.stats(d.id),
     };
@@ -49,15 +44,10 @@ export class DeviceService {
     const { store, catalog, tv } = this.s;
     return store.getHomeEntries(d.id, catalog.catalogId).map(({ itemId, addedAt }) => {
       const item = catalog.item(itemId);
-      return {
-        itemId,
-        title: item?.title ?? null,
-        kind: item?.kind ?? null,
-        posterUrl: item ? catalog.posterUrl(item) : null,
-        missing: !item,
-        continue: item ? tv.continueFor(d.id, item) : null,
-        newEpisodes: item ? tv.newEpisodesFor(d.id, item, addedAt) : 0,
-      };
+      if (!item) return { itemId, title: null, kind: null, posterUrl: null, missing: true, continue: null, newEpisodes: 0 };
+      const { title, kind } = item;
+      const continueFrom = tv.continueFor(d.id, item);
+      return { itemId, title, kind, posterUrl: catalog.posterUrl(item), missing: false, continue: continueFrom, newEpisodes: tv.newEpisodesFor(d.id, item, addedAt) };
     });
   }
 
@@ -73,15 +63,9 @@ export class DeviceService {
     };
     return {
       cursors: store.listCursors(d.id, catalogId).map((cur) => ({ itemId: cur.itemId, episodeId: cur.episodeId, updatedAt: iso(cur.updatedAt), ...titleOf(cur.episodeId) })),
-      progress: store.listProgress(d.id, catalogId).map((p) => ({
-        itemId: p.itemId,
-        episodeId: p.episodeId,
-        positionMs: p.positionMs,
-        durationMs: p.durationMs,
-        status: p.status,
-        updatedAt: iso(p.updatedAt),
-        ...titleOf(p.episodeId),
-      })),
+      progress: store.listProgress(d.id, catalogId).map(({ itemId, episodeId, positionMs, durationMs, status, updatedAt }) => {
+        return { itemId, episodeId, positionMs, durationMs, status, updatedAt: iso(updatedAt), ...titleOf(episodeId) };
+      }),
     };
   }
 
@@ -92,20 +76,10 @@ export class DeviceService {
       online: this.s.events.isOnline(d.id),
       serverNowMs: this.s.now(),
       seq: n?.seq ?? 0,
-      nowPlaying: n
-        ? {
-            itemId: n.itemId,
-            episodeId: n.episodeId,
-            sourceId: n.sourceId,
-            itemTitle: ref?.item.title ?? null,
-            episodeTitle: ref?.episode.title ?? null,
-            positionMs: n.positionMs,
-            durationMs: n.durationMs,
-            state: n.state,
-            updatedAt: iso(n.updatedAt),
-            playing: n.playing,
-          }
-        : null,
+      nowPlaying: n && {
+        itemId: n.itemId, episodeId: n.episodeId, sourceId: n.sourceId, itemTitle: ref?.item.title ?? null, episodeTitle: ref?.episode.title ?? null,
+        positionMs: n.positionMs, durationMs: n.durationMs, state: n.state, updatedAt: iso(n.updatedAt), playing: n.playing,
+      },
       // Where the TV is: positionMs as of atMs (server clock), advancing at `rate` while `playing`.
       anchor: n ? { positionMs: n.positionMs, atMs: n.anchorAt ?? n.updatedAt, playing: n.playing, rate: 1 } : null,
     };

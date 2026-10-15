@@ -22,9 +22,7 @@ const LANGUAGE_TAG_OR_NULL = { anyOf: [{ type: "string", pattern: LANGUAGE_TAG_P
 const NAME = { type: "string", minLength: 1, maxLength: 60, pattern: "\\S" };
 const MS = { type: "integer", minimum: 0, maximum: 1e12 };
 
-export const approveBody = ajv.compile<{ code: string; name?: string }>(
-  object({ code: { type: "string", pattern: PAIR_CODE.source }, name: NAME }, ["code"]),
-);
+export const approveBody = ajv.compile<{ code: string; name?: string }>(object({ code: { type: "string", pattern: PAIR_CODE.source }, name: NAME }, ["code"]));
 
 export const devicePatchBody = ajv.compile<DevicePatch>({
   ...object({
@@ -37,13 +35,9 @@ export const devicePatchBody = ajv.compile<DevicePatch>({
   minProperties: 1,
 });
 
-export const homeBody = ajv.compile<{ itemIds: string[] }>(
-  object({ itemIds: { type: "array", items: ID, maxItems: 1000 } }, ["itemIds"]),
-);
+export const homeBody = ajv.compile<{ itemIds: string[] }>(object({ itemIds: { type: "array", items: ID, maxItems: 1000 } }, ["itemIds"]));
 
-export const cursorBody = ajv.compile<{ itemId: string; episodeId: string }>(
-  object({ itemId: ID, episodeId: ID }, ["itemId", "episodeId"]),
-);
+export const cursorBody = ajv.compile<{ itemId: string; episodeId: string }>(object({ itemId: ID, episodeId: ID }, ["itemId", "episodeId"]));
 
 const SEEK_DELTA = { type: "integer", minimum: -MAX_SEEK_DELTA_MS, maximum: MAX_SEEK_DELTA_MS };
 const MESSAGE = { type: "string", minLength: 1, maxLength: MESSAGE_MAX_CHARS, pattern: "\\S" };
@@ -106,9 +100,7 @@ export const problemBody = ajv.compile<ProblemReportBody>(
 const OFFSET_MS = { type: "integer", minimum: -21_600_000, maximum: 21_600_000 };
 const RATE = { type: "number", minimum: 0.5, maximum: 2 };
 
-export const companionLinkBody = ajv.compile<LinkInput>(
-  object({ offsetMs: OFFSET_MS, rate: RATE, language: LANGUAGE_TAG_OR_NULL }, ["offsetMs", "rate"]),
-);
+export const companionLinkBody = ajv.compile<LinkInput>(object({ offsetMs: OFFSET_MS, rate: RATE, language: LANGUAGE_TAG_OR_NULL }, ["offsetMs", "rate"]));
 
 export const companionResolveBody = ajv.compile<CompanionResolveInput>(
   object({ episodeId: ID, sourceId: ID, language: LANGUAGE_TAG_OR_NULL }, ["episodeId", "sourceId"]),
@@ -122,9 +114,7 @@ export async function parseBody<T>(c: Context, validate: ValidateFunction<T>): P
   } catch {
     throw new HttpError(400, "invalid_json", "the request body is not valid JSON");
   }
-  if (!validate(body)) {
-    throw new HttpError(400, "invalid_request", "the request body does not match the API", { details: simplifySchemaErrors(validate.errors) });
-  }
+  if (!validate(body)) throw new HttpError(400, "invalid_request", "the request body does not match the API", { details: simplifySchemaErrors(validate.errors) });
   return body;
 }
 

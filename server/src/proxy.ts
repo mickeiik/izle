@@ -21,11 +21,7 @@ const UPSTREAM_HEADERS_TIMEOUT_MS = 20_000;
 export const PROXY_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
 const PLAYLIST_TYPE = "application/vnd.apple.mpegurl";
-const SUBTITLE_TYPES: Record<string, string> = {
-  vtt: "text/vtt; charset=utf-8",
-  srt: "application/x-subrip; charset=utf-8",
-  ttml: "application/ttml+xml",
-};
+const SUBTITLE_TYPES: Record<string, string> = { vtt: "text/vtt; charset=utf-8", srt: "application/x-subrip; charset=utf-8", ttml: "application/ttml+xml" };
 /** Response headers passed from the upstream to the TV; everything else (cookies, redirects, CORS) is dropped. */
 const PASSED_HEADERS = ["content-type", "content-length", "content-range", "accept-ranges", "last-modified", "etag"];
 /** Formats the TS aligner never touches (by URL extension). */
@@ -38,10 +34,7 @@ interface ProxySessionInit {
   episodeId?: string | null;
   sourceId?: string | null;
   /** Null when only subtitle tracks need the proxy. */
-  main:
-    | { kind: "hls" | "mp4"; url: string; playlist?: undefined }
-    | { kind: "hls"; playlist: string; baseUrl: string }
-    | null;
+  main: { kind: "hls" | "mp4"; url: string; playlist?: undefined } | { kind: "hls"; playlist: string; baseUrl: string } | null;
   /** Upstream headers for the main media and everything its playlists reference. */
   headers: Record<string, string>;
   /** One entry per subtitle track the TV gets; null = that track is not proxied. */
@@ -63,12 +56,7 @@ export type ProxyTarget = { type: "index" } | { type: "video" } | { type: "u"; r
  * `upstream_<status>` (401/403/410: the session went stale), `upstream_error` (5xx, or a playlist that broke off),
  * `upstream_unreachable` (network error or no answer in time), `not_a_playlist`, `playlist_too_large`.
  */
-export type ProxyProblemCode =
-  | `upstream_${401 | 403 | 410}`
-  | "upstream_error"
-  | "upstream_unreachable"
-  | "not_a_playlist"
-  | "playlist_too_large";
+export type ProxyProblemCode = `upstream_${401 | 403 | 410}` | "upstream_error" | "upstream_unreachable" | "not_a_playlist" | "playlist_too_large";
 
 /** An upstream request of a session that failed in a way the owner should hear about. */
 export interface ProxyProblem {
@@ -93,11 +81,9 @@ interface ProxyOptions {
   onProblem?: (problem: ProxyProblem) => void;
 }
 
-export const entryPath = (token: string, kind: "hls" | "mp4"): string =>
-  `/p/${token}/${kind === "hls" ? "index.m3u8" : "video.mp4"}`;
+export const entryPath = (token: string, kind: "hls" | "mp4"): string => `/p/${token}/${kind === "hls" ? "index.m3u8" : "video.mp4"}`;
 
-export const subtitlePath = (token: string, index: number, format: string): string =>
-  `/p/${token}/sub/${index}.${format}`;
+export const subtitlePath = (token: string, index: number, format: string): string => `/p/${token}/sub/${index}.${format}`;
 
 function extensionOf(url: string): string | null {
   try {
@@ -108,15 +94,11 @@ function extensionOf(url: string): string | null {
 }
 
 function json(status: number, error: string, extra: Record<string, unknown> = {}): Response {
-  return new Response(JSON.stringify({ error, ...extra }), {
-    status,
-    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
-  });
+  return new Response(JSON.stringify({ error, ...extra }), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
 }
 
 /** A stream error that @hono/node-server treats as a closed connection rather than a crash to print. */
-const prematureClose = (): Error =>
-  Object.assign(new Error("upstream closed early"), { code: "ERR_STREAM_PREMATURE_CLOSE" });
+const prematureClose = (): Error => Object.assign(new Error("upstream closed early"), { code: "ERR_STREAM_PREMATURE_CLOSE" });
 
 /** Why a fetch failed, without its message: the network error code (`ECONNREFUSED`, `ENOTFOUND`) or the class name. */
 function networkReason(err: unknown): string {
@@ -239,15 +221,13 @@ export class ProxyService {
       case "u": {
         const link = this.verify(s, target.ref);
         if (!link) return json(404, "not_found");
-        const what = link.kind === "p" ? "playlist" : "segment";
-        return this.forward(req, s, link.url, s.headers, { kind: link.kind, prefix: "", what });
+        return this.forward(req, s, link.url, s.headers, { kind: link.kind, prefix: "", what: link.kind === "p" ? "playlist" : "segment" });
       }
       case "sub": {
         const m = /^(\d{1,2})\.(vtt|srt|ttml)$/.exec(target.file);
         const sub = m ? s.subtitles[Number(m[1])] : undefined;
         if (!m || !sub) return json(404, "not_found");
-        const opts = { kind: "r", prefix: null, contentType: SUBTITLE_TYPES[m[2]!], what: "subtitles" } as const;
-        return this.forward(req, s, sub.url, sub.headers, opts);
+        return this.forward(req, s, sub.url, sub.headers, { kind: "r", prefix: null, contentType: SUBTITLE_TYPES[m[2]!], what: "subtitles" });
       }
     }
   }
@@ -312,8 +292,7 @@ export class ProxyService {
 
     const out = passedHeaders(upstream, opts.contentType);
     if (!upstream.body) return new Response(null, { status, headers: out });
-    const align =
-      !!this.o.alignTsSegments && s.main?.kind === "hls" && opts.prefix === "" && status === 200 && range === null;
+    const align = !!this.o.alignTsSegments && s.main?.kind === "hls" && opts.prefix === "" && status === 200 && range === null;
     const body = await this.stream(upstream.body, align && !NOT_TS_EXTENSIONS.has(extensionOf(url) ?? ""), out);
     return new Response(body, { status, headers: out });
   }

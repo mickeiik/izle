@@ -45,9 +45,7 @@ export class PairingService {
     if (!rate.ok) throw tooManyRequests("rate_limited", "too many pairing attempts", rate.retryAfterSec);
     const t = this.now();
     this.purge(t);
-    if (this.store.listOpenPairCodes(t).length >= MAX_OPEN_PAIR_CODES) {
-      throw new HttpError(429, "too_many_pending", "too many pairing codes are waiting for approval");
-    }
+    if (this.store.listOpenPairCodes(t).length >= MAX_OPEN_PAIR_CODES) throw new HttpError(429, "too_many_pending", "too many pairing codes are waiting for approval");
     let code = "";
     for (let attempt = 0; attempt < 50 && !code; attempt++) {
       const candidate = String(randomInt(0, 1_000_000)).padStart(6, "0");
@@ -120,8 +118,6 @@ export class PairingService {
   }
 
   listOpen(): Array<{ code: string; createdAt: number; expiresAt: number; approved: boolean }> {
-    return this.store
-      .listOpenPairCodes(this.now())
-      .map((r) => ({ code: r.code, createdAt: r.createdAt, expiresAt: r.expiresAt, approved: r.approvedAt !== null }));
+    return this.store.listOpenPairCodes(this.now()).map((r) => ({ code: r.code, createdAt: r.createdAt, expiresAt: r.expiresAt, approved: r.approvedAt !== null }));
   }
 }

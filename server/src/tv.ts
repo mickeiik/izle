@@ -80,15 +80,9 @@ export class TvService {
     const episode = item.episodes[index]!;
     const p = progress.get(episode.id);
     const status = p?.status ?? "new";
-    return {
-      episodeId: episode.id,
-      ...episodeSummary(episode),
-      index,
-      count: item.episodes.length,
-      positionMs: status === "watching" ? p!.positionMs : 0,
-      durationMs: p?.durationMs ?? episode.durationMs ?? null,
-      status,
-    };
+    const positionMs = status === "watching" ? p!.positionMs : 0;
+    const durationMs = p?.durationMs ?? episode.durationMs ?? null;
+    return { episodeId: episode.id, ...episodeSummary(episode), index, count: item.episodes.length, positionMs, durationMs, status };
   }
 
   /**
@@ -100,7 +94,6 @@ export class TvService {
     const catalogId = this.s.catalog.catalogId;
     const since = Math.max(this.s.store.lastProgressAt(deviceId, catalogId, item.id) ?? 0, addedAt ?? 0);
     const added = this.s.store.episodesSeenAfter(catalogId, item.id, since);
-    if (added.length === 0) return 0;
     const allowed = new Set(item.episodes.filter((e) => e.playbackAllowed).map((e) => e.id));
     return added.filter((id) => allowed.has(id)).length;
   }
@@ -169,20 +162,10 @@ export class TvService {
     const next = nextIndex >= 0 ? item.episodes[nextIndex]! : null;
     const catalogId = this.s.catalog.catalogId;
     const progress = this.s.store.getProgress(device.id, catalogId, episode.id);
-    const resume =
-      progress?.status === "watching" ? { positionMs: progress.positionMs, durationMs: progress.durationMs } : null;
-    this.s.store.setNowPlaying(device.id, {
-      catalogId,
-      itemId: item.id,
-      episodeId: episode.id,
-      sourceId: r.source.id,
-      positionMs: resume?.positionMs ?? 0,
-      durationMs: progress?.durationMs ?? episode.durationMs ?? null,
-      state: "starting",
-      updatedAt: this.s.now(),
-      playing: false,
-      anchorAt: this.s.now(),
-    });
+    const resume = progress?.status === "watching" ? { positionMs: progress.positionMs, durationMs: progress.durationMs } : null;
+    const durationMs = progress?.durationMs ?? episode.durationMs ?? null;
+    const row = { catalogId, itemId: item.id, episodeId: episode.id, sourceId: r.source.id, positionMs: resume?.positionMs ?? 0, durationMs };
+    this.s.store.setNowPlaying(device.id, { ...row, state: "starting", updatedAt: this.s.now(), playing: false, anchorAt: this.s.now() });
     this.nowWaiters.wake(device.id);
     return {
       sessionId: r.session.id,
@@ -211,30 +194,15 @@ export class TvService {
     const t = this.s.now();
     const durationMs = input.durationMs ?? null;
     const finished = input.status === "finished";
+    const ids = { catalogId, itemId: item.id, episodeId: episode.id };
     const changed = this.s.store.transaction(() => {
       const cursor = cursorAfterReport(item, index, input.status, this.s.store.getCursor(device.id, catalogId, item.id));
-      this.s.store.upsertProgress(device.id, {
-        catalogId,
-        itemId: item.id,
-        episodeId: episode.id,
-        positionMs: finished ? (durationMs ?? input.positionMs) : input.positionMs,
-        durationMs,
-        status: finished ? "finished" : "watching",
-        updatedAt: t,
-      });
+      const positionMs = finished ? (durationMs ?? input.positionMs) : input.positionMs;
+      this.s.store.upsertProgress(device.id, { ...ids, positionMs, durationMs, status: finished ? "finished" : "watching", updatedAt: t });
       this.s.store.setCursor(device.id, { catalogId, itemId: item.id, episodeId: cursor.episodeId, updatedAt: t, wrapped: cursor.wrapped });
-      this.s.store.setNowPlaying(device.id, {
-        catalogId,
-        itemId: item.id,
-        episodeId: episode.id,
-        sourceId,
-        positionMs: input.positionMs,
-        durationMs,
-        state: input.status,
-        updatedAt: t,
-        playing: input.playing ?? input.status === "playing",
-        anchorAt: t - (input.ageMs ?? 0),
-      });
+      const playing = input.playing ?? input.status === "playing";
+      const now = { ...ids, sourceId, positionMs: input.positionMs, durationMs, state: input.status, updatedAt: t, playing, anchorAt: t - (input.ageMs ?? 0) };
+      this.s.store.setNowPlaying(device.id, now);
       return cursor.changed;
     });
     this.nowWaiters.wake(device.id);

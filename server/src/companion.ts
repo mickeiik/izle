@@ -25,12 +25,7 @@ export interface CompanionResolveInput {
 }
 
 /** A link as the admin API shows it: the stored values, or the defaults (no offset, same speed). */
-const linkJson = (l: CompanionLink | null) => ({
-  offsetMs: l?.offsetMs ?? 0,
-  rate: l?.rate ?? 1,
-  language: l?.language ?? null,
-  updatedAt: l ? iso(l.updatedAt) : null,
-});
+const linkJson = (l: CompanionLink | null) => ({ offsetMs: l?.offsetMs ?? 0, rate: l?.rate ?? 1, language: l?.language ?? null, updatedAt: l ? iso(l.updatedAt) : null });
 
 export class CompanionService {
   private readonly s: Services;
@@ -61,9 +56,7 @@ export class CompanionService {
     const from = this.s.store.getCompanionLink(this.s.catalog.catalogId, ref.episode.id, sourceId);
     if (!from) throw new HttpError(404, "no_link", "this episode has no stored link for that source");
     const t = this.s.now();
-    const episodeIds = ref.item.episodes
-      .filter((e) => e.id !== ref.episode.id && e.sources.some((s) => s.id === sourceId))
-      .map((e) => e.id);
+    const episodeIds = ref.item.episodes.filter((e) => e.id !== ref.episode.id && e.sources.some((s) => s.id === sourceId)).map((e) => e.id);
     this.s.store.transaction(() => {
       for (const id of episodeIds) this.s.store.putCompanionLink({ ...from, episodeId: id, updatedAt: t });
     });
@@ -78,30 +71,13 @@ export class CompanionService {
     const links = new Map(this.s.store.listCompanionLinks(this.s.catalog.catalogId, ref.episode.id).map((l) => [l.sourceId, l]));
     const { item, episode } = ref;
     return {
-      nowPlaying: {
-        itemId: item.id,
-        itemKind: item.kind,
-        episodeId: episode.id,
-        sourceId: n.sourceId,
-        itemTitle: item.title,
-        episodeTitle: episode.title ?? null,
-        state: n.state,
-      },
+      nowPlaying: { itemId: item.id, itemKind: item.kind, episodeId: episode.id, sourceId: n.sourceId, itemTitle: item.title, episodeTitle: episode.title ?? null, state: n.state },
       // Upstream URLs, headers and refs are deliberately not exposed (the admin item view has the same rule).
       candidates: episode.sources.map((s) => {
         const kind = s.type === "direct" ? s.media.kind : null;
         const supported = kind !== "dash"; // an adapter that answers DASH is refused at resolve time
-        return {
-          sourceId: s.id,
-          type: s.type,
-          kind,
-          label: s.label ?? null,
-          languages: s.languages,
-          current: s.id === n.sourceId,
-          supported,
-          reason: supported ? null : "dash",
-          link: linkJson(links.get(s.id) ?? null),
-        };
+        const link = linkJson(links.get(s.id) ?? null);
+        return { sourceId: s.id, type: s.type, kind, label: s.label ?? null, languages: s.languages, current: s.id === n.sourceId, supported, reason: supported ? null : "dash", link };
       }),
     };
   }

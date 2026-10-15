@@ -71,22 +71,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const events = new EventHub();
   const sessions = new PlaybackSessions(now);
   const problems = new ProblemService({ store, catalog, log, now, sessions });
-  const proxy = new ProxyService({
-    log,
-    now,
-    ttlMs: config.proxy.sessionTtlSec * 1000,
-    alignTsSegments: config.proxy.alignTsSegments,
-    fetch: fetchUpstream,
-    onProblem: (p) => problems.recordProxy(p),
-  });
+  const { sessionTtlSec, alignTsSegments, always: proxyAlways } = config.proxy;
+  const proxy = new ProxyService({ log, now, ttlMs: sessionTtlSec * 1000, alignTsSegments, fetch: fetchUpstream, onProblem: (p) => problems.recordProxy(p) });
   const resolver = new ResolveService({
-    catalog,
-    log,
-    now,
-    proxy,
-    sessions,
-    adapters: resolverModule?.adapters ?? null,
-    proxyAlways: config.proxy.always,
+    catalog, log, now, proxy, sessions, adapters: resolverModule?.adapters ?? null, proxyAlways,
     deadlineMs: config.resolver?.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,
     budgetMs: config.resolver?.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
   });

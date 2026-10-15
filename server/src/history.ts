@@ -70,15 +70,8 @@ export class CatalogHistory {
       for (const episode of item.episodes) {
         const s = known.get(episode.id);
         if (!s) {
-          added.push({
-            id: episode.id,
-            itemId: item.id,
-            itemTitle: item.title,
-            season: episode.season ?? null,
-            number: episode.number ?? null,
-            label: episode.label ?? null,
-            playbackAllowed: episode.playbackAllowed,
-          });
+          const { season = null, number = null, label = null, playbackAllowed } = episode;
+          added.push({ id: episode.id, itemId: item.id, itemTitle: item.title, season, number, label, playbackAllowed });
           continue;
         }
         // A returning episode keeps its first-seen date: it is not new to anyone who saw it before.
@@ -105,12 +98,8 @@ export class CatalogHistory {
         removed: cap(removed).map((s) => ({ id: s.episodeId, itemId: s.itemId, itemTitle: titleOf(s.itemId) })),
       },
     };
-    const build = buildRow(next, false, {
-      itemsAdded: itemsAdded.length,
-      itemsRemoved: itemsRemoved.length,
-      episodesAdded: added.length,
-      episodesRemoved: removed.length,
-    });
+    const counts = { itemsAdded: itemsAdded.length, itemsRemoved: itemsRemoved.length, episodesAdded: added.length, episodesRemoved: removed.length };
+    const build = buildRow(next, false, counts);
     this.store.recordCatalogBuild(build, changes);
     return build;
   }
