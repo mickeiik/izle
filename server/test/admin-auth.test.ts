@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { errorMessage } from "../admin/lib.js";
+import { errorText } from "../admin/lib.js";
 import { RateLimiter } from "../src/ratelimit.ts";
 import { ADMIN_TOKEN, startTestServer, type Json, type TestServer } from "./helpers.ts";
 
@@ -103,5 +103,5 @@ test("RateLimiter.check reports a used-up key without counting a hit", () => {
 });
 
 test("admin page: the lockout has owner-facing text", () => {
-  assert.match(errorMessage("too_many_attempts"), /Too many wrong admin tokens .* Try again in 10 minutes\./);
+  assert.match(errorText({ code: "too_many_attempts" }), /Too many wrong admin tokens .* Try again in 10 minutes\./);
 });

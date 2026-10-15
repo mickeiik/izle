@@ -268,13 +268,10 @@ const ERRORS = /** @type {Record<string, string>} */ ({
   hls_unavailable: "The HLS player did not load. Reload the page and try again.",
 });
 
-/** @param {string} code */
-export const errorMessage = (code) => ERRORS[code] ?? `The server answered: ${code}.`;
-
 /** Owner-facing text for anything that went wrong: an error with a string `code` is looked up. @param {unknown} err */
 export function errorText(err) {
   const code = /** @type {{ code?: unknown } | null | undefined} */ (err)?.code;
-  return typeof code === "string" ? errorMessage(code) : "Something went wrong.";
+  return typeof code === "string" ? ERRORS[code] ?? `The server answered: ${code}.` : "Something went wrong.";
 }
 
 /** `1 variant`, `2 variants`. @param {number} n @param {string} word */
