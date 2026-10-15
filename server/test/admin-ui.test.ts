@@ -66,11 +66,8 @@ test("admin helpers: episode names, what OK does, list moves and episode states"
     { episodeId: "e1", status: "finished", positionMs: 10, durationMs: 10 },
     { episodeId: "e2", status: "watching", positionMs: 5, durationMs: 10 },
   ]);
-  assert.deepEqual(states.map((s) => [s.episode.id, s.current, s.watched, s.percent]), [
-    ["e1", false, true, null],
-    ["e2", true, false, 50],
-    ["e3", false, false, null],
-  ]);
+  assert.deepEqual(states.map((s) => [s.episode.id, s.current, s.watched, s.percent]),
+    [["e1", false, true, null], ["e2", true, false, 50], ["e3", false, false, null]]);
   const s = ({ playbackAllowed = true, current = false, watched = false, percent = null as number | null }) =>
     ({ episode: { playbackAllowed }, current, watched, percent });
   cases([
@@ -94,11 +91,8 @@ test("admin helpers: what the TV plays and how a problem reads", () => {
     [playbackState({ ...n, state: "starting" }, true, NOW), { label: "Starting", tone: "", active: true }],
     [playbackState({ ...n, state: "stopped" }, true, NOW), { label: "Last played", tone: "", active: false }],
   ]);
-  const p = {
-    origin: "tv", kind: "playback", code: "ERROR_CODE_IO_BAD_HTTP_STATUS", itemId: "show", itemTitle: "Şov Dünyası",
-    itemKind: "series", episodeId: "show.e1", episodeTitle: "Pilot", season: 1, number: 1, sourceId: "tr-dub",
-    positionMs: 754_000, httpStatus: 403, appVersion: "0.3.0 (300)", missing: false,
-  };
+  const p = { itemId: "show", itemTitle: "Şov Dünyası", itemKind: "series", episodeId: "show.e1", episodeTitle: "Pilot", season: 1, number: 1,
+    sourceId: "tr-dub", positionMs: 754_000, httpStatus: 403, appVersion: "0.3.0 (300)", missing: false };
   const bare = { ...p, sourceId: null, positionMs: null, httpStatus: null, appVersion: null };
   cases([
     [problemContext(p), "Şov Dünyası · S1 · E1 — Pilot · source tr-dub · at 12:34 · HTTP 403 · app 0.3.0 (300)"],
@@ -198,25 +192,14 @@ test("admin helpers: a diagnostics source, line by line", () => {
     [failed("timeout", "TimeoutError"), ["timed out"]],
     [failed("timeout", "BudgetExhausted"), ["skipped: the time budget of the request ran out"]],
   ]);
-  assert.deepEqual(sourceReport({ sourceId: "missing", type: "adapter", adapterId: "example", ok: false, code: "empty", ms: 1 }, at), {
-    ok: false,
-    sourceId: "missing",
-    how: "adapter example · 1 ms",
-    lines: ["the adapter found nothing to play"],
-  });
+  assert.deepEqual(sourceReport({ sourceId: "missing", type: "adapter", adapterId: "example", ok: false, code: "empty", ms: 1 }, at),
+    { ok: false, sourceId: "missing", how: "adapter example · 1 ms", lines: ["the adapter found nothing to play"] });
   const stream = { kind: "hls", inline: false, host: "127.0.0.1:8788", headerNames: ["Referer"], delivery: "proxy", languages: { audio: ["en", "tr"], subtitles: ["en"] }, expiresAt: "2026-10-14T12:00:00Z" };
   const probe = { ok: true, status: 200, ms: 3, playlist: { master: true, variants: 1, renditions: 3, segments: 0 } };
   assert.deepEqual(sourceReport({ sourceId: "signed-hls", type: "adapter", adapterId: "example", ok: true, ms: 2, stream, probe }, at), {
-    ok: true,
-    sourceId: "signed-hls",
-    how: "adapter example · 2 ms",
-    lines: [
-      "HLS from 127.0.0.1:8788 · through the proxy",
-      "upstream headers: Referer",
-      "audio en, tr · subtitles en",
-      "expires at 2026-10-14T12:00:00Z",
-      "probe ok (HTTP 200, 1 variant, 3 renditions, 3 ms)",
-    ],
+    ok: true, sourceId: "signed-hls", how: "adapter example · 2 ms",
+    lines: ["HLS from 127.0.0.1:8788 · through the proxy", "upstream headers: Referer", "audio en, tr · subtitles en",
+      "expires at 2026-10-14T12:00:00Z", "probe ok (HTTP 200, 1 variant, 3 renditions, 3 ms)"],
   });
   const direct = { kind: "mp4", inline: true, host: null, headerNames: [], delivery: "direct", languages: { audio: null, subtitles: [] }, expiresAt: null };
   const r = sourceReport({ sourceId: "d", type: "direct", ok: true, ms: 0, stream: direct, probe: { ok: false, status: 403, ms: 5, error: null, name: null } }, at);
@@ -323,24 +306,16 @@ test("listen along helpers: TV position, companion target, sync decisions, clock
     [formatDrift(null), "–"],
     [formatPosition(3_725_450), "1:02:05.4"], [formatPosition(65_000), "1:05.0"], [formatPosition(-1), "–"],
   ]);
-  const options = candidateOptions([
-    { sourceId: "hls-multi-audio", label: "Unified", languages: { audio: ["en", "it"], subtitles: [] }, current: true, supported: true, reason: null },
-    { sourceId: "fr-dub", label: null, languages: { audio: ["fr"], subtitles: null }, current: false, supported: true, reason: null },
-    { sourceId: "silent", label: null, languages: { audio: [], subtitles: null }, current: false, supported: true, reason: null },
-    { sourceId: "mystery", label: null, languages: { audio: null, subtitles: null }, current: false, supported: true, reason: null },
-    { sourceId: "dash", label: null, languages: { audio: ["de"], subtitles: [] }, current: false, supported: false, reason: "dash" },
+  const source = (sourceId: string, audio: string[] | null, more = {}) =>
+    ({ sourceId, label: null, languages: { audio, subtitles: null }, current: false, supported: true, reason: null, ...more });
+  const options = candidateOptions([source("hls-multi-audio", ["en", "it"], { label: "Unified", current: true }), source("fr-dub", ["fr"]),
+    source("silent", []), source("mystery", null), source("dash", ["de"], { supported: false, reason: "dash" })]);
+  assert.deepEqual(options.map((o) => [o.sourceId, o.language, o.disabled, o.label]), [
+    ["hls-multi-audio", "en", false, "hls-multi-audio — Unified · English (en) · the TV's source"],
+    ["hls-multi-audio", "it", false, "hls-multi-audio — Unified · Italiano (it) · the TV's source"],
+    ["fr-dub", null, false, "fr-dub · Français (fr)"], ["silent", null, false, "silent · no dialogue"], ["mystery", null, false, "mystery"],
+    ["dash", null, true, "dash · Deutsch (de) · DASH, cannot play on a phone"],
   ]);
-  assert.deepEqual(
-    options.map((o) => [o.sourceId, o.language, o.disabled, o.label]),
-    [
-      ["hls-multi-audio", "en", false, "hls-multi-audio — Unified · English (en) · the TV's source"],
-      ["hls-multi-audio", "it", false, "hls-multi-audio — Unified · Italiano (it) · the TV's source"],
-      ["fr-dub", null, false, "fr-dub · Français (fr)"],
-      ["silent", null, false, "silent · no dialogue"],
-      ["mystery", null, false, "mystery"],
-      ["dash", null, true, "dash · Deutsch (de) · DASH, cannot play on a phone"],
-    ],
-  );
   assert.deepEqual(parseCandidate(options[1]!.value), { sourceId: "hls-multi-audio", language: "it" });
   assert.deepEqual(parseCandidate(options[2]!.value), { sourceId: "fr-dub", language: null });
 });
