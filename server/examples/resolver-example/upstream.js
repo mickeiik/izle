@@ -5,7 +5,7 @@
 // synthesized in memory (tests). Playlists may contain `{{base}}`, replaced by the absolute URL of the video's
 // directory, so absolute URIs can be tested.
 //
-//   node upstream.js [--media <dir>] [--host 127.0.0.1] [--port 8788] [--token-ttl <seconds>] [--verbose]
+//   node upstream.js [--media <dir>] [--port 8788] [--token-ttl <seconds>] [--verbose]   (listens on 127.0.0.1)
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
@@ -119,7 +119,6 @@ function parseRange(header, size) {
 /**
  * Starts the upstream. Resolves once it listens.
  * @param {object} [opts]
- * @param {string} [opts.host]
  * @param {number} [opts.port]
  * @param {string | null} [opts.mediaDir] directory with `<video>/master.m3u8`, `<video>/video.mp4`, …; null = synthetic
  * @param {number} [opts.tokenTtlSec] lifetime of signed stream URLs
@@ -193,16 +192,10 @@ export async function startUpstream(opts = {}) {
     const prefix = ext === "ts" && junk > 0 ? junkBytes(junk) : null;
     const size = file.size + (prefix?.length ?? 0);
     const range = req.headers.range && !prefix ? parseRange(req.headers.range, size) : null;
-    if (range === "unsatisfiable") {
-      res.writeHead(416, { "Content-Range": `bytes */${size}` });
-      return void res.end();
-    }
+    if (range === "unsatisfiable") return void res.writeHead(416, { "Content-Range": `bytes */${size}` }).end();
     const headers = { "Content-Type": type, "Accept-Ranges": prefix ? "none" : "bytes" };
-    if (range) {
-      res.writeHead(206, { ...headers, "Content-Length": range.end - range.start + 1, "Content-Range": `bytes ${range.start}-${range.end}/${size}` });
-    } else {
-      res.writeHead(200, { ...headers, "Content-Length": size });
-    }
+    if (range) res.writeHead(206, { ...headers, "Content-Length": range.end - range.start + 1, "Content-Range": `bytes ${range.start}-${range.end}/${size}` });
+    else res.writeHead(200, { ...headers, "Content-Length": size });
     if (prefix) res.write(prefix);
     const body = range ? file.read(range.start, range.end) : file.read();
     if (Buffer.isBuffer(body)) res.end(body);
@@ -222,8 +215,7 @@ export async function startUpstream(opts = {}) {
     const exp = Math.floor(now() / 1000) + tokenTtlSec;
     const base = `${originOf(req)}/s/${exp}-${junk}-${sign(video, exp, junk)}/${video}/`;
     const info = JSON.parse((await readText(`${video}/info.json`)) ?? "{}");
-    const languages = info.languages ? { languages: info.languages } : {};
-    const answer = { referer: DEFAULT_REFERER, expiresAt: new Date(exp * 1000).toISOString(), ...languages };
+    const answer = { referer: DEFAULT_REFERER, expiresAt: new Date(exp * 1000).toISOString(), ...(info.languages && { languages: info.languages }) };
     if (url.searchParams.get("delivery") === "inline" && format === "hls") {
       const text = /** @type {string} */ (await readText(`${video}/master.m3u8`));
       return sendJson(res, 200, { ...answer, playlist: text.replaceAll("{{base}}", base), baseUrl: base });
@@ -240,10 +232,9 @@ export async function startUpstream(opts = {}) {
       status: 0,
     });
     requests.push(record);
-    res.on("finish", () => void (record.status = res.statusCode));
     // "close" also fires when the client stops reading a stream early (players do that all the time).
     res.on("close", () => {
-      if (record.status === 0) record.status = res.statusCode;
+      record.status = res.statusCode;
       opts.onRequest?.(record);
     });
     try {
@@ -272,14 +263,13 @@ export async function startUpstream(opts = {}) {
     }
   });
 
-  const host = opts.host ?? "127.0.0.1";
   await new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(opts.port ?? 8788, host, () => resolve(undefined));
+    server.listen(opts.port ?? 8788, "127.0.0.1", () => resolve(undefined));
   });
   const { port } = /** @type {import("node:net").AddressInfo} */ (server.address());
   return {
-    url: `http://${host.includes(":") ? `[${host}]` : host}:${port}`,
+    url: `http://127.0.0.1:${port}`,
     requests,
     close: () =>
       new Promise((resolve) => {
@@ -304,10 +294,9 @@ function sendJson(res, status, value) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [str, bool] = /** @type {const} */ ([{ type: "string" }, { type: "boolean" }]);
-  const { values } = parseArgs({ options: { media: str, host: str, port: str, "token-ttl": str, verbose: bool } });
+  const { values } = parseArgs({ options: { media: str, port: str, "token-ttl": str, verbose: bool } });
   const up = await startUpstream({
     mediaDir: values.media ?? null,
-    host: values.host,
     port: values.port ? Number(values.port) : undefined,
     tokenTtlSec: values["token-ttl"] ? Number(values["token-ttl"]) : undefined,
     onRequest: values.verbose

@@ -1,11 +1,6 @@
 // @ts-check
-// Example izle resolver module (resolver module API v1, see docs/spec/resolver-module-v1.md and README.md).
-//
-// It resolves `adapter: "example"` catalog sources against the local example upstream (upstream.js), which behaves
-// like a typical streaming site: a JSON API behind an API key hands out signed, expiring stream URLs that only
-// play with the right Referer. A real module has the same shape: read its settings from `ctx.config`, call the
-// site with `ctx.fetch` and the request's `signal`, and return what to play plus the headers it needs. izle then
-// serves header-bound streams through its proxy, so the headers never reach the TV.
+// Example izle resolver module (resolver module API v1, see docs/spec/resolver-module-v1.md; walkthrough in
+// README.md). It resolves `adapter: "example"` catalog sources against the local stand-in site, upstream.js.
 //
 // Server configuration:
 //   "resolver": { "module": "./index.js", "config": { "apiBase": "http://127.0.0.1:8788/", "apiKey": "…" } }
