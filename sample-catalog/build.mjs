@@ -25,26 +25,12 @@ const UA = "izle-sample-build/1 (+https://github.com/mickeiik/izle)";
  * centre of the crop, for landscape stills whose subject is not in the middle.
  */
 const POSTERS = {
-  caminandes: {
-    url: "https://upload.wikimedia.org/wikipedia/commons/1/14/Caminandes_gran_dillama.png",
-    focusX: 0.45,
-  },
-  "tears-of-steel": {
-    url: "https://upload.wikimedia.org/wikipedia/commons/7/70/Tos-poster.png",
-  },
-  "big-buck-bunny": {
-    url: "https://upload.wikimedia.org/wikipedia/commons/c/c5/Big_buck_bunny_poster_big.jpg",
-  },
-  sintel: {
-    url: "https://upload.wikimedia.org/wikipedia/commons/8/8f/Sintel_poster.jpg",
-  },
-  "elephants-dream": {
-    url: "https://upload.wikimedia.org/wikipedia/commons/e/e8/Elephants_Dream_s5_both.jpg",
-    focusX: 0.55,
-  },
-  "his-girl-friday": {
-    url: "https://upload.wikimedia.org/wikipedia/commons/6/6e/His_Girl_Friday_%281940_poster%29.jpg",
-  },
+  caminandes: { url: "https://upload.wikimedia.org/wikipedia/commons/1/14/Caminandes_gran_dillama.png", focusX: 0.45 },
+  "tears-of-steel": { url: "https://upload.wikimedia.org/wikipedia/commons/7/70/Tos-poster.png" },
+  "big-buck-bunny": { url: "https://upload.wikimedia.org/wikipedia/commons/c/c5/Big_buck_bunny_poster_big.jpg" },
+  sintel: { url: "https://upload.wikimedia.org/wikipedia/commons/8/8f/Sintel_poster.jpg" },
+  "elephants-dream": { url: "https://upload.wikimedia.org/wikipedia/commons/e/e8/Elephants_Dream_s5_both.jpg", focusX: 0.55 },
+  "his-girl-friday": { url: "https://upload.wikimedia.org/wikipedia/commons/6/6e/His_Girl_Friday_%281940_poster%29.jpg" },
 };
 
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
@@ -81,10 +67,7 @@ async function buildPosters(items) {
 
       let quality = 85;
       let jpg = encode(src, spec.focusX ?? 0.5, quality);
-      while (jpg.length > MAX_BYTES && quality > 40) {
-        quality -= 5;
-        jpg = encode(src, spec.focusX ?? 0.5, quality);
-      }
+      while (jpg.length > MAX_BYTES && quality > 40) jpg = encode(src, spec.focusX ?? 0.5, (quality -= 5));
       const name = `${sha256(jpg)}.jpg`;
       writeFileSync(path.join(ASSETS, name), jpg);
       item.poster = `assets/${name}`;
