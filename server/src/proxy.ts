@@ -199,7 +199,6 @@ export class ProxyService {
     return /^https?:\/\//.test(url) ? { url, kind } : null;
   }
 
-  /** Answers one proxy request. */
   async serve(req: Request, token: string, target: ProxyTarget): Promise<Response> {
     const t = this.now();
     const s = this.sessions.get(token);

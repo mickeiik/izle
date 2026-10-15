@@ -170,7 +170,6 @@ export class ResolveService {
   private readonly o: ResolveServiceOptions;
   private readonly catalog: CatalogService;
   private readonly now: () => number;
-  /** Time for one adapter call. */
   readonly deadlineMs: number;
   readonly proxyAlways: boolean;
 
