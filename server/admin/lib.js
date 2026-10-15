@@ -228,8 +228,7 @@ export function groupEpisodeChanges(list) {
   for (const e of list) {
     let group = groups.get(e.itemId);
     if (!group) groups.set(e.itemId, (group = { itemId: e.itemId, title: e.itemTitle ?? e.itemId, episodes: [] }));
-    const season = e.season ?? null;
-    const number = e.number ?? null;
+    const { season = null, number = null } = e;
     const name = season !== null && number !== null ? `S${season} E${number}` : (e.label ?? (number !== null ? `E${number}` : e.id));
     group.episodes.push(e.playbackAllowed === false ? `${name} (not allowed)` : name);
   }

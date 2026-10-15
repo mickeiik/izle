@@ -50,14 +50,8 @@ export function deviceView(scope, id) {
   const history = historyCard(ctx);
   const problems = problemsCard(ctx);
   /** @type {Array<[string, HTMLElement]>} */
-  const sections = [
-    ["Now playing", now.element],
-    ["Home screen", home.element],
-    ["Settings", settings.element],
-    ["Listen along", listenAlong.element],
-    ["History", history.element],
-    ["Problems", problems.element],
-  ];
+  const sections = [["Now playing", now.element], ["Home screen", home.element], ["Settings", settings.element],
+    ["Listen along", listenAlong.element], ["History", history.element], ["Problems", problems.element]];
   sections.forEach(([label, el]) => (el.id = `sec-${label.toLowerCase().replace(/\s+/g, "-")}`));
   const nav = sectionNav(scope, sections);
   const top = h("div", { class: "sticky", hidden: true }, nav.element, scope.note);
@@ -278,10 +272,8 @@ function settingsCard(ctx) {
     }
     const on = autoplay.checked;
     autoplay.setAttribute("aria-busy", "true");
-    void attempt(
-      () => api("PATCH", ctx.path, { autoplayOnStart: on }),
-      on ? "Autoplay is on: it starts the next time the app opens on the TV." : "Autoplay is off.",
-    ).then((r) => {
+    const done = on ? "Autoplay is on: it starts the next time the app opens on the TV." : "Autoplay is off.";
+    void attempt(() => api("PATCH", ctx.path, { autoplayOnStart: on }), done).then((r) => {
       autoplay.removeAttribute("aria-busy");
       if (r.ok) device = r.value.device;
       else autoplay.checked = !on;
