@@ -1,9 +1,5 @@
-# izle-server as a systemd service; setup in docs/deploy/self-hosting.md.
-#   sudo install -m 0644 izle.service /etc/systemd/system/izle.service
-#   sudo systemctl daemon-reload && sudo systemctl enable --now izle
-#   journalctl -u izle -f                 # the server's JSON log
-#   sudo systemctl reload izle            # re-read the catalog bundle (SIGHUP), nothing else
-#   sudo systemctl restart izle           # after a config change or a new resolver module
+# izle-server as a systemd service; setup in docs/deploy/self-hosting.md (§4). `systemctl reload izle` (SIGHUP)
+# re-reads the catalog bundle, nothing else; restart after a config change or a new resolver module.
 
 [Unit]
 Description=izle server (catalog, TV and admin APIs)
