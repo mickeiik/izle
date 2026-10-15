@@ -2,12 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import {
-  SEARCH_MAX, buildSummary, canControlPlayback, candidateOptions, catalogSearchPath, clockOffset, companionTarget,
-  continueText, episodeName, episodeStateLabel, episodeStates, errorMessage, errorText, formatClock, formatCode,
-  formatCountdown, formatDrift, formatPosition, formatRelative, groupEpisodeChanges, isActive, issueLine, languageLabel,
-  moveItem, originLabel, parseCandidate, percent, playbackState, plural, primarySubtag, problemContext, pushSample,
-  resumes, sameLanguage, searchSummary, serverAddress, shortId, showMeta, sourceReport, syncDecision, tokenFromHash,
-  triedText, tvPositionAt,
+  buildSummary, candidateOptions, catalogSearchPath, clockOffset, companionTarget, continueText, episodeName,
+  episodeStateLabel, episodeStates, errorText, formatClock, formatCode, formatCountdown, formatDrift, formatPosition,
+  formatRelative, groupEpisodeChanges, isActive, issueLine, languageLabel, moveItem, parseCandidate, percent,
+  playbackState, plural, problemContext, resumes, sameLanguage, searchSummary, serverAddress, shortId, showMeta,
+  sourceReport, syncDecision, tokenFromHash, tvPositionAt,
 } from "../admin/lib.js";
 import { ADMIN_FILES, ADMIN_VENDOR_FILES } from "../src/admin-files.ts";
 import { startTestServer } from "./helpers.ts";
@@ -83,8 +82,8 @@ test("admin helpers: episode names, what OK does, list moves and episode states"
   ]);
 });
 
-test("admin helpers: what the TV plays, when the remote control applies, and how a problem reads", () => {
-  const n = { state: "playing", updatedAt: ago(20_000), itemTitle: "X", episodeTitle: null, positionMs: 1, durationMs: 2 };
+test("admin helpers: what the TV plays and how a problem reads", () => {
+  const n = { state: "playing", updatedAt: ago(20_000) };
   cases([
     [isActive(n, true, NOW), true],
     [isActive(n, false, NOW), false, "an offline TV is not playing"],
@@ -94,11 +93,6 @@ test("admin helpers: what the TV plays, when the remote control applies, and how
     [playbackState({ ...n, state: "paused" }, true, NOW), { label: "Paused", tone: "", active: true }],
     [playbackState({ ...n, state: "starting" }, true, NOW), { label: "Starting", tone: "", active: true }],
     [playbackState({ ...n, state: "stopped" }, true, NOW), { label: "Last played", tone: "", active: false }],
-    [canControlPlayback(null), false], [canControlPlayback(undefined), false],
-    [canControlPlayback({ state: "playing" }), true], [canControlPlayback({ state: "paused" }), true],
-    [canControlPlayback({ state: "starting" }), false], [canControlPlayback({ state: "stopped" }), false],
-    [canControlPlayback({ state: "finished" }), false],
-    [originLabel("tv"), "TV"], [originLabel("server"), "server"],
   ]);
   const p = {
     origin: "tv", kind: "playback", code: "ERROR_CODE_IO_BAD_HTTP_STATUS", itemId: "show", itemTitle: "Şov Dünyası",
@@ -172,8 +166,8 @@ test("admin helpers: show lines, searches, ids, issues, error texts and language
     [searchSummary(3, " pro "), "3 shows match “pro”."], [searchSummary(1, "pro"), "1 show matches “pro”."],
     [searchSummary(0, "xyz"), "No show matches “xyz”."], [searchSummary(7, ""), "All 7 shows."],
     [searchSummary(1, ""), "The catalog's only show."], [searchSummary(0, ""), "The catalog has no shows."],
-    [searchSummary(SEARCH_MAX, ""), "The first 200 shows; type a title to narrow the list.", "the server's cap"],
-    [searchSummary(SEARCH_MAX, "a"), "The first 200 shows that match “a”; type more to narrow the list."],
+    [searchSummary(200, ""), "The first 200 shows; type a title to narrow the list.", "the server's cap"],
+    [searchSummary(200, "a"), "The first 200 shows that match “a”; type more to narrow the list."],
     [catalogSearchPath(" pro "), "/catalog/search?limit=200&q=pro"],
     [catalogSearchPath("a&b c"), "/catalog/search?limit=200&q=a%26b%20c"],
     [catalogSearchPath(""), "/catalog/search?limit=200&q=", "an empty box lists the catalog"],
@@ -181,8 +175,7 @@ test("admin helpers: show lines, searches, ids, issues, error texts and language
     [shortId("20261014-6b05c8e71a2b3c4d5e6f"), "20261014-6b05c8e71a2…"],
     [issueLine({ file: "items.json", path: "/items/3/poster", message: "file not found" }), "items.json /items/3/poster: file not found"],
     [issueLine({ file: "bundle.json", path: null, message: "unknown format" }), "bundle.json: unknown format"],
-    [errorMessage("too_many_items"), "A home screen holds at most 12 shows."],
-    [errorMessage("weird_code"), "The server answered: weird_code."],
+    [errorText({ code: "too_many_items" }), "A home screen holds at most 12 shows."],
     [errorText({ code: "network" }), "The server cannot be reached.", "an ApiError's code"],
     [errorText({ code: "hls_unsupported" }), "This browser cannot play HLS.", "the companion player's"],
     [errorText({ code: "weird" }), "The server answered: weird."],
@@ -192,20 +185,19 @@ test("admin helpers: show lines, searches, ids, issues, error texts and language
     [plural(1, "variant"), "1 variant"], [plural(3, "segment"), "3 segments"],
     [languageLabel("tr"), "Türkçe (tr)"], [languageLabel("pt-BR"), "Português (pt-BR)"], [languageLabel("xx"), "xx"],
     [languageLabel(null, "Off"), "Off"],
-    [primarySubtag("pt-BR"), "pt"], [primarySubtag("EN"), "en"],
     [sameLanguage("en", "en-GB"), true], [sameLanguage("TR", "tr"), true], [sameLanguage("en", "tr"), false],
     [sameLanguage(null, "en"), false], [sameLanguage("en", undefined), false],
   ]);
 });
 
 test("admin helpers: a diagnostics source, line by line", () => {
-  cases([
-    [triedText("empty", null), "the adapter found nothing to play"],
-    [triedText("error", "UpstreamError"), "the adapter failed (UpstreamError)"],
-    [triedText("timeout", "TimeoutError"), "timed out"],
-    [triedText("timeout", "BudgetExhausted"), "skipped: the time budget of the request ran out"],
-  ]);
   const at = (iso: string) => `at ${iso}`;
+  const failed = (code: string, name: string | null) => sourceReport({ sourceId: "s", type: "direct", ok: false, code, name, ms: 0 }, at).lines;
+  cases([
+    [failed("error", "UpstreamError"), ["the adapter failed (UpstreamError)"]],
+    [failed("timeout", "TimeoutError"), ["timed out"]],
+    [failed("timeout", "BudgetExhausted"), ["skipped: the time budget of the request ran out"]],
+  ]);
   assert.deepEqual(sourceReport({ sourceId: "missing", type: "adapter", adapterId: "example", ok: false, code: "empty", ms: 1 }, at), {
     ok: false,
     sourceId: "missing",
@@ -327,7 +319,6 @@ test("listen along helpers: TV position, companion target, sync decisions, clock
     [decide(500, 1, false), { action: "pause", rate: 1, state: "paused", errorMs: 500 }],
     [syncDecision({ targetMs: -3_000, actualMs: 0, tvPlaying: true, nominalRate: 1 }).state, "waiting"],
     [clockOffset([slow, quick, longPoll]), 6_020 - 1_020], [clockOffset([longPoll]), null], [clockOffset([]), null],
-    [pushSample([quick, slow], longPoll, 2), [slow, longPoll]],
     [formatDrift(600), "+600 ms"], [formatDrift(-12.4), "−12 ms"], [formatDrift(1_540), "+1.5 s"],
     [formatDrift(null), "–"],
     [formatPosition(3_725_450), "1:02:05.4"], [formatPosition(65_000), "1:05.0"], [formatPosition(-1), "–"],

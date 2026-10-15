@@ -7,7 +7,7 @@ export const HOME_MAX = 12;
 /** The TV resumes a saved position only from 30 s on (PlaybackPlan); earlier positions start over. */
 const RESUME_MIN_MS = 30_000;
 /** The most results the catalog search returns (the server's cap). */
-export const SEARCH_MAX = 200;
+const SEARCH_MAX = 200;
 
 /** `1:02:03` or `12:34`; `–` when unknown. @param {number | null | undefined} ms */
 export function formatClock(ms) {
@@ -154,10 +154,7 @@ export function searchSummary(count, query) {
 /** @param {string} query */
 export const catalogSearchPath = (query) => `/catalog/search?limit=${SEARCH_MAX}&q=${encodeURIComponent(query.trim())}`;
 
-/**
- * @typedef {{ state: string, updatedAt: string, itemTitle: string | null, episodeTitle: string | null,
- *   positionMs: number, durationMs: number | null }} NowPlaying
- */
+/** @typedef {{ state: string, updatedAt: string }} NowPlaying what is read here of a now-playing record */
 
 /**
  * Whether a now-playing record describes playback that is going on (a TV that stopped reporting for two minutes
@@ -168,12 +165,6 @@ export function isActive(n, online, now = Date.now()) {
   if (!n || !online || !["starting", "playing", "paused"].includes(n.state)) return false;
   return now - Date.parse(n.updatedAt) < 2 * 60_000;
 }
-
-/**
- * Whether the remote-control buttons make sense: the TV's last report says it is in the player, playing or paused.
- * @param {{ state: string } | null | undefined} n
- */
-export const canControlPlayback = (n) => n?.state === "playing" || n?.state === "paused";
 
 /**
  * The now-playing chip: Playing, Paused or Starting while the TV's reports are recent, else Last played.
@@ -187,17 +178,12 @@ export function playbackState(n, online, now = Date.now()) {
   return { label: "Playing", tone: "ok", active: true };
 }
 
-/** @param {string} origin */
-export const originLabel = (origin) => (origin === "tv" ? "TV" : origin);
-
 /**
- * @typedef {{ origin: string, kind: string, code: string, itemId: string | null, itemTitle: string | null,
- *   itemKind?: string | null, episodeId: string | null, episodeTitle: string | null, season: number | null,
- *   number: number | null, sourceId: string | null, positionMs: number | null, httpStatus: number | null,
- *   appVersion: string | null, missing: boolean }} ProblemLike
+ * Where and when a problem happened: show · episode · source · position · HTTP status · app.
+ * @param {{ itemId: string | null, itemTitle: string | null, itemKind?: string | null, episodeId: string | null,
+ *   episodeTitle: string | null, season: number | null, number: number | null, sourceId: string | null,
+ *   positionMs: number | null, httpStatus: number | null, appVersion: string | null, missing: boolean }} p
  */
-
-/** Where and when a problem happened: show · episode · source · position · HTTP status · app. @param {ProblemLike} p */
 export function problemContext(p) {
   const parts = [];
   if (p.missing) parts.push(`${p.itemId ?? p.episodeId} (no longer in the catalog)`);
@@ -305,13 +291,6 @@ const TRIED = /** @type {Record<string, string>} */ ({
   unsupported: "cannot be served (DASH that needs upstream headers)",
 });
 
-/** @param {string} code @param {string | null | undefined} name */
-export function triedText(code, name) {
-  const text = TRIED[code] ?? code;
-  if (name === "BudgetExhausted") return "skipped: the time budget of the request ran out";
-  return name && code !== "timeout" ? `${text} (${name})` : text;
-}
-
 /**
  * One source of a diagnostics run (`POST /admin/diagnostics/resolve`): whether it worked (resolved, and its probe
  * passed when there was one), how it was tried, and what came back, a line each.
@@ -324,7 +303,8 @@ export function sourceReport(s, formatTime = (iso) => new Date(iso).toLocaleStri
   const p = s.probe;
   /** @type {string[]} */
   const lines = [];
-  if (!s.ok) lines.push(triedText(s.code, s.name));
+  if (!s.ok && s.name === "BudgetExhausted") lines.push("skipped: the time budget of the request ran out");
+  else if (!s.ok) lines.push(`${TRIED[s.code] ?? s.code}${s.name && s.code !== "timeout" ? ` (${s.name})` : ""}`);
   if (st) {
     const delivery = st.delivery === "proxy" ? "through the proxy" : st.delivery === "direct" ? "direct to the TV" : "cannot be served";
     lines.push(`${st.kind.toUpperCase()}${st.inline ? " (inline playlist)" : ""} from ${st.host ?? "?"} · ${delivery}`);
@@ -363,7 +343,7 @@ export function languageLabel(tag, none = "–") {
 }
 
 /** The language of a BCP 47 tag, lower case: `pt` for `pt-BR`. @param {string} tag */
-export const primarySubtag = (tag) => (tag.split("-")[0] ?? "").toLowerCase();
+const primarySubtag = (tag) => (tag.split("-")[0] ?? "").toLowerCase();
 
 /**
  * Whether a track's language is the one wanted (`en` matches `en-GB`); never for an unknown side.
@@ -459,18 +439,11 @@ export function clockOffset(samples) {
   return best ? best.serverNowMs - (best.sentAt + best.receivedAt) / 2 : null;
 }
 
-/** @param {ClockSample[]} samples @param {ClockSample} sample @param {number} [keep] */
-export const pushSample = (samples, sample, keep = 8) => [...samples, sample].slice(-keep);
-
-/**
- * @typedef {{ sourceId: string, label: string | null, current: boolean, supported: boolean, reason: string | null,
- *   languages: { audio: string[] | null, subtitles: string[] | null } }} Candidate
- */
-
 /**
  * Select options for the companion candidates: one per source, or one per audio language when a source has
  * several. `value` is `<sourceId>\u0000<language>` (see `parseCandidate`).
- * @param {Candidate[]} candidates
+ * @param {Array<{ sourceId: string, label: string | null, current: boolean, supported: boolean, reason: string | null,
+ *   languages: { audio: string[] | null, subtitles: string[] | null } }>} candidates
  */
 export function candidateOptions(candidates) {
   const out = [];

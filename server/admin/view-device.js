@@ -7,19 +7,7 @@ import { ApiError, api, attempt, devicePath } from "./api.js";
 import { companionCard } from "./companion.js";
 import { homeCard } from "./device-home.js";
 import { actionButton, card, chip, h, keepFocus, onSubmit, page, progressBar, setChip, setOff, setProgress, setTitle, slot, statusChip, toast } from "./dom.js";
-import {
-  LANGUAGES,
-  canControlPlayback,
-  episodeName,
-  errorText,
-  formatClock,
-  formatRelative,
-  languageLabel,
-  originLabel,
-  percent,
-  playbackState,
-  problemContext,
-} from "./lib.js";
+import { LANGUAGES, episodeName, errorText, formatClock, formatRelative, languageLabel, percent, playbackState, problemContext } from "./lib.js";
 
 /**
  * What the sections of a TV's page share: `send` sends a command and resolves with whether the server took it,
@@ -239,7 +227,8 @@ function nowPlayingCard(ctx) {
     const pct = percent(n.positionMs, n.durationMs);
     bar.hidden = pct === null;
     if (pct !== null) setProgress(bar, pct, `${formatClock(n.positionMs)} of ${formatClock(n.durationMs)}`);
-    for (const b of remote) setOff(b, !canControlPlayback(n));
+    // The remote control applies while the TV's last report says it is in the player, playing or paused.
+    for (const b of remote) setOff(b, n.state !== "playing" && n.state !== "paused");
     setOff(stop, !s.active);
     shown.show(info);
   };
@@ -393,7 +382,7 @@ function problemsCard(ctx) {
         const context = problemContext(p);
         const at = new Date(p.at).toLocaleString([], { dateStyle: "short", timeStyle: "short" });
         const when = time(h("time", { class: "muted", datetime: p.at }), () => `${formatRelative(p.at)} · ${at}`);
-        const origin = chip(originLabel(p.origin), p.origin === "server" ? "server" : "");
+        const origin = chip(p.origin === "tv" ? "TV" : p.origin, p.origin === "server" ? "server" : "");
         return h(
           "li",
           null,

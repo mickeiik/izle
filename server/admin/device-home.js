@@ -4,21 +4,7 @@
 
 import { api, attempt } from "./api.js";
 import { actionButton, card, chip, h, keepFocus, keyedRows, liveSearch, loadError, loading, poster, progressBar, setOff, showRow, uid } from "./dom.js";
-import {
-  HOME_MAX,
-  catalogSearchPath,
-  continueText,
-  episodeName,
-  episodeStateLabel,
-  episodeStates,
-  formatClock,
-  moveItem,
-  percent,
-  plural,
-  resumes,
-  searchSummary,
-  showMeta,
-} from "./lib.js";
+import { HOME_MAX, catalogSearchPath, continueText, episodeName, episodeStateLabel, episodeStates, formatClock, moveItem, percent, plural, resumes, searchSummary, showMeta } from "./lib.js";
 
 /** @param {import("./view-device.js").DeviceContext} ctx */
 export function homeCard(ctx) {

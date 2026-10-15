@@ -6,21 +6,7 @@
 import { api, attempt, devicePath, isUnauthorized, readStored, writeStored } from "./api.js";
 import { attach, nativeHlsBroken } from "./companion-player.js";
 import { actionButton, card, h, slot, toast } from "./dom.js";
-import {
-  SYNC,
-  candidateOptions,
-  clockOffset,
-  companionTarget,
-  errorText,
-  formatDrift,
-  formatPosition,
-  isActive,
-  parseCandidate,
-  plural,
-  pushSample,
-  syncDecision,
-  tvPositionAt,
-} from "./lib.js";
+import { SYNC, candidateOptions, clockOffset, companionTarget, errorText, formatDrift, formatPosition, isActive, parseCandidate, plural, syncDecision, tvPositionAt } from "./lib.js";
 
 const NUDGE_KEY = "izle.companion.nudgeMs";
 const TICK_MS = 250;
@@ -226,7 +212,7 @@ export function companionCard({ deviceId, signal }) {
     const receivedAt = Date.now();
     const rtt = receivedAt - sentAt;
     if (!wait || rtt <= SYNC.sampleMaxRttMs) {
-      samples = pushSample(samples, { sentAt, receivedAt, serverNowMs: r.serverNowMs });
+      samples = [...samples, { sentAt, receivedAt, serverNowMs: r.serverNowMs }].slice(-8);
       offset = clockOffset(samples);
       bestRtt = Math.min(bestRtt, rtt);
     }
