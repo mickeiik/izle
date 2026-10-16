@@ -13,7 +13,7 @@ import { PROBLEM_LIST_DEFAULT, PROBLEM_LIST_MAX } from "../../problems.ts";
 import { iso } from "../../presenters.ts";
 import type { Device, Store } from "../../store.ts";
 import { HOME_MAX_ITEMS, MAX_NOW_WAIT_MS } from "../../tv.ts";
-import { approveBody, commandBody, companionLinkBody, companionResolveBody, cursorBody, devicePatchBody, diagnosticsBody, homeBody, isId, parseBody, parseWait } from "../../validation.ts";
+import { adoptBody, approveBody, commandBody, companionLinkBody, companionResolveBody, cursorBody, devicePatchBody, diagnosticsBody, homeBody, isId, parseBody, parseWait } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
 
 /** The device a `/admin/devices/:id` route names; 404 `unknown_device` otherwise. */
@@ -28,7 +28,7 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
 
   app.post("/api/v1/admin/pair/approve", async (c) => {
     const body = await parseBody(c, approveBody);
-    return c.json(pairing.approve(body.code, body.name));
+    return c.json(pairing.approve(body.code, body.name, body.replaces));
   });
 
   app.get("/api/v1/admin/pair/pending", (c) =>
@@ -51,6 +51,12 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
   app.delete("/api/v1/admin/devices/:id", (c) => {
     devices.remove(requireDevice(store, c.req.param("id")), c.get("actor"));
     return c.body(null, 204);
+  });
+
+  app.post("/api/v1/admin/devices/:id/history/adopt", async (c) => {
+    const d = requireDevice(store, c.req.param("id"));
+    const body = await parseBody(c, adoptBody);
+    return c.json({ moved: devices.adoptHistory(d, body.fromDeviceId, c.get("actor")) });
   });
 
   app.put("/api/v1/admin/devices/:id/home", async (c) => {

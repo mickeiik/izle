@@ -372,7 +372,8 @@ export class Store {
 
   /**
    * Deletes pair codes that expired (or were delivered) more than `graceMs` ago, together with devices that were
-   * approved but never collected their token.
+   * approved but never collected their token. An active device that an expired replacement code was bound to has
+   * a token, and stays.
    */
   purgePairCodes(now: number, graceMs: number): void {
     this.transaction(() => {
@@ -470,6 +471,13 @@ export class Store {
 
   purgeCommands(before: number): void {
     this.run("DELETE FROM commands WHERE created_at < ?", before);
+  }
+
+  // --- history adoption --------------------------------------------------------------------------------------
+
+  /** Gives the viewings of `fromDeviceId` (a TV that is gone) to another TV, under its name; how many moved. */
+  adoptViewings(fromDeviceId: string, toDeviceId: string, toName: string): number {
+    return this.run("UPDATE viewings SET device_id = ?, device_name = ? WHERE device_id = ?", toDeviceId, toName, fromDeviceId);
   }
 
   // --- access tokens -------------------------------------------------------------------------------------------

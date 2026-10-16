@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { startTestServer, type TestServer } from "./helpers.ts";
+import { DatabaseSync } from "node:sqlite";
+import { databaseFile } from "../src/config.ts";
+import { openEvents, startTestServer, type Json, type TestServer } from "./helpers.ts";
 
 test("pairing: start → pending → approve → token delivered exactly once", async (t) => {
   const s = await startTestServer();
@@ -130,4 +132,84 @@ test("pairing: approving without a name calls the TV \"TV\", then \"TV 2\", …"
   assert.equal((await approve()).name, "TV 4", "taken names are skipped regardless of case");
   const devices = (await s.admin("GET", "/devices")).json.devices.map((d: { name: string }) => d.name).sort();
   assert.deepEqual(devices, ["Kitchen", "TV", "TV 2", "TV 4", "tv 3"]);
+});
+
+test("replacing a TV: the new TV takes over the device and everything stored for it; the old token stops working", async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  const old = await s.pair("Salon");
+  const d = old.deviceId;
+  await s.admin("PUT", `/devices/${d}/home`, { itemIds: ["show", "film"] });
+  await s.admin("PATCH", `/devices/${d}`, { autoplayOnStart: true });
+  await s.call("POST", "/api/v1/tv/progress", { token: old.token, body: { episodeId: "show.e1", positionMs: 60_000, durationMs: 1_200_000, status: "stopped" } });
+  const oldStream = await openEvents(s.base, old.token);
+  t.after(() => oldStream.close());
+  await oldStream.next((m) => m.event === "state");
+
+  const start = await s.call("POST", "/api/v1/pair/start");
+  const code = start.json.code;
+  const pendingId = (await s.admin("POST", "/pair/approve", { code: (await s.call("POST", "/api/v1/pair/start")).json.code })).json.deviceId;
+  for (const replaces of ["ghost", pendingId]) {
+    const r = await s.admin("POST", "/pair/approve", { code, replaces });
+    assert.deepEqual([r.status, r.json.error], [404, "unknown_device"], `replaces ${replaces}`);
+  }
+  assert.deepEqual((await s.admin("POST", "/pair/approve", { code, name: "Ignored", replaces: d })).json, { deviceId: d, name: "Salon" });
+  assert.equal((await s.call("GET", "/api/v1/tv/state", { token: old.token })).status, 200, "until the code is collected the old TV goes on");
+
+  const done = await s.call("GET", `/api/v1/pair/wait?code=${code}&wait=0`, { token: start.json.pairToken });
+  assert.deepEqual([done.json.status, done.json.deviceId], ["approved", d]);
+  assert.equal((await s.call("GET", "/api/v1/tv/state", { token: old.token })).status, 401, "the old TV pairs again by itself");
+  await assert.rejects(oldStream.next(() => false), /stream ended/, "the old TV's event stream is closed");
+
+  const state = (await s.call("GET", "/api/v1/tv/state", { token: done.json.deviceToken })).json;
+  assert.deepEqual([state.device.id, state.device.name, state.device.autoplayOnStart], [d, "Salon", true]);
+  assert.deepEqual(state.home.map((h: Json) => [h.item.id, h.continue.positionMs]), [["show", 60_000], ["film", 0]]);
+  assert.deepEqual((await s.admin("GET", "/devices")).json.devices.map((x: Json) => x.id).sort(), [d, pendingId].sort(), "no device was created");
+  const paired = (await s.admin("GET", "/events?after=0&types=device.paired")).json.events.map((e: Json) => [e.deviceId, e.data]);
+  assert.deepEqual(paired, [[d, { name: "Salon", replaced: false }], [d, { name: "Salon", replaced: true }]]);
+});
+
+test("replacing a TV: a code that expires uncollected changes nothing, also after the purge", async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  const old = await s.pair("Salon");
+  const start = await s.call("POST", "/api/v1/pair/start");
+  assert.equal((await s.admin("POST", "/pair/approve", { code: start.json.code, replaces: old.deviceId })).status, 200);
+  s.clock.advance(10 * 60_000 + 1);
+  assert.equal((await s.call("GET", `/api/v1/pair/wait?code=${start.json.code}&wait=0`, { token: start.json.pairToken })).status, 410);
+  s.clock.advance(60 * 60_000);
+  s.srv.ctx.pairing.purge();
+  assert.equal(s.srv.ctx.store.getPairCode(start.json.code), null, "the code is purged");
+  assert.equal((await s.call("GET", "/api/v1/tv/state", { token: old.token })).json.device.id, old.deviceId, "the device and its token stay");
+});
+
+test("history adopt: a deleted TV's viewings go to an existing one, under its name", async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  const gone = await s.pair("Old TV");
+  const tv = await s.pair("New TV");
+  const db = new DatabaseSync(databaseFile(s.config));
+  t.after(() => db.close());
+  const insert = db.prepare(`INSERT INTO viewings (device_id, device_name, catalog_id, item_id, episode_id, started_at, trigger, actor_json)
+    VALUES (?, ?, 'fixture', 'show', 'show.e1', 0, 'viewer', '{"type":"server"}')`);
+  for (const [id, name] of [[gone.deviceId, "Old TV"], [gone.deviceId, "Old TV"], ["elsewhere00", "Third"]]) insert.run(id, name);
+  const adopt = (body: unknown, id = tv.deviceId) => s.admin("POST", `/devices/${id}/history/adopt`, body);
+
+  const refused: Array<[unknown, string, number, string]> = [
+    [{ fromDeviceId: gone.deviceId }, tv.deviceId, 409, "device_exists"],
+    [{ fromDeviceId: tv.deviceId }, tv.deviceId, 409, "device_exists"],
+    [{ fromDeviceId: gone.deviceId }, "ghost", 404, "unknown_device"],
+    [{}, tv.deviceId, 400, "invalid_request"],
+  ];
+  for (const [body, id, status, error] of refused) {
+    const r = await adopt(body, id);
+    assert.deepEqual([r.status, r.json.error], [status, error], `${id} ${JSON.stringify(body)}`);
+  }
+  await s.admin("DELETE", `/devices/${gone.deviceId}`);
+  assert.deepEqual((await adopt({ fromDeviceId: gone.deviceId })).json, { moved: 2 });
+  assert.deepEqual((await adopt({ fromDeviceId: gone.deviceId })).json, { moved: 0 });
+  const rows = db.prepare("SELECT device_id, device_name FROM viewings ORDER BY id").all().map((r) => [r.device_id, r.device_name]);
+  assert.deepEqual(rows, [[tv.deviceId, "New TV"], [tv.deviceId, "New TV"], ["elsewhere00", "Third"]]);
+  const events = (await s.admin("GET", "/events?after=0&types=history.changed")).json.events;
+  assert.deepEqual(events.map((e: Json) => [e.deviceId, e.actor, e.data]), [[tv.deviceId, { type: "owner" }, { moved: 2 }]], "nothing moved, nothing to announce");
 });

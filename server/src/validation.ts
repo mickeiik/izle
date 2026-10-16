@@ -23,7 +23,11 @@ const LANGUAGE_TAG_OR_NULL = { anyOf: [{ type: "string", pattern: LANGUAGE_TAG_P
 const NAME = { type: "string", minLength: 1, maxLength: 60, pattern: "\\S" };
 const MS = { type: "integer", minimum: 0, maximum: 1e12 };
 
-export const approveBody = ajv.compile<{ code: string; name?: string }>(object({ code: { type: "string", pattern: PAIR_CODE.source }, name: NAME }, ["code"]));
+export const approveBody = ajv.compile<{ code: string; name?: string; replaces?: string }>(
+  object({ code: { type: "string", pattern: PAIR_CODE.source }, name: NAME, replaces: ID }, ["code"]),
+);
+
+export const adoptBody = ajv.compile<{ fromDeviceId: string }>(object({ fromDeviceId: ID }, ["fromDeviceId"]));
 
 export const devicePatchBody = ajv.compile<DevicePatch>({
   ...object({

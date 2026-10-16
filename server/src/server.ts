@@ -92,7 +92,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const services = { config, store, catalog, events, notifier: new Notifier(store, events), eventLog, resolver, sessions, problems, log, now };
   const tv = new TvService(services);
   const ctx: AppContext = {
-    ...services, tv, companion: new CompanionService(services), pairing: new PairingService(services, opts.pairing), proxy,
+    ...services, tv, companion: new CompanionService(services), pairing: new PairingService({ ...services, proxy }, opts.pairing), proxy,
     devices: new DeviceService({ ...services, tv, proxy }), commands: new CommandService({ ...services, tv }), tokens: new TokenService(store, log, now),
     resolverModule, adminToken, pingMs: opts.pingMs ?? 20_000, fetch: fetchUpstream, adminUiDir: fileURLToPath(new URL("../admin", import.meta.url)),
   };

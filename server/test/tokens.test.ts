@@ -94,6 +94,7 @@ test("scopes: each level against a representative route of every level; 403 insu
     ["DELETE", `/tokens/${tokens.read.id}`, undefined, "owner"],
     ["POST", "/pair/approve", { code: "123456" }, "owner"],
     ["DELETE", `/devices/${tv.deviceId}`, undefined, "owner"],
+    ["POST", `/devices/${tv.deviceId}/history/adopt`, { fromDeviceId: "gone" }, "owner"],
     ["POST", "/diagnostics/resolve", { episodeId: "show.e1" }, "owner"],
     ["POST", `/devices/${tv.deviceId}/companion/resolve`, { episodeId: "show.e1", sourceId: "en-orig" }, "owner"],
     ["PUT", "/companion/links/show.e1/en-orig", { offsetMs: 0, rate: 1 }, "owner"],
