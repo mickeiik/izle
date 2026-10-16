@@ -2,6 +2,7 @@ package io.github.mickeiik.izle
 
 import android.app.Application
 import android.content.Context
+import android.os.Build
 import android.os.SystemClock
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.preferencesDataStoreFile
@@ -15,6 +16,11 @@ import io.github.mickeiik.izle.data.ServerRepository
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.EventsClient
 import io.github.mickeiik.izle.settings.DeviceStore
+import io.github.mickeiik.izle.update.ApkDownloader
+import io.github.mickeiik.izle.update.AppInstaller
+import io.github.mickeiik.izle.update.AppUpdater
+import io.github.mickeiik.izle.update.PackageInstallerAppInstaller
+import io.github.mickeiik.izle.update.UpdateCapabilities
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
 import okhttp3.HttpUrl
@@ -40,7 +46,7 @@ class AppGraph(val context: Context) {
 
     val deviceStore = DeviceStore(PreferenceDataStoreFactory.create { context.preferencesDataStoreFile("izle") })
 
-    val repository = ServerRepository(appScope, deviceStore, EventsClient(sseHttp))
+    val repository = ServerRepository(appScope, deviceStore, EventsClient(sseHttp), onAppCheck = { api -> updater.check(api) })
 
     /** Problem reports for the owner, sent from the application scope so they outlive the screen. */
     val problems = ProblemReporter(appScope, { repository.api }, SystemClock::elapsedRealtime)
@@ -48,8 +54,31 @@ class AppGraph(val context: Context) {
     /** What became of the owner's commands, also sent from the application scope. */
     val commandResults = CommandResultReporter(appScope) { api, id, result -> api.reportCommandResult(id, result) }
 
-    fun apiClient(baseUrl: HttpUrl, deviceToken: String?): ApiClient = ApiClient(baseUrl, deviceToken, http, longPollHttp)
+    /** The system side of self-updates; the tests put a fake here before the view model starts. */
+    var installer: AppInstaller = PackageInstallerAppInstaller(context)
 
+    /** The TV's self-update (docs/ux/senior-tv.md, "Update"). */
+    val updater: AppUpdater by lazy {
+        AppUpdater(
+            scope = appScope,
+            store = deviceStore,
+            downloader = ApkDownloader(http, context.cacheDir),
+            installer = { installer },
+            problems = problems,
+            capabilityOf = { silentRefused -> UpdateCapabilities.current(context, silentRefused) },
+            installedVersionCode = BuildConfig.VERSION_CODE.toLong(),
+            versionName = BuildConfig.VERSION_NAME,
+            sdkInt = Build.VERSION.SDK_INT,
+        )
+    }
+
+    /** API calls (never media) say which app version this is and how it can update: the server records it per TV. */
+    val apiUserAgent: String get() = updater.userAgent
+
+    fun apiClient(baseUrl: HttpUrl, deviceToken: String?): ApiClient =
+        ApiClient(baseUrl, deviceToken, http, longPollHttp, userAgent = { apiUserAgent })
+
+    /** Media requests. */
     val userAgent: String = "izle-tv/${BuildConfig.VERSION_NAME}"
 }
 

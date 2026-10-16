@@ -80,6 +80,16 @@
     <string name="about_device">TV name</string>
     <string name="about_catalog">Catalog</string>
     <string name="about_build">Catalog build</string>
+    <string name="about_update_available">Update available</string>
+    <string name="about_up_to_date">Up to date</string>
+    <string name="settings_install_update">Install update</string>
+
+    <!-- Update -->
+    <string name="update_overline">New version</string>
+    <string name="update_press_ok">Press OK to install</string>
+    <string name="update_install">Install</string>
+    <string name="update_installing">Updating…</string>
+    <string name="update_failed">Could not update</string>
 
     <string name="language_tr" translatable="false">Türkçe</string>
     <string name="language_en" translatable="false">English</string>

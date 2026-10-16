@@ -103,6 +103,17 @@ object Problems {
         appVersion = appVersion.take(MAX_APP_VERSION_CHARS),
     )
 
+    /**
+     * A self-update that did not happen: `update_` + [code], the command result's reason (`update_verify`), the
+     * install status (`update_failure_storage`) or `update_needs_user_action` (a silent install the system wanted
+     * confirmed).
+     */
+    fun update(code: String, appVersion: String): ProblemReport = ProblemReport(
+        kind = "other",
+        code = code("update_$code"),
+        appVersion = appVersion.take(MAX_APP_VERSION_CHARS),
+    )
+
     /** The report as sent [ageMs] after it happened (clamped to what the server accepts). */
     fun aged(report: ProblemReport, ageMs: Long): ProblemReport = report.copy(ageMs = ageMs.coerceIn(0, MAX_AGE_MS))
 

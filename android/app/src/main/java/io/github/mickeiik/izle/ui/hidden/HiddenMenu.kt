@@ -112,6 +112,14 @@ fun HiddenMenu(
                         item(key = "pair") {
                             MenuRow(stringResource(R.string.settings_pair_again), modifier = focus(2)) { actions.onSettings(SettingsEntry.PairAgain) }
                         }
+                        // Only while the server offers a newer version; last, so the focus never starts on it.
+                        about.updateVersion?.let { version ->
+                            item(key = "update") {
+                                MenuRow(stringResource(R.string.settings_install_update), version, modifier = focus(3)) {
+                                    actions.onSettings(SettingsEntry.InstallUpdate)
+                                }
+                            }
+                        }
                     }
                     MenuPage.About -> MenuList(page, initial = 0) { focus ->
                         val rows = listOf(
@@ -123,6 +131,14 @@ fun HiddenMenu(
                         )
                         rows.forEachIndexed { i, (label, value) ->
                             item(key = label) { MenuRow(stringResource(label), value ?: "–", modifier = focus(i)) {} }
+                        }
+                        item(key = "update") {
+                            val version = about.updateVersion
+                            if (version != null) {
+                                MenuRow(stringResource(R.string.about_update_available), version, modifier = focus(rows.size)) {}
+                            } else {
+                                MenuRow(stringResource(R.string.about_up_to_date), modifier = focus(rows.size)) {}
+                            }
                         }
                     }
                 }

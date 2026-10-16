@@ -85,6 +85,25 @@ remotely from the admin page (`/admin/` on the server) or, on the TV itself, beh
   switch episodes like CH+/CH−, stop, and show a message. These act only while video shows; resume, next and
   previous close the hidden menu if it is open.
 
+### Update
+
+The server keeps one TV app version for its TVs; the owner uploads it and may send a TV the **update** command.
+Nothing about it ever interrupts playback: during playback the command answers `busy` and nothing is installed.
+
+- **Android 12 and newer, with the one-time "install unknown apps" grant for izle**: the TV updates itself, without
+  any dialog, once it has sat on Home for 3 minutes with no key pressed (no hidden menu, no autoplay countdown,
+  nothing playing, server reachable), when the owner allows TVs to update by themselves; the owner's command
+  installs at once. "Updating…" shows for the moment of the install, then the new version starts on Home. After a
+  failed attempt the TV waits 6 hours before trying by itself again. If the system asks for a confirmation anyway,
+  the TV gives up on silent updates and behaves as below until its next update.
+- **Android 11 and older** (the system always asks): only on the owner's command, a full-screen panel says "New
+  version", the version, "Press OK to install" and "Home in 60 s" over its bar, **Install** focused and **Not now**
+  beside it. OK shows "Updating…" while it downloads, then the system's own Install/Cancel dialog. Back, Not now,
+  Cancel or 60 s without a press: Home.
+- A failure says "Could not update" for 15 s (with **Home** focused), then Home; "Updating…" goes Home by itself
+  after 2 minutes if the system never answers (Back too, without stopping an install already under way). Owner messages are not shown on
+  this screen; the Menu key and holding OK do nothing on it.
+
 ### Hidden menu
 
 Opened with the remote's **Menu** key or by **holding OK for 0.6 s** (on Home: for the focused show; in the
@@ -98,8 +117,8 @@ and closes it.
 | Start over | always for a show | plays the episode OK would play from the beginning (in the player: seeks to 0) |
 | Audio language | player, ≥ 2 audio tracks | Automatic (the owner's preference) or a specific track, for this playback |
 | Subtitles | player | Off or one of the stream's subtitle tracks, for this playback |
-| Settings | always | Server address (back to the address screen), Language (Automatic → Türkçe → English), Pair again |
-| About | always | app version, TV name, server, catalog and catalog build |
+| Settings | always | Server address (back to the address screen), Language (Automatic → Türkçe → English), Pair again; Install update (with the version) while the server offers a newer one, as the owner's command |
+| About | always | app version, TV name, server, catalog and catalog build; "Update available" with the version, or "Up to date" |
 
 ### First run
 
@@ -124,7 +143,7 @@ and closes it.
 | Rewind / Fast forward | — | like ← / → | — | — |
 | Stop | — | save, Home | — | — |
 | CH+ / CH−, ▶▶\| / \|◀◀ | nothing | next / previous episode (first press only; the ends: information only) | nothing | nothing |
-| Back | nothing | save, Home | Home | one level up / close |
+| Back | nothing | save, Home | Home (also from the update screen) | one level up / close |
 | HOME (system) | leaves the app; it reopens on Home | saves the position, releases the player | | |
 
 A short OK is delivered on release; a release without a press (the OK that launched the app from the TV
@@ -141,12 +160,12 @@ izle.
 | Resume | saved position ≥ 30 s and not within the end threshold; start 5 s before it |
 | End threshold ("finished") | remaining ≤ max(2 min, 5 % of the duration), capped at 10 % of the duration (so a 90 s episode is finished in its last 9 s, a 2 h film in its last 6 min) |
 | Heartbeat | every 15 s while playing, plus pause, resume, seek, stop and end |
-| Countdowns | auto-next and autoplay on start 10 s, error screen 30 s, each with a bar that runs down a step a second; "The end" 8 s, then Home |
+| Countdowns | auto-next and autoplay on start 10 s, error screen 30 s, update "press OK" 60 s, "Could not update" 15 s, each with a bar that runs down a step a second; "The end" 8 s, then Home; "Updating…" at most 2 min |
 | Source errors | try the server's next alternative from the same position; HTTP 403/410 after more than 5 min of playback re-resolves the same source first (an expired signed URL) |
 | Stream refresh | when a resolve answer's `expiresAt` is ≥ 90 s away (measured on the server's clock): resolve the same source again at `expiresAt` − 60 s, playing or paused; new media only when the URL changed, at the same position; at most one refresh per 60 s; a network or server failure is retried once after 30 s while the URL is still valid, else the 403/410 rule above applies |
 | Episode keys (CH+/CH−, ▶▶\|/\|◀◀, next/previous commands) | the nearest `playbackAllowed` episode after / before the current one in play order; no wrap-around; the current one is reported like Back (stopped, or finished within the end threshold) |
 | Owner's message | up to 200 characters, 3–120 s (the server's default: 15 s); a new one replaces the current one |
-| Problem reports (to the owner) | one attempt in the background, never retried, failures ignored: player errors (Media3 error code, HTTP status, exception class names — never messages or URLs), failed resolves (the server's error code or `network`), "Can't play right now" (`gave_up`), the server unreachable for ≥ 5 min (`server_unreachable`, sent once it answers again) |
+| Problem reports (to the owner) | one attempt in the background, never retried, failures ignored: player errors (Media3 error code, HTTP status, exception class names — never messages or URLs), failed resolves (the server's error code or `network`), "Can't play right now" (`gave_up`), the server unreachable for ≥ 5 min (`server_unreachable`, sent once it answers again), a self-update that failed (`update_…`: the download or archive check without a command, the install status, `update_needs_user_action`) |
 | Languages | audio: the owner's preferred language (and its primary subtag), else the stream default; subtitles: off unless the owner set a language |
 
 ## Copy (en / tr)
@@ -168,6 +187,9 @@ izle.
 | Pairing | Pair this TV · Open http://… /admin on your phone or computer and approve this code · Waiting for approval… | Bu televizyonu eşleştirin · Telefonunuzda veya bilgisayarınızda http://… /admin adresini açın ve bu kodu onaylayın · Onay bekleniyor… |
 | Server address | Server address · Connect · The server cannot be reached. | Sunucu adresi · Bağlan · Sunucuya ulaşılamıyor. |
 | Menu | Episodes · Start over · Audio language · Subtitles · Settings · About | Bölümler · Baştan başlat · Ses dili · Altyazı · Ayarlar · Hakkında |
+| Update | New version · Press OK to install · Home in 60 s · Install · Not now | Yeni sürüm · Kurmak için OK'a basın · 60 sn sonra ana ekran · Kur · Şimdi değil |
+| Update under way / failed | Updating… · Could not update · Home in 15 s · Home | Güncelleniyor… · Güncellenemedi · 15 sn sonra ana ekran · Ana ekran |
+| Menu: update | Install update · Update available · Up to date | Güncellemeyi kur · Güncelleme var · Güncel |
 
 The full lists are `android/app/src/main/res/values/strings.xml` and `values-tr/strings.xml`. The UI language is
 the hidden-menu override if set, else the server's (owner-controlled) setting, else the TV's system language.

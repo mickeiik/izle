@@ -118,3 +118,27 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
   knows for certain: no stored APK, a TV offline or not set up, or one reported up to date.
 - Sizes are in powers of 1000 (`12.3 MB`), the 64 MiB cap is named in MiB where it is quoted; the upload shows no
   byte progress, because `fetch` reports none for request bodies, only "Uploading …" until the answer.
+
+## TV app updates: TV side (2026-10-16)
+
+- The `update` command's single result goes out, and is waited for (two tries), right before `session.commit()`:
+  `done installing` (silent) or `done prompted` (guided, once OK was pressed and the archive checked out, as the
+  system dialog comes up). A successful install ends the process, so nothing could be sent afterwards; install
+  failures after that point only reach the owner as problem reports (`update_failure_storage`, …). On the guided
+  "press OK" screen the result waits for the viewer: Back, Not now or HOME is `declined`, 60 s is `timeout`, also
+  while a guided download is still running. `update` during the update screen answers `busy`, other commands
+  `not_ready`.
+- Capability is decided at runtime (Android 12+, the "install unknown apps" grant, no refusal yet) and re-read when
+  the app comes to the front. A silent session that comes back `STATUS_PENDING_USER_ACTION` is abandoned, stored as
+  `silentRefused` (the `User-Agent` says `guided` from then on) and reported as `update_needs_user_action`; a
+  `MY_PACKAGE_REPLACED` clears it, so each new version tries silent once again.
+- Idle means 3 minutes since the last key press, the app coming to the front or the end of playback, checked every
+  30 s while in front; the same conditions are checked again after the download, right before committing. A failed
+  attempt (download, check or install) and an unanswered commit hold automatic attempts back for 6 h; the command
+  and the menu entry ignore that. Cancel in the system dialog is not a failure.
+- Relaunch: the session's status receiver is an activity `PendingIntent` for `MainActivity` (the system sending it
+  is an allowed background activity start; on Android 14+ the creator also opts in). Below Android 10 the
+  `MY_PACKAGE_REPLACED` receiver also starts the activity itself. Status intents only count for a session this
+  process committed and still owns (session ids are random), since the activity is exported.
+- The archive's own versionCode must equal the one `/tv/app` announced (else `bad_archive`) and be newer than the
+  running one (else `ignored not_newer`); `404 no_apk` during the download is `ignored up_to_date`.

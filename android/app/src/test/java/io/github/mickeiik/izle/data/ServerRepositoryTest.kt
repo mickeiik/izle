@@ -79,9 +79,16 @@ class ServerRepositoryTest {
         server.close()
     }
 
-    private fun repository(clock: () -> Long = { System.nanoTime() / 1_000_000 }) = ServerRepository(
+    private fun repository(
+        clock: () -> Long = { System.nanoTime() / 1_000_000 },
+        appCheckMs: Long = 6 * 3_600_000L,
+        onAppCheck: suspend (ApiClient) -> Unit = {},
+    ) = ServerRepository(
         scope, store, EventsClient(http),
-        timing = ServerRepository.Timing(pollMs = 60_000, offlinePollMs = 60_000, minBackoffMs = 50, maxBackoffMs = 100, clock = clock),
+        timing = ServerRepository.Timing(
+            pollMs = 60_000, offlinePollMs = 60_000, minBackoffMs = 50, maxBackoffMs = 100, appCheckMs = appCheckMs, clock = clock,
+        ),
+        onAppCheck = onAppCheck,
     )
 
     private fun api() = ApiClient(server.url("/"), "device-token", http)
@@ -143,6 +150,29 @@ class ServerRepositoryTest {
         repo.stop()
         assertTrue(paths.count { it == "/api/v1/tv/events" } >= 2)
         assertTrue(paths.containsAll(listOf("/api/v1/tv/commands/7/ack", "/api/v1/tv/commands/9/ack")))
+    }
+
+    @Test
+    fun theOfferedAppVersionIsCheckedOnConnectOnAppEventsAndNowAndThen() = runBlocking {
+        eventsBody = "event: app\nid: a300\ndata: {\"versionCode\":300}\n\n"
+        val checks = CopyOnWriteArrayList<ApiClient>()
+        val repo = repository(appCheckMs = 200) { api ->
+            delay(20) // a check under way: the next one asked for meanwhile is skipped
+            checks += api
+        }
+        val api = api()
+        repo.use(api)
+        val app = async { withTimeout(5_000) { repo.appEvents.first() } }
+        delay(50)
+        repo.start()
+        assertEquals(ServerEvent.App(300), app.await())
+        withTimeout(5_000) { while (checks.size < 3) delay(20) }
+        repo.stop()
+        delay(300)
+        val stopped = checks.size
+        delay(400)
+        assertEquals("no checks once stopped", stopped, checks.size)
+        assertTrue(checks.all { it === api })
     }
 
     @Test
