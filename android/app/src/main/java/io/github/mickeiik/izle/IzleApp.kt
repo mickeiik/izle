@@ -9,6 +9,7 @@ import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import io.github.mickeiik.izle.data.CommandResultReporter
 import io.github.mickeiik.izle.data.ProblemReporter
 import io.github.mickeiik.izle.data.ServerRepository
 import io.github.mickeiik.izle.data.api.ApiClient
@@ -43,6 +44,9 @@ class AppGraph(val context: Context) {
 
     /** Problem reports for the owner, sent from the application scope so they outlive the screen. */
     val problems = ProblemReporter(appScope, { repository.api }, SystemClock::elapsedRealtime)
+
+    /** What became of the owner's commands, also sent from the application scope. */
+    val commandResults = CommandResultReporter(appScope) { api, id, result -> api.reportCommandResult(id, result) }
 
     fun apiClient(baseUrl: HttpUrl, deviceToken: String?): ApiClient = ApiClient(baseUrl, deviceToken, http, longPollHttp)
 

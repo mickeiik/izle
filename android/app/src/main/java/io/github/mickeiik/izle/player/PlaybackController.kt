@@ -17,20 +17,22 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import io.github.mickeiik.izle.data.CommandResultReporter
 import io.github.mickeiik.izle.data.ProblemReporter
 import io.github.mickeiik.izle.data.ServerRepository
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.ApiException
+import io.github.mickeiik.izle.data.api.CommandResult
 import io.github.mickeiik.izle.data.api.EpisodeDetails
 import io.github.mickeiik.izle.data.api.EpisodeRef
 import io.github.mickeiik.izle.data.api.ItemCard
 import io.github.mickeiik.izle.data.api.NextEpisode
 import io.github.mickeiik.izle.data.api.ProgressStatus
-import io.github.mickeiik.izle.data.api.ResolveRequest
 import io.github.mickeiik.izle.data.api.ResolveResponse
 import io.github.mickeiik.izle.data.api.orNullOnFailure
 import io.github.mickeiik.izle.domain.EpisodeSteps
 import io.github.mickeiik.izle.domain.ExpiryPlan
+import io.github.mickeiik.izle.domain.PlaybackOrigin
 import io.github.mickeiik.izle.domain.PlaybackPlan
 import io.github.mickeiik.izle.domain.Problems
 import io.github.mickeiik.izle.domain.RemoteCommand
@@ -97,6 +99,8 @@ class PlaybackController(
     private val mediaHttp: OkHttpClient,
     private val repository: ServerRepository,
     private val problems: ProblemReporter,
+    /** The owner's `play` commands report once their playback runs or fails. */
+    private val commandResults: CommandResultReporter,
     private val userAgent: String,
     private val appVersion: String,
     private val capVideoTo720p: Boolean,
@@ -112,8 +116,17 @@ class PlaybackController(
 
     private class Session(val api: ApiClient, val resolved: ResolveResponse)
 
+    /** An owner command [id] from [api]'s server, waiting for its result. */
+    private class PendingCommand(val api: ApiClient, val id: Long)
+
     private var session: Session? = null
     private var episodeId: String? = null
+
+    /** Who started this playback: every resolve made for it (fallback, expiry refresh, Try again) says so. */
+    private var origin = PlaybackOrigin.Viewer
+
+    /** The owner's `play` command this playback answers once it runs or fails; null when none, or answered. */
+    private var playCommand: PendingCommand? = null
     private val attempts = SourceAttempts()
     private var readyAt: Long? = null
     private var reported = false
@@ -147,14 +160,27 @@ class PlaybackController(
 
     /**
      * Plays [episodeId] from [startAtMs], or from the server's saved position under the resume rules when null.
-     * [hint] (the home tile's item) and [episodeHint] are shown while the stream is being resolved.
+     * [hint] (the home tile's item) and [episodeHint] are shown while the stream is being resolved. [origin] goes with
+     * every resolve of this playback; with [playCommand], it is the owner's `play` command whose result this playback
+     * reports: `done` at its first frame, `failed` on "Can't play right now", `ignored` when left or replaced first.
      */
-    fun play(episodeId: String, startAtMs: Long? = null, hint: ItemCard? = null, episodeHint: EpisodeRef? = null) {
+    fun play(
+        episodeId: String,
+        origin: PlaybackOrigin,
+        startAtMs: Long? = null,
+        hint: ItemCard? = null,
+        episodeHint: EpisodeRef? = null,
+        playCommand: Boolean = false,
+    ) {
         val api = repository.api
         resolveJob?.cancel()
         endSession()
         cancelOverlays()
         _player.value?.stop()
+        answerPlayCommand(CommandResult.ignored(CommandResult.SUPERSEDED))
+        val commandId = origin.commandId
+        this.playCommand = if (playCommand && api != null && commandId != null) PendingCommand(api, commandId) else null
+        this.origin = origin
         this.episodeId = episodeId
         attempts.reset()
         lastRefreshAt = null
@@ -168,7 +194,7 @@ class PlaybackController(
             playWhenReady = true,
         )
         if (api == null) return showFailed()
-        resolveJob = scope.launch { resolveAndStart(api, episodeId, sourceId = null, startAtMs = startAtMs) }
+        resolveJob = scope.launch { resolveAndStart(api, episodeId, origin, sourceId = null, startAtMs = startAtMs) }
     }
 
     /** Leaves the player: reports where the viewer stopped, releases the decoder, goes Home. */
@@ -179,6 +205,7 @@ class PlaybackController(
 
     /** Like [exit] without navigating (the app went to the background). */
     fun stop() {
+        answerPlayCommand(CommandResult.ignored(CommandResult.STOPPED))
         resolveJob?.cancel()
         stepJob?.cancel()
         cancelOverlays()
@@ -193,14 +220,15 @@ class PlaybackController(
         _ui.value = PlayerUi()
     }
 
+    /** Try again: continues the failed playback, with its origin (a `play` command's result was already sent). */
     fun retry() {
         val id = episodeId ?: return exit()
-        play(id, startAtMs = lastPositionMs)
+        play(id, origin, startAtMs = lastPositionMs)
     }
 
     fun playNextNow() {
         val phase = _ui.value.phase as? PlayerPhase.UpNext ?: return
-        play(phase.next.episodeId)
+        play(phase.next.episodeId, PlaybackOrigin.Next)
     }
 
     fun togglePause() {
@@ -260,30 +288,51 @@ class PlaybackController(
 
     /**
      * CH+/CH− (also |◀◀ ▶▶| and the owner's next/previous): ends the episode as Back does and plays the nearest
-     * playable one after ([direction] > 0) or before it, under the normal resume rules. At either end only the info
-     * overlay appears. Presses while the episode list is being fetched are ignored.
+     * playable one after ([direction] > 0) or before it, under the normal resume rules, as [origin]. At either end only
+     * the info overlay appears. Presses while the episode list is being fetched are ignored. [onResult] says, once
+     * and maybe later, whether it stepped (`done`) or why not: an owner command's result.
      */
-    fun stepEpisode(direction: Int) {
-        if (_ui.value.phase != PlayerPhase.Playing || stepJob?.isActive == true) return
-        val s = session ?: return
-        val current = episodeId ?: return
+    fun stepEpisode(direction: Int, origin: PlaybackOrigin, onResult: (CommandResult) -> Unit = {}) {
+        val notInPlayer = CommandResult.ignored(CommandResult.NOT_IN_PLAYER)
+        if (_ui.value.phase != PlayerPhase.Playing) return onResult(notInPlayer)
+        if (stepJob?.isActive == true) return onResult(CommandResult.ignored(CommandResult.BUSY))
+        val s = session ?: return onResult(notInPlayer)
+        val current = episodeId ?: return onResult(notInPlayer)
         val item = s.resolved.item
         val ref = s.resolved.episode
-        if (!EpisodeSteps.mayHaveNeighbour(ref.index, ref.count, direction)) return showInfo()
-        episodeLists[item.id]?.let { return stepTo(it, current, direction, item) }
+        if (!EpisodeSteps.mayHaveNeighbour(ref.index, ref.count, direction)) {
+            showInfo()
+            return onResult(CommandResult.ignored(CommandResult.NO_EPISODE))
+        }
+        episodeLists[item.id]?.let { return onResult(stepTo(it, current, direction, item, origin)) }
         stepJob = scope.launch {
-            val episodes = orNullOnFailure { s.api.item(item.id).episodes }
-            if (episodes != null) episodeLists[item.id] = episodes
-            // Auto-next, Back or a command may have changed things meanwhile.
-            if (episodeId != current || _ui.value.phase != PlayerPhase.Playing) return@launch
-            if (episodes == null) showInfo() else stepTo(episodes, current, direction, item)
+            // Unless set below, auto-next, Back or a command changed things meanwhile (or leaving cancelled the step).
+            var result = CommandResult.ignored(CommandResult.SUPERSEDED)
+            try {
+                val episodes = orNullOnFailure { s.api.item(item.id).episodes }
+                if (episodes != null) episodeLists[item.id] = episodes
+                if (episodeId != current || _ui.value.phase != PlayerPhase.Playing) return@launch
+                result = if (episodes == null) {
+                    showInfo()
+                    CommandResult.failed(CommandResult.EPISODES_UNAVAILABLE)
+                } else {
+                    stepTo(episodes, current, direction, item, origin)
+                }
+            } finally {
+                onResult(result)
+            }
         }
     }
 
-    private fun stepTo(episodes: List<EpisodeDetails>, current: String, direction: Int, item: ItemCard) {
-        val target = EpisodeSteps.neighbour(episodes, current, direction) ?: return showInfo()
+    /** Plays the neighbour of [current] in [direction] (`done`); without one, shows the info overlay (`no_episode`). */
+    private fun stepTo(episodes: List<EpisodeDetails>, current: String, direction: Int, item: ItemCard, origin: PlaybackOrigin): CommandResult {
+        val target = EpisodeSteps.neighbour(episodes, current, direction) ?: run {
+            showInfo()
+            return CommandResult.ignored(CommandResult.NO_EPISODE)
+        }
         val hint = EpisodeRef(target.id, target.index, episodes.size, target.season, target.number, target.title, target.label, target.durationMs)
-        play(target.id, startAtMs = null, hint = item, episodeHint = hint)
+        play(target.id, origin, startAtMs = null, hint = item, episodeHint = hint)
+        return CommandResult.Done
     }
 
     fun audioTracks(): List<TrackOption> = tracksOf(C.TRACK_TYPE_AUDIO)
@@ -326,6 +375,7 @@ class PlaybackController(
     private suspend fun resolveAndStart(
         api: ApiClient,
         episodeId: String,
+        origin: PlaybackOrigin,
         sourceId: String?,
         startAtMs: Long?,
         playWhenReady: Boolean = true,
@@ -333,13 +383,13 @@ class PlaybackController(
         // A stopped/finished report still on its way would make `resume` and the cursor stale.
         reporter.awaitDelivered()
         val resolved = try {
-            api.resolve(ResolveRequest(episodeId, sourceId, exclude = attempts.excludeFor(sourceId)))
+            api.resolve(origin.request(episodeId, sourceId, exclude = attempts.excludeFor(sourceId)))
         } catch (e: Exception) {
             onResolveFailure(e, api, episodeId, sourceId)
             if (attempts.continueAfterFailedResolve(sourceId)) {
-                resolveAndStart(api, episodeId, sourceId = null, startAtMs, playWhenReady)
+                resolveAndStart(api, episodeId, origin, sourceId = null, startAtMs, playWhenReady)
             } else {
-                showFailed(reason = "then resolve failed: " + Problems.code(if (e is ApiException) e.code else "network"))
+                showFailed(reason = "then resolve failed: " + Problems.code(if (e is ApiException) e.code else "network"), resolveFailed = true)
             }
             return
         }
@@ -435,7 +485,7 @@ class PlaybackController(
             val sourceId = s.resolved.sourceId
             lastRefreshAt = SystemClock.elapsedRealtime()
             val resolved = try {
-                api.resolve(ResolveRequest(episodeId, sourceId = sourceId))
+                api.resolve(origin.request(episodeId, sourceId = sourceId))
             } catch (e: Exception) {
                 onResolveFailure(e, api, episodeId, sourceId)
                 if (session !== s) return null
@@ -480,6 +530,7 @@ class PlaybackController(
                     if (readyAt == null) {
                         readyAt = SystemClock.elapsedRealtime()
                         session?.resolved?.item?.let(onPlaybackStarted)
+                        answerPlayCommand(CommandResult.Done)
                     }
                     attempts.onPlaying()
                     if (_ui.value.phase == PlayerPhase.Loading) _ui.update { it.copy(phase = PlayerPhase.Playing) }
@@ -535,7 +586,7 @@ class PlaybackController(
                 countDown(PlaybackPlan.AUTO_NEXT_COUNTDOWN_SEC) { left ->
                     _ui.update { it.copy(phase = PlayerPhase.UpNext(next, left), showInfo = false, cues = null) }
                 }
-                play(next.episodeId)
+                play(next.episodeId, PlaybackOrigin.Next)
             }
         }
     }
@@ -573,11 +624,15 @@ class PlaybackController(
         val playWhenReady = _player.value?.playWhenReady ?: true
         resolveJob?.cancel()
         expiryJob?.cancel()
-        resolveJob = scope.launch { resolveAndStart(api, episodeId, sourceId, positionMs, playWhenReady) }
+        resolveJob = scope.launch { resolveAndStart(api, episodeId, origin, sourceId, positionMs, playWhenReady) }
     }
 
-    /** "Can't play right now". [reason] completes the problem report's "tried N sources". */
-    private fun showFailed(reason: String? = null) {
+    /**
+     * "Can't play right now". [reason] completes the problem report's "tried N sources"; [resolveFailed]: no resolve
+     * found anything to play (else the player failed, or the media address was unusable).
+     */
+    private fun showFailed(reason: String? = null, resolveFailed: Boolean = false) {
+        answerPlayCommand(CommandResult.failed(if (resolveFailed) CommandResult.NO_PLAYABLE_SOURCE else CommandResult.PLAYBACK_ERROR))
         stopSessionLoops()
         _player.value?.stop()
         episodeId?.let { id ->
@@ -640,6 +695,13 @@ class PlaybackController(
         session = null
         stopSessionLoops()
         seek.cancel()
+    }
+
+    /** Sends the waiting `play` command's [result], if any; a command gets one result. */
+    private fun answerPlayCommand(result: CommandResult) {
+        val command = playCommand ?: return
+        playCommand = null
+        commandResults.report(command.api, command.id, result)
     }
 
     private fun report(s: Session, status: ProgressStatus, positionMs: Long, durationMs: Long?, playing: Boolean) =

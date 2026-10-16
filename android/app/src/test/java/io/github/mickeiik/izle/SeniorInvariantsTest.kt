@@ -154,7 +154,7 @@ class SeniorInvariantsTest {
         tv.press(KeyEvent.KEYCODE_DPAD_CENTER)
         assertEquals(Screen.Player, tv.vm.screen.value)
         waitUntil("the resolve request") { resolveRequests().isNotEmpty() }
-        assertEquals(listOf("""{"episodeId":"a.film"}"""), resolveRequests())
+        assertEquals(listOf("""{"episodeId":"a.film","trigger":"viewer"}"""), resolveRequests())
         // Nothing is playable on this server: the player shows its own error screen.
         waitUntil("the player's error screen") { exists(string(R.string.cannot_play)) }
     }
@@ -194,7 +194,7 @@ class SeniorInvariantsTest {
             tv.press(KeyEvent.KEYCODE_DPAD_CENTER)
             assertEquals(Screen.Player, tv.vm.screen.value)
             waitUntil("the resolve request") { resolveRequests().isNotEmpty() }
-            assertEquals(listOf("""{"episodeId":"b.e7"}"""), resolveRequests())
+            assertEquals(listOf("""{"episodeId":"b.e7","trigger":"viewer"}"""), resolveRequests())
         }
     }
 

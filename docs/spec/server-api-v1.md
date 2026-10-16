@@ -1,6 +1,6 @@
 # izle-server API v1
 
-Status: **draft, implemented**, except parts of [Remote management](#remote-management) (its status line says which).
+Status: **draft, implemented**.
 Changes within v1 are additive only (new optional request fields, new response fields, new routes); clients MUST
 ignore unknown response fields.
 
@@ -447,11 +447,8 @@ language inside the same multi-audio stream) in sync with the picture, from the 
 
 ## Remote management
 
-Status: **draft, partly implemented**. Implemented: [access tokens](#access-tokens) and the `Actor`,
-[`GET /admin/status`](#status) and the one rule for `online`, the [event log](#events) with its stream and long-poll
-(every event type), the [viewing history](#viewing-history) with its routes, marks and events,
-[remote play and command results](#remote-play-and-command-results), [home list changes](#home-list-changes) and
-[replacing a TV](#replacing-a-tv) with adopting a deleted TV's viewings. Everything here is additive within v1.
+Status: **draft, implemented** on the server and in the TV app (the admin page does not use these routes yet).
+Everything here is additive within v1.
 
 The viewer only watches; the TV is run from elsewhere: by the owner on the admin page, by the owner's own apps, or by
 AI agents. They all use these routes. An MCP server for agents is a thin wrapper around them with an
@@ -596,9 +593,10 @@ each keeps a copy of the titles it was watched under.
   its viewing running). A lost viewing ends at its last report (or its resolve). `endedAt` and `endReason` are null
   while the viewing runs.
 - `seen`: the viewing reached the end of the episode (see below); false while it runs.
-- `trigger`: `viewer` (OK on Home, the episode list or Start over in the menu, Try again), `autoplay` (autoplay on
-  start), `next` (auto-next, Up next's Play now, CH+/CH−), `command` (a remote `play`, `next` or `previous`;
-  `actor` is who sent it and `commandId` names it) or `unknown` (a TV that does not say). The TV says it with two new
+- `trigger`: `viewer` (OK on Home, the episode list or Start over in the menu), `autoplay` (autoplay on start),
+  `next` (auto-next, Up next's Play now, CH+/CH−), `command` (a remote `play`, `next` or `previous`; `actor` is who
+  sent it and `commandId` names it) or `unknown` (a TV that does not say). Try again, like the re-resolves after a
+  player error or for an expired stream, repeats the trigger of the playback it continues. The TV says it with two new
   optional fields of [`POST /tv/resolve`](#post-apiv1tvresolve): `trigger` and `commandId`. `actor` is
   `{"type": "tv", "deviceId"}` and `commandId` null unless the trigger is a command.
 - A viewing that ends not `seen` with `watchedMs` under 10 s is dropped (a mis-press; a source that failed straight
@@ -711,7 +709,7 @@ Viewings of a deleted TV keep its id and name; `POST /api/v1/admin/devices/:id/h
 
 ### What changes for the TV
 
-Everything the TV app has to learn, all optional for a TV from before (the server treats a TV that sends none of it
+Status: **implemented in the TV app** (Unreleased). Everything the TV app has to learn, all optional for a TV from before (the server treats a TV that sends none of it
 as before):
 
 - [`POST /tv/resolve`](#post-apiv1tvresolve) takes `trigger` (`viewer`, `autoplay`, `next`, `command`) and

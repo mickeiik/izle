@@ -4,7 +4,8 @@ import io.github.mickeiik.izle.data.api.ServerEvent
 
 /** What an owner command asks the TV to do (`event: command` on the server's event stream). */
 sealed interface RemoteCommand {
-    data class Play(val itemId: String?, val episodeId: String) : RemoteCommand
+    /** [positionMs]: where to start, 0 = from the beginning; null = the saved position under the resume rules. */
+    data class Play(val itemId: String?, val episodeId: String, val positionMs: Long? = null) : RemoteCommand
     data object Stop : RemoteCommand
     data object Pause : RemoteCommand
     data object Resume : RemoteCommand
@@ -34,7 +35,8 @@ sealed interface RemoteCommand {
         const val MESSAGE_DEFAULT_SEC = 15 // as on the server; only an older or odd payload lacks it
 
         fun of(command: ServerEvent.Command): RemoteCommand = when (command.type) {
-            "play" -> command.episodeId?.let { Play(command.itemId, it) } ?: Ignored(command.type)
+            // A negative position (never from a correct server) is no position: the saved one is used.
+            "play" -> command.episodeId?.let { Play(command.itemId, it, command.positionMs?.takeIf { p -> p >= 0 }) } ?: Ignored(command.type)
             "stop" -> Stop
             "pause" -> Pause
             "resume" -> Resume

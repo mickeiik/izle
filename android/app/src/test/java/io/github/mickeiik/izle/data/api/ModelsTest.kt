@@ -76,8 +76,23 @@ class ModelsTest {
     }
 
     @Test
+    fun commandResultsKeepTheirWireNames() {
+        fun wire(result: CommandResult) = ApiJson.encodeToString(CommandResult.serializer(), result)
+        assertEquals("""{"result":"done"}""", wire(CommandResult.Done))
+        assertEquals("""{"result":"ignored","reason":"no_episode"}""", wire(CommandResult.ignored(CommandResult.NO_EPISODE)))
+        assertEquals("""{"result":"failed","reason":"playback_error"}""", wire(CommandResult.failed(CommandResult.PLAYBACK_ERROR)))
+        // Every reason the TV sends is one the server takes: [A-Za-z0-9_.:-]{1,64}.
+        val reasons = listOf(
+            CommandResult.NOT_IN_PLAYER, CommandResult.NOT_READY, CommandResult.NO_EPISODE, CommandResult.UNKNOWN_TYPE,
+            CommandResult.NO_PLAYABLE_SOURCE, CommandResult.PLAYBACK_ERROR, CommandResult.SUPERSEDED, CommandResult.STOPPED,
+            CommandResult.BUSY, CommandResult.EPISODES_UNAVAILABLE,
+        )
+        reasons.forEach { assertTrue(it, Regex("[A-Za-z0-9_.:-]{1,64}").matches(it)) }
+    }
+
+    @Test
     fun progressReportsLeaveOutUnsetFieldsAndKeepTheirStatusNames() {
-        // Resolve requests: see ApiClientTest.resolvePostsJson.
+        // Resolve requests: see ApiClientTest.resolvePostsJson and PlaybackOriginTest.
         fun wire(report: ProgressReport) = ApiJson.encodeToString(ProgressReport.serializer(), report)
         assertEquals("""{"episodeId":"e","positionMs":1000,"status":"stopped"}""", wire(ProgressReport(null, "e", 1_000, null, ProgressStatus.Stopped)))
         assertEquals(
