@@ -78,8 +78,15 @@ export class EventHub {
     return (this.subscribers.get(deviceId)?.size ?? 0) > 0 || this.closing.has(deviceId);
   }
 
-  /** Ends the open streams of a device that is gone (deleted): no offline event follows. */
-  closeDevice(deviceId: string): void {
+  /**
+   * Ends the open streams of a device that is gone (deleted): no offline event follows. A device another TV took
+   * over (`gone` false) is disconnected like any other, so the new TV connecting within the grace does not flap.
+   */
+  closeDevice(deviceId: string, gone = true): void {
+    if (!gone) {
+      for (const s of [...(this.subscribers.get(deviceId) ?? [])]) s.close();
+      return;
+    }
     const timer = this.closing.get(deviceId);
     if (timer !== undefined) clearTimeout(timer);
     this.closing.delete(deviceId);

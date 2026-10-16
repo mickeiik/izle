@@ -3,6 +3,7 @@
 
 import type { Actor } from "./actor.ts";
 import type { Services } from "./context.ts";
+import { HttpError } from "./errors.ts";
 import { iso } from "./presenters.ts";
 import type { ProxyService } from "./proxy.ts";
 import { companionScope } from "./resolve.ts";
@@ -106,5 +107,19 @@ export class DeviceService {
     this.s.proxy.dropDevice(d.id);
     this.s.proxy.dropDevice(companionScope(d.id));
     this.s.log.info("device deleted", { deviceId: d.id });
+  }
+
+  /**
+   * Gives the viewings of a deleted TV to this one (after replacing a TV the old way: delete, pair anew). 409
+   * `device_exists` while `fromDeviceId` is still a device: its history is its own.
+   */
+  adoptHistory(d: Device, fromDeviceId: string, actor: Actor): number {
+    const { store, eventLog } = this.s;
+    if (store.getDevice(fromDeviceId)) throw new HttpError(409, "device_exists", "that TV still exists; delete it first");
+    return store.transaction(() => {
+      const moved = store.adoptViewings(fromDeviceId, d.id, d.name);
+      if (moved > 0) eventLog.append("history.changed", d.id, actor, { moved });
+      return moved;
+    });
   }
 }

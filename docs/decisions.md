@@ -54,3 +54,16 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
   never exceeds `total`); an episode that left the catalog counts only once the item itself has. `rewatches` are
   the seen viewings of an episode beyond its first, within the TV asked for; a mark is not a viewing.
 - `sort=title` and the items within a day use the catalog search's collation (`byTitle` in catalog.ts).
+
+## Remote management: commands and devices (2026-10-16)
+
+- A replacement needs no new column: the pair code is bound to the device it replaces, and collecting it tells a
+  takeover from a new TV by the device already having a token. The purge only deletes devices without one, so an
+  expired replacement code never touches the device it named.
+- The old TV's event streams close like a disconnect, not like a deletion, so the new TV connecting within the
+  online grace keeps the device online without an offline/online flap. Its own proxy sessions end; the owner's
+  Listen along sessions are left to expire.
+- The single home changes rebuild the whole list and go through `setHome`, so an item already on the list that left
+  the catalog blocks an addition with `unknown_item` (its `itemId` says which), as it blocks a whole-list `PUT`.
+- A command result does not count as the acknowledgement: `deliveredAt` stays the ack's time (or null), as the spec
+  keeps the two apart.

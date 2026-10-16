@@ -18,6 +18,7 @@ import { clientKeyFor, registerMiddleware, type Env } from "./http/middleware.ts
 import { registerAdmin } from "./http/routes/admin.ts";
 import { registerAdminEvents } from "./http/routes/admin-events.ts";
 import { registerAdminHistory } from "./http/routes/admin-history.ts";
+import { registerAdminHome } from "./http/routes/admin-home.ts";
 import { registerAdminStatus } from "./http/routes/admin-status.ts";
 import { registerAdminTokens } from "./http/routes/admin-tokens.ts";
 import { registerTv } from "./http/routes/tv.ts";
@@ -97,8 +98,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const services = { config, store, catalog, events, notifier: new Notifier(store, events), eventLog, resolver, sessions, problems, viewings, log, now };
   const tv = new TvService(services);
   const ctx: AppContext = {
-    ...services, tv, companion: new CompanionService(services), pairing: new PairingService(services, opts.pairing), proxy,
-    devices: new DeviceService({ ...services, tv, proxy }), commands: new CommandService(services), tokens: new TokenService(store, log, now),
+    ...services, tv, companion: new CompanionService(services), pairing: new PairingService({ ...services, proxy }, opts.pairing), proxy,
+    devices: new DeviceService({ ...services, tv, proxy }), commands: new CommandService({ ...services, tv }), tokens: new TokenService(store, log, now),
     resolverModule, adminToken, pingMs: opts.pingMs ?? 20_000, fetch: fetchUpstream, adminUiDir: fileURLToPath(new URL("../admin", import.meta.url)),
   };
 
@@ -113,6 +114,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   registerAdminEvents(app, ctx);
   registerAdminStatus(app, ctx);
   registerAdminHistory(app, ctx);
+  registerAdminHome(app, ctx);
 
   let server: Server;
   try {

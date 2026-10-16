@@ -5,6 +5,7 @@ import type { Services } from "./context.ts";
 import { HttpError, tooManyRequests } from "./errors.ts";
 import type { EventLog } from "./eventlog.ts";
 import type { Logger } from "./log.ts";
+import type { ProxyService } from "./proxy.ts";
 import { RateLimiter } from "./ratelimit.ts";
 import type { Store } from "./store.ts";
 import { Waiters } from "./waiters.ts";
@@ -35,12 +36,14 @@ export class PairingService {
   private readonly log: Logger;
   private readonly now: () => number;
   private readonly eventLog: EventLog;
+  private readonly deps: Pick<Services, "events"> & { proxy: ProxyService };
 
-  constructor(deps: Pick<Services, "store" | "log" | "now" | "eventLog">, opts: PairingOptions = {}) {
+  constructor(deps: Pick<Services, "store" | "log" | "now" | "eventLog" | "events"> & { proxy: ProxyService }, opts: PairingOptions = {}) {
     this.store = deps.store;
     this.log = deps.log;
     this.now = deps.now;
     this.eventLog = deps.eventLog;
+    this.deps = deps;
     const limit = opts.startLimit ?? { max: 10, windowMs: 10 * 60_000 };
     this.limiter = new RateLimiter(limit.max, limit.windowMs, this.now);
   }
@@ -71,20 +74,28 @@ export class PairingService {
   /**
    * Owner approval. Creates the device (pending until the TV collects its token). Without a name the TV is called
    * "TV", or the first free "TV n", so two unnamed TVs stay apart in the admin page; the owner can rename it later.
+   * With `replaces` (an active device) no device is created: the code is bound to that one, which the TV takes
+   * over when it collects its token, keeping its name (`name` is ignored).
    */
-  approve(code: string, name?: string | null): { deviceId: string; name: string } {
+  approve(code: string, name?: string | null, replaces?: string): { deviceId: string; name: string } {
     const t = this.now();
     const device = this.store.transaction(() => {
       const row = this.store.getPairCode(code);
       if (!row || row.deliveredAt !== null || row.expiresAt <= t) throw new HttpError(404, "unknown_code", "no open pairing code with this value");
       if (row.approvedAt !== null) throw new HttpError(409, "already_approved", "this code is already approved");
+      if (replaces !== undefined) {
+        const old = this.store.getDevice(replaces);
+        if (!old || old.tokenHash === null) throw new HttpError(404, "unknown_device", "no active device with this id");
+        this.store.approvePairCode(code, old.id, t);
+        return { deviceId: old.id, name: old.name };
+      }
       const id = newId();
       const deviceName = name?.trim() || this.defaultName();
       this.store.createDevice({ id, name: deviceName, tokenHash: null, now: t });
       this.store.approvePairCode(code, id, t);
       return { deviceId: id, name: deviceName };
     });
-    this.log.info("pairing approved", { deviceId: device.deviceId });
+    this.log.info("pairing approved", { deviceId: device.deviceId, replaces: replaces !== undefined });
     this.waiters.wake(code);
     return device;
   }
@@ -104,13 +115,22 @@ export class PairingService {
     if (row.approvedAt === null || row.deviceId === null) return { status: "pending" };
     const deviceToken = newToken();
     const deviceId = row.deviceId;
-    this.store.transaction(() => {
+    // A device that already has a token is being taken over (`approve` with `replaces`): the new token replaces it.
+    const replaced = this.store.transaction(() => {
+      const device = this.store.getDevice(deviceId);
       this.store.setDeviceToken(deviceId, sha256(deviceToken), t);
       this.store.markPairCodeDelivered(code, t);
-      const name = this.store.getDevice(deviceId)?.name ?? "";
-      this.eventLog.append("device.paired", deviceId, tvActor(deviceId), { name, replaced: false });
+      const taken = device?.tokenHash != null;
+      this.eventLog.append("device.paired", deviceId, tvActor(deviceId), { name: device?.name ?? "", replaced: taken });
+      return taken;
     });
-    this.log.info("pairing completed", { deviceId });
+    if (replaced) {
+      // The old TV's token is dead: its streams and proxy sessions end now, its next request gets 401 and it shows
+      // a pairing code by itself. Everything stored for the device stays for the new TV.
+      this.deps.events.closeDevice(deviceId, false);
+      this.deps.proxy.dropDevice(deviceId);
+    }
+    this.log.info("pairing completed", { deviceId, replaced });
     return { status: "approved", deviceId, deviceToken };
   }
 

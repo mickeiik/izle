@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
 import type { Actor } from "./actor.ts";
-import type { CommandType } from "./commands.ts";
+import type { CommandResult, CommandType } from "./commands.ts";
 import type { ProgressReportStatus } from "./playback.ts";
 import type { ProblemKind } from "./problems.ts";
 import type { Scope } from "./tokens.ts";
@@ -103,7 +103,7 @@ export interface Command {
   /** Who sent it; null for commands stored before actors were recorded. */
   actor: Actor | null;
   /** What the TV made of it (`POST /tv/commands/:id/result`); null until it reports, or with a TV that never does. */
-  result: "done" | "ignored" | "failed" | null;
+  result: CommandResult | null;
   reason: string | null;
   resultAt: number | null;
 }
@@ -461,7 +461,8 @@ export class Store {
 
   /**
    * Deletes pair codes that expired (or were delivered) more than `graceMs` ago, together with devices that were
-   * approved but never collected their token.
+   * approved but never collected their token. An active device that an expired replacement code was bound to has
+   * a token, and stays.
    */
   purgePairCodes(now: number, graceMs: number): void {
     this.transaction(() => {
@@ -548,8 +549,24 @@ export class Store {
     return this.run("UPDATE commands SET acked_at = COALESCE(acked_at, ?) WHERE id = ? AND device_id = ?", now, id, deviceId) > 0;
   }
 
+  /** One of the device's commands; null when it has none with this id. */
+  getCommand(deviceId: string, id: number): Command | null {
+    return this.one("SELECT * FROM commands WHERE id = ? AND device_id = ?", [id, deviceId]);
+  }
+
+  setCommandResult(id: number, result: CommandResult, reason: string | null, now: number): void {
+    this.run("UPDATE commands SET result = ?, reason = ?, result_at = ? WHERE id = ?", result, reason, now, id);
+  }
+
   purgeCommands(before: number): void {
     this.run("DELETE FROM commands WHERE created_at < ?", before);
+  }
+
+  // --- history adoption --------------------------------------------------------------------------------------
+
+  /** Gives the viewings of `fromDeviceId` (a TV that is gone) to another TV, under its name; how many moved. */
+  adoptViewings(fromDeviceId: string, toDeviceId: string, toName: string): number {
+    return this.run("UPDATE viewings SET device_id = ?, device_name = ? WHERE device_id = ?", toDeviceId, toName, fromDeviceId);
   }
 
   // --- access tokens -------------------------------------------------------------------------------------------

@@ -1,7 +1,7 @@
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
 import { ID_PATTERN, simplifySchemaErrors } from "@izle/contract";
 import type { Context } from "hono";
-import { MAX_SEEK_DELTA_MS, MESSAGE_DURATION_SEC, MESSAGE_MAX_CHARS, PLAIN_COMMANDS, type CommandBody } from "./commands.ts";
+import { COMMAND_RESULTS, MAX_SEEK_DELTA_MS, MESSAGE_DURATION_SEC, MESSAGE_MAX_CHARS, PLAIN_COMMANDS, type CommandBody, type CommandResult } from "./commands.ts";
 import type { CompanionResolveInput, LinkInput } from "./companion.ts";
 import { LANGUAGE_TAG_PATTERN, objectSchema as object } from "./config.ts";
 import type { DiagnosticsInput } from "./diagnostics.ts";
@@ -24,7 +24,11 @@ const LANGUAGE_TAG_OR_NULL = { anyOf: [{ type: "string", pattern: LANGUAGE_TAG_P
 const NAME = { type: "string", minLength: 1, maxLength: 60, pattern: "\\S" };
 const MS = { type: "integer", minimum: 0, maximum: 1e12 };
 
-export const approveBody = ajv.compile<{ code: string; name?: string }>(object({ code: { type: "string", pattern: PAIR_CODE.source }, name: NAME }, ["code"]));
+export const approveBody = ajv.compile<{ code: string; name?: string; replaces?: string }>(
+  object({ code: { type: "string", pattern: PAIR_CODE.source }, name: NAME, replaces: ID }, ["code"]),
+);
+
+export const adoptBody = ajv.compile<{ fromDeviceId: string }>(object({ fromDeviceId: ID }, ["fromDeviceId"]));
 
 export const devicePatchBody = ajv.compile<DevicePatch>({
   ...object({
@@ -36,9 +40,20 @@ export const devicePatchBody = ajv.compile<DevicePatch>({
 
 export const tokenBody = ajv.compile<{ name: string; scope: Scope }>(object({ name: NAME, scope: { enum: SCOPES } }, ["name", "scope"]));
 
-export const homeBody = ajv.compile<{ itemIds: string[] }>(object({ itemIds: { type: "array", items: ID, maxItems: 1000 } }, ["itemIds"]));
+const ITEM_IDS = { type: "array", items: ID, maxItems: 1000 };
+const POSITION = { type: "integer", minimum: 0 };
+
+export const homeBody = ajv.compile<{ itemIds: string[]; expected?: string[] }>(object({ itemIds: ITEM_IDS, expected: ITEM_IDS }, ["itemIds"]));
+
+export const homeItemBody = ajv.compile<{ itemId: string; position?: number }>(object({ itemId: ID, position: POSITION }, ["itemId"]));
+
+export const homeMoveBody = ajv.compile<{ position: number }>(object({ position: POSITION }, ["position"]));
 
 export const cursorBody = ajv.compile<{ itemId: string; episodeId: string }>(object({ itemId: ID, episodeId: ID }, ["itemId", "episodeId"]));
+
+const CODE = { type: "string", minLength: 1, maxLength: 64, pattern: "^[A-Za-z0-9_.:-]+$" };
+
+export const commandResultBody = ajv.compile<{ result: CommandResult; reason?: string }>(object({ result: { enum: COMMAND_RESULTS }, reason: CODE }, ["result"]));
 
 const SEEK_DELTA = { type: "integer", minimum: -MAX_SEEK_DELTA_MS, maximum: MAX_SEEK_DELTA_MS };
 const MESSAGE = { type: "string", minLength: 1, maxLength: MESSAGE_MAX_CHARS, pattern: "\\S" };
@@ -46,7 +61,10 @@ const DURATION_SEC = { type: "integer", minimum: MESSAGE_DURATION_SEC.min, maxim
 
 export const commandBody = ajv.compile<CommandBody>({
   oneOf: [
-    object({ type: { const: "play" }, episodeId: ID }, ["type", "episodeId"]),
+    // By item (what OK would play, or the episode given with it) or by episode alone: the second branch forbids
+    // itemId, so a body matches one branch. positionMs instead of the saved position.
+    object({ type: { const: "play" }, itemId: ID, episodeId: ID, positionMs: MS }, ["type", "itemId"]),
+    object({ type: { const: "play" }, episodeId: ID, positionMs: MS }, ["type", "episodeId"]),
     object({ type: { enum: PLAIN_COMMANDS } }, ["type"]),
     // A seek is relative (deltaMs) or absolute (positionMs), never both: each branch forbids the other field.
     object({ type: { const: "seek" }, deltaMs: SEEK_DELTA }, ["type", "deltaMs"]),
@@ -94,7 +112,7 @@ export const problemBody = ajv.compile<ProblemReportBody>(
   object(
     {
       kind: { enum: TV_PROBLEM_KINDS },
-      code: { type: "string", minLength: 1, maxLength: 64, pattern: "^[A-Za-z0-9_.:-]+$" },
+      code: CODE,
       // How long ago it happened: a report queued while the server was unreachable keeps its time.
       ageMs: { type: "integer", minimum: 0, maximum: 86_400_000 },
       episodeId: ID,

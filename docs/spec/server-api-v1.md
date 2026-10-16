@@ -449,11 +449,9 @@ language inside the same multi-audio stream) in sync with the picture, from the 
 
 Status: **draft, partly implemented**. Implemented: [access tokens](#access-tokens) and the `Actor`,
 [`GET /admin/status`](#status) and the one rule for `online`, the [event log](#events) with its stream and long-poll
-(every event type except `command.result` and the `history.changed` of an adoption, which come with the parts
-below), and the [viewing history](#viewing-history) with its routes, marks and events. Not implemented yet:
+(every event type), the [viewing history](#viewing-history) with its routes, marks and events,
 [remote play and command results](#remote-play-and-command-results), [home list changes](#home-list-changes) and
-[replacing a TV](#replacing-a-tv) (with the adoption of a deleted TV's viewings). Everything here is additive
-within v1.
+[replacing a TV](#replacing-a-tv) with adopting a deleted TV's viewings. Everything here is additive within v1.
 
 The viewer only watches; the TV is run from elsewhere: by the owner on the admin page, by the owner's own apps, or by
 AI agents. They all use these routes. An MCP server for agents is a thin wrapper around them with an
@@ -566,9 +564,7 @@ Events carry no URLs, headers, refs, tokens, message texts or problem details.
 
 Ordering within one change: when a resolve replaces a running viewing, `playback.ended` comes before
 `playback.started`; `episode.seen` follows its `playback.ended`. New types and fields are added within v1; consumers
-MUST ignore those they do not know. Not implemented yet: `command.result` (it comes with the command results) and
-the `{"moved"}` form of `history.changed`; `device.paired` always says `replaced: false` until
-[replacing a TV](#replacing-a-tv) is. The `pairing.pending` event has the server as its actor: the TV has no id
+MUST ignore those they do not know. The `pairing.pending` event has the server as its actor: the TV has no id
 yet.
 
 ### Viewing history
@@ -706,11 +702,12 @@ the current `itemIds`) when the list is no longer that. Every change emits `home
 `404 unknown_device` otherwise): no new device is created; when the TV collects its token it takes over that device,
 with its id, name, settings, home list, progress, cursors and history, and the old TV's token stops working (the old
 TV then shows a pairing code by itself, as after a deletion). Until the code is collected the device is unchanged,
-and a code that expires uncollected changes nothing. `device.paired` says `replaced: true`.
+and a code that expires uncollected changes nothing. `device.paired` says `replaced: true`. The approval answers
+that device's id and name (a `name` given with `replaces` is ignored; `PATCH` renames).
 
 Viewings of a deleted TV keep its id and name; `POST /api/v1/admin/devices/:id/history/adopt` `{"fromDeviceId"}` →
-`{"moved"}` gives them to an existing TV (owner token only; `404 unknown_device` for `:id`, `409 device_exists` while
-`fromDeviceId` is still a device).
+`{"moved"}` gives them to an existing TV, under its name (owner token only; `404 unknown_device` for `:id`,
+`409 device_exists` while `fromDeviceId` is still a device); `history.changed` follows when any moved.
 
 ### What changes for the TV
 

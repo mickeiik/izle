@@ -3,8 +3,10 @@
 
 import { tvActor, type Actor } from "./actor.ts";
 import type { Services } from "./context.ts";
-import { requireEpisode, requirePlayable } from "./lookup.ts";
+import { HttpError } from "./errors.ts";
+import { requireEpisode, requireItem, requirePlayable } from "./lookup.ts";
 import type { Command } from "./store.ts";
+import type { TvService } from "./tv.ts";
 
 /** Commands that carry no payload (the SSE payload is `{}`). */
 export const PLAIN_COMMANDS = ["stop", "pause", "resume", "next", "previous"] as const;
@@ -15,9 +17,13 @@ export const MESSAGE_DURATION_SEC = { min: 3, max: 120, default: 15 };
 
 export type CommandType = "play" | "seek" | "message" | (typeof PLAIN_COMMANDS)[number];
 
+/** What the TV made of a command (`POST /tv/commands/:id/result`). */
+export const COMMAND_RESULTS = ["done", "ignored", "failed"] as const;
+export type CommandResult = (typeof COMMAND_RESULTS)[number];
+
 /** A command as the admin API takes it (`POST /admin/devices/:id/commands`, validated in validation.ts). */
 export type CommandBody =
-  | { type: "play"; episodeId: string }
+  | { type: "play"; itemId?: string; episodeId?: string; positionMs?: number }
   | { type: (typeof PLAIN_COMMANDS)[number] }
   | { type: "seek"; deltaMs: number; positionMs?: undefined }
   | { type: "seek"; positionMs: number; deltaMs?: undefined }
@@ -29,20 +35,38 @@ const COMMAND_REPLAY_MS = 2 * 60_000;
 const COMMAND_RETENTION_MS = 7 * 24 * 60 * 60_000;
 
 export class CommandService {
-  private readonly s: Services;
+  private readonly s: Services & { tv: TvService };
 
-  constructor(services: Services) {
-    this.s = services;
+  constructor(deps: Services & { tv: TvService }) {
+    this.s = deps;
+  }
+
+  /**
+   * The episode a `play` names: the one given (in the item, when both are), or what OK would play for the item on
+   * this TV right now. The TV gets ids only, so it plays what the owner saw when sending.
+   */
+  private playPayload(deviceId: string, body: Extract<CommandBody, { type: "play" }>): Record<string, unknown> {
+    const item = body.itemId === undefined ? null : requireItem(this.s.catalog, body.itemId, 404, "unknown_item");
+    let episodeId: string;
+    if (body.episodeId !== undefined) {
+      const ref = requireEpisode(this.s.catalog, body.episodeId, 400, "unknown_episode");
+      if (item && ref.item.id !== item.id) throw new HttpError(400, "unknown_episode", "the episode does not belong to this item");
+      requirePlayable(ref.episode, 400, "not_allowed");
+      episodeId = ref.episode.id;
+    } else {
+      const cont = this.s.tv.continueFor(deviceId, item!);
+      if (!cont) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed", { itemId: item!.id });
+      episodeId = cont.episodeId;
+    }
+    const itemId = item?.id ?? this.s.catalog.episode(episodeId)!.item.id;
+    return { itemId, episodeId, ...(body.positionMs !== undefined ? { positionMs: body.positionMs } : {}) };
   }
 
   /** What the TV gets with a command (the SSE `payload`); a message's display time defaults here. */
-  private payload(body: CommandBody): Record<string, unknown> {
+  private payload(deviceId: string, body: CommandBody): Record<string, unknown> {
     switch (body.type) {
-      case "play": {
-        const ref = requireEpisode(this.s.catalog, body.episodeId, 400, "unknown_episode");
-        requirePlayable(ref.episode, 400, "not_allowed");
-        return { itemId: ref.item.id, episodeId: ref.episode.id };
-      }
+      case "play":
+        return this.playPayload(deviceId, body);
       case "seek":
         return body.deltaMs !== undefined ? { deltaMs: body.deltaMs } : { positionMs: body.positionMs };
       case "message":
@@ -54,7 +78,7 @@ export class CommandService {
 
   /** Stores a command for the device and publishes it to the device's open event streams. */
   send(deviceId: string, body: CommandBody, actor: Actor): { command: Command; online: boolean } {
-    const payload = this.payload(body);
+    const payload = this.payload(deviceId, body);
     const online = this.s.events.isOnline(deviceId);
     const cmd = this.s.store.transaction(() => {
       const c = this.s.store.insertCommand(deviceId, body.type, payload, actor, this.s.now());
@@ -79,6 +103,24 @@ export class CommandService {
       this.s.eventLog.append("command.delivered", deviceId, tvActor(deviceId), { commandId: id });
       return true;
     });
+  }
+
+  /**
+   * The TV reports what it made of a command, once: `unknown` when the device has no command with this id,
+   * `already_reported` for a second report.
+   */
+  report(deviceId: string, id: number, result: CommandResult, reason: string | null): "ok" | "unknown" | "already_reported" {
+    const outcome = this.s.store.transaction(() => {
+      const cmd = this.s.store.getCommand(deviceId, id);
+      if (!cmd) return "unknown";
+      if (cmd.result !== null) return "already_reported";
+      this.s.store.setCommandResult(id, result, reason, this.s.now());
+      this.s.eventLog.append("command.result", deviceId, tvActor(deviceId), { commandId: id, type: cmd.type, result, reason });
+      return "ok";
+    });
+    // The reason is one of a few codes ([A-Za-z0-9_.:-]), never free text.
+    if (outcome === "ok") this.s.log.info("command result", { deviceId, commandId: id, result, reason });
+    return outcome;
   }
 
   purge(): void {

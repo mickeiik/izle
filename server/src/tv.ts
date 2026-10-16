@@ -227,7 +227,17 @@ export class TvService {
     return this.s.notifier.bump(deviceId);
   }
 
-  setHome(deviceId: string, itemIds: string[], actor: Actor): number {
+  /**
+   * Replaces the home list. With `expected` (the list the caller saw), answers 409 `home_changed` when the list is
+   * no longer that, so two editors do not overwrite each other.
+   */
+  setHome(deviceId: string, itemIds: string[], actor: Actor, expected?: string[]): number {
+    if (expected) {
+      const current = this.homeIds(deviceId);
+      if (current.length !== expected.length || current.some((id, i) => id !== expected[i])) {
+        throw new HttpError(409, "home_changed", "the home list changed in the meantime", { itemIds: current });
+      }
+    }
     if (itemIds.length > HOME_MAX_ITEMS) {
       throw new HttpError(400, "too_many_items", `a home list holds at most ${HOME_MAX_ITEMS} items`, { max: HOME_MAX_ITEMS });
     }
@@ -249,5 +259,37 @@ export class TvService {
       this.s.eventLog.append("home.changed", deviceId, actor, { itemIds, added, removed });
     });
     return this.s.notifier.bump(deviceId);
+  }
+
+  // --- single home changes: each builds the new list and goes through setHome ----------------------------------
+
+  /** The device's home list as item ids, in display order (items gone from the catalog included). */
+  homeIds(deviceId: string): string[] {
+    return this.s.store.getHomeEntries(deviceId, this.s.catalog.catalogId).map((e) => e.itemId);
+  }
+
+  /** Puts the item at `position` (0-based; default and upper bound: the end). */
+  addHomeItem(deviceId: string, itemId: string, position: number | undefined, actor: Actor): number {
+    const ids = this.homeIds(deviceId);
+    ids.splice(Math.min(position ?? ids.length, ids.length), 0, itemId);
+    return this.setHome(deviceId, ids, actor);
+  }
+
+  /** Moves an item of the list to `position` (clamped to the end). */
+  moveHomeItem(deviceId: string, itemId: string, position: number, actor: Actor): number {
+    const ids = this.withoutHomeItem(deviceId, itemId);
+    ids.splice(Math.min(position, ids.length), 0, itemId);
+    return this.setHome(deviceId, ids, actor);
+  }
+
+  removeHomeItem(deviceId: string, itemId: string, actor: Actor): number {
+    return this.setHome(deviceId, this.withoutHomeItem(deviceId, itemId), actor);
+  }
+
+  /** The list without the item; 404 `not_on_home` when it is not on it. */
+  private withoutHomeItem(deviceId: string, itemId: string): string[] {
+    const ids = this.homeIds(deviceId);
+    if (!ids.includes(itemId)) throw new HttpError(404, "not_on_home", "the item is not on this TV's home list");
+    return ids.filter((id) => id !== itemId);
   }
 }
