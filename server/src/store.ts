@@ -137,6 +137,95 @@ export interface EventFilter {
   types?: readonly string[];
 }
 
+/** One playback of one episode on one TV, as stored (the running state in the `last*` fields is the history's own). */
+export interface Viewing {
+  id: number;
+  deviceId: string;
+  deviceName: string;
+  catalogId: string;
+  itemId: string;
+  itemKind: string | null;
+  itemTitle: string | null;
+  episodeId: string;
+  episodeTitle: string | null;
+  season: number | null;
+  number: number | null;
+  sourceId: string | null;
+  startedAt: number;
+  /** Null while the viewing runs. */
+  endedAt: number | null;
+  startPositionMs: number | null;
+  endPositionMs: number | null;
+  durationMs: number | null;
+  watchedMs: number | null;
+  endReason: ViewingEndReason | null;
+  seen: boolean;
+  trigger: ViewingTrigger;
+  actor: Actor;
+  commandId: number | null;
+  /** Made from a saved position at the upgrade that introduced the history. */
+  imported: boolean;
+  /** The last progress report applied: when it arrived, what it said, and where it was sampled (null: none yet). */
+  lastReportAt: number | null;
+  lastPositionMs: number | null;
+  lastPlaying: boolean;
+  lastAnchorAt: number | null;
+  lastState: ProgressReportStatus | null;
+}
+
+export type ViewingEndReason = "finished" | "stopped" | "replaced" | "lost";
+export type ViewingTrigger = "viewer" | "autoplay" | "next" | "command" | "unknown";
+
+/** Which viewings to list: of a catalog, a TV, an item or an episode, started in a window, the page after a viewing id. */
+export interface ViewingFilter {
+  catalogId: string;
+  deviceId?: string;
+  itemId?: string;
+  episodeId?: string;
+  from?: number;
+  to?: number;
+  /** The id of the last viewing of the previous page (newest first by `startedAt`, then id). */
+  before?: number;
+  limit: number;
+}
+
+/** Viewings of one episode summed up (the `device` filter applied). */
+export interface EpisodeViewingStats {
+  itemId: string;
+  episodeId: string;
+  viewings: number;
+  watchedMs: number;
+  firstStartedAt: number;
+  lastStartedAt: number;
+  seenViewings: number;
+  /** Ended viewings, not seen, with `watchedMs` under 10 minutes (imported ones, whose `watchedMs` is unknown, never count). */
+  shortViewings: number;
+  /** Whether every viewing of the episode is an imported one. */
+  onlyImported: boolean;
+  /** The position of the newest viewing: its last report while it runs, else where it ended. */
+  lastPositionMs: number | null;
+  lastDurationMs: number | null;
+  /** How the viewings named the episode (for one that left the catalog). */
+  season: number | null;
+  number: number | null;
+  episodeTitle: string | null;
+}
+
+/** When an episode was first seen by a viewing, over every TV. */
+export interface EpisodeSeenAt {
+  itemId: string;
+  episodeId: string;
+  seenAt: number;
+}
+
+/** The owner's word on an episode. */
+export interface EpisodeMark {
+  episodeId: string;
+  itemId: string;
+  seen: boolean;
+  at: number;
+}
+
 export type ProblemOrigin = "tv" | "server";
 
 /** Something that went wrong on a TV: reported by the TV itself, or recorded by the server for it. */
@@ -579,6 +668,165 @@ export class Store {
 
   getNowPlaying(deviceId: string): NowPlaying | null {
     return this.one("SELECT * FROM now_playing WHERE device_id = ?", [deviceId], "device_id");
+  }
+
+  // --- viewings ------------------------------------------------------------------------------------------------
+
+  insertViewing(v: Omit<Viewing, "id">): Viewing {
+    const { actor, ...rest } = v;
+    return fromRow(this.insert("viewings", { ...rest, actorJson: JSON.stringify(actor) }, undefined, " RETURNING *")!);
+  }
+
+  getViewing(id: number): Viewing | null {
+    return this.one("SELECT * FROM viewings WHERE id = ?", [id]);
+  }
+
+  /** The device's running viewing (there is at most one), or null. */
+  runningViewing(deviceId: string): Viewing | null {
+    return this.one("SELECT * FROM viewings WHERE device_id = ? AND ended_at IS NULL AND imported = 0 ORDER BY id DESC LIMIT 1", [deviceId]);
+  }
+
+  listRunningViewings(): Viewing[] {
+    return this.many("SELECT * FROM viewings WHERE ended_at IS NULL AND imported = 0 ORDER BY id", []);
+  }
+
+  /** Writes the given fields of a viewing (the store's own field names, never request input). */
+  updateViewing(id: number, patch: Partial<Omit<Viewing, "id" | "actor">>): void {
+    const keys = Object.keys(patch) as Array<keyof typeof patch>;
+    if (keys.length === 0) return;
+    this.run(`UPDATE viewings SET ${keys.map((k) => `${column(k)} = ?`).join(", ")} WHERE id = ?`, ...keys.map((k) => sqlValue(patch[k])), id);
+  }
+
+  /** Viewings newest first (by `startedAt`, then id), those that pass the filter, at most `limit`. */
+  listViewings(f: ViewingFilter): Viewing[] {
+    const where = ["catalog_id = ?"];
+    const params: SQLInputValue[] = [f.catalogId];
+    const add = (clause: string, value: SQLInputValue | undefined) => {
+      if (value === undefined) return;
+      where.push(clause);
+      params.push(value);
+    };
+    add("device_id = ?", f.deviceId);
+    add("item_id = ?", f.itemId);
+    add("episode_id = ?", f.episodeId);
+    add("started_at >= ?", f.from);
+    add("started_at <= ?", f.to);
+    if (f.before !== undefined) {
+      // The page after a viewing: everything that sorts after it (older, or the same start with a lower id).
+      const anchor = this.getViewing(f.before);
+      if (!anchor) return [];
+      where.push("(started_at < ? OR (started_at = ? AND id < ?))");
+      params.push(anchor.startedAt, anchor.startedAt, anchor.id);
+    }
+    return this.many(`SELECT * FROM viewings WHERE ${where.join(" AND ")} ORDER BY started_at DESC, id DESC LIMIT ?`, [...params, f.limit]);
+  }
+
+  /** One row per episode with a viewing (of `deviceId` when given, else of every TV), in `itemId` when given. */
+  episodeViewingStats(catalogId: string, deviceId: string | null, itemId: string | null = null): EpisodeViewingStats[] {
+    const sql = `SELECT item_id, episode_id, COUNT(*) AS viewings, SUM(COALESCE(watched_ms, 0)) AS watched_ms,
+         MIN(started_at) AS first_started_at, MAX(started_at) AS last_started_at, SUM(seen) AS seen_viewings,
+         SUM(ended_at IS NOT NULL AND seen = 0 AND imported = 0 AND COALESCE(watched_ms, 0) < 600000) AS short_viewings,
+         MIN(imported) AS only_imported, MAX(season) AS season, MAX(number) AS number, MAX(episode_title) AS episode_title,
+         (SELECT COALESCE(n.last_position_ms, n.end_position_ms) FROM viewings n WHERE n.catalog_id = v.catalog_id AND n.episode_id = v.episode_id
+            AND (? IS NULL OR n.device_id = ?) ORDER BY n.started_at DESC, n.id DESC LIMIT 1) AS last_position_ms,
+         (SELECT n.duration_ms FROM viewings n WHERE n.catalog_id = v.catalog_id AND n.episode_id = v.episode_id AND n.duration_ms IS NOT NULL
+            AND (? IS NULL OR n.device_id = ?) ORDER BY n.started_at DESC, n.id DESC LIMIT 1) AS last_duration_ms
+       FROM viewings v WHERE catalog_id = ? AND (? IS NULL OR device_id = ?) AND (? IS NULL OR item_id = ?)
+       GROUP BY item_id, episode_id`;
+    type Raw = Omit<EpisodeViewingStats, "onlyImported"> & { onlyImported: number };
+    return this.many<Raw>(sql, [deviceId, deviceId, deviceId, deviceId, catalogId, deviceId, deviceId, itemId, itemId]).map((r) => ({ ...r, onlyImported: r.onlyImported === 1 }));
+  }
+
+  /** When each episode was first seen by a viewing of any TV (`itemId` narrows to one item). */
+  episodeSeenAt(catalogId: string, itemId: string | null = null): EpisodeSeenAt[] {
+    const sql = "SELECT item_id, episode_id, MIN(ended_at) AS seen_at FROM viewings WHERE catalog_id = ? AND seen = 1 AND (? IS NULL OR item_id = ?) GROUP BY item_id, episode_id";
+    return this.many(sql, [catalogId, itemId, itemId]);
+  }
+
+  /** Whether another viewing than `exceptId` saw the episode. */
+  episodeSeenByOther(catalogId: string, episodeId: string, exceptId: number): boolean {
+    return this.get("SELECT 1 AS x FROM viewings WHERE catalog_id = ? AND episode_id = ? AND seen = 1 AND id != ?", catalogId, episodeId, exceptId) !== undefined;
+  }
+
+  /** The item of an episode the history knows (its newest viewing's), or null. */
+  historyEpisodeItem(catalogId: string, episodeId: string): string | null {
+    const r = this.get("SELECT item_id FROM viewings WHERE catalog_id = ? AND episode_id = ? ORDER BY started_at DESC, id DESC LIMIT 1", catalogId, episodeId);
+    return r ? String(r.item_id) : null;
+  }
+
+  /** The titles and kinds the history knows an item under, newest viewing first. */
+  historyItem(catalogId: string, itemId: string): { kind: string | null; title: string | null } | null {
+    return this.one("SELECT item_kind AS kind, item_title AS title FROM viewings WHERE catalog_id = ? AND item_id = ? ORDER BY started_at DESC, id DESC LIMIT 1", [catalogId, itemId]);
+  }
+
+  /** The item ids with a viewing or a mark. */
+  historyItemIds(catalogId: string): string[] {
+    const sql = "SELECT item_id FROM viewings WHERE catalog_id = ? UNION SELECT item_id FROM episode_marks WHERE catalog_id = ?";
+    return this.many<{ itemId: string }>(sql, [catalogId, catalogId]).map((r) => r.itemId);
+  }
+
+  /** The viewings started between `from` and `to` (inclusive), for the day counts. */
+  viewingsBetween(catalogId: string, deviceId: string | null, from: number, to: number): Array<Pick<Viewing, "id" | "itemId" | "itemTitle" | "startedAt" | "watchedMs">> {
+    const sql = "SELECT id, item_id, item_title, started_at, watched_ms FROM viewings WHERE catalog_id = ? AND started_at BETWEEN ? AND ? AND (? IS NULL OR device_id = ?) ORDER BY started_at, id";
+    return this.many(sql, [catalogId, from, to, deviceId, deviceId]);
+  }
+
+  deleteViewing(id: number): boolean {
+    return this.run("DELETE FROM viewings WHERE id = ?", id) > 0;
+  }
+
+  /** Deletes the viewings of a TV (when given) started before `before` (when given); every viewing without both. */
+  deleteViewings(catalogId: string, deviceId: string | null, before: number | null): number {
+    return this.run("DELETE FROM viewings WHERE catalog_id = ? AND (? IS NULL OR device_id = ?) AND (? IS NULL OR started_at < ?)", catalogId, deviceId, deviceId, before, before);
+  }
+
+  /** Records that `[fromMs, toMs]` was played; a range that continues the previous one extends it instead of adding a row. */
+  addViewingRange(viewingId: number, fromMs: number, toMs: number): void {
+    const extended = this.run("UPDATE viewing_ranges SET to_ms = MAX(to_ms, ?) WHERE viewing_id = ? AND from_ms <= ? AND to_ms >= ?", toMs, viewingId, fromMs, fromMs);
+    if (extended === 0) this.insert("viewing_ranges", { viewingId, fromMs, toMs });
+  }
+
+  /** The ranges of a viewing, unmerged, in position order. */
+  viewingRanges(viewingId: number): Array<[number, number]> {
+    return this.many<{ fromMs: number; toMs: number }>("SELECT from_ms, to_ms FROM viewing_ranges WHERE viewing_id = ? ORDER BY from_ms, to_ms", [viewingId]).map((r) => [r.fromMs, r.toMs]);
+  }
+
+  /** The ranges of every viewing of the item's episodes (of `deviceId` when given), by episode. */
+  itemRanges(catalogId: string, deviceId: string | null, itemId: string): Map<string, Array<[number, number]>> {
+    const sql = `SELECT v.episode_id, r.from_ms, r.to_ms FROM viewing_ranges r JOIN viewings v ON v.id = r.viewing_id
+       WHERE v.catalog_id = ? AND v.item_id = ? AND (? IS NULL OR v.device_id = ?) ORDER BY v.episode_id, r.from_ms, r.to_ms`;
+    const out = new Map<string, Array<[number, number]>>();
+    for (const r of this.many<{ episodeId: string; fromMs: number; toMs: number }>(sql, [catalogId, itemId, deviceId, deviceId])) {
+      const list = out.get(r.episodeId) ?? [];
+      out.set(r.episodeId, list);
+      list.push([r.fromMs, r.toMs]);
+    }
+    return out;
+  }
+
+  /** The commands a viewing may be the result of: this TV's `play`, `next` or `previous` command with that id. */
+  viewingCommand(deviceId: string, id: number): Command | null {
+    return this.one("SELECT * FROM commands WHERE id = ? AND device_id = ? AND type IN ('play', 'next', 'previous')", [id, deviceId]);
+  }
+
+  // --- marks ---------------------------------------------------------------------------------------------------
+
+  /** Every mark of the catalog (`itemId` narrows to one item), by episode id. */
+  listMarks(catalogId: string, itemId: string | null = null): Map<string, EpisodeMark> {
+    const marks = this.many<EpisodeMark>("SELECT episode_id, item_id, seen, at FROM episode_marks WHERE catalog_id = ? AND (? IS NULL OR item_id = ?)", [catalogId, itemId, itemId]);
+    return new Map(marks.map((m) => [m.episodeId, m]));
+  }
+
+  getMark(catalogId: string, episodeId: string): EpisodeMark | null {
+    return this.one("SELECT episode_id, item_id, seen, at FROM episode_marks WHERE catalog_id = ? AND episode_id = ?", [catalogId, episodeId]);
+  }
+
+  /** Sets the mark of each episode; `seen: null` removes it. */
+  setMarks(catalogId: string, episodes: ReadonlyArray<{ episodeId: string; itemId: string }>, seen: boolean | null, at: number): void {
+    for (const e of episodes) {
+      if (seen === null) this.run("DELETE FROM episode_marks WHERE catalog_id = ? AND episode_id = ?", catalogId, e.episodeId);
+      else this.insert("episode_marks", { catalogId, ...e, seen, at }, "catalog_id, episode_id");
+    }
   }
 
   // --- catalog history -----------------------------------------------------------------------------------------

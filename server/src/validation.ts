@@ -13,6 +13,7 @@ import type { ResolveInput } from "./resolve.ts";
 import type { DevicePatch } from "./store.ts";
 import { SCOPES, type Scope } from "./tokens.ts";
 import type { ProgressInput } from "./tv.ts";
+import { VIEWING_TRIGGERS } from "./viewings.ts";
 
 const ajv = new Ajv2020({ strict: true, allErrors: true });
 
@@ -55,7 +56,18 @@ export const commandBody = ajv.compile<CommandBody>({
 });
 
 export const resolveBody = ajv.compile<ResolveInput>(
-  object({ episodeId: ID, sourceId: ID, exclude: { type: "array", items: ID, maxItems: 64 } }, ["episodeId"]),
+  object(
+    {
+      episodeId: ID, sourceId: ID, exclude: { type: "array", items: ID, maxItems: 64 },
+      // The viewing history: what started this playback, and the command when it was a remote one.
+      trigger: { enum: VIEWING_TRIGGERS }, commandId: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+    },
+    ["episodeId"],
+  ),
+);
+
+export const marksBody = ajv.compile<{ episodeIds: string[]; seen: boolean | null }>(
+  object({ episodeIds: { type: "array", items: ID, minItems: 1, maxItems: 500 }, seen: { anyOf: [BOOLEAN, NULL] } }, ["episodeIds", "seen"]),
 );
 
 export const diagnosticsBody = ajv.compile<DiagnosticsInput>(

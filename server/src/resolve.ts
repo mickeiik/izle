@@ -7,6 +7,7 @@ import { requireEpisode, requirePlayable, requireSource } from "./lookup.ts";
 import { orderSources } from "./playback.ts";
 import { entryPath, subtitlePath, type ProxyService } from "./proxy.ts";
 import { runAdapter, type AdapterFailureCode } from "./resolver.ts";
+import type { ResolveTrigger } from "./viewings.ts";
 
 const FAILURE_PENALTY_MS = 10 * 60_000;
 const PLAYBACK_SESSION_TTL_MS = 12 * 60 * 60_000;
@@ -15,6 +16,10 @@ export interface ResolveInput {
   episodeId: string;
   sourceId?: string;
   exclude?: string[];
+  /** What started this playback (the viewing history); absent from a TV that does not say. */
+  trigger?: ResolveTrigger;
+  /** With `trigger: "command"`: the command's id. */
+  commandId?: number;
 }
 
 /** Proxy-session owner key of a device's companion streams (separate from the TV's own two sessions). */
