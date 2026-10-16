@@ -8,6 +8,7 @@ import { reloadOnSignal } from "./catalog-admin.ts";
 import { ConfigError, databaseFile, loadConfig, localServerUrl, SAMPLE_CATALOG_DIR, type ServerConfig } from "./config.ts";
 import { createLogger } from "./log.ts";
 import { PAIR_CODE } from "./pairing.ts";
+import { SCOPES, type Scope } from "./tokens.ts";
 import { healthcheckAll, loadResolver, ResolverLoadError } from "./resolver.ts";
 import { startServer } from "./server.ts";
 import { adminCall, linkBase, qrCode, ServerUnreachableError, signInLink } from "./shell.ts";
@@ -24,6 +25,13 @@ const USAGE = `usage:
                                                    approve the code a TV shows (name: "TV", "TV 2", … when omitted)
                                                    pair talks to the running server; --server <url> if it does not
                                                    listen where the config says
+  izle-server token create <name…> --scope <read|control|manage> [--config <file>]
+                                                   create an access token for an agent or an app and print its
+                                                   secret, once (read: see everything; control: also send commands;
+                                                   manage: also change home lists, cursors, settings, marks)
+  izle-server token list [--config <file>]         list the access tokens
+  izle-server token revoke <id> [--config <file>]  revoke one; requests with it answer 401 from now on
+                                                   token talks to the running server, like pair (--server <url>)
   izle-server backup <file> [--config <file>] [--force]
                                                    copy the database to <file> (mode 0600) while the server keeps
                                                    running; --force replaces an existing file
@@ -120,6 +128,52 @@ async function pair(config: ServerConfig, args: string[], serverUrl: string | un
   }
 }
 
+/** `token create <name…> --scope <scope>` / `token list` / `token revoke <id>` against the running server. */
+async function token(config: ServerConfig, args: string[], serverUrl: string | undefined, scope: string | undefined): Promise<number> {
+  const [sub, ...rest] = args;
+  if (sub !== "create" && sub !== "list" && sub !== "revoke") return usage(`token needs "create <name…> --scope <scope>", "list" or "revoke <id>"`);
+  if (scope !== undefined && sub !== "create") return usage("--scope belongs to token create");
+  const server = serverUrl ?? localServerUrl(config);
+  const { token: adminToken } = loadAdminToken(config, stderrLog, { create: false });
+  type Token = { id: string; name: string; scope: Scope; createdAt: string; lastUsedAt: string | null };
+  const unexpected = (r: { status: number; json: unknown }) => {
+    const message = (r.json as { message?: string } | null)?.message;
+    return fail(r.status === 401 ? TOKEN_REFUSED : `unexpected answer ${r.status} from ${server}${message ? `: ${message}` : ""}`);
+  };
+  try {
+    if (sub === "list") {
+      if (rest.length > 0) return fail("token list takes no arguments");
+      const r = await adminCall<{ tokens: Token[] }>(server, adminToken, "GET", "/api/v1/admin/tokens");
+      if (r.status !== 200) return unexpected(r);
+      if (r.json!.tokens.length === 0) out("no access tokens; create one with `izle-server token create <name> --scope <scope>`");
+      for (const t of r.json!.tokens) out(`${t.id}  ${t.scope.padEnd(7)}  ${t.lastUsedAt ? `last used ${t.lastUsedAt}` : "never used"}  ${t.name}`);
+      return 0;
+    }
+    if (sub === "revoke") {
+      const [id, ...extra] = rest;
+      if (!id || extra.length > 0) return fail("token revoke needs the token's id (see token list)");
+      const r = await adminCall<{ message?: string }>(server, adminToken, "DELETE", `/api/v1/admin/tokens/${encodeURIComponent(id)}`);
+      if (r.status === 404) return fail(`no access token with the id ${id}`);
+      if (r.status !== 204) return unexpected(r);
+      out(`revoked access token ${id}; requests with it answer 401 from now on`);
+      return 0;
+    }
+    const name = rest.join(" ").trim();
+    if (!name) return fail("token create needs a name");
+    if (!SCOPES.includes(scope as Scope)) return fail(`token create needs --scope ${SCOPES.join("|")}`);
+    const r = await adminCall<{ token: Token; secret: string; message?: string }>(server, adminToken, "POST", "/api/v1/admin/tokens", { name, scope });
+    if (r.status === 409) return fail(`an access token named "${name}" exists`);
+    if (r.status !== 201) return unexpected(r);
+    // The secret alone on stdout, like admin-token, so a script can capture it; it is shown only now.
+    process.stderr.write(`created access token "${r.json!.token.name}" (${r.json!.token.id}, scope ${r.json!.token.scope}); its secret, shown only now:\n`);
+    out(r.json!.secret);
+    return 0;
+  } catch (err) {
+    if (err instanceof ServerUnreachableError) return fail(`${err.message}; is it running? (--server <url> if it listens elsewhere)`);
+    throw err;
+  }
+}
+
 /**
  * `admin-token`: prints the admin token (creating it, or with `rotate` replacing it), or with `link` the admin page's
  * sign-in link and its QR code.
@@ -166,7 +220,7 @@ function invocationDir(): string {
 
 const OPTIONS = {
   config: { type: "string", short: "c" }, rotate: { type: "boolean" }, link: { type: "boolean" }, base: { type: "string" },
-  server: { type: "string" }, force: { type: "boolean" }, help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" },
+  server: { type: "string" }, scope: { type: "string" }, force: { type: "boolean" }, help: { type: "boolean", short: "h" }, version: { type: "boolean", short: "v" },
 } as const;
 
 export async function main(argv: string[]): Promise<number> {
@@ -182,10 +236,12 @@ export async function main(argv: string[]): Promise<number> {
     return usage((err as Error).message);
   }
   const { values, positionals } = parsed;
-  const maxPositionals = command === "pair" ? Infinity : command === "backup" ? 1 : 0;
+  const maxPositionals = command === "pair" || command === "token" ? Infinity : command === "backup" ? 1 : 0;
   if (positionals.length > maxPositionals) return usage(`unexpected argument "${positionals[maxPositionals]}"`);
-  for (const [flag, owner] of [["rotate", "admin-token"], ["link", "admin-token"], ["base", "admin-token"], ["server", "pair"], ["force", "backup"]] as const) {
-    if (values[flag] !== undefined && command !== owner) return usage(`--${flag} belongs to the ${owner} command`);
+  const owners = [["rotate", "admin-token"], ["link", "admin-token"], ["base", "admin-token"], ["server", "pair, token"], ["scope", "token"], ["force", "backup"]] as const;
+  for (const [flag, owner] of owners) {
+    const commands = owner.split(", ");
+    if (values[flag] !== undefined && !commands.includes(command ?? "")) return usage(`--${flag} belongs to the ${commands.join(" and ")} command${commands.length > 1 ? "s" : ""}`);
   }
   for (const flag of ["base", "server"] as const) {
     const url = values[flag];
@@ -208,6 +264,7 @@ export async function main(argv: string[]): Promise<number> {
     if (command === "backup") return backup(config, positionals[0]!, values.force ?? false);
     if (command === "admin-token") return adminToken(config, { rotate: values.rotate ?? false, link: values.link ?? false, base: values.base });
     if (command === "pair") return await pair(config, positionals, values.server);
+    if (command === "token") return await token(config, positionals, values.server, values.scope);
     if (command !== undefined) return usage(`unknown command "${command}"`);
 
     const server = await startServer({ config, log });

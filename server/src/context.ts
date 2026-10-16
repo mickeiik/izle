@@ -11,6 +11,7 @@ import type { ProxyService } from "./proxy.ts";
 import type { PlaybackSessions, ResolveService } from "./resolve.ts";
 import type { LoadedResolver } from "./resolver.ts";
 import type { Store } from "./store.ts";
+import type { TokenService } from "./tokens.ts";
 import type { TvService } from "./tv.ts";
 
 /** The services the TV, companion, device and command services are built on. */
@@ -36,6 +37,7 @@ export interface AppContext extends Services {
   proxy: ProxyService;
   devices: DeviceService;
   commands: CommandService;
+  tokens: TokenService;
   /** The loaded resolver module, or null when none is configured. */
   resolverModule: LoadedResolver | null;
   adminToken: string;

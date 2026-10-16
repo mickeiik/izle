@@ -9,6 +9,11 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Added
 
+- **Access tokens for agents and apps:** the owner creates named tokens with a scope (`read`, `control` or
+  `manage`) and revokes them at any time, through `GET`/`POST`/`DELETE /api/v1/admin/tokens` or `izle-server token
+  create <name> --scope <scope>`, `token list` and `token revoke <id>`. A token lacking a route's scope gets
+  `403 insufficient_scope`; a wrong or revoked one counts like a wrong admin token. Every change records who made
+  it (its `actor`), and the access log names a token by its id, never its secret.
 - **Next and previous episode from the remote:** CH+/CH− and the media next/previous keys switch episodes while
   playing.
 - **Autoplay when the TV starts** (per TV, off by default): the show watched last, else the first tile, starts after

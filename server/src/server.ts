@@ -14,6 +14,7 @@ import { EventHub, Notifier } from "./events.ts";
 import { CatalogHistory } from "./history.ts";
 import { clientKeyFor, registerMiddleware, type Env } from "./http/middleware.ts";
 import { registerAdmin } from "./http/routes/admin.ts";
+import { registerAdminTokens } from "./http/routes/admin-tokens.ts";
 import { registerTv } from "./http/routes/tv.ts";
 import { registerStatic } from "./http/static.ts";
 import { createLogger, type Logger } from "./log.ts";
@@ -23,6 +24,7 @@ import { ProxyService } from "./proxy.ts";
 import { PlaybackSessions, ResolveService } from "./resolve.ts";
 import { loadResolver } from "./resolver.ts";
 import { Store } from "./store.ts";
+import { TokenService } from "./tokens.ts";
 import { TvService } from "./tv.ts";
 import { VERSION } from "./version.ts";
 
@@ -82,8 +84,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const tv = new TvService(services);
   const ctx: AppContext = {
     ...services, tv, companion: new CompanionService(services), pairing: new PairingService(store, log, now, opts.pairing), proxy,
-    devices: new DeviceService({ ...services, tv, proxy }), commands: new CommandService(services), resolverModule, adminToken,
-    pingMs: opts.pingMs ?? 20_000, fetch: fetchUpstream, adminUiDir: fileURLToPath(new URL("../admin", import.meta.url)),
+    devices: new DeviceService({ ...services, tv, proxy }), commands: new CommandService(services), tokens: new TokenService(store, log, now),
+    resolverModule, adminToken, pingMs: opts.pingMs ?? 20_000, fetch: fetchUpstream, adminUiDir: fileURLToPath(new URL("../admin", import.meta.url)),
   };
 
   // One app with every area's routes, middleware first: access logs name the route template, so no sub-apps.
@@ -93,6 +95,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   registerStatic(app, ctx);
   registerTv(app, ctx, clientKey);
   registerAdmin(app, ctx);
+  registerAdminTokens(app, ctx);
 
   let server: Server;
   try {

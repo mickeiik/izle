@@ -11,6 +11,7 @@ import { PROGRESS_REPORT_STATUSES } from "./playback.ts";
 import { TV_PROBLEM_KINDS, type ProblemReportBody } from "./problems.ts";
 import type { ResolveInput } from "./resolve.ts";
 import type { DevicePatch } from "./store.ts";
+import { SCOPES, type Scope } from "./tokens.ts";
 import type { ProgressInput } from "./tv.ts";
 
 const ajv = new Ajv2020({ strict: true, allErrors: true });
@@ -31,6 +32,8 @@ export const devicePatchBody = ajv.compile<DevicePatch>({
   }),
   minProperties: 1,
 });
+
+export const tokenBody = ajv.compile<{ name: string; scope: Scope }>(object({ name: NAME, scope: { enum: SCOPES } }, ["name", "scope"]));
 
 export const homeBody = ajv.compile<{ itemIds: string[] }>(object({ itemIds: { type: "array", items: ID, maxItems: 1000 } }, ["itemIds"]));
 
