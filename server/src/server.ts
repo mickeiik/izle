@@ -92,7 +92,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const tv = new TvService(services);
   const ctx: AppContext = {
     ...services, tv, companion: new CompanionService(services), pairing: new PairingService(services, opts.pairing), proxy,
-    devices: new DeviceService({ ...services, tv, proxy }), commands: new CommandService(services), tokens: new TokenService(store, log, now),
+    devices: new DeviceService({ ...services, tv, proxy }), commands: new CommandService({ ...services, tv }), tokens: new TokenService(store, log, now),
     resolverModule, adminToken, pingMs: opts.pingMs ?? 20_000, fetch: fetchUpstream, adminUiDir: fileURLToPath(new URL("../admin", import.meta.url)),
   };
 

@@ -1,7 +1,7 @@
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
 import { ID_PATTERN, simplifySchemaErrors } from "@izle/contract";
 import type { Context } from "hono";
-import { MAX_SEEK_DELTA_MS, MESSAGE_DURATION_SEC, MESSAGE_MAX_CHARS, PLAIN_COMMANDS, type CommandBody } from "./commands.ts";
+import { COMMAND_RESULTS, MAX_SEEK_DELTA_MS, MESSAGE_DURATION_SEC, MESSAGE_MAX_CHARS, PLAIN_COMMANDS, type CommandBody, type CommandResult } from "./commands.ts";
 import type { CompanionResolveInput, LinkInput } from "./companion.ts";
 import { LANGUAGE_TAG_PATTERN, objectSchema as object } from "./config.ts";
 import type { DiagnosticsInput } from "./diagnostics.ts";
@@ -39,13 +39,20 @@ export const homeBody = ajv.compile<{ itemIds: string[] }>(object({ itemIds: { t
 
 export const cursorBody = ajv.compile<{ itemId: string; episodeId: string }>(object({ itemId: ID, episodeId: ID }, ["itemId", "episodeId"]));
 
+const CODE = { type: "string", minLength: 1, maxLength: 64, pattern: "^[A-Za-z0-9_.:-]+$" };
+
+export const commandResultBody = ajv.compile<{ result: CommandResult; reason?: string }>(object({ result: { enum: COMMAND_RESULTS }, reason: CODE }, ["result"]));
+
 const SEEK_DELTA = { type: "integer", minimum: -MAX_SEEK_DELTA_MS, maximum: MAX_SEEK_DELTA_MS };
 const MESSAGE = { type: "string", minLength: 1, maxLength: MESSAGE_MAX_CHARS, pattern: "\\S" };
 const DURATION_SEC = { type: "integer", minimum: MESSAGE_DURATION_SEC.min, maximum: MESSAGE_DURATION_SEC.max };
 
 export const commandBody = ajv.compile<CommandBody>({
   oneOf: [
-    object({ type: { const: "play" }, episodeId: ID }, ["type", "episodeId"]),
+    // By item (what OK would play, or the episode given with it) or by episode alone: the second branch forbids
+    // itemId, so a body matches one branch. positionMs instead of the saved position.
+    object({ type: { const: "play" }, itemId: ID, episodeId: ID, positionMs: MS }, ["type", "itemId"]),
+    object({ type: { const: "play" }, episodeId: ID, positionMs: MS }, ["type", "episodeId"]),
     object({ type: { enum: PLAIN_COMMANDS } }, ["type"]),
     // A seek is relative (deltaMs) or absolute (positionMs), never both: each branch forbids the other field.
     object({ type: { const: "seek" }, deltaMs: SEEK_DELTA }, ["type", "deltaMs"]),
@@ -82,7 +89,7 @@ export const problemBody = ajv.compile<ProblemReportBody>(
   object(
     {
       kind: { enum: TV_PROBLEM_KINDS },
-      code: { type: "string", minLength: 1, maxLength: 64, pattern: "^[A-Za-z0-9_.:-]+$" },
+      code: CODE,
       // How long ago it happened: a report queued while the server was unreachable keeps its time.
       ageMs: { type: "integer", minimum: 0, maximum: 86_400_000 },
       episodeId: ID,

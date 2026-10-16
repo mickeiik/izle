@@ -1,8 +1,8 @@
-// The admin API: pairing approval, the TVs (list, page, settings, deletion, home list, "continue from", what each
-// has watched and is playing, remote commands, problem reports), the catalog (what is loaded and its builds,
-// search, an item's details, the "test this episode" diagnostics, the reload), and "Listen along" (companion audio
-// on the owner's phone: the candidate sources of what a TV plays, resolving one for the phone, the timing links).
-
+// The admin API: pairing approval, the TVs (list, page, settings, deletion, adopting a deleted TV's history, home
+// list, "continue from", what each has watched and is playing, remote commands and their results, problem reports),
+// the catalog (what is loaded and its builds, search, an item's details, the "test this episode" diagnostics, the
+// reload), and "Listen along" (companion audio on the owner's phone: the candidate sources of what a TV plays,
+// resolving one for the phone, the timing links).
 import type { Context, Hono } from "hono";
 import { buildJson, catalogInfo, catalogItemJson, reloadCatalog, searchHitJson } from "../../catalog-admin.ts";
 import type { AppContext } from "../../context.ts";
@@ -84,6 +84,16 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
     const body = await parseBody(c, commandBody);
     const { command, online } = ctx.commands.send(d.id, body, c.get("actor"));
     return c.json({ id: command.id, online }, 202);
+  });
+
+  // A command while it is stored (7 days): when the TV acknowledged it, and what it made of it.
+  app.get("/api/v1/admin/devices/:id/commands/:commandId", (c) => {
+    const d = requireDevice(store, c.req.param("id"));
+    const id = Number(c.req.param("commandId"));
+    const cmd = Number.isSafeInteger(id) && id > 0 ? store.getCommand(d.id, id) : null;
+    if (!cmd) throw new HttpError(404, "unknown_command");
+    const { type, payload, actor, result, reason } = cmd;
+    return c.json({ command: { id, type, payload, actor, createdAt: iso(cmd.createdAt), deliveredAt: iso(cmd.ackedAt), result, reason, resultAt: iso(cmd.resultAt) } });
   });
 
   app.get("/api/v1/admin/devices/:id/problems", (c) => {

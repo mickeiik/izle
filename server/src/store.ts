@@ -2,7 +2,7 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
 import type { Actor } from "./actor.ts";
-import type { CommandType } from "./commands.ts";
+import type { CommandResult, CommandType } from "./commands.ts";
 import type { ProgressReportStatus } from "./playback.ts";
 import type { ProblemKind } from "./problems.ts";
 import type { Scope } from "./tokens.ts";
@@ -103,7 +103,7 @@ export interface Command {
   /** Who sent it; null for commands stored before actors were recorded. */
   actor: Actor | null;
   /** What the TV made of it (`POST /tv/commands/:id/result`); null until it reports, or with a TV that never does. */
-  result: "done" | "ignored" | "failed" | null;
+  result: CommandResult | null;
   reason: string | null;
   resultAt: number | null;
 }
@@ -457,6 +457,15 @@ export class Store {
 
   ackCommand(deviceId: string, id: number, now: number): boolean {
     return this.run("UPDATE commands SET acked_at = COALESCE(acked_at, ?) WHERE id = ? AND device_id = ?", now, id, deviceId) > 0;
+  }
+
+  /** One of the device's commands; null when it has none with this id. */
+  getCommand(deviceId: string, id: number): Command | null {
+    return this.one("SELECT * FROM commands WHERE id = ? AND device_id = ?", [id, deviceId]);
+  }
+
+  setCommandResult(id: number, result: CommandResult, reason: string | null, now: number): void {
+    this.run("UPDATE commands SET result = ?, reason = ?, result_at = ? WHERE id = ?", result, reason, now, id);
   }
 
   purgeCommands(before: number): void {
