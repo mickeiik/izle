@@ -51,7 +51,9 @@ try {
   check(/✔|valid/i.test(await cli(["validate-catalog", path.join(pkgDir, "sample-catalog")])), "the packaged sample catalog validates");
 
   const config = path.join(work, "izle.json");
-  await writeFile(config, JSON.stringify({ listen: { host: "127.0.0.1", port: 0 }, dataDir: "./data", trustedProxies: ["127.0.0.1"] }));
+  // The TV app check stays off: the smoke test never leaves loopback.
+  const settings = { listen: { host: "127.0.0.1", port: 0 }, dataDir: "./data", trustedProxies: ["127.0.0.1"], appUpdates: { source: "manual" } };
+  await writeFile(config, JSON.stringify(settings));
   const child = (server = spawn(bin, ["--config", config], { env, stdio: ["ignore", "pipe", "pipe"] }));
   /** @type {any[]} */
   const logs = [];

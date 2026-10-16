@@ -26,7 +26,15 @@ export interface ServerConfig {
   log: { level: Level };
   /** How long the event log is kept. */
   events: { retentionDays: number };
+  /**
+   * The TV app's updates: where the APK the server offers its TVs comes from (`github`: the latest release of
+   * `repo`, checked every `checkIntervalHours`; `manual`: only what the owner uploads), and whether TVs that can
+   * install silently do so on their own (`auto`).
+   */
+  appUpdates: { source: AppUpdateSource; repo: string; checkIntervalHours: number; auto: boolean };
 }
+
+export type AppUpdateSource = "github" | "manual";
 
 export class ConfigError extends Error {
   override name = "ConfigError";
@@ -39,6 +47,9 @@ const DEFAULT_PORT = 8787;
 const DEFAULT_EVENT_RETENTION_DAYS = 7;
 export const DEFAULT_RESOLVE_DEADLINE_MS = 12_000;
 export const DEFAULT_RESOLVE_BUDGET_MS = 30_000;
+export const DEFAULT_APP_REPO = "mickeiik/izle";
+/** `owner/name` of a GitHub repository (neither part `.` or `..`). */
+export const REPO_PATTERN = "^(?!\\.\\.?/)[A-Za-z0-9_.-]+/(?!\\.\\.?$)[A-Za-z0-9_.-]+$";
 
 /** Simplified BCP 47 language tag, as in the catalog contract (`LanguageTag`). */
 export const LANGUAGE_TAG_PATTERN = "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$";
@@ -70,6 +81,10 @@ const CONFIG_SCHEMA = objectSchema({
   }),
   log: objectSchema({ level: { enum: ["debug", "info", "warn", "error"] } }),
   events: objectSchema({ retentionDays: { type: "integer", minimum: 1, maximum: 90 } }),
+  appUpdates: objectSchema({
+    source: { enum: ["github", "manual"] }, repo: { type: "string", pattern: REPO_PATTERN, maxLength: 200 },
+    checkIntervalHours: { type: "integer", minimum: 1, maximum: 168 }, auto: { type: "boolean" },
+  }),
 });
 
 const validateConfigFile = new Ajv2020({ strict: true, allErrors: true }).compile(CONFIG_SCHEMA);
@@ -86,6 +101,7 @@ interface ConfigFile {
   defaults?: { uiLanguage?: "tr" | "en" | null; preferredAudioLanguage?: string | null };
   log?: { level?: Level };
   events?: { retentionDays?: number };
+  appUpdates?: { source?: AppUpdateSource; repo?: string; checkIntervalHours?: number; auto?: boolean };
 }
 
 interface LoadConfigOptions {
@@ -163,5 +179,6 @@ export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
     defaults: { uiLanguage: null, preferredAudioLanguage: null, ...file.defaults },
     log: { level: "info", ...file.log },
     events: { retentionDays: DEFAULT_EVENT_RETENTION_DAYS, ...file.events },
+    appUpdates: { source: "github", repo: DEFAULT_APP_REPO, checkIntervalHours: 24, auto: true, ...file.appUpdates },
   };
 }

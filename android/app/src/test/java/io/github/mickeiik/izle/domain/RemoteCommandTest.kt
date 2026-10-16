@@ -62,6 +62,14 @@ class RemoteCommandTest {
     }
 
     @Test
+    fun updateNamesTheVersionTheOwnerSaw() {
+        assertEquals(RemoteCommand.Update(300), command("""{"id":40,"type":"update","payload":{"versionCode":300}}"""))
+        assertEquals("without one: whatever is offered", RemoteCommand.Update(null), command("""{"id":41,"type":"update","payload":{}}"""))
+        assertEquals(RemoteCommand.Update(null), command("""{"id":42,"type":"update","payload":{"versionCode":"300"}}"""))
+        assertEquals(RemoteCommand.Update(null), command("""{"id":43,"type":"update","payload":{"versionCode":-1}}"""))
+    }
+
+    @Test
     fun unknownTypesAndOddPayloadsStillArriveToBeAcknowledged() {
         // A command must parse whatever its payload, or it would never be acknowledged and replay for two minutes.
         assertEquals(ServerEvent.Command(20, "dance"), ServerEvent.parse("command", """{"id":20,"type":"dance","payload":{"style":"tango","speed":[1,2]}}"""))

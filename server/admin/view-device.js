@@ -8,7 +8,10 @@ import { companionCard } from "./companion.js";
 import { homeCard } from "./device-home.js";
 import { actionButton, card, chip, h, keepFocus, onSubmit, page, progressBar, setChip, setOff, setProgress, setTitle, slot, statusChip, toast } from "./dom.js";
 import { watchEvents } from "./events.js";
-import { LANGUAGES, commandResultText, episodeName, errorText, formatClock, formatDuration, formatRelative, languageLabel, percent, playbackState, problemContext, triggerLabel, viewingEnd } from "./lib.js";
+import {
+  LANGUAGES, androidText, appUpdateChip, capabilityText, commandResultText, episodeName, errorText, formatClock, formatDuration,
+  formatRelative, installNowBlocked, languageLabel, percent, playbackState, problemContext, triggerLabel, viewingEnd,
+} from "./lib.js";
 
 /**
  * What the sections of a TV's page share: `send` sends a command and resolves with whether the server took it,
@@ -46,13 +49,14 @@ export function deviceView(scope, id) {
   const now = nowPlayingCard(ctx);
   const home = homeCard(ctx);
   const settings = settingsCard(ctx);
+  const tvApp = appCard(ctx);
   const listenAlong = companionCard({ deviceId: id, signal: scope.signal });
   scope.onCleanup(() => listenAlong.stop());
   const history = historyCard(ctx);
   const problems = problemsCard(ctx);
   /** @type {Array<[string, HTMLElement]>} */
   const sections = [["Now playing", now.element], ["Home screen", home.element], ["Settings", settings.element],
-    ["Listen along", listenAlong.element], ["History", history.element], ["Problems", problems.element]];
+    ["TV app", tvApp.element], ["Listen along", listenAlong.element], ["History", history.element], ["Problems", problems.element]];
   sections.forEach(([label, el]) => (el.id = `sec-${label.toLowerCase().replace(/\s+/g, "-")}`));
   const nav = sectionNav(scope, sections);
   const top = h("div", { class: "sticky", hidden: true }, nav.element, scope.note);
@@ -74,6 +78,7 @@ export function deviceView(scope, id) {
     chipBox.replaceChildren(statusChip(device));
     seen.textContent = device.status === "active" ? `last seen ${formatRelative(device.lastSeenAt)}` : "approved, waiting for the TV to collect its token";
     now.setDevice(device);
+    tvApp.setDevice(device);
     home.update(d.home);
   };
 
@@ -93,6 +98,7 @@ export function deviceView(scope, id) {
       const deviceJob = scope.poll(loadDevice, 15000);
       const historyJob = scope.poll(history.refresh, 15000, history.fail);
       const problemsJob = scope.poll(problems.refresh, 15000, problems.fail);
+      scope.poll(tvApp.refresh, 30_000, tvApp.fail);
       // The polls stay as the fallback; the event stream makes the page follow the TV as things happen.
       watchEvents(scope, { devices: [id] }, (e) => {
         const type = /** @type {string} */ (e.type);
@@ -316,6 +322,65 @@ function settingsCard(ctx) {
   const autoplayHint = h("p", { class: "hint", id: "s-autoplay-hint" }, "When the app opens, the show the viewer watched last (else the first tile) starts after a 10-second countdown. Any key stops the countdown.");
   const toggle = h("div", { class: "toggle" }, h("label", { class: "check", for: "s-autoplay" }, autoplay, "Autoplay when the TV starts"), autoplayHint);
   return { element: card("Settings", form, toggle), update };
+}
+
+/**
+ * The TV's app: its installed version, its Android version, how it takes updates, and "Install now" (the same rules
+ * as on the TV app page). It reads whether the server stores an APK on its own poll; the TV comes with the page's.
+ * @param {DeviceContext} ctx
+ * @returns {Section & { setDevice(device: any): void }}
+ */
+function appCard(ctx) {
+  /** @type {any} */
+  let device = null;
+  /** Whether the server stores an APK; null before it was read; "unsupported" on a server without TV app updates. */
+  let stored = /** @type {boolean | null | "unsupported"} */ (null);
+  const version = h("dd");
+  const android = h("dd");
+  const how = h("dd");
+  const state = chip("");
+  const facts = h("dl", { class: "facts" }, h("dt", null, "Installed"), version, h("dt", null, "Android"), android,
+    h("dt", null, "Updates"), how, h("dt", null, "State"), h("dd", null, state));
+  const why = h("p", { class: "hint", id: "app-install-why" });
+  const guided = h("p", { class: "hint", hidden: true }, "Someone at the TV has to press OK when the screen appears.");
+  const install = actionButton("Install now", { "aria-describedby": "app-install-why" }, () => ctx.send({ type: "update" }, "Install now"));
+  setOff(install, true);
+
+  const show = () => {
+    if (!device) return;
+    const a = device.app;
+    version.textContent = a?.version ? `${a.version}${a.versionCode !== null && a.versionCode !== undefined ? ` (code ${a.versionCode})` : ""}` : "unknown";
+    android.textContent = androidText(a?.androidSdk);
+    how.textContent = capabilityText(a);
+    const c = appUpdateChip(a);
+    setChip(state, c.text, c.tone);
+    guided.hidden = a?.capability !== "guided";
+    const blocked = stored === null ? "Looking for the server's TV app…" : stored === "unsupported" ? "This server has no TV app updates." : installNowBlocked(device, stored);
+    setOff(install, blocked !== null);
+    why.textContent = blocked ?? "Asks the TV to update now.";
+  };
+
+  const refresh = async () => {
+    try {
+      stored = Boolean((await ctx.scope.read("/app")).apk);
+    } catch (err) {
+      if (!(err instanceof ApiError && err.status === 404)) throw err;
+      stored = "unsupported";
+    }
+    show();
+  };
+  const link = h("a", { href: "#/app" }, "TV app page");
+  return {
+    element: card({ title: "TV app", aside: link }, facts, h("div", { class: "actions" }, install), why, guided),
+    refresh,
+    fail: () => {
+      if (stored === null) why.textContent = "Could not read the server's TV app.";
+    },
+    setDevice(d) {
+      device = d;
+      show();
+    },
+  };
 }
 
 /** The TV's viewings: what it played, who started it, how much was watched and how each ended. @param {DeviceContext} ctx @returns {Section} */

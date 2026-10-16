@@ -25,6 +25,12 @@ sealed interface RemoteCommand {
     /** A banner at the top of the screen for [durationSec] seconds. */
     data class Message(val text: String, val durationSec: Int) : RemoteCommand
 
+    /**
+     * Install the TV app version the server offers; [versionCode]: the one the owner saw (null: whatever is offered).
+     * See [io.github.mickeiik.izle.update.UpdatePlan].
+     */
+    data class Update(val versionCode: Long?) : RemoteCommand
+
     /** A type this TV does not know (a newer server) or an unusable payload: acknowledged, otherwise ignored. */
     data class Ignored(val type: String) : RemoteCommand
 
@@ -53,6 +59,7 @@ sealed interface RemoteCommand {
                 val seconds = (command.durationSec ?: MESSAGE_DEFAULT_SEC).coerceIn(MESSAGE_MIN_SEC, MESSAGE_MAX_SEC)
                 if (text.isNullOrEmpty()) Ignored(command.type) else Message(text, seconds)
             }
+            "update" -> Update(command.versionCode?.takeIf { it > 0 })
             else -> Ignored(command.type)
         }
     }

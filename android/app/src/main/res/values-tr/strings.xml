@@ -77,4 +77,14 @@
     <string name="about_device">TV adı</string>
     <string name="about_catalog">Katalog</string>
     <string name="about_build">Katalog sürümü</string>
+    <string name="about_update_available">Güncelleme var</string>
+    <string name="about_up_to_date">Güncel</string>
+    <string name="settings_install_update">Güncellemeyi kur</string>
+
+    <!-- Update -->
+    <string name="update_overline">Yeni sürüm</string>
+    <string name="update_press_ok">Kurmak için OK\'a basın</string>
+    <string name="update_install">Kur</string>
+    <string name="update_installing">Güncelleniyor…</string>
+    <string name="update_failed">Güncellenemedi</string>
 </resources>

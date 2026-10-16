@@ -33,6 +33,8 @@ class EventsClientTest {
                     "retry: 5000\nevent: state\nid: s4\ndata: {\"version\":4}\n\n" +
                         ": ping\n\n" +
                         "event: command\nid: c7\ndata: {\"id\":7,\"type\":\"play\",\"payload\":{\"itemId\":\"show\",\"episodeId\":\"show.e1\"}}\n\n" +
+                        "event: app\nid: a300\ndata: {\"versionCode\":300}\n\n" +
+                        "event: command\nid: c8\ndata: {\"id\":8,\"type\":\"update\",\"payload\":{\"versionCode\":300}}\n\n" +
                         "event: future\ndata: {}\n\n",
                 )
                 .build(),
@@ -42,7 +44,8 @@ class EventsClientTest {
         val events = withTimeout(5_000) {
             EventsClient(http).events(api).catch { failure = it }.toList()
         }
-        assertEquals(listOf(ServerEvent.Open, ServerEvent.State(4), ServerEvent.Command(7, "play", "show", "show.e1")), events)
+        val update = ServerEvent.Command(8, "update", versionCode = 300)
+        assertEquals(listOf(ServerEvent.Open, ServerEvent.State(4), ServerEvent.Command(7, "play", "show", "show.e1"), ServerEvent.App(300), update), events)
         assertTrue("the end of the stream is a failure to reconnect from", failure is IOException)
         val request = server.takeRequest()
         assertEquals("/api/v1/tv/events", request.url.encodedPath)

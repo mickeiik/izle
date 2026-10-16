@@ -3,7 +3,9 @@ package io.github.mickeiik.izle.settings
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -17,6 +19,10 @@ data class DeviceSettings(
     val uiLanguageOverride: String? = null,
     /** The show played last on this TV: what "autoplay on start" offers. */
     val lastPlayedItemId: String? = null,
+    /** A silent self-update came back asking for a confirmation: this TV updates guided (until the next update). */
+    val updateSilentRefused: Boolean = false,
+    /** When a self-update last failed (wall clock, ms): no automatic attempt for a while. */
+    val lastUpdateFailureAt: Long? = null,
 ) {
     val isPaired: Boolean get() = serverUrl != null && deviceToken != null
 }
@@ -32,6 +38,8 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
             deviceToken = p[DEVICE_TOKEN],
             uiLanguageOverride = p[UI_LANGUAGE],
             lastPlayedItemId = p[LAST_PLAYED_ITEM],
+            updateSilentRefused = p[UPDATE_SILENT_REFUSED] ?: false,
+            lastUpdateFailureAt = p[LAST_UPDATE_FAILURE],
         )
     }
 
@@ -73,6 +81,14 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { p -> if (language == null) p.remove(UI_LANGUAGE) else p[UI_LANGUAGE] = language }
     }
 
+    suspend fun setUpdateSilentRefused(refused: Boolean) {
+        dataStore.edit { p -> if (refused) p[UPDATE_SILENT_REFUSED] = true else p.remove(UPDATE_SILENT_REFUSED) }
+    }
+
+    suspend fun setLastUpdateFailureAt(at: Long?) {
+        dataStore.edit { p -> if (at == null) p.remove(LAST_UPDATE_FAILURE) else p[LAST_UPDATE_FAILURE] = at }
+    }
+
     suspend fun cachedState(): String? = dataStore.data.first()[CACHED_STATE]
 
     suspend fun saveCachedState(json: String) {
@@ -86,5 +102,7 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
         val UI_LANGUAGE = stringPreferencesKey("ui_language")
         val CACHED_STATE = stringPreferencesKey("cached_state")
         val LAST_PLAYED_ITEM = stringPreferencesKey("last_played_item")
+        val UPDATE_SILENT_REFUSED = booleanPreferencesKey("update_silent_refused")
+        val LAST_UPDATE_FAILURE = longPreferencesKey("last_update_failure_at")
     }
 }

@@ -5,7 +5,7 @@
 import { api, attempt } from "./api.js";
 import { card, chip, h, keyedRows, onSubmit, page, setOff, slot, srOnly, statusChip, toast } from "./dom.js";
 import { watchEvents } from "./events.js";
-import { formatCode, formatCountdown, formatRelative, plural, serverAddress } from "./lib.js";
+import { appUpdateChip, formatCode, formatCountdown, formatRelative, plural, serverAddress } from "./lib.js";
 
 /** @param {import("./router.js").Scope} scope */
 export function devicesView(scope) {
@@ -70,10 +70,14 @@ export function devicesView(scope) {
       /** @param {any} next */
       update(next) {
         name.textContent = next.name;
-        meta.textContent = `${plural(next.homeCount, "show")} on Home · seen ${formatRelative(next.lastSeenAt)}`;
+        const version = next.app?.version ? ` · app ${next.app.version}` : "";
+        meta.textContent = `${plural(next.homeCount, "show")} on Home · seen ${formatRelative(next.lastSeenAt)}${version}`;
         const n = next.problems?.recent ?? 0;
         const problems = n > 0 ? chip(`${plural(n, "problem")} in 24 h`, "warn") : null;
-        chips.replaceChildren(...[problems, statusChip(next)].filter((c) => c !== null));
+        // Only what asks for the owner: an update on its way, or one that needs Install now (the TV app page).
+        const u = next.app?.update === "pending" || next.app?.update === "needs_install_now" ? appUpdateChip(next.app) : null;
+        const update = u ? chip(u.text, u.tone) : null;
+        chips.replaceChildren(...[problems, update, statusChip(next)].filter((c) => c !== null));
       },
     };
   };

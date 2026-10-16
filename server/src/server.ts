@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { SERVER, tvActor } from "./actor.ts";
+import { AppUpdateService, FIRST_CHECK_DELAY_MS } from "./app-updates.ts";
 import { loadAdminToken } from "./auth.ts";
 import { CatalogService } from "./catalog.ts";
 import { CommandService } from "./commands.ts";
@@ -16,6 +17,7 @@ import { EventHub, Notifier } from "./events.ts";
 import { CatalogHistory } from "./history.ts";
 import { clientKeyFor, registerMiddleware, type Env } from "./http/middleware.ts";
 import { registerAdmin } from "./http/routes/admin.ts";
+import { registerAdminApp } from "./http/routes/admin-app.ts";
 import { registerAdminEvents } from "./http/routes/admin-events.ts";
 import { registerAdminHistory } from "./http/routes/admin-history.ts";
 import { registerAdminHome } from "./http/routes/admin-home.ts";
@@ -45,8 +47,12 @@ interface StartOptions {
   /** How long a TV stays online after its last event stream closed (default 60 s; tests shorten it). */
   offlineGraceMs?: number;
   pairing?: PairingOptions;
-  /** Upstream fetch of the media proxy and the diagnostics probe (default: the global fetch). */
+  /** Upstream fetch of the media proxy, the diagnostics probe and the TV app check (default: the global fetch). */
   fetch?: typeof fetch;
+  /** Where the TV app check finds GitHub's API (default `https://api.github.com`; tests serve a fake). */
+  githubApiBase?: string;
+  /** TV app updates (tests): the APK size cap, the check's timeouts, and the delay of the first check (60 s). */
+  appUpdates?: { maxBytes?: number; timeouts?: { apiMs?: number; downloadMs?: number }; firstCheckDelayMs?: number };
 }
 
 interface RunningServer {
@@ -86,6 +92,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     viewings.onOnline(deviceId, online);
     eventLog.append(online ? "device.online" : "device.offline", deviceId, tvActor(deviceId), {});
   };
+  const appUpdates = new AppUpdateService({
+    store, eventLog, events, log, now, config, fetch: fetchUpstream, githubApiBase: opts.githubApiBase,
+    maxBytes: opts.appUpdates?.maxBytes, timeouts: opts.appUpdates?.timeouts,
+  });
+  appUpdates.reconcile();
   const sessions = new PlaybackSessions(now);
   const problems = new ProblemService({ store, catalog, log, now, sessions, eventLog });
   const { sessionTtlSec, alignTsSegments, always: proxyAlways } = config.proxy;
@@ -95,7 +106,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     deadlineMs: config.resolver?.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,
     budgetMs: config.resolver?.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
   });
-  const services = { config, store, catalog, events, notifier: new Notifier(store, events), eventLog, resolver, sessions, problems, viewings, log, now };
+  const services = { config, store, catalog, events, notifier: new Notifier(store, events), eventLog, resolver, sessions, problems, viewings, appUpdates, log, now };
   const tv = new TvService(services);
   const ctx: AppContext = {
     ...services, tv, companion: new CompanionService(services), pairing: new PairingService({ ...services, proxy }, opts.pairing), proxy,
@@ -111,6 +122,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   registerTv(app, ctx, clientKey);
   registerAdmin(app, ctx);
   registerAdminTokens(app, ctx);
+  registerAdminApp(app, ctx);
   registerAdminEvents(app, ctx);
   registerAdminStatus(app, ctx);
   registerAdminHistory(app, ctx);
@@ -142,6 +154,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   // Viewings whose TV fell silent or offline end as lost.
   const sweep = setInterval(() => viewings.sweep(), VIEWING_SWEEP_MS);
   sweep.unref();
+  // With the GitHub source: the TV app's latest release, a minute after the start, then every checkIntervalHours.
+  appUpdates.schedule(opts.appUpdates?.firstCheckDelayMs ?? FIRST_CHECK_DELAY_MS);
 
   let closing: Promise<void> | null = null;
   return {
@@ -151,6 +165,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
       closing ??= (async () => {
         clearInterval(housekeeping);
         clearInterval(sweep);
+        await appUpdates.stop();
         events.closeAll();
         await new Promise<void>((resolve) => {
           server.close(() => resolve());

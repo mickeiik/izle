@@ -4,5 +4,6 @@
   "catalog": { "dir": "../sample-catalog" },
   "admin": { "tokenFile": "./data/admin.token" },
   "defaults": { "uiLanguage": "en", "preferredAudioLanguage": "en" },
-  "log": { "level": "info" }
+  "log": { "level": "info" },
+  "appUpdates": { "source": "manual" }
 }

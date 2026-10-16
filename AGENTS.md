@@ -15,7 +15,10 @@ UX rules in [docs/ux/senior-tv.md](docs/ux/senior-tv.md) describe what the softw
 ## Hard invariants
 
 - The server loads catalog bundles and resolver modules **from local paths only**. It never downloads, installs
-  or updates code or catalogs by itself.
+  or updates its own code, catalogs or resolvers. The one thing it may download, when `appUpdates.source` is
+  `github`, is a release APK of the TV app for the TVs (`izle-tv-X.Y.Z.apk` from the configured repository's latest
+  release, checked against the release's `SHA256SUMS`, never executed by the server); tests point `githubApiBase`
+  at an in-process fake.
 - **No stream URLs, upstream headers, adapter refs, tokens or playlist text in logs.** Everything goes through
   the single `redact()` helper; tests assert this with hostile fixtures.
 - Upstream request headers never reach the TV; header-bound media is served through the server proxy.

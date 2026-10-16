@@ -3,7 +3,8 @@ import type { Command, Device, Store } from "./store.ts";
 
 export type ServerEvent =
   | { type: "state"; data: { version: number } }
-  | { type: "command"; data: { id: number; type: CommandType; payload: Record<string, unknown> } };
+  | { type: "command"; data: { id: number; type: CommandType; payload: Record<string, unknown> } }
+  | { type: "app"; data: { versionCode: number } };
 
 interface Subscriber {
   send(event: ServerEvent): void;
@@ -15,9 +16,16 @@ export function commandEvent(cmd: Pick<Command, "id" | "type" | "payload">): Ser
   return { type: "command", data: { id: cmd.id, type: cmd.type, payload: cmd.payload } };
 }
 
-/** The SSE `id` of an event: `s<version>` for state, `c<commandId>` for commands. */
+/** The SSE `id` of an event: `s<version>` for state, `c<commandId>` for commands, `a<versionCode>` for the app. */
 export function eventId(ev: ServerEvent): string {
-  return ev.type === "state" ? `s${ev.data.version}` : `c${ev.data.id}`;
+  switch (ev.type) {
+    case "state":
+      return `s${ev.data.version}`;
+    case "command":
+      return `c${ev.data.id}`;
+    case "app":
+      return `a${ev.data.versionCode}`;
+  }
 }
 
 /** A TV stays online this long after its last event stream closed, so a reconnect does not flap. */
@@ -72,6 +80,11 @@ export class EventHub {
 
   publish(deviceId: string, event: ServerEvent): void {
     for (const s of this.subscribers.get(deviceId) ?? []) s.send(event);
+  }
+
+  /** Sends the event to every open stream of every device (a new TV app APK). */
+  publishAll(event: ServerEvent): void {
+    for (const set of this.subscribers.values()) for (const s of set) s.send(event);
   }
 
   isOnline(deviceId: string): boolean {

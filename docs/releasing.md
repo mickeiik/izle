@@ -10,6 +10,11 @@ publishes a GitHub release with these files, installed by owners as in [deploy/s
 | `izle-tv-X.Y.Z-debug.apk` | the debug build, always |
 | `SHA256SUMS` | checksums |
 
+Servers with `appUpdates.source` set to `github` (the default) fetch `izle-tv-X.Y.Z.apk` and `SHA256SUMS` from the
+**latest non-pre-release** of the configured repository and offer the APK to their TVs, so keep these file names, sign
+every release with the same key, and let the version (hence the Android `versionCode`) grow: a TV refuses an APK that
+is not newer or signed with another key. Pre-releases are never fetched; test them with the admin page's upload.
+
 ## Cutting a release
 
 1. Set the version everywhere (the contract and server packages, the lockfile and the Android `versionName`). The

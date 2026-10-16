@@ -79,14 +79,34 @@ export const devicePath = (id) => `/devices/${encodeURIComponent(id)}`;
  * @returns {Promise<any>}
  */
 export async function api(method, path, body, opts = {}) {
+  return request(method, path, body !== undefined ? { "Content-Type": "application/json" } : {}, body !== undefined ? JSON.stringify(body) : undefined, opts);
+}
+
+/**
+ * Uploads a file as the raw request body (`PUT`), as an APK (`Content-Type`) with its name in `X-Izle-Filename`;
+ * `headers` are added. Answers and fails like `api()`.
+ * @param {string} path below /api/v1/admin
+ * @param {File} file
+ * @param {Record<string, string>} [headers]
+ * @returns {Promise<any>}
+ */
+export async function upload(path, file, headers = {}) {
+  return request("PUT", path, { "Content-Type": "application/vnd.android.package-archive", "X-Izle-Filename": file.name, ...headers }, file, {});
+}
+
+/**
+ * @param {string} method @param {string} path @param {Record<string, string>} headers
+ * @param {BodyInit | undefined} body @param {{ token?: string | null, signal?: AbortSignal }} opts
+ */
+async function request(method, path, headers, body, opts) {
   const withToken = opts.token === undefined ? getToken() : opts.token;
   const aborted = () => new ApiError(0, "aborted", null);
   let res;
   try {
     res = await fetch(`/api/v1/admin${path}`, {
       method,
-      headers: { Authorization: `Bearer ${withToken ?? ""}`, ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      headers: { Authorization: `Bearer ${withToken ?? ""}`, ...headers },
+      ...(body !== undefined ? { body } : {}),
       ...(opts.signal ? { signal: opts.signal } : {}),
     });
   } catch {

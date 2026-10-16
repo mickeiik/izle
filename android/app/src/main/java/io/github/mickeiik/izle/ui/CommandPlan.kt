@@ -11,7 +11,8 @@ import io.github.mickeiik.izle.player.PlayerPhase
  * `pause` makes sure closing it later does not resume, `seek` happens under it.
  *
  * Every command ends in exactly one result for the server: a [Action.Report] last when it is known at once, else
- * [Action.Play] (reports once its playback runs or fails) or [Action.Step] (reports whether it stepped).
+ * [Action.Play] (reports once its playback runs or fails), [Action.Step] (reports whether it stepped) or
+ * [Action.Update] (reports what became of the update).
  */
 object CommandPlan {
     sealed interface Action {
@@ -37,13 +38,17 @@ object CommandPlan {
 
         /** The command's result, known now. */
         data class Report(val result: CommandResult) : Action
+
+        /** The owner's `update`: [io.github.mickeiik.izle.update.UpdatePlan] decides (and reports). */
+        data class Update(val command: RemoteCommand.Update) : Action
     }
 
     private val done = Action.Report(CommandResult.Done)
 
     /** The actions for [command] on [screen], with the player in [phase] and the hidden menu open or not, in order. */
     fun actions(command: RemoteCommand, screen: Screen, phase: PlayerPhase, menuOpen: Boolean): List<Action> {
-        val ready = screen == Screen.Home || screen == Screen.Player
+        // An `update` while the update screen shows is the update plan's (`busy`).
+        val ready = screen == Screen.Home || screen == Screen.Player || (screen is Screen.Update && command is RemoteCommand.Update)
         if (!ready && command !is RemoteCommand.Ignored) return listOf(Action.Report(CommandResult.ignored(CommandResult.NOT_READY)))
         val video = screen == Screen.Player && phase == PlayerPhase.Playing
         val notInPlayer = listOf(Action.Report(CommandResult.ignored(CommandResult.NOT_IN_PLAYER)))
@@ -57,6 +62,7 @@ object CommandPlan {
             RemoteCommand.Next -> if (video) closingMenu(resume = true) + Action.Step(1) else notInPlayer
             RemoteCommand.Previous -> if (video) closingMenu(resume = true) + Action.Step(-1) else notInPlayer
             is RemoteCommand.Message -> listOf(Action.ShowMessage(command), done)
+            is RemoteCommand.Update -> listOf(Action.Update(command))
             // A newer server's command, or an unusable one: acknowledged, nothing else.
             is RemoteCommand.Ignored -> listOf(Action.Report(CommandResult.ignored(CommandResult.UNKNOWN_TYPE)))
         }

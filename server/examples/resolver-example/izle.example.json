@@ -8,5 +8,6 @@
   },
   "proxy": { "alignTsSegments": true },
   "defaults": { "uiLanguage": "en", "preferredAudioLanguage": "en" },
-  "log": { "level": "info" }
+  "log": { "level": "info" },
+  "appUpdates": { "source": "manual" }
 }

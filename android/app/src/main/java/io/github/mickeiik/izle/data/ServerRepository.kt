@@ -34,6 +34,11 @@ class ServerRepository(
     private val store: DeviceStore,
     private val events: EventsClient,
     private val timing: Timing = Timing(),
+    /**
+     * Asks the server which TV app version it offers (`GET /tv/app`): when the event stream opens, on its `app` events
+     * and every [Timing.appCheckMs] while started. The app's updater; nothing by default.
+     */
+    private val onAppCheck: suspend (ApiClient) -> Unit = {},
 ) {
     /** [clock]: monotonic, in milliseconds (outage lengths). */
     data class Timing(
@@ -41,6 +46,7 @@ class ServerRepository(
         val offlinePollMs: Long = 10_000,
         val minBackoffMs: Long = 1_000,
         val maxBackoffMs: Long = 30_000,
+        val appCheckMs: Long = 6 * 3_600_000L,
         val clock: () -> Long = { System.nanoTime() / 1_000_000 },
     )
 
@@ -52,6 +58,10 @@ class ServerRepository(
 
     private val _commands = MutableSharedFlow<ServerEvent.Command>(extraBufferCapacity = 16)
     val commands: SharedFlow<ServerEvent.Command> = _commands.asSharedFlow()
+
+    /** The server's `app` events: the TV app version it offers changed (the [onAppCheck] hook already runs on them). */
+    private val _appEvents = MutableSharedFlow<ServerEvent.App>(extraBufferCapacity = 4)
+    val appEvents: SharedFlow<ServerEvent.App> = _appEvents.asSharedFlow()
 
     /** Every state actually fetched from the server (never the offline cache). */
     private val _fetched = MutableSharedFlow<TvState>(extraBufferCapacity = 4)
@@ -97,6 +107,7 @@ class ServerRepository(
         connection = scope.launch {
             launch { pollLoop(api) }
             launch { eventsLoop(api) }
+            launch { appCheckLoop(api) }
         }
     }
 
@@ -162,6 +173,25 @@ class ServerRepository(
         }
     }
 
+    private suspend fun appCheckLoop(api: ApiClient) {
+        while (scope.isActive) {
+            delay(timing.appCheckMs)
+            checkApp(api)
+        }
+    }
+
+    /** One check at a time; a failing hook never breaks the stream. */
+    private val appCheckLock = Mutex()
+
+    private fun checkApp(api: ApiClient) {
+        if (appCheckLock.isLocked) return
+        scope.launch {
+            appCheckLock.withLock {
+                if (this@ServerRepository.api === api) orNullOnFailure { onAppCheck(api) }
+            }
+        }
+    }
+
     private suspend fun eventsLoop(api: ApiClient) {
         var backoff = timing.minBackoffMs
         while (scope.isActive) {
@@ -171,6 +201,11 @@ class ServerRepository(
                         ServerEvent.Open -> {
                             backoff = timing.minBackoffMs
                             if (!_online.value) refresh(api)
+                            checkApp(api)
+                        }
+                        is ServerEvent.App -> {
+                            _appEvents.tryEmit(event)
+                            checkApp(api)
                         }
                         is ServerEvent.State -> if (event.version != _state.value?.version) refresh(api)
                         is ServerEvent.Command -> dispatch(api, event)

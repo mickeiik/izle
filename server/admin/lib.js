@@ -274,6 +274,13 @@ const ERRORS = /** @type {Record<string, string>} */ ({
   device_exists: "That TV still exists; forget it first.",
   hls_unsupported: "This browser cannot play HLS.",
   hls_unavailable: "The HLS player did not load. Reload the page and try again.",
+  no_apk: "No TV app is stored on the server yet: fetch or upload one on the TV app page.",
+  invalid_filename: "Name the file izle-tv-X.Y.Z.apk, as on the releases page.",
+  not_an_apk: "That file is not an Android app (APK).",
+  unsupported_media_type: "The server did not accept that kind of file; choose the APK.",
+  apk_too_large: "That APK is larger than 64 MiB, the server's limit.",
+  github_disabled: "Checks are off: this server is set to uploaded APKs only.",
+  check_running: "A check is already running; its result shows here in a moment.",
 });
 
 /** Owner-facing text for anything that went wrong: an error with a string `code` is looked up. @param {unknown} err */
@@ -510,12 +517,41 @@ const REASONS = /** @type {Record<string, string>} */ ({
   stopped: "the player was left first", busy: "the TV was busy", episodes_unavailable: "the episode list could not be fetched",
 });
 
+/** What became of an `update` command, by `result:reason` (or by `reason` for any result). */
+const UPDATE_RESULTS = /** @type {Record<string, string>} */ ({
+  "done:installing": "Update: the TV is installing",
+  "done:prompted": "Update: the TV shows the install screen; someone has to press OK",
+  up_to_date: "Update: ignored, the TV is up to date",
+  not_newer: "Update: ignored, the TV has this version or a newer one",
+  busy: "Update: ignored, the TV is playing",
+  not_ready: "Update: ignored, the TV is not set up",
+  declined: "Update: declined on the TV (Back was pressed)",
+  timeout: "Update: nobody pressed OK on the TV within 60 s",
+  download: "Update failed: the TV could not download the APK",
+  too_large: "Update failed: the APK is too large for the TV",
+  verify: "Update failed: the download did not match its checksum",
+  wrong_package: "Update failed: the APK is not the izle TV app",
+  bad_archive: "Update failed: the APK is damaged",
+  install_failure_incompatible: "Update failed: different signing key (only a release APK installs over a release install)",
+});
+
+/** @param {{ result: string, reason: string | null }} d */
+function updateResultText(d) {
+  const known = UPDATE_RESULTS[`${d.result}:${d.reason}`] ?? (d.reason ? UPDATE_RESULTS[d.reason] : undefined);
+  if (known) return known;
+  if (d.reason?.startsWith("install_")) return `Update failed: the TV's installer refused (${d.reason.slice("install_".length).replace(/_/g, " ")})`;
+  if (d.result === "done") return "Update: done";
+  const why = d.reason ? ` (${d.reason.replace(/_/g, " ")})` : "";
+  return d.result === "failed" ? `Update failed${why}` : `Update: ${d.result}${why}`;
+}
+
 /**
  * What became of a command, for a toast: `Play: done`, `Pause: ignored (nothing is playing)`, `Play: failed (the
- * player failed)`.
+ * player failed)`; an `update` in its own words (`Update: the TV is installing`).
  * @param {{ type: string, result: string, reason: string | null }} d a `command.result` event's data
  */
 export function commandResultText(d) {
+  if (d.type === "update") return updateResultText(d);
   const name = d.type.charAt(0).toUpperCase() + d.type.slice(1);
   const why = d.reason ? ` (${REASONS[d.reason] ?? d.reason.replace(/_/g, " ")})` : "";
   return `${name}: ${d.result}${why}`;
@@ -530,6 +566,166 @@ export const SCOPES = /** @type {const} */ ([
 
 /** `Read`, `Control`, `Manage`; the scope itself when unknown. @param {string} scope */
 export const scopeLabel = (scope) => SCOPES.find(([s]) => s === scope)?.[1] ?? scope;
+
+// --- TV app updates ----------------------------------------------------------------------------------------------
+
+/** The server's upload cap for an APK. */
+export const APK_MAX_BYTES = 64 * 1024 * 1024;
+
+/** `512 B`, `12.3 MB`, `164 MB` (powers of 1000); `–` when unknown. @param {number | null | undefined} n */
+export function formatBytes(n) {
+  if (n === null || n === undefined || !Number.isFinite(n) || n < 0) return "–";
+  if (n < 1000) return `${Math.round(n)} B`;
+  const units = ["kB", "MB", "GB", "TB"];
+  let v = n / 1000;
+  let i = 0;
+  while (v >= 999.5 && i < units.length - 1) {
+    v /= 1000;
+    i++;
+  }
+  return `${v >= 99.95 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+}
+
+/** The release APK's name, as the server requires it (`izle-tv-0.3.0.apk`). */
+const APK_NAME = /^izle-tv-(0|[1-9]\d*)\.([1-9]?\d)\.([1-9]?\d)(-[0-9A-Za-z.-]+)?\.apk$/;
+
+/** The version in a release APK's file name (`0.3.0`, `0.3.0-rc.1`), or null for any other name. @param {string} name */
+export function apkVersion(name) {
+  const m = APK_NAME.exec(name);
+  return m ? `${m[1]}.${m[2]}.${m[3]}${m[4] ?? ""}` : null;
+}
+
+/**
+ * What a TV reports about its app (`app` of a device row); absent or all nulls on older servers and apps.
+ * @typedef {{ version?: string | null, versionCode?: number | null, androidSdk?: number | null,
+ *   capability?: string | null, reportedAt?: string | null, update?: string | null }} DeviceApp
+ */
+
+/**
+ * The update chip of a TV: Up to date, Update available (it installs by itself when idle), Needs Install now (an
+ * older TV: the owner starts it and someone at the TV presses OK), or Unknown.
+ * @param {DeviceApp | null | undefined} app
+ * @returns {{ text: string, tone: "ok" | "warn" | "info" | "" }}
+ */
+export function appUpdateChip(app) {
+  switch (app?.update) {
+    case "up_to_date": return { text: "Up to date", tone: "ok" };
+    case "pending": return { text: "Update available", tone: "info" };
+    case "needs_install_now": return { text: "Needs Install now", tone: "warn" };
+    default: return { text: "Unknown", tone: "" };
+  }
+}
+
+/** Android versions by API level; a level not listed is shown as it is. */
+const ANDROID = /** @type {Record<number, string>} */ ({
+  21: "5.0", 22: "5.1", 23: "6", 24: "7.0", 25: "7.1", 26: "8.0", 27: "8.1", 28: "9", 29: "10", 30: "11", 31: "12",
+  32: "12L", 33: "13", 34: "14", 35: "15", 36: "16",
+});
+
+/** `Android 9 (API 28)`; `unknown` when the TV did not say. @param {number | null | undefined} sdk */
+export function androidText(sdk) {
+  if (sdk === null || sdk === undefined || !Number.isInteger(sdk)) return "unknown";
+  return ANDROID[sdk] ? `Android ${ANDROID[sdk]} (API ${sdk})` : `API ${sdk}`;
+}
+
+/** How a TV takes an update, in a sentence. @param {DeviceApp | null | undefined} app */
+export function capabilityText(app) {
+  if (app?.capability === "silent") return "Installs updates by itself while nobody is watching.";
+  if (app?.capability === "guided") {
+    const sdk = app.androidSdk;
+    const why = sdk !== null && sdk !== undefined && sdk >= 31 ? "The TV lacks the one-time permission to install apps, so" : "On Android 11 or older,";
+    return `${why} an update needs Install now here, and someone at the TV pressing OK when the screen appears.`;
+  }
+  return "Unknown: the TV has not said how it installs updates (an older app).";
+}
+
+/** The words of a failed check's reason. */
+const CHECK_REASONS = /** @type {Record<string, string>} */ ({
+  network: "GitHub could not be reached",
+  rate_limited: "GitHub's rate limit was reached; a later check tries again",
+  no_release: "the repository has no release yet",
+  prerelease: "the latest release is a pre-release, which is not offered to TVs",
+  bad_tag: "the latest release's tag is not a version (vX.Y.Z)",
+  no_apk_asset: "the latest release has no izle-tv APK",
+  no_checksums: "the latest release has no checksum file",
+  checksums_too_large: "the release's checksum file is too large",
+  checksum_missing: "the checksum file does not list the APK",
+  checksum_mismatch: "the downloaded APK does not match its checksum",
+  too_large: "the APK is larger than 64 MiB",
+  not_an_apk: "the download is not an APK",
+});
+
+/** Human words for why a check failed. @param {string | null | undefined} reason */
+export function appCheckReasonText(reason) {
+  if (!reason) return "for an unknown reason";
+  const http = /^http_(\d{3})$/.exec(reason);
+  if (http) return `GitHub answered HTTP ${http[1]}`;
+  return CHECK_REASONS[reason] ?? reason.replace(/_/g, " ");
+}
+
+/** `5 min`, `3 h`, `2 days`: how long until `iso`. @param {string} iso @param {number} now */
+function formatUntil(iso, now) {
+  const min = Math.round((Date.parse(iso) - now) / 60_000);
+  if (min < 60) return `${min} min`;
+  const h = Math.round(min / 60);
+  if (h < 24) return `${h} h`;
+  const d = Math.round(h / 24);
+  return d === 1 ? "1 day" : `${d} days`;
+}
+
+/**
+ * The state of the server's checks for a new release, in one line: `Last check 2 h ago: up to date · next check in
+ * 4 h`, `Last check failed just now: GitHub could not be reached`, `Checking now…`, `Checks disabled (manual
+ * source)…`.
+ * @param {{ lastAt: string | null, nextAt: string | null, result: string | null, reason: string | null, running: boolean }
+ *   | null | undefined} check
+ * @param {string} source `github` or `manual`
+ * @param {number} [now]
+ */
+export function appCheckText(check, source, now = Date.now()) {
+  if (source === "manual") return "Checks disabled (manual source): the server offers the APK uploaded here.";
+  if (!check) return "";
+  const parts = [];
+  if (check.running) parts.push("checking now…");
+  else if (!check.lastAt) parts.push("not checked yet");
+  else {
+    const when = formatRelative(check.lastAt, now);
+    if (check.result === "failed") parts.push(`last check failed ${when}: ${appCheckReasonText(check.reason)}`);
+    else if (check.result === "fetched") parts.push(`last check ${when}: fetched a new version`);
+    else if (check.result === "up_to_date") parts.push(`last check ${when}: up to date`);
+    else parts.push(`last check ${when}`);
+  }
+  if (check.nextAt && !check.running) {
+    const ms = Date.parse(check.nextAt) - now;
+    if (!Number.isNaN(ms)) parts.push(ms < 60_000 ? "next check soon" : `next check in ${formatUntil(check.nextAt, now)}`);
+  }
+  const text = parts.join(" · ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * The toast after "Check now" (`POST /admin/app/check`).
+ * @param {{ result: string, reason: string | null, apk: { versionName: string } | null }} r
+ * @returns {{ text: string, kind: "ok" | "info" | "error" }}
+ */
+export function checkResultText(r) {
+  if (r.result === "fetched") return { text: `Fetched ${r.apk?.versionName ?? "a new version"} from GitHub. TVs that install by themselves update when idle.`, kind: "ok" };
+  if (r.result === "up_to_date") return { text: `Up to date: ${r.apk ? `${r.apk.versionName} is the latest release` : "nothing new on GitHub"}.`, kind: "info" };
+  return { text: `The check failed: ${appCheckReasonText(r.reason)}.`, kind: "error" };
+}
+
+/**
+ * Why "Install now" is unavailable for a TV, or null when it may be pressed: no APK on the server, a TV not set up
+ * or offline, or one that is up to date.
+ * @param {{ status?: string, online?: boolean, app?: DeviceApp | null }} device @param {boolean} hasApk
+ */
+export function installNowBlocked(device, hasApk) {
+  if (!hasApk) return "No TV app is stored on the server.";
+  if (device.status !== undefined && device.status !== "active") return "The TV is not set up yet.";
+  if (!device.online) return "The TV is offline.";
+  if (device.app?.update === "up_to_date") return "The TV is up to date.";
+  return null;
+}
 
 // --- Listen along (companion audio on the owner's phone) ----------------------------------------------------------
 

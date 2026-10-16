@@ -1,6 +1,7 @@
-// What runs around every route: security headers and the access log, the API's cache and body limits, error
-// answers, and the two token checks (device tokens on /tv; on /admin the owner token or an access token, with the
-// sign-in throttle, and the scope each admin route needs).
+// What runs around every route: security headers and the access log, the API's cache and body limits (the APK
+// upload excepted), error answers, and the two token checks (device tokens on /tv, where the User-Agent reports the
+// TV's app version; on /admin the owner token or an access token, with the sign-in throttle, and the scope each
+// admin route needs).
 
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context, Hono } from "hono";
@@ -9,10 +10,12 @@ import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import { routePath } from "hono/route";
 import { OWNER, type Actor } from "../actor.ts";
+import { parseTvUserAgent } from "../app-updates.ts";
 import { bearerToken, secretsEqual, sha256 } from "../auth.ts";
 import { clientAddress, compileTrustedProxies } from "../clientip.ts";
 import type { ServerConfig } from "../config.ts";
 import type { AppContext } from "../context.ts";
+import { sameApp } from "../devices.ts";
 import { HttpError, tooManyRequests, unauthorized } from "../errors.ts";
 import { RateLimiter } from "../ratelimit.ts";
 import { stopwatch } from "../stopwatch.ts";
@@ -48,6 +51,9 @@ const ROUTE_SCOPES: ReadonlyArray<[method: string, route: string, required: Requ
   ["POST", "/api/v1/admin/history/marks", "manage"],
   ["DELETE", "/api/v1/admin/devices/:id/problems", "manage"],
   ["POST", "/api/v1/admin/catalog/reload", "manage"],
+  ["PUT", "/api/v1/admin/app/apk", "manage"],
+  ["DELETE", "/api/v1/admin/app/apk", "manage"],
+  ["POST", "/api/v1/admin/app/check", "manage"],
 ];
 
 /** The scope a request to an admin route needs. */
@@ -61,6 +67,8 @@ export function requiredScope(method: string, route: string): Required {
 const ADMIN_AUTH_MAX_FAILURES = 10;
 const ADMIN_AUTH_WINDOW_MS = 10 * 60_000;
 const API_BODY_LIMIT = 64 * 1024;
+/** The one route whose body may be larger than API_BODY_LIMIT: the APK upload, which streams and caps its own. */
+const LARGE_BODY_ROUTE = "/api/v1/admin/app/apk";
 
 /** The address a request is counted under (pair/start, admin sign-ins): `X-Forwarded-For` only from trusted proxies. */
 export function clientKeyFor(config: ServerConfig): (c: Context) => string {
@@ -100,7 +108,8 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
     await next();
     if (!c.res.headers.has("Cache-Control")) c.header("Cache-Control", "no-store");
   });
-  app.use("/api/*", bodyLimit({ maxSize: API_BODY_LIMIT, onError: (c) => c.json({ error: "body_too_large" }, 413) }));
+  const apiBodyLimit = bodyLimit({ maxSize: API_BODY_LIMIT, onError: (c) => c.json({ error: "body_too_large" }, 413) });
+  app.use("/api/*", (c, next) => (c.req.method === "PUT" && routePath(c, -1) === LARGE_BODY_ROUTE ? next() : apiBodyLimit(c, next)));
 
   app.onError((err, c) => {
     if (err instanceof HttpError) {
@@ -121,7 +130,9 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
     if (!device) throw unauthorized("izle", "missing or invalid device token");
     const t = ctx.now();
     if (device.lastSeenAt === null || t - device.lastSeenAt > 60_000) store.touchDevice(device.id, t);
-    c.set("device", device);
+    // The app version comes with every request, in the User-Agent; a change is recorded (anything else is ignored).
+    const app = parseTvUserAgent(c.req.header("User-Agent"));
+    c.set("device", app && !sameApp(device, app) ? ctx.devices.recordApp(device, app) : device);
     await next();
   });
 

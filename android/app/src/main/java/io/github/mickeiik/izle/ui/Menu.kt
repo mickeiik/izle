@@ -6,7 +6,8 @@ import io.github.mickeiik.izle.player.TrackOption
 
 enum class RootEntry { Episodes, StartOver, Audio, Subtitles, Settings, About }
 
-enum class SettingsEntry { ServerAddress, Language, PairAgain }
+/** [InstallUpdate]: only while the server offers a newer version of the app. */
+enum class SettingsEntry { ServerAddress, Language, PairAgain, InstallUpdate }
 
 sealed interface MenuPage {
     /** [focused]: the entry that opened the page above, so Back returns to it. */

@@ -15,7 +15,7 @@ export const MAX_SEEK_DELTA_MS = 3_600_000;
 export const MESSAGE_MAX_CHARS = 200;
 export const MESSAGE_DURATION_SEC = { min: 3, max: 120, default: 15 };
 
-export type CommandType = "play" | "seek" | "message" | (typeof PLAIN_COMMANDS)[number];
+export type CommandType = "play" | "seek" | "message" | "update" | (typeof PLAIN_COMMANDS)[number];
 
 /** What the TV made of a command (`POST /tv/commands/:id/result`). */
 export const COMMAND_RESULTS = ["done", "ignored", "failed"] as const;
@@ -27,7 +27,8 @@ export type CommandBody =
   | { type: (typeof PLAIN_COMMANDS)[number] }
   | { type: "seek"; deltaMs: number; positionMs?: undefined }
   | { type: "seek"; positionMs: number; deltaMs?: undefined }
-  | { type: "message"; text: string; durationSec?: number };
+  | { type: "message"; text: string; durationSec?: number }
+  | { type: "update" };
 
 /** Unacknowledged commands younger than this are replayed when a TV (re)connects to the event stream. */
 const COMMAND_REPLAY_MS = 2 * 60_000;
@@ -69,6 +70,12 @@ export class CommandService {
         return body.deltaMs !== undefined ? { deltaMs: body.deltaMs } : { positionMs: body.positionMs };
       case "message":
         return { text: body.text.trim(), durationSec: body.durationSec ?? MESSAGE_DURATION_SEC.default };
+      case "update": {
+        // The version the TV is to install: the APK stored now (the TV fetches /tv/app before installing).
+        const apk = this.s.appUpdates.current();
+        if (!apk) throw new HttpError(409, "no_apk", "no TV app APK is stored");
+        return { versionCode: apk.versionCode };
+      }
       default:
         return {}; // stop, pause, resume, next, previous
     }

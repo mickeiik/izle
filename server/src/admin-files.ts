@@ -1,6 +1,6 @@
 const JS = "text/javascript; charset=utf-8";
 const MODULES = ["app.js", "router.js", "api.js", "dom.js", "lib.js", "view-devices.js", "view-device.js",
-  "device-home.js", "view-catalog.js", "view-item.js", "view-history.js", "view-tokens.js", "events.js", "companion.js", "companion-player.js"];
+  "device-home.js", "view-catalog.js", "view-item.js", "view-history.js", "view-tokens.js", "view-app.js", "events.js", "companion.js", "companion-player.js"];
 
 /**
  * The admin page's static files, served from `server/admin/` with their content types. This is an allow-list:
