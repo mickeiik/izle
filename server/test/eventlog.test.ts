@@ -210,7 +210,7 @@ test("online: a TV is online while a stream is open and for the grace period aft
   assert.equal(online(), false);
 });
 
-test("status: every active TV in one call with lastEventId read first; nowPlaying while the last report is not stopped or finished", async (t) => {
+test("status: every active TV in one call with lastEventId read first; nowPlaying while a viewing runs, with its id", async (t) => {
   const s = await startTestServer();
   t.after(() => s.close());
   const tv = await s.pair("Salon");
@@ -232,6 +232,7 @@ test("status: every active TV in one call with lastEventId read first; nowPlayin
     (({ itemId, episodeId, itemTitle, episodeTitle, state, positionMs }) => ({ itemId, episodeId, itemTitle, episodeTitle, state, positionMs }))(st.devices[0].nowPlaying),
     { itemId: "show", episodeId: "show.e1", itemTitle: "Şov Dünyası", episodeTitle: "Pilot", state: "starting", positionMs: 0 },
   );
+  assert.equal(st.devices[0].nowPlaying.viewingId, s.srv.ctx.viewings.running(tv.deviceId)!.id);
   await s.call("POST", "/api/v1/tv/progress", { token: tv.token, body: { episodeId: "show.e1", positionMs: 5000, durationMs: 1_200_000, status: "paused" } });
   assert.equal((await s.admin("GET", "/status")).json.devices[0].nowPlaying.state, "paused");
   await s.call("POST", "/api/v1/tv/progress", { token: tv.token, body: { episodeId: "show.e1", positionMs: 6000, durationMs: 1_200_000, status: "stopped" } });

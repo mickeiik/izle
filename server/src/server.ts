@@ -17,6 +17,7 @@ import { CatalogHistory } from "./history.ts";
 import { clientKeyFor, registerMiddleware, type Env } from "./http/middleware.ts";
 import { registerAdmin } from "./http/routes/admin.ts";
 import { registerAdminEvents } from "./http/routes/admin-events.ts";
+import { registerAdminHistory } from "./http/routes/admin-history.ts";
 import { registerAdminStatus } from "./http/routes/admin-status.ts";
 import { registerAdminTokens } from "./http/routes/admin-tokens.ts";
 import { registerTv } from "./http/routes/tv.ts";
@@ -31,6 +32,7 @@ import { Store } from "./store.ts";
 import { TokenService } from "./tokens.ts";
 import { TvService } from "./tv.ts";
 import { VERSION } from "./version.ts";
+import { ViewingService, VIEWING_SWEEP_MS } from "./viewings.ts";
 
 interface StartOptions {
   config: ServerConfig;
@@ -78,7 +80,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   }
   const events = new EventHub(opts.offlineGraceMs);
   const eventLog = new EventLog(store, log, now, config.events.retentionDays);
-  events.onOnline = (deviceId, online) => eventLog.append(online ? "device.online" : "device.offline", deviceId, tvActor(deviceId), {});
+  const viewings = new ViewingService({ store, catalog, eventLog, events, log, now });
+  events.onOnline = (deviceId, online) => {
+    viewings.onOnline(deviceId, online);
+    eventLog.append(online ? "device.online" : "device.offline", deviceId, tvActor(deviceId), {});
+  };
   const sessions = new PlaybackSessions(now);
   const problems = new ProblemService({ store, catalog, log, now, sessions, eventLog });
   const { sessionTtlSec, alignTsSegments, always: proxyAlways } = config.proxy;
@@ -88,7 +94,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     deadlineMs: config.resolver?.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,
     budgetMs: config.resolver?.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
   });
-  const services = { config, store, catalog, events, notifier: new Notifier(store, events), eventLog, resolver, sessions, problems, log, now };
+  const services = { config, store, catalog, events, notifier: new Notifier(store, events), eventLog, resolver, sessions, problems, viewings, log, now };
   const tv = new TvService(services);
   const ctx: AppContext = {
     ...services, tv, companion: new CompanionService(services), pairing: new PairingService(services, opts.pairing), proxy,
@@ -106,6 +112,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   registerAdminTokens(app, ctx);
   registerAdminEvents(app, ctx);
   registerAdminStatus(app, ctx);
+  registerAdminHistory(app, ctx);
 
   let server: Server;
   try {
@@ -130,6 +137,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     eventLog.purge();
   }, 10 * 60_000);
   housekeeping.unref();
+  // Viewings whose TV fell silent or offline end as lost.
+  const sweep = setInterval(() => viewings.sweep(), VIEWING_SWEEP_MS);
+  sweep.unref();
 
   let closing: Promise<void> | null = null;
   return {
@@ -138,6 +148,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     close() {
       closing ??= (async () => {
         clearInterval(housekeeping);
+        clearInterval(sweep);
         events.closeAll();
         await new Promise<void>((resolve) => {
           server.close(() => resolve());

@@ -67,6 +67,8 @@ export class DeviceService {
   /** What the device is playing (its now-playing row `n`), with the anchor the phone's "Listen along" follows. */
   now(d: Device, n: NowPlaying | null) {
     const ref = n ? this.s.catalog.episode(n.episodeId) : undefined;
+    // The running viewing, while it is the one the row reports on; null once it ended.
+    const running = n ? this.s.viewings.running(d.id) : null;
     return {
       online: this.s.events.isOnline(d.id),
       serverNowMs: this.s.now(),
@@ -74,6 +76,7 @@ export class DeviceService {
       nowPlaying: n && {
         itemId: n.itemId, episodeId: n.episodeId, sourceId: n.sourceId, itemTitle: ref?.item.title ?? null, episodeTitle: ref?.episode.title ?? null,
         positionMs: n.positionMs, durationMs: n.durationMs, state: n.state, updatedAt: iso(n.updatedAt), playing: n.playing,
+        viewingId: running?.episodeId === n.episodeId ? running.id : null,
       },
       // Where the TV is: positionMs as of atMs (server clock), advancing at `rate` while `playing`.
       anchor: n ? { positionMs: n.positionMs, atMs: n.anchorAt ?? n.updatedAt, playing: n.playing, rate: 1 } : null,

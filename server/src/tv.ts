@@ -164,7 +164,11 @@ export class TvService {
     const resume = progress?.status === "watching" ? { positionMs: progress.positionMs, durationMs: progress.durationMs } : null;
     const durationMs = progress?.durationMs ?? episode.durationMs ?? null;
     const row = { catalogId, itemId: item.id, episodeId: episode.id, sourceId: r.source.id, positionMs: resume?.positionMs ?? 0, durationMs };
-    this.s.store.setNowPlaying(device.id, { ...row, state: "starting", updatedAt: this.s.now(), playing: false, anchorAt: this.s.now() });
+    this.s.store.transaction(() => {
+      this.s.store.setNowPlaying(device.id, { ...row, state: "starting", updatedAt: this.s.now(), playing: false, anchorAt: this.s.now() });
+      // The viewing history starts, continues or replaces this TV's viewing, in the same transaction.
+      this.s.viewings.onResolve(device, r.ref, r.source.id, row.positionMs, durationMs, input);
+    });
     this.nowWaiters.wake(device.id);
     return {
       sessionId: r.session.id, sourceId: r.source.id, media: r.media,
@@ -197,6 +201,8 @@ export class TvService {
       const playing = input.playing ?? input.status === "playing";
       const now = { ...ids, sourceId, positionMs: input.positionMs, durationMs, state: input.status, updatedAt: t, playing, anchorAt: t - (input.ageMs ?? 0) };
       this.s.store.setNowPlaying(device.id, now);
+      // The viewing history applies the report to the running viewing of this episode (ignored otherwise).
+      this.s.viewings.onReport(device, { episodeId: episode.id, positionMs: input.positionMs, durationMs, status: input.status, playing, anchorAt: now.anchorAt });
       return cursor.changed;
     });
     this.nowWaiters.wake(device.id);

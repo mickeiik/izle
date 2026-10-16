@@ -14,6 +14,7 @@ import type { LoadedResolver } from "./resolver.ts";
 import type { Store } from "./store.ts";
 import type { TokenService } from "./tokens.ts";
 import type { TvService } from "./tv.ts";
+import type { ViewingService } from "./viewings.ts";
 
 /** The services the TV, companion, device and command services are built on. */
 export interface Services {
@@ -28,6 +29,8 @@ export interface Services {
   /** The playback sessions resolve opens; progress and problem reports name them. */
   sessions: PlaybackSessions;
   problems: ProblemService;
+  /** The viewing history: resolves and progress reports feed it. */
+  viewings: ViewingService;
   log: Logger;
   now: () => number;
 }

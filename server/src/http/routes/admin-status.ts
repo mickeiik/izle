@@ -8,7 +8,7 @@ import { VERSION } from "../../version.ts";
 import type { Env } from "../middleware.ts";
 
 export function status(ctx: AppContext) {
-  const { store, catalog, devices, pairing, eventLog, events } = ctx;
+  const { store, catalog, devices, pairing, eventLog, events, viewings } = ctx;
   const lastEventId = eventLog.lastId();
   const { manifest } = catalog.current;
   return {
@@ -17,10 +17,9 @@ export function status(ctx: AppContext) {
     catalog: { id: manifest.catalogId, buildId: manifest.buildId },
     pairing: { pending: pairing.listOpen().length },
     devices: store.listDevices().filter((d) => d.tokenHash !== null).map((d) => {
-      // TODO(history slice): nowPlaying is the "now" object while the TV has a running viewing (and gains
-      // `viewingId`); until viewings exist, the last report stands in while its state is not stopped or finished.
+      // The "now" object while the TV has a running viewing; GET …/now itself keeps answering the last report.
       const n = store.getNowPlaying(d.id);
-      const playing = n && n.state !== "stopped" && n.state !== "finished" ? devices.now(d, n).nowPlaying : null;
+      const playing = n && viewings.running(d.id) ? devices.now(d, n).nowPlaying : null;
       return { id: d.id, name: d.name, online: events.isOnline(d.id), lastSeenAt: iso(d.lastSeenAt), nowPlaying: playing };
     }),
     lastEventId,
