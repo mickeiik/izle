@@ -17,7 +17,7 @@ import { approveBody, commandBody, companionLinkBody, companionResolveBody, curs
 import type { Env } from "../middleware.ts";
 
 /** The device a `/admin/devices/:id` route names; 404 `unknown_device` otherwise. */
-function requireDevice(store: Store, id: string): Device {
+export function requireDevice(store: Store, id: string): Device {
   const d = isId(id) ? store.getDevice(id) : null;
   if (!d) throw new HttpError(404, "unknown_device");
   return d;
@@ -56,7 +56,7 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
   app.put("/api/v1/admin/devices/:id/home", async (c) => {
     const d = requireDevice(store, c.req.param("id"));
     const body = await parseBody(c, homeBody);
-    const version = tv.setHome(d.id, body.itemIds, c.get("actor"));
+    const version = tv.setHome(d.id, body.itemIds, c.get("actor"), body.expected);
     return c.json({ version, home: devices.home(d) });
   });
 

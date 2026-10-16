@@ -17,6 +17,7 @@ import { CatalogHistory } from "./history.ts";
 import { clientKeyFor, registerMiddleware, type Env } from "./http/middleware.ts";
 import { registerAdmin } from "./http/routes/admin.ts";
 import { registerAdminEvents } from "./http/routes/admin-events.ts";
+import { registerAdminHome } from "./http/routes/admin-home.ts";
 import { registerAdminStatus } from "./http/routes/admin-status.ts";
 import { registerAdminTokens } from "./http/routes/admin-tokens.ts";
 import { registerTv } from "./http/routes/tv.ts";
@@ -106,6 +107,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   registerAdminTokens(app, ctx);
   registerAdminEvents(app, ctx);
   registerAdminStatus(app, ctx);
+  registerAdminHome(app, ctx);
 
   let server: Server;
   try {

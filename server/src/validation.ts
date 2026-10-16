@@ -35,7 +35,14 @@ export const devicePatchBody = ajv.compile<DevicePatch>({
 
 export const tokenBody = ajv.compile<{ name: string; scope: Scope }>(object({ name: NAME, scope: { enum: SCOPES } }, ["name", "scope"]));
 
-export const homeBody = ajv.compile<{ itemIds: string[] }>(object({ itemIds: { type: "array", items: ID, maxItems: 1000 } }, ["itemIds"]));
+const ITEM_IDS = { type: "array", items: ID, maxItems: 1000 };
+const POSITION = { type: "integer", minimum: 0 };
+
+export const homeBody = ajv.compile<{ itemIds: string[]; expected?: string[] }>(object({ itemIds: ITEM_IDS, expected: ITEM_IDS }, ["itemIds"]));
+
+export const homeItemBody = ajv.compile<{ itemId: string; position?: number }>(object({ itemId: ID, position: POSITION }, ["itemId"]));
+
+export const homeMoveBody = ajv.compile<{ position: number }>(object({ position: POSITION }, ["position"]));
 
 export const cursorBody = ajv.compile<{ itemId: string; episodeId: string }>(object({ itemId: ID, episodeId: ID }, ["itemId", "episodeId"]));
 
