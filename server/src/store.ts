@@ -1,9 +1,11 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
+import type { Actor } from "./actor.ts";
 import type { CommandType } from "./commands.ts";
 import type { ProgressReportStatus } from "./playback.ts";
 import type { ProblemKind } from "./problems.ts";
+import type { Scope } from "./tokens.ts";
 import { MIGRATIONS } from "./store/migrations.ts";
 
 export { MIGRATIONS, SCHEMA_VERSION } from "./store/migrations.ts";
@@ -98,6 +100,41 @@ export interface Command {
   payload: Record<string, unknown>;
   createdAt: number;
   ackedAt: number | null;
+  /** Who sent it; null for commands stored before actors were recorded. */
+  actor: Actor | null;
+  /** What the TV made of it (`POST /tv/commands/:id/result`); null until it reports, or with a TV that never does. */
+  result: "done" | "ignored" | "failed" | null;
+  reason: string | null;
+  resultAt: number | null;
+}
+
+/** A named token an agent or an app signs in with; only the hash of its secret is kept. */
+export interface AccessToken {
+  id: string;
+  name: string;
+  scope: Scope;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+
+/** One row of the event log, as stored. */
+export interface StoredEvent {
+  id: number;
+  at: number;
+  type: string;
+  deviceId: string | null;
+  actor: Actor;
+  data: Record<string, unknown>;
+}
+
+/** Which events to read: after an id, for some devices (events without a device always pass), of some types. */
+export interface EventFilter {
+  after: number;
+  limit: number;
+  /** Device ids; undefined = every device. */
+  devices?: readonly string[];
+  /** Event types, or prefixes ending in `.`; undefined = every type. */
+  types?: readonly string[];
 }
 
 export type ProblemOrigin = "tv" | "server";
@@ -160,7 +197,7 @@ type Row = Record<string, SQLOutputValue>;
 
 const PATCHABLE = ["name", "uiLanguage", "preferredAudioLanguage", "subtitlesLanguage", "autoplayOnStart"] as const;
 /** 0/1 columns, read as booleans. */
-const FLAGS = new Set(["autoplay_on_start", "wrapped", "playing", "baseline"]);
+const FLAGS = new Set(["autoplay_on_start", "wrapped", "playing", "baseline", "seen", "imported", "last_playing"]);
 const column = (key: string) => key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 const sqlValue = (v: unknown) => (typeof v === "boolean" ? Number(v) : v) as SQLInputValue;
 
@@ -184,6 +221,8 @@ export class Store {
   // Tracked by hand: DatabaseSync#isOpen / #isTransaction need Node 22.15+ / 22.16+.
   private open = true;
   private inTransaction = false;
+  /** What runs once the open transaction commits (nothing if it rolls back): events are published this way. */
+  private afterCommitHooks: Array<() => void> = [];
 
   constructor(file: string) {
     if (file !== ":memory:") mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -207,16 +246,27 @@ export class Store {
     if (this.inTransaction) return fn();
     this.db.exec("BEGIN IMMEDIATE");
     this.inTransaction = true;
+    let result: T;
     try {
-      const result = fn();
+      result = fn();
       this.db.exec("COMMIT");
-      return result;
     } catch (err) {
       this.db.exec("ROLLBACK");
-      throw err;
-    } finally {
+      this.afterCommitHooks = [];
       this.inTransaction = false;
+      throw err;
     }
+    const hooks = this.afterCommitHooks;
+    this.afterCommitHooks = [];
+    this.inTransaction = false;
+    for (const hook of hooks) hook();
+    return result;
+  }
+
+  /** Runs `fn` once the open transaction commits (never if it rolls back); outside a transaction, at once. */
+  afterCommit(fn: () => void): void {
+    if (this.inTransaction) this.afterCommitHooks.push(fn);
+    else fn();
   }
 
   private get(sql: string, ...params: SQLInputValue[]): Row | undefined {
@@ -411,6 +461,79 @@ export class Store {
 
   purgeCommands(before: number): void {
     this.run("DELETE FROM commands WHERE created_at < ?", before);
+  }
+
+  // --- access tokens -------------------------------------------------------------------------------------------
+
+  insertAccessToken(t: AccessToken & { secretHash: string }): AccessToken {
+    return fromRow(this.insert("access_tokens", t, undefined, " RETURNING id, name, scope, created_at, last_used_at")!);
+  }
+
+  getAccessToken(id: string): AccessToken | null {
+    return this.one("SELECT id, name, scope, created_at, last_used_at FROM access_tokens WHERE id = ?", [id]);
+  }
+
+  getAccessTokenByHash(secretHash: string): AccessToken | null {
+    return this.one("SELECT id, name, scope, created_at, last_used_at FROM access_tokens WHERE secret_hash = ?", [secretHash]);
+  }
+
+  getAccessTokenByName(name: string): AccessToken | null {
+    return this.one("SELECT id, name, scope, created_at, last_used_at FROM access_tokens WHERE name = ?", [name]);
+  }
+
+  /** Every access token, oldest first. */
+  listAccessTokens(): AccessToken[] {
+    return this.many("SELECT id, name, scope, created_at, last_used_at FROM access_tokens ORDER BY created_at, id", []);
+  }
+
+  touchAccessToken(id: string, now: number): void {
+    this.run("UPDATE access_tokens SET last_used_at = ? WHERE id = ?", now, id);
+  }
+
+  deleteAccessToken(id: string): boolean {
+    return this.run("DELETE FROM access_tokens WHERE id = ?", id) > 0;
+  }
+
+  // --- events --------------------------------------------------------------------------------------------------
+
+  /** Appends an event and returns its id (strictly increasing: the order the changes were stored in). */
+  insertEvent(e: Omit<StoredEvent, "id">): number {
+    const row = { at: e.at, type: e.type, deviceId: e.deviceId, actorJson: JSON.stringify(e.actor), dataJson: JSON.stringify(e.data) };
+    return Number(this.insert("events", row, undefined, " RETURNING id")!.id);
+  }
+
+  /** Events after `after` that pass the filter, oldest first, at most `limit`. */
+  listEvents(f: EventFilter): StoredEvent[] {
+    const where = ["id > ?"];
+    const params: SQLInputValue[] = [f.after];
+    if (f.devices) {
+      where.push(`(device_id IS NULL OR device_id IN (${f.devices.map(() => "?").join(", ") || "NULL"}))`);
+      params.push(...f.devices);
+    }
+    if (f.types) {
+      // A type ending in "." is a prefix (`playback.`); the types are validated to letters, dots and underscores,
+      // so a LIKE pattern cannot be smuggled in.
+      const clauses = f.types.map((t) => (t.endsWith(".") ? "type LIKE ? || '%'" : "type = ?"));
+      where.push(`(${clauses.join(" OR ") || "0"})`);
+      params.push(...f.types);
+    }
+    return this.many(`SELECT * FROM events WHERE ${where.join(" AND ")} ORDER BY id LIMIT ?`, [...params, f.limit]);
+  }
+
+  /** The id of the newest event ever appended (also after it was purged), or 0 when there was none. */
+  lastEventId(): number {
+    const r = this.get("SELECT COALESCE((SELECT MAX(id) FROM events), (SELECT seq FROM sqlite_sequence WHERE name = 'events'), 0) AS id")!;
+    return Number(r.id);
+  }
+
+  /** The id of the oldest kept event, or null when none is kept. */
+  oldestEventId(): number | null {
+    const r = this.get("SELECT MIN(id) AS id FROM events")!;
+    return r.id === null ? null : Number(r.id);
+  }
+
+  purgeEvents(before: number): number {
+    return this.run("DELETE FROM events WHERE at < ?", before);
   }
 
   // --- problems ------------------------------------------------------------------------------------------------

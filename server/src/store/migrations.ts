@@ -128,6 +128,89 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (catalog_id, episode_id));
   CREATE INDEX catalog_seen_by_item ON catalog_seen (catalog_id, item_id, first_seen_at);
   `,
+  // 5 — remote management: access tokens with scopes, the stored event log, the permanent viewing history (viewings
+  // outlive the TV and the catalog, so no foreign keys), the owner's seen marks, and who sent each command with
+  // what the TV made of it. The saved positions become the first viewings ("imported"), one per position.
+  `
+  CREATE TABLE access_tokens (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    scope TEXT NOT NULL CHECK (scope IN ('read', 'control', 'manage')),
+    secret_hash TEXT NOT NULL UNIQUE,       -- sha256 of the secret; the secret itself is shown once and never kept
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER                    -- written at most once a minute
+  );
+  CREATE TABLE events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,   -- strictly increasing: the order the changes were stored in
+    at INTEGER NOT NULL,
+    type TEXT NOT NULL,
+    device_id TEXT,                         -- no foreign key: events outlive devices
+    actor_json TEXT NOT NULL,
+    data_json TEXT NOT NULL
+  );
+  CREATE INDEX events_by_device ON events (device_id, id);
+  CREATE INDEX events_by_type ON events (type, id);
+  CREATE TABLE viewings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT NOT NULL,                -- no foreign key, no cascade: viewings outlive the TV
+    device_name TEXT NOT NULL,
+    catalog_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    item_kind TEXT,
+    item_title TEXT,
+    episode_id TEXT NOT NULL,
+    episode_title TEXT,
+    season INTEGER,
+    number INTEGER,
+    source_id TEXT,
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER,                       -- NULL while the viewing runs
+    start_position_ms INTEGER,
+    end_position_ms INTEGER,
+    duration_ms INTEGER,
+    watched_ms INTEGER,
+    end_reason TEXT,                        -- finished | stopped | replaced | lost; NULL while running
+    seen INTEGER NOT NULL DEFAULT 0,
+    trigger TEXT NOT NULL,                  -- viewer | autoplay | next | command | unknown
+    actor_json TEXT NOT NULL,
+    command_id INTEGER,
+    imported INTEGER NOT NULL DEFAULT 0,
+    last_report_at INTEGER,                 -- running state, kept by the history: the last report and its anchor
+    last_position_ms INTEGER,
+    last_playing INTEGER,
+    last_anchor_at INTEGER,
+    last_state TEXT
+  );
+  CREATE INDEX viewings_by_device ON viewings (device_id, started_at);
+  CREATE INDEX viewings_by_item ON viewings (catalog_id, item_id);
+  CREATE INDEX viewings_by_episode ON viewings (catalog_id, episode_id);
+  CREATE INDEX viewings_by_end ON viewings (ended_at);
+  CREATE TABLE viewing_ranges (
+    viewing_id INTEGER NOT NULL REFERENCES viewings(id) ON DELETE CASCADE,
+    from_ms INTEGER NOT NULL,
+    to_ms INTEGER NOT NULL
+  );
+  CREATE INDEX viewing_ranges_by_viewing ON viewing_ranges (viewing_id);
+  CREATE TABLE episode_marks (
+    catalog_id TEXT NOT NULL,
+    episode_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    seen INTEGER NOT NULL,                  -- the owner's word: 1 seen, 0 not seen (a mark wins over the viewings)
+    at INTEGER NOT NULL,
+    PRIMARY KEY (catalog_id, episode_id)
+  );
+  ALTER TABLE commands ADD COLUMN actor_json TEXT;                -- who sent it; NULL for commands from before
+  ALTER TABLE commands ADD COLUMN result TEXT;                    -- done | ignored | failed, as the TV reported
+  ALTER TABLE commands ADD COLUMN reason TEXT;
+  ALTER TABLE commands ADD COLUMN result_at INTEGER;
+  INSERT INTO viewings (device_id, device_name, catalog_id, item_id, episode_id, started_at, ended_at, end_position_ms, duration_ms,
+                        end_reason, seen, trigger, actor_json, imported)
+    SELECT p.device_id, d.name, p.catalog_id, p.item_id, p.episode_id, p.updated_at, p.updated_at, p.position_ms, p.duration_ms,
+           CASE p.status WHEN 'finished' THEN 'finished' ELSE 'stopped' END, CASE p.status WHEN 'finished' THEN 1 ELSE 0 END,
+           'unknown', '{"type":"tv","deviceId":"' || p.device_id || '"}', 1
+    FROM progress p JOIN devices d ON d.id = p.device_id
+    ORDER BY p.updated_at, p.device_id, p.episode_id;
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
