@@ -1,7 +1,8 @@
 # izle-server API v1
 
-Status: **draft, implemented**. Changes within v1 are additive only (new optional request fields, new response
-fields, new routes); clients MUST ignore unknown response fields.
+Status: **draft, implemented**, except [Remote management](#remote-management) (draft, not implemented yet).
+Changes within v1 are additive only (new optional request fields, new response fields, new routes); clients MUST
+ignore unknown response fields.
 
 ## Conventions
 
@@ -442,6 +443,277 @@ language inside the same multi-audio stream) in sync with the picture, from the 
 `404 unknown_episode`, `404 unknown_source`, `403 not_allowed`, `400 unsupported_media` (DASH), `404 no_link`
 (copy without a stored link), `502 no_playable_source`.
 
+## Remote management
+
+Status: **draft, not implemented**. Everything here is additive within v1.
+
+The viewer only watches; the TV is run from elsewhere: by the owner on the admin page, by the owner's own apps, or by
+AI agents. They all use these routes. An MCP server for agents is a thin wrapper around them with an
+[access token](#access-tokens); it is not part of the server. One family per server: every token sees every TV of the
+server. Whether an agent must ask before acting is decided where the agent is set up, not by the server.
+
+In one place: [access tokens](#access-tokens) with scopes, and the `Actor` behind every change;
+[`GET /admin/status`](#status); a stored [event log](#events) with a stream and a long-poll; the permanent
+[viewing history](#viewing-history); `play` by item and at a position, and
+[command results](#remote-play-and-command-results); [single home list changes](#home-list-changes);
+[replacing a TV](#replacing-a-tv). [What changes for the TV](#what-changes-for-the-tv) lists the TV side.
+
+### Access tokens
+
+The admin token (the **owner token**) keeps full access. The owner creates named **access tokens** for an agent or
+an app, each with one scope, and revokes them at any time:
+
+| Scope | Allows |
+|---|---|
+| `read` | every `GET` admin route except `GET /admin/tokens`: devices, catalog, problems, Listen along candidates, the pending pairing codes, [status](#status), [events](#events) and [history](#viewing-history) |
+| `control` | `read`, plus [`POST …/commands`](#commands) |
+| `manage` | `control`, plus the home list (`PUT …/home` and the [single changes](#home-list-changes)), `PUT …/cursor`, `PATCH /admin/devices/:id`, [history marks](#viewing-history), `DELETE …/problems` and `POST /admin/catalog/reload` |
+
+Every other route needs the owner token: pairing approval, deleting a TV, deleting and adopting history,
+[diagnostics](#diagnostics), [Listen along](#listen-along) resolves and links, and the access tokens themselves (every
+method). A request whose token does not cover the route answers `403 insufficient_scope` with `required` (the scope it
+needs, or `owner`); it does not count as a failed sign-in.
+
+| Route | Body | Response |
+|---|---|---|
+| `GET /api/v1/admin/tokens` | | `{"tokens": [AccessToken]}`, oldest first |
+| `POST /api/v1/admin/tokens` | `{"name", "scope"}` (`name`: 1–60 characters, trimmed, unique) | `201 {"token": AccessToken, "secret": "izat_…"}`; the secret is shown only here |
+| `DELETE /api/v1/admin/tokens/:id` | | `204`; requests with that token answer `401` from now on |
+
+`AccessToken` = `{"id", "name", "scope", "createdAt", "lastUsedAt"}` (`id`: 12 alphanumeric characters, like a device
+id; `lastUsedAt` is written at most once a minute). The secret is `izat_` and 32 random bytes base64url (the prefix
+lets secret scanners recognize it, and the server tell it from the owner token); the server keeps its sha256, never
+logs it, and the admin sign-in throttle ([Authentication model](#authentication-model)) counts a wrong or revoked one
+like a wrong owner token. An app that keeps sending a revoked token therefore locks its address out of the admin API
+for 10 minutes: stop the app before revoking. Errors: `409 duplicate_name`, `404 unknown_token`.
+`izle-server token create <name> --scope <scope>` (prints the secret once), `token list` and `token revoke <id>` call
+these routes on the running server, like `pair approve`. The access log records the token's id, never the secret
+([Logging](#logging)).
+
+`Actor` (who caused a change or an event) = `{"type": "owner"}`, `{"type": "token", "tokenId", "name"}` (the name at
+that moment), `{"type": "tv", "deviceId"}` (the viewer, with the remote; also what the TV reports and its
+connections) or `{"type": "server"}` (a catalog reload by `SIGHUP`, a viewing that timed out, housekeeping, the
+start). Consumers MUST ignore unknown actor types.
+
+### Status
+
+`GET /api/v1/admin/status` → `{"serverNowMs", "server": {"version"}, "catalog": {"id", "buildId"},
+"pairing": {"pending"}, "devices": [{"id", "name", "online", "lastSeenAt", "nowPlaying"}], "lastEventId"}`: every
+active TV in one call. `nowPlaying` is the object of [`GET …/now`](#devices) while the TV has a running
+[viewing](#viewing-history), else null (`GET …/now` itself keeps answering the last report, with its `state`, as
+before). `lastEventId` is read before the rest, so reading the status and then the [events](#events) after
+`lastEventId` misses nothing (a change in between shows twice, never not at all).
+
+`nowPlaying` (here and in `GET …/now`) gains `viewingId`: the running viewing, or null once it ended.
+
+**Online.** A TV is online while it has an event stream open, and for 60 s after its last one closed (a reconnect does
+not flap). `online` in `Device`, in the answer to a command and here all follow this rule; at start every TV is
+offline until it connects.
+
+### Events
+
+Everything worth reacting to is appended to a stored event log, kept for `events.retentionDays` (config, default
+7, 1–90). The event log is for live consumers; the [viewing history](#viewing-history) is the permanent record.
+
+`Event` = `{"id": 1234, "at": "…", "type": "playback.started", "deviceId": "…" | null, "actor": Actor, "data": {…}}`.
+`id` increases strictly, in the order the changes were stored (an event is written in the transaction of its change).
+Events carry no URLs, headers, refs, tokens, message texts or problem details.
+
+- **Stream:** `GET /api/v1/admin/events/stream?after=&devices=&types=`, server-sent events as for
+  [`/tv/events`](#get-apiv1tvevents): each event as `id: <id>`, `event: <type>`, `data: <Event>`, starting after
+  `after`, else after `Last-Event-ID` (without either: new events only); `retry: 5000`, a `: ping` comment every
+  20 s. The token goes in the `Authorization` header as on every admin route, never in the query string (a browser's
+  `EventSource` cannot set it; the admin page reads the stream with `fetch`).
+- **Long-poll:** `GET /api/v1/admin/events?after=&wait=&limit=&devices=&types=` → `{"events": [Event], "last",
+  "gap"}`, oldest first (`limit` ≤ 500, default 100); with no event after `after` it waits up to `wait` seconds (0–25,
+  default 0). For clients that cannot keep a stream open: MCP tools, scripts. `last` is the id of the last event
+  returned, else `after`; without `after` the answer is empty at once and `last` is the newest id, where following
+  starts.
+- **Filters:** `devices`: device ids, comma-separated (events without a device pass the filter); `types`: types or
+  prefixes ending in `.`, comma-separated (`playback.,command.result`).
+- **Gap:** when `after` is older than the oldest kept event, events were lost: `gap: true` and the kept events from
+  the oldest on (the stream sends `event: gap` `{"oldest"}` first). The consumer re-reads [`/admin/status`](#status)
+  and what it needs from the history.
+
+| `type` | `data` |
+|---|---|
+| `server.started` | `{"version"}`: the server (re)started; every TV is offline until it connects, and streams have to be reopened |
+| `device.online` / `device.offline` | `{}`, by the rule under [Status](#status) |
+| `device.paired` | `{"name", "replaced"}`: a TV collected its token; `replaced: true`: it took over an existing TV ([Replacing a TV](#replacing-a-tv)) |
+| `device.updated` / `device.removed` | `{"fields"}` (names of the changed settings, `name` included) / `{"name"}` |
+| `pairing.pending` | `{"code", "expiresAt"}`: a TV shows a new pairing code |
+| `playback.started` | `{"viewingId", "itemId", "itemKind", "itemTitle", "episodeId", "episodeTitle", "season", "number", "sourceId", "positionMs", "trigger"}`: a [viewing](#viewing-history) starts (its first resolve; the re-resolves that continue it send nothing); `positionMs` is where it will start |
+| `playback.paused` / `playback.resumed` | `{"viewingId", "positionMs"}`: a `paused` report / a `playing` report after one |
+| `playback.seeked` | `{"viewingId", "fromMs", "toMs"}`: a report's position is more than 10 s from where playback should be (see [`coveredFraction`](#viewing-history)) |
+| `playback.stalled` / `playback.recovered` | `{"viewingId", "positionMs"}`: a `playing` report with `playing: false` / the next one with `playing: true` (a `paused` report in between is a pause, not a recovery) |
+| `playback.ended` | `{"viewingId", "endReason", "seen", "positionMs", "watchedMs", "dropped"}`; `dropped: true`: the viewing was too short to keep, its id is gone |
+| `episode.seen` | `{"viewingId", "itemId", "episodeId", "firstTime", "itemFinished"}`: a viewing ended [seen](#viewing-history); `firstTime`: the episode was not seen before (by any TV, or a mark); `itemFinished`: every playable episode of the item in the current catalog is now seen (false when the item left it) |
+| `command.sent` / `command.delivered` | `{"commandId", "type", "online"}` / `{"commandId"}` (the TV acknowledged it) |
+| `command.result` | `{"commandId", "type", "result", "reason"}`, see [Remote play and command results](#remote-play-and-command-results) |
+| `home.changed` | `{"itemIds", "added", "removed"}` (the ids that came and went; a reorder has both empty) |
+| `cursor.changed` | `{"itemId", "episodeId"}`: set through `PUT …/cursor` (not the moves that come from watching) |
+| `problem.recorded` | `{"problemId", "origin", "kind", "code", "episodeId"}` |
+| `catalog.reloaded` / `catalog.reload_failed` | `{"buildId", "added", "removed"}` (`{"items", "episodes"}` counts as in [`Build`](#catalog-history), 0 when the build was the one already loaded) on every successful reload, not at start / `{"issues"}` (their number) |
+| `history.changed` | `{"episodeIds", "seen"}` (marks), `{"deleted"}` (viewings deleted) or `{"moved"}` (viewings adopted, `deviceId`: the TV that got them) |
+
+Ordering within one change: when a resolve replaces a running viewing, `playback.ended` comes before
+`playback.started`; `episode.seen` follows its `playback.ended`. New types and fields are added within v1; consumers
+MUST ignore those they do not know.
+
+### Viewing history
+
+A **viewing** is one playback of one episode on one TV. A TV has at most one running viewing. It starts with a
+successful TV resolve and ends with a `stopped` or `finished` report, with the TV resolving something else, or with
+silence. Pauses and seeks (skipping an intro, a recap or the credits) stay within the viewing. A resolve of the same
+episode by the same TV while its viewing runs continues it: the TV re-resolves after a player error, for an expired
+stream and for "Try again", and goes on at the same position. A viewing never reopens once it ended. The server
+records viewings from the TV's resolve and progress reports; a report is applied to the TV's running viewing when it
+names that viewing's episode, and otherwise ignored by the history (the saved position and the cursor take it as
+before). Viewings are **never deleted automatically**, and they outlive catalog changes and the removal of the TV:
+each keeps a copy of the titles it was watched under.
+
+`Viewing` = `{"id", "deviceId", "deviceName", "itemId", "itemKind", "itemTitle", "episodeId", "episodeTitle",
+"season", "number", "sourceId", "startedAt", "endedAt", "startPositionMs", "endPositionMs", "durationMs",
+"watchedMs", "endReason", "seen", "trigger", "actor", "commandId", "imported"}`:
+
+- `id` is an integer. Titles, `season`, `number`, `itemKind` and `deviceName` are copied when the viewing starts.
+  `sourceId` is the source played last (a re-resolve may change it). `durationMs` is the reports' duration, else the
+  catalog's, else null.
+- `startPositionMs`: the position of the first report (until it arrives, the resume position the server offered);
+  `endPositionMs`: the position of the last report (a `finished` report: the duration).
+- `watchedMs`: how long the player actually advanced: for each two consecutive reports of which the first had
+  `playing: true`, the time between them (by the reports' anchors, `receipt − ageMs`), at most 60 s.
+- `endReason`: `finished` (a `finished` report), `stopped` (a `stopped` report), `replaced` (the TV resolved another
+  episode), `lost` (silence: no report for 2 minutes while the last one said `playing` or none came yet, or the TV
+  offline for 2 minutes whatever the last report said; a power cut, a dead app. A paused TV that stays online keeps
+  its viewing running). A lost viewing ends at its last report (or its resolve). `endedAt` and `endReason` are null
+  while the viewing runs.
+- `seen`: the viewing reached the end of the episode (see below); false while it runs.
+- `trigger`: `viewer` (OK on Home, the episode list or Start over in the menu, Try again), `autoplay` (autoplay on
+  start), `next` (auto-next, Up next's Play now, CH+/CH−), `command` (a remote `play`, `next` or `previous`;
+  `actor` is who sent it and `commandId` names it) or `unknown` (a TV that does not say). The TV says it with two new
+  optional fields of [`POST /tv/resolve`](#post-apiv1tvresolve): `trigger` and `commandId`. `actor` is
+  `{"type": "tv", "deviceId"}` and `commandId` null unless the trigger is a command.
+- A viewing that ends not `seen` with `watchedMs` under 10 s is dropped (a mis-press; a source that failed straight
+  away is in the [problem reports](#problem-reports)). Its `playback.ended` event says `dropped: true`.
+- `imported: true`: made once, at the upgrade that introduces history, from every saved episode position: `startedAt`
+  and `endedAt` its last update, `endReason` `finished` or `stopped` (`seen` accordingly), `endPositionMs` its
+  position, `startPositionMs`, `sourceId`, `watchedMs` and `commandId` null, `trigger` `unknown`, `actor` the TV.
+
+A viewing is **seen** when it ends with a `finished` report, or ends (`stopped`, `replaced`, `lost`) at 90 % of
+`durationMs` or later. The TV reports `finished` at the end of the stream and when the viewer leaves within its
+credits allowance (the last 2 minutes or 5 % of the duration, whichever is longer, at most 10 %); the 90 % rule also
+catches the longer credits of films. Parts skipped on the way (an intro, a recap, a scene) do not matter: reaching
+the end is what counts. The 90 % rule is the history's only: the TV's tiles and resume position follow its own
+`finished` reports as before, and a mark changes nothing on the TV (that is `PUT …/cursor`).
+
+An episode is **seen** when one of its viewings is seen, unless the owner marked it otherwise (a mark wins). A movie
+is its single episode. The history covers all TVs of the server (the family) unless a route is given `device`; marks
+are the family's, so `device` narrows the viewings and the counts, not `seen`.
+
+| Route | Body | Response |
+|---|---|---|
+| `GET /api/v1/admin/history/viewings?device=&item=&episode=&from=&to=&before=&limit=` | | `{"viewings": [Viewing], "next"}`: newest first (by `startedAt`, then id), running ones included; `from`/`to` (ISO) bound `startedAt`; `limit` ≤ 200 (default 50); `next` (a viewing id, or null) is the `before` of the next page |
+| `GET /api/v1/admin/history/viewings/:id` | | `{"viewing": Viewing, "ranges": [[fromMs, toMs], …]}`: the ranges played at least once, merged, in position order (empty for an imported viewing); `404 unknown_viewing` |
+| `GET /api/v1/admin/history/titles?device=&status=&sort=&limit=` | | `{"titles": [TitleSummary]}`: titles with a viewing or a mark; `sort`: `recent` (default, last watched first), `watched` (most `watchedMs`), `title` (as the catalog search orders); `status`: one or more statuses, comma-separated; `limit` ≤ 500 (default 100) |
+| `GET /api/v1/admin/history/titles/:itemId?device=` | | `{"title": TitleSummary, "episodes": [EpisodeHistory]}`; `404 unknown_item` (never in the catalog nor the history) |
+| `GET /api/v1/admin/history/days?device=&from=&to=&tz=` | | `{"days": [{"date", "watchedMs", "viewings", "items": [{"itemId", "title", "watchedMs"}]}]}`: one entry per calendar day with a viewing, in `tz` (an IANA zone, default the server's), a viewing counted on the day it started; `from`/`to` are dates, default the last 30 days, at most 366 days; `400 invalid_request` for an unknown zone |
+| `POST /api/v1/admin/history/marks` | `{"episodeIds": [...], "seen": true \| false \| null}` (1–500 ids, each in the catalog or the history) | `{"updated"}`; `null` removes the marks; `400 unknown_episode` (`episodeId`) |
+| `DELETE /api/v1/admin/history?device=&olderThan=` | | `{"deleted"}`: viewings (of that TV, started before `olderThan`, ISO; without them, all) are deleted, running ones too; owner token only |
+| `DELETE /api/v1/admin/history/viewings/:id` | | `204`; `404 unknown_viewing`; owner token only |
+
+`TitleSummary` = `{"itemId", "kind", "title", "inCatalog", "firstWatchedAt", "lastWatchedAt", "viewings",
+"watchedMs", "status", "episodes": {"total", "seen", "started"}, "seasons": [{"season", "total", "seen",
+"started"}], "rewatches", "shortViewings"}`:
+
+- `title` and `kind` come from the current catalog, else from the newest viewing. `inCatalog: false`: the item left
+  the catalog; `total` then counts the episodes seen or started.
+- `total`: the item's playable episodes; `started`: episodes with a viewing; `seen`: by the rule above. `seasons` by
+  `season` (null: episodes without one), series only.
+- `status`: `finished` (every playable episode seen), `new_episodes` (every unseen playable episode entered the
+  catalog after `lastWatchedAt`, by the [catalog history](#catalog-history)), `watching` (else, with a viewing in the
+  last 30 days), `idle` (else: nothing watched for 30 days and nothing new, which is also a show between seasons, so
+  it says nothing about the viewer's interest).
+- `rewatches`: seen viewings of episodes that were already seen. `shortViewings`: ended viewings that are not
+  seen, with `watchedMs` under 10 minutes, a hint that the title did not hold the viewer's attention.
+
+`EpisodeHistory` = `{"episodeId", "season", "number", "title", "inCatalog", "seen", "seenAt", "mark", "viewings",
+"watchedMs", "coveredFraction", "lastWatchedAt", "lastPositionMs"}`, in play order, then the episodes that left the
+catalog:
+
+- `seenAt`: when the episode was first seen: the end of its first seen viewing, or the time of a `true` mark when
+  that is earlier; null while not seen.
+- `mark`: `true`, `false` or null (none).
+- `coveredFraction`: the share of the episode's duration played at least once, over all its viewings (0–1, two
+  decimals): the union of the position ranges between consecutive reports while the player advanced. Where playback
+  should be at a report is the previous report's position, plus the time since its anchor when it said
+  `playing: true`; a report more than 10 s from there is a seek (`playback.seeked`): it covers nothing and the next
+  range starts at it. Null without a known duration or with only imported viewings. For information only: `seen`
+  with a low `coveredFraction` means the end was reached by skipping.
+
+### Remote play and command results
+
+- **Any catalog item plays**, on the TV's home list or not: [`play`](#commands) only needs a playable episode. The
+  item does not join the home list; Back returns to Home as always.
+- **`play` by item:** `{"type": "play", "itemId"}` plays what OK would play for that item on this TV
+  ([Play order](#play-order-and-the-cursor)), resolved by the server when the command is sent; the payload is
+  `{"itemId", "episodeId"}` as before. One of `itemId` and `episodeId` is required; with both, the episode must
+  belong to the item (`400 unknown_episode`). `404 unknown_item`, `400 not_playable` (no playable episode).
+- **`play` at a position:** optional `positionMs` (integer 0…10¹²; `0` starts over) instead of the saved position;
+  the payload carries it. A TV that does not know the field resumes as before.
+- **Results:** after acting on a command (or deciding not to) the TV reports
+  `POST /api/v1/tv/commands/:id/result` `{"result": "done" | "ignored" | "failed", "reason"?}` → `{"ok": true}`;
+  `404 unknown_command` (not this TV's), `409 already_reported`. `play` reports `done` once playback runs and
+  `failed` when it ends on "Can't play right now"; the other commands report right away. `reason` (1–64 characters
+  of `A-Z a-z 0-9 _ . : -`): `not_in_player` (a transport command without video showing), `not_ready` (the TV is on
+  the pairing or server address screen), `no_episode` (`next`/`previous` at the end of the item), `unknown_type`,
+  `no_playable_source` (the resolve found nothing) or `playback_error`; consumers MUST accept others. The
+  acknowledgement stays separate and immediate, so a slow start is never replayed; the result is sent with the same
+  retries as a final progress report, and stays null when it never arrives.
+- `GET /api/v1/admin/devices/:id/commands/:commandId` → `{"command": {"id", "type", "payload", "actor",
+  "createdAt", "deliveredAt", "result", "reason", "resultAt"}}` while the command is stored (7 days);
+  `404 unknown_command`. `deliveredAt` is when the TV acknowledged it; `result` stays null with a TV that does not
+  report results. `POST …/commands` answers `202 {"id", "online"}` as before.
+
+### Home list changes
+
+Single changes, so that two editors (the owner, an agent) do not overwrite each other's lists:
+
+| Route | Body | Response |
+|---|---|---|
+| `POST /api/v1/admin/devices/:id/home/items` | `{"itemId", "position"?}` (0-based, default and upper bound: the end) | `{"version", "home"}` |
+| `PATCH /api/v1/admin/devices/:id/home/items/:itemId` | `{"position"}` (0-based, clamped to the end) | `{"version", "home"}` |
+| `DELETE /api/v1/admin/devices/:id/home/items/:itemId` | | `{"version", "home"}` |
+
+Errors as for `PUT …/home` (`400 too_many_items`, `duplicate_item`, `unknown_item`, `not_playable`), plus
+`404 not_on_home`. `PUT …/home` gains an optional `expected` (the `itemIds` the caller saw): `409 home_changed` (with
+the current `itemIds`) when the list is no longer that. Every change emits `home.changed`.
+
+### Replacing a TV
+
+[`POST /admin/pair/approve`](#post-apiv1adminpairapprove) gains an optional `replaces` (the id of an active device;
+`404 unknown_device` otherwise): no new device is created; when the TV collects its token it takes over that device,
+with its id, name, settings, home list, progress, cursors and history, and the old TV's token stops working (the old
+TV then shows a pairing code by itself, as after a deletion). Until the code is collected the device is unchanged,
+and a code that expires uncollected changes nothing. `device.paired` says `replaced: true`.
+
+Viewings of a deleted TV keep its id and name; `POST /api/v1/admin/devices/:id/history/adopt` `{"fromDeviceId"}` →
+`{"moved"}` gives them to an existing TV (owner token only; `404 unknown_device` for `:id`, `409 device_exists` while
+`fromDeviceId` is still a device).
+
+### What changes for the TV
+
+Everything the TV app has to learn, all optional for a TV from before (the server treats a TV that sends none of it
+as before):
+
+- [`POST /tv/resolve`](#post-apiv1tvresolve) takes `trigger` (`viewer`, `autoplay`, `next`, `command`) and
+  `commandId` (integer, with `trigger: "command"`); a `commandId` that is not a `play`, `next` or `previous` command
+  of this TV is ignored, and the viewing gets trigger `command` with the TV as its actor.
+- The `play` payload may carry `positionMs`: start there instead of the saved position (`0`: from the beginning).
+- `POST /tv/commands/:id/result` after every command, as above; `play` reports once playback runs or fails.
+- Nothing else: the viewing history, events and access tokens are the server's. The TV keeps reporting progress as
+  before, and need not heartbeat while paused.
+
 ## Static routes
 
 | Route | |
@@ -460,7 +732,8 @@ more base64url characters become `<token>`; errors are reduced to their class na
 log records the **route template** (e.g. `/api/v1/tv/items/:itemId`), status, duration and device id, never the raw
 path or query; health checks and successful proxy requests (a steady stream of segments) at `debug` level only,
 proxy errors at `info`. Commands are logged with their type and ids (never a message's text), problem reports with
-their kind and code (never their detail).
+their kind and code (never their detail). A request made with an [access token](#access-tokens) is logged with the
+token's id (field `actorId`: a key containing the word `token` would be dropped by the redaction), never the secret.
 
 ## Configuration
 
@@ -504,3 +777,16 @@ in `./data` (`izle.db`, `admin.token`). Deployment (systemd, Caddy, Docker): [se
 - `defaults` (default null each): `uiLanguage` (`tr`/`en`) and `preferredAudioLanguage` (a language tag) for devices
   without their own setting; null falls back to the catalog's hints.
 - `log.level`: `debug`, `info` (default), `warn` or `error`.
+- `events.retentionDays` (1–90, default 7): how long the [event log](#events) is kept (remote management draft, not
+  implemented yet: the key is refused until then).
+
+## Changelog
+
+- **v1 (2026-10-10)** — initial version.
+- **v1, remote management draft (2026-10-16)** — additive, not implemented yet: [access tokens](#access-tokens) with
+  scopes and the `Actor` of every change, [`GET /admin/status`](#status) and one rule for `online`, the stored
+  [event log](#events) with its stream and long-poll, the permanent [viewing history](#viewing-history) (seen at the
+  end or past 90 %, `seenAt`, `coveredFraction`, played ranges) with title summaries and marks, `play` by item and at
+  a position, command results from the TV, single [home list changes](#home-list-changes), and
+  [replacing a TV](#replacing-a-tv) at pairing. Config `events.retentionDays`; TV resolve fields `trigger` and
+  `commandId`; see [What changes for the TV](#what-changes-for-the-tv).
