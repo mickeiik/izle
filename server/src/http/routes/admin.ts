@@ -13,7 +13,7 @@ import { PROBLEM_LIST_DEFAULT, PROBLEM_LIST_MAX } from "../../problems.ts";
 import { iso } from "../../presenters.ts";
 import type { Device, Store } from "../../store.ts";
 import { HOME_MAX_ITEMS, MAX_NOW_WAIT_MS } from "../../tv.ts";
-import { adoptBody, approveBody, commandBody, companionLinkBody, companionResolveBody, cursorBody, devicePatchBody, diagnosticsBody, homeBody, isId, parseBody, parseWait } from "../../validation.ts";
+import { adoptBody, approveBody, commandBody, companionLinkBody, companionResolveBody, cursorBody, devicePatchBody, diagnosticsBody, homeBody, intParam, intQuery, isId, limitQuery, parseBody, parseWait } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
 
 /** The device a `/admin/devices/:id` route names; 404 `unknown_device` otherwise. */
@@ -77,9 +77,7 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
   // `?seq=<n>&wait=<s>` long-polls until the row changes (the phone's "Listen along" follows the TV with it).
   app.get("/api/v1/admin/devices/:id/now", async (c) => {
     const d = requireDevice(store, c.req.param("id"));
-    const seqParam = c.req.query("seq");
-    const seq = seqParam === undefined ? null : Number(seqParam);
-    if (seq !== null && (!Number.isSafeInteger(seq) || seq < 0)) throw new HttpError(400, "invalid_request", "seq must be a non-negative integer");
+    const seq = intQuery(c.req.query("seq"), "seq", 0) ?? null;
     const waitSec = parseWait(c.req.query("wait"), 0, MAX_NOW_WAIT_MS / 1000);
     const n = await tv.waitNow(d.id, seq, waitSec * 1000, c.req.raw.signal);
     return c.json(devices.now(d, n));
@@ -95,8 +93,8 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
   // A command while it is stored (7 days): when the TV acknowledged it, and what it made of it.
   app.get("/api/v1/admin/devices/:id/commands/:commandId", (c) => {
     const d = requireDevice(store, c.req.param("id"));
-    const id = Number(c.req.param("commandId"));
-    const cmd = Number.isSafeInteger(id) && id > 0 ? store.getCommand(d.id, id) : null;
+    const id = intParam(c.req.param("commandId"), "unknown_command");
+    const cmd = store.getCommand(d.id, id);
     if (!cmd) throw new HttpError(404, "unknown_command");
     const { type, payload, actor, result, reason } = cmd;
     return c.json({ command: { id, type, payload, actor, createdAt: iso(cmd.createdAt), deliveredAt: iso(cmd.ackedAt), result, reason, resultAt: iso(cmd.resultAt) } });
@@ -104,8 +102,7 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
 
   app.get("/api/v1/admin/devices/:id/problems", (c) => {
     const d = requireDevice(store, c.req.param("id"));
-    const asked = Math.trunc(Number(c.req.query("limit") ?? PROBLEM_LIST_DEFAULT)) || PROBLEM_LIST_DEFAULT;
-    return c.json({ problems: ctx.problems.list(d.id, Math.min(Math.max(asked, 1), PROBLEM_LIST_MAX)) });
+    return c.json({ problems: ctx.problems.list(d.id, limitQuery(c.req.query("limit"), PROBLEM_LIST_DEFAULT, PROBLEM_LIST_MAX)) });
   });
 
   app.delete("/api/v1/admin/devices/:id/problems", (c) => {
@@ -117,8 +114,7 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
 
   app.get("/api/v1/admin/catalog/search", (c) => {
     const q = (c.req.query("q") ?? "").slice(0, 200);
-    const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 50) || 50, 1), 200);
-    return c.json({ items: catalog.search(q, limit).map((item) => searchHitJson(catalog, item)) });
+    return c.json({ items: catalog.search(q, limitQuery(c.req.query("limit"), 50, 200)).map((item) => searchHitJson(catalog, item)) });
   });
 
   app.get("/api/v1/admin/catalog/builds/:buildId", (c) => {

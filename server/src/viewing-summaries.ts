@@ -61,6 +61,10 @@ class HistoryView {
   /** When each episode was first seen by a viewing, over every TV. */
   readonly seenAt = new Map<string, number>();
   readonly marks: Map<string, EpisodeMark>;
+  /** When each present catalog episode first appeared (the "new episodes" status). */
+  private readonly firstSeen: Map<string, number>;
+  /** What the history last called each item (for one that left the catalog). */
+  private readonly known: Map<string, { kind: string | null; title: string | null }>;
   private readonly d: SummaryDeps;
 
   constructor(d: SummaryDeps, deviceId: string | null, itemId: string | null) {
@@ -72,6 +76,8 @@ class HistoryView {
     }
     for (const e of d.store.episodeSeenAt(catalogId, itemId)) this.seenAt.set(e.episodeId, e.seenAt);
     this.marks = d.store.listMarks(catalogId, itemId);
+    this.firstSeen = d.store.episodeFirstSeen(catalogId, itemId);
+    this.known = d.store.historyItems(catalogId, itemId);
   }
 
   /** Whether the episode is seen: the mark's word, else any seen viewing of any TV. */
@@ -97,8 +103,7 @@ class HistoryView {
 
   /** `TitleSummary` of an item with a viewing or a mark; `item` is its catalog entry, when it has one. */
   title(itemId: string, item: CatalogItem | undefined) {
-    const { store, catalog, now } = this.d;
-    const known = item ? null : store.historyItem(catalog.catalogId, itemId);
+    const known = item ? null : this.known.get(itemId);
     const stats = this.statsByItem.get(itemId) ?? [];
     const started = new Set(stats.map((s) => s.episodeId));
     // The universe the counts are over: the item's playable episodes, or, once it left the catalog, what was seen or started.
@@ -113,8 +118,8 @@ class HistoryView {
     const unseen = episodes.filter((e) => !this.isSeen(e.id)).map((e) => e.id);
     let status: TitleStatus = "idle";
     if (counts.total > 0 && counts.seen === counts.total) status = "finished";
-    else if (item && lastWatchedAt !== null && unseen.length > 0 && isSubset(unseen, store.episodesSeenAfter(catalog.catalogId, itemId, lastWatchedAt))) status = "new_episodes";
-    else if (lastWatchedAt !== null && now() - lastWatchedAt <= WATCHING_WINDOW_MS) status = "watching";
+    else if (item && lastWatchedAt !== null && unseen.length > 0 && unseen.every((id) => (this.firstSeen.get(id) ?? 0) > lastWatchedAt)) status = "new_episodes";
+    else if (lastWatchedAt !== null && this.d.now() - lastWatchedAt <= WATCHING_WINDOW_MS) status = "watching";
     return {
       itemId, kind: item?.kind ?? known?.kind ?? null, title: item?.title ?? known?.title ?? itemId, inCatalog: item !== undefined,
       firstWatchedAt: iso(firstWatchedAt), lastWatchedAt: iso(lastWatchedAt), viewings: sum(stats, (s) => s.viewings), watchedMs: sum(stats, (s) => s.watchedMs),
@@ -138,7 +143,6 @@ class HistoryView {
 }
 
 const sum = <T>(list: T[], of: (t: T) => number) => list.reduce((acc, t) => acc + of(t), 0);
-const isSubset = (ids: string[], of: string[]) => ids.every((id) => of.includes(id));
 
 export type TitleSummary = ReturnType<HistoryView["title"]>;
 

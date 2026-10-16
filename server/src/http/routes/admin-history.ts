@@ -6,7 +6,7 @@ import type { Context, Hono } from "hono";
 import type { AppContext } from "../../context.ts";
 import { HttpError } from "../../errors.ts";
 import { dayCounts, mergeRanges, TITLE_SORTS, TITLE_STATUSES, titleDetail, titleSummaries, viewingJson, type TitleSort, type TitleStatus } from "../../viewing-summaries.ts";
-import { isId, marksBody, parseBody } from "../../validation.ts";
+import { intParam, intQuery, isId, limitQuery, listQuery, marksBody, parseBody } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
 
 const VIEWINGS_DEFAULT = 50;
@@ -38,37 +38,22 @@ function parseTime(c: Context, name: string): number | undefined {
   return ms;
 }
 
-/** `?limit=`: clamped into 1..max, `fallback` when absent or not a number. */
-function parseLimit(c: Context, fallback: number, max: number): number {
-  const asked = Math.trunc(Number(c.req.query("limit") ?? fallback)) || fallback;
-  return Math.min(Math.max(asked, 1), max);
-}
-
 /** `:id` of a viewing route: a positive integer, else 404 `unknown_viewing`. */
-function viewingId(c: Context): number {
-  const id = Number(c.req.param("id"));
-  if (!Number.isSafeInteger(id) || id < 1) throw new HttpError(404, "unknown_viewing");
-  return id;
-}
+const viewingId = (c: Context) => intParam(c.req.param("id"), "unknown_viewing");
 
 /** A comma-separated choice among `allowed`; absent = null. */
-function parseChoices<T extends string>(value: string | undefined, allowed: readonly T[], name: string): T[] | null {
-  if (value === undefined) return null;
-  const list = value.split(",").map((v) => v.trim()).filter((v) => v !== "");
-  if (list.length === 0 || list.some((v) => !allowed.includes(v as T))) throw new HttpError(400, "invalid_request", `${name} must be among ${allowed.join(", ")}`);
-  return list as T[];
+function parseChoices<T extends string>(c: Context, name: string, allowed: readonly T[]): T[] | null {
+  return (listQuery(c.req.query(name), name, (v) => allowed.includes(v as T)) as T[] | undefined) ?? null;
 }
 
 export function registerAdminHistory(app: Hono<Env>, ctx: AppContext): void {
   const { store, catalog, viewings } = ctx;
 
   app.get("/api/v1/admin/history/viewings", (c) => {
-    const limit = parseLimit(c, VIEWINGS_DEFAULT, VIEWINGS_MAX);
-    const before = c.req.query("before");
-    if (before !== undefined && (!Number.isSafeInteger(Number(before)) || Number(before) < 1)) throw new HttpError(400, "invalid_request", "before must be a viewing id");
+    const limit = limitQuery(c.req.query("limit"), VIEWINGS_DEFAULT, VIEWINGS_MAX);
     const filter = {
       catalogId: catalog.catalogId, deviceId: parseDevice(c) ?? undefined, itemId: parseIdParam(c, "item"), episodeId: parseIdParam(c, "episode"),
-      from: parseTime(c, "from"), to: parseTime(c, "to"), before: before === undefined ? undefined : Number(before), limit: limit + 1,
+      from: parseTime(c, "from"), to: parseTime(c, "to"), before: intQuery(c.req.query("before"), "before", 1), limit: limit + 1,
     };
     // One more than asked tells whether a next page exists.
     const page = store.listViewings(filter);
@@ -83,10 +68,11 @@ export function registerAdminHistory(app: Hono<Env>, ctx: AppContext): void {
   });
 
   app.get("/api/v1/admin/history/titles", (c) => {
-    const statuses = parseChoices<TitleStatus>(c.req.query("status"), TITLE_STATUSES, "status");
-    const sort = parseChoices<TitleSort>(c.req.query("sort"), TITLE_SORTS, "sort");
+    const statuses = parseChoices<TitleStatus>(c, "status", TITLE_STATUSES);
+    const sort = parseChoices<TitleSort>(c, "sort", TITLE_SORTS);
     if (sort && sort.length !== 1) throw new HttpError(400, "invalid_request", "sort takes one value");
-    return c.json({ titles: titleSummaries(ctx, { deviceId: parseDevice(c), statuses, sort: sort?.[0] ?? "recent", limit: parseLimit(c, TITLES_DEFAULT, TITLES_MAX) }) });
+    const limit = limitQuery(c.req.query("limit"), TITLES_DEFAULT, TITLES_MAX);
+    return c.json({ titles: titleSummaries(ctx, { deviceId: parseDevice(c), statuses, sort: sort?.[0] ?? "recent", limit }) });
   });
 
   app.get("/api/v1/admin/history/titles/:itemId", (c) => {

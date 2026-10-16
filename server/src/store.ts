@@ -333,6 +333,9 @@ export class Store {
 
   transaction<T>(fn: () => T): T {
     if (this.inTransaction) return fn();
+    // A fresh hook list per transaction: one that rolled back leaves its hooks behind, never run.
+    const hooks: Array<() => void> = [];
+    this.afterCommitHooks = hooks;
     this.db.exec("BEGIN IMMEDIATE");
     this.inTransaction = true;
     let result: T;
@@ -341,13 +344,10 @@ export class Store {
       this.db.exec("COMMIT");
     } catch (err) {
       this.db.exec("ROLLBACK");
-      this.afterCommitHooks = [];
-      this.inTransaction = false;
       throw err;
+    } finally {
+      this.inTransaction = false;
     }
-    const hooks = this.afterCommitHooks;
-    this.afterCommitHooks = [];
-    this.inTransaction = false;
     for (const hook of hooks) hook();
     return result;
   }
@@ -771,9 +771,11 @@ export class Store {
     return r ? String(r.item_id) : null;
   }
 
-  /** The titles and kinds the history knows an item under, newest viewing first. */
-  historyItem(catalogId: string, itemId: string): { kind: string | null; title: string | null } | null {
-    return this.one("SELECT item_kind AS kind, item_title AS title FROM viewings WHERE catalog_id = ? AND item_id = ? ORDER BY started_at DESC, id DESC LIMIT 1", [catalogId, itemId]);
+  /** The title and kind the history last knew each item under (its newest viewing's), by item id; `itemId` narrows to one. */
+  historyItems(catalogId: string, itemId: string | null = null): Map<string, { kind: string | null; title: string | null }> {
+    // SQLite's bare columns with MAX come from the row holding the maximum: the newest viewing of each item.
+    const sql = "SELECT item_id, item_kind AS kind, item_title AS title, MAX(started_at) FROM viewings WHERE catalog_id = ? AND (? IS NULL OR item_id = ?) GROUP BY item_id";
+    return new Map(this.many<{ itemId: string; kind: string | null; title: string | null }>(sql, [catalogId, itemId, itemId]).map(({ itemId: id, kind, title }) => [id, { kind, title }]));
   }
 
   /** The item ids with a viewing or a mark. */
@@ -881,6 +883,12 @@ export class Store {
     const sql = `SELECT episode_id FROM catalog_seen WHERE catalog_id = ? AND item_id = ? AND removed_at IS NULL AND first_seen_at > ?
        ORDER BY first_seen_at, episode_id`;
     return this.many<{ episodeId: string }>(sql, [catalogId, itemId, sinceMs]).map((e) => e.episodeId);
+  }
+
+  /** When each present episode of the catalog first appeared, by episode id (`itemId` narrows to one item). */
+  episodeFirstSeen(catalogId: string, itemId: string | null = null): Map<string, number> {
+    const sql = "SELECT episode_id, first_seen_at FROM catalog_seen WHERE catalog_id = ? AND removed_at IS NULL AND (? IS NULL OR item_id = ?)";
+    return new Map(this.many<{ episodeId: string; firstSeenAt: number }>(sql, [catalogId, itemId, itemId]).map((r) => [r.episodeId, r.firstSeenAt]));
   }
 
   /** Stores a loaded build. A build id loaded again later (a rollback) replaces its row with the new load. */

@@ -13,7 +13,7 @@ import { commandEvent, eventId, type ServerEvent } from "../../events.ts";
 import { MAX_PAIR_WAIT_MS, PAIR_CODE } from "../../pairing.ts";
 import { iso } from "../../presenters.ts";
 import { PROXY_TOKEN, type ProxyTarget } from "../../proxy.ts";
-import { commandResultBody, isId, parseBody, parseWait, problemBody, progressBody, resolveBody } from "../../validation.ts";
+import { commandResultBody, intParam, isId, parseBody, parseWait, problemBody, progressBody, resolveBody } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
 
 export function registerTv(app: Hono<Env>, ctx: AppContext, clientKey: (c: Context) => string): void {
@@ -61,11 +61,7 @@ export function registerTv(app: Hono<Env>, ctx: AppContext, clientKey: (c: Conte
     return c.json({ ok: true, version: tv.recordProgress(c.get("device"), body).version });
   });
 
-  const commandId = (c: Context) => {
-    const id = Number(c.req.param("id"));
-    if (!Number.isSafeInteger(id) || id <= 0) throw new HttpError(404, "unknown_command");
-    return id;
-  };
+  const commandId = (c: Context) => intParam(c.req.param("id"), "unknown_command");
 
   app.post("/api/v1/tv/commands/:id/ack", (c) => {
     if (!ctx.commands.ack(c.get("device").id, commandId(c))) throw new HttpError(404, "unknown_command");

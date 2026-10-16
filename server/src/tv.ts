@@ -232,12 +232,6 @@ export class TvService {
    * no longer that, so two editors do not overwrite each other.
    */
   setHome(deviceId: string, itemIds: string[], actor: Actor, expected?: string[]): number {
-    if (expected) {
-      const current = this.homeIds(deviceId);
-      if (current.length !== expected.length || current.some((id, i) => id !== expected[i])) {
-        throw new HttpError(409, "home_changed", "the home list changed in the meantime", { itemIds: current });
-      }
-    }
     if (itemIds.length > HOME_MAX_ITEMS) {
       throw new HttpError(400, "too_many_items", `a home list holds at most ${HOME_MAX_ITEMS} items`, { max: HOME_MAX_ITEMS });
     }
@@ -249,14 +243,15 @@ export class TvService {
       if (!item) throw new HttpError(400, "unknown_item", "no such item in the catalog", { itemId: id });
       if (!isPlayable(item)) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed", { itemId: id });
     }
-    const catalogId = this.s.catalog.catalogId;
     this.s.store.transaction(() => {
-      const before = new Set(this.s.store.getHomeEntries(deviceId, catalogId).map((e) => e.itemId));
-      this.s.store.setHome(deviceId, catalogId, itemIds, this.s.now());
-      const after = new Set(itemIds);
-      const added = itemIds.filter((id) => !before.has(id));
-      const removed = [...before].filter((id) => !after.has(id));
-      this.s.eventLog.append("home.changed", deviceId, actor, { itemIds, added, removed });
+      const before = this.homeIds(deviceId);
+      if (expected && (before.length !== expected.length || before.some((id, i) => id !== expected[i]))) {
+        throw new HttpError(409, "home_changed", "the home list changed in the meantime", { itemIds: before });
+      }
+      this.s.store.setHome(deviceId, this.s.catalog.catalogId, itemIds, this.s.now());
+      const was = new Set(before);
+      const is = new Set(itemIds);
+      this.s.eventLog.append("home.changed", deviceId, actor, { itemIds, added: itemIds.filter((id) => !was.has(id)), removed: before.filter((id) => !is.has(id)) });
     });
     return this.s.notifier.bump(deviceId);
   }

@@ -47,19 +47,17 @@ export class CommandService {
    */
   private playPayload(deviceId: string, body: Extract<CommandBody, { type: "play" }>): Record<string, unknown> {
     const item = body.itemId === undefined ? null : requireItem(this.s.catalog, body.itemId, 404, "unknown_item");
-    let episodeId: string;
+    const position = body.positionMs === undefined ? {} : { positionMs: body.positionMs };
     if (body.episodeId !== undefined) {
       const ref = requireEpisode(this.s.catalog, body.episodeId, 400, "unknown_episode");
       if (item && ref.item.id !== item.id) throw new HttpError(400, "unknown_episode", "the episode does not belong to this item");
       requirePlayable(ref.episode, 400, "not_allowed");
-      episodeId = ref.episode.id;
-    } else {
-      const cont = this.s.tv.continueFor(deviceId, item!);
-      if (!cont) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed", { itemId: item!.id });
-      episodeId = cont.episodeId;
+      return { itemId: ref.item.id, episodeId: ref.episode.id, ...position };
     }
-    const itemId = item?.id ?? this.s.catalog.episode(episodeId)!.item.id;
-    return { itemId, episodeId, ...(body.positionMs !== undefined ? { positionMs: body.positionMs } : {}) };
+    // Without an episode the body names an item (validation.ts).
+    const cont = this.s.tv.continueFor(deviceId, item!);
+    if (!cont) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed", { itemId: item!.id });
+    return { itemId: item!.id, episodeId: cont.episodeId, ...position };
   }
 
   /** What the TV gets with a command (the SSE `payload`); a message's display time defaults here. */

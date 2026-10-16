@@ -183,6 +183,18 @@ test("replacing a TV: a code that expires uncollected changes nothing, also afte
   assert.equal((await s.call("GET", "/api/v1/tv/state", { token: old.token })).json.device.id, old.deviceId, "the device and its token stay");
 });
 
+test("replacing a TV: deleting the TV before the new one collects its token deletes the code with it", async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  const old = await s.pair("Salon");
+  const start = await s.call("POST", "/api/v1/pair/start");
+  assert.equal((await s.admin("POST", "/pair/approve", { code: start.json.code, replaces: old.deviceId })).status, 200);
+  assert.equal((await s.admin("DELETE", `/devices/${old.deviceId}`)).status, 204);
+  const r = await s.call("GET", `/api/v1/pair/wait?code=${start.json.code}&wait=0`, { token: start.json.pairToken });
+  assert.deepEqual([r.status, r.json.error], [404, "not_found"], "no token is handed out for a device that is gone");
+  assert.equal((await s.admin("GET", "/events?after=0&types=device.paired")).json.events.length, 1);
+});
+
 test("history adopt: a deleted TV's viewings go to an existing one, under its name", async (t) => {
   const s = await startTestServer();
   t.after(() => s.close());

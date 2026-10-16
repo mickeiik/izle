@@ -32,8 +32,9 @@ export function watchEvents(scope, filter, handler) {
   };
   const pause = (/** @type {number} */ ms) =>
     new Promise((resolve) => {
-      const t = setTimeout(resolve, ms);
-      scope.signal.addEventListener("abort", () => (clearTimeout(t), resolve(undefined)), { once: true });
+      const stop = () => (clearTimeout(t), resolve(undefined));
+      const t = setTimeout(() => (scope.signal.removeEventListener("abort", stop), resolve(undefined)), ms);
+      scope.signal.addEventListener("abort", stop, { once: true });
     });
   const deliver = (/** @type {{ id: string | null, event: string, data: string }} */ e) => {
     if (e.id !== null) last = e.id;

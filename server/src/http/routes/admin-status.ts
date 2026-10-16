@@ -8,7 +8,7 @@ import { VERSION } from "../../version.ts";
 import type { Env } from "../middleware.ts";
 
 export function status(ctx: AppContext) {
-  const { store, catalog, devices, pairing, eventLog, events, viewings } = ctx;
+  const { store, catalog, devices, pairing, eventLog, events } = ctx;
   const lastEventId = eventLog.lastId();
   const { manifest } = catalog.current;
   return {
@@ -17,10 +17,10 @@ export function status(ctx: AppContext) {
     catalog: { id: manifest.catalogId, buildId: manifest.buildId },
     pairing: { pending: pairing.listOpen().length },
     devices: store.listDevices().filter((d) => d.tokenHash !== null).map((d) => {
-      // The "now" object while the TV has a running viewing; GET …/now itself keeps answering the last report.
+      // The "now" object while its viewing runs; GET …/now itself keeps answering the last report.
       const n = store.getNowPlaying(d.id);
-      const playing = n && viewings.running(d.id) ? devices.now(d, n).nowPlaying : null;
-      return { id: d.id, name: d.name, online: events.isOnline(d.id), lastSeenAt: iso(d.lastSeenAt), nowPlaying: playing };
+      const now = n && devices.now(d, n).nowPlaying;
+      return { id: d.id, name: d.name, online: events.isOnline(d.id), lastSeenAt: iso(d.lastSeenAt), nowPlaying: now?.viewingId ? now : null };
     }),
     lastEventId,
   };

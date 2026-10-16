@@ -4,33 +4,16 @@
 import type { Context, Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import type { AppContext } from "../../context.ts";
-import { HttpError } from "../../errors.ts";
 import { EVENT_LIST_DEFAULT, EVENT_LIST_MAX, EVENT_TYPE, MAX_EVENT_WAIT_MS, type Event } from "../../eventlog.ts";
 import type { EventFilter } from "../../store.ts";
-import { isId, parseWait } from "../../validation.ts";
+import { intQuery, isId, limitQuery, listQuery, parseWait } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
-
-/** `?after=`: an event id, or absent (null). */
-function parseAfter(param: string | undefined): number | null {
-  if (param === undefined || param === "") return null;
-  const n = Number(param);
-  if (!Number.isSafeInteger(n) || n < 0) throw new HttpError(400, "invalid_request", "after must be a non-negative integer");
-  return n;
-}
-
-/** A comma-separated list parameter, each entry checked by `ok`; absent = no filter. */
-function parseList(param: string | undefined, what: string, ok: (v: string) => boolean): string[] | undefined {
-  if (param === undefined) return undefined;
-  const list = param.split(",").map((v) => v.trim()).filter((v) => v !== "");
-  if (list.length > 100 || list.some((v) => !ok(v))) throw new HttpError(400, "invalid_request", `${what} must be a comma-separated list of ${what}`);
-  return list;
-}
 
 /** The `devices` and `types` filters of both routes. */
 function filters(c: Context): Pick<EventFilter, "devices" | "types"> {
   return {
-    devices: parseList(c.req.query("devices"), "device ids", isId),
-    types: parseList(c.req.query("types"), "event types", (t) => EVENT_TYPE.test(t) && t.length <= 60),
+    devices: listQuery(c.req.query("devices"), "device ids", isId),
+    types: listQuery(c.req.query("types"), "event types", (t) => EVENT_TYPE.test(t) && t.length <= 60),
   };
 }
 
@@ -45,49 +28,42 @@ export function registerAdminEvents(app: Hono<Env>, ctx: AppContext): void {
   const { eventLog } = ctx;
 
   app.get("/api/v1/admin/events", async (c) => {
-    const after = parseAfter(c.req.query("after"));
+    const after = intQuery(c.req.query("after"), "after", 0);
     const waitSec = parseWait(c.req.query("wait"), 0, MAX_EVENT_WAIT_MS / 1000);
-    const asked = Math.trunc(Number(c.req.query("limit") ?? EVENT_LIST_DEFAULT)) || EVENT_LIST_DEFAULT;
-    const limit = Math.min(Math.max(asked, 1), EVENT_LIST_MAX);
+    const limit = limitQuery(c.req.query("limit"), EVENT_LIST_DEFAULT, EVENT_LIST_MAX);
     const f = filters(c);
     // Without `after` the caller is finding out where to start following from.
-    if (after === null) return c.json({ events: [], last: eventLog.lastId(), gap: false });
+    if (after === undefined) return c.json({ events: [], last: eventLog.lastId(), gap: false });
     return c.json(await eventLog.wait({ after, limit, ...f }, waitSec * 1000, c.req.raw.signal));
   });
 
   // Replays the stored events after `after` / `Last-Event-ID`, then the live ones; without either, live ones only.
   app.get("/api/v1/admin/events/stream", (c) => {
-    const after = parseAfter(c.req.query("after") ?? c.req.header("Last-Event-ID"));
+    const after = intQuery(c.req.query("after") ?? c.req.header("Last-Event-ID"), "after", 0);
     const f = filters(c);
     c.header("X-Accel-Buffering", "no");
     return streamSSE(c, async (stream) => {
       let ping: ReturnType<typeof setInterval> | undefined;
       const closed = new Promise<void>((resolve) => stream.onAbort(resolve));
-      // One writer at a time keeps the replay and the live events in id order.
-      let queue = Promise.resolve();
-      let lastSent = after ?? Number.MAX_SAFE_INTEGER;
-      const send = (e: Event) => {
-        if (e.id <= lastSent) return;
-        lastSent = e.id;
-        queue = queue.then(() => stream.writeSSE({ id: String(e.id), event: e.type, data: JSON.stringify(e) })).catch(() => stream.abort());
-      };
-      // Subscribed before the stored events are read: nothing committed in between can be missed (the store is
-      // synchronous, so no event lands between the two statements).
+      // Every frame goes through one writer, in the order it was queued.
+      let queue: Promise<unknown> = Promise.resolve();
+      const write = (frame: () => Promise<unknown>) => void (queue = queue.then(frame).catch(() => stream.abort()));
+      const send = (e: Event) => write(() => stream.writeSSE({ id: String(e.id), event: e.type, data: JSON.stringify(e) }));
+      // The stored events are read and the live subscription made in one synchronous run (the store is synchronous,
+      // so nothing is committed in between): no event is missed, none is sent twice.
+      const replay: Event[] = [];
+      let gap = false;
+      for (let from = after; from !== undefined; ) {
+        const page = eventLog.list({ after: from, limit: EVENT_LIST_MAX, ...f });
+        if (from === after) gap = page.gap;
+        replay.push(...page.events);
+        from = page.events.length < EVENT_LIST_MAX ? undefined : page.last;
+      }
       const unsubscribe = eventLog.subscribe((e) => void (passes(e, f) && send(e)));
       try {
-        await stream.write("retry: 5000\n\n");
-        if (after !== null) {
-          let from = after;
-          for (;;) {
-            const page = eventLog.list({ after: from, limit: EVENT_LIST_MAX, ...f });
-            if (from === after && page.gap) await stream.writeSSE({ event: "gap", data: JSON.stringify({ oldest: eventLog.oldestId() }) });
-            for (const e of page.events) send(e);
-            if (page.events.length < EVENT_LIST_MAX) break;
-            from = page.last;
-          }
-        } else {
-          lastSent = eventLog.lastId();
-        }
+        write(() => stream.write("retry: 5000\n\n"));
+        if (gap) write(() => stream.writeSSE({ event: "gap", data: JSON.stringify({ oldest: eventLog.oldestId() }) }));
+        for (const e of replay) send(e);
         ping = setInterval(() => void stream.write(": ping\n\n").catch(() => stream.abort()), ctx.pingMs);
         await closed;
       } finally {

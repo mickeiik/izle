@@ -158,3 +158,32 @@ export function parseWait(param: string | undefined, defaultSec: number, maxSec:
   if (!Number.isInteger(sec) || sec < 0 || sec > maxSec) throw new HttpError(400, "invalid_request", `wait must be an integer between 0 and ${maxSec}`);
   return sec;
 }
+
+/** A positive integer id in a route path (`:id`); 404 `code` for anything else. */
+export function intParam(value: string | undefined, code: string): number {
+  const n = Number(value);
+  if (!Number.isSafeInteger(n) || n < 1) throw new HttpError(404, code);
+  return n;
+}
+
+/** An optional integer query parameter of at least `min`; 400 `invalid_request` for anything else. */
+export function intQuery(value: string | undefined, name: string, min: number): number | undefined {
+  if (value === undefined || value === "") return undefined;
+  const n = Number(value);
+  if (!Number.isSafeInteger(n) || n < min) throw new HttpError(400, "invalid_request", `${name} must be an integer of at least ${min}`);
+  return n;
+}
+
+/** `?limit=`: clamped into 1..max, `fallback` when absent or not a number. */
+export function limitQuery(value: string | undefined, fallback: number, max: number): number {
+  const asked = Math.trunc(Number(value ?? fallback)) || fallback;
+  return Math.min(Math.max(asked, 1), max);
+}
+
+/** A comma-separated query parameter (at most 100 entries, each checked by `ok`); undefined when absent. */
+export function listQuery(value: string | undefined, name: string, ok: (v: string) => boolean): string[] | undefined {
+  if (value === undefined) return undefined;
+  const list = value.split(",").map((v) => v.trim()).filter((v) => v !== "");
+  if (list.length === 0 || list.length > 100 || list.some((v) => !ok(v))) throw new HttpError(400, "invalid_request", `${name} must be a comma-separated list of ${name}`);
+  return list;
+}
