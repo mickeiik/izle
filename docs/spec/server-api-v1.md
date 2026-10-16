@@ -162,7 +162,9 @@ The hidden menu's episode list, for any catalog item (`404 unknown_item`).
 
 ### `POST /api/v1/tv/resolve`
 
-`{"episodeId": "…", "sourceId"?: "…", "exclude"?: ["sourceId", …]}` → what to play.
+`{"episodeId": "…", "sourceId"?: "…", "exclude"?: ["sourceId", …], "trigger"?: "…", "commandId"?: 12}` → what to
+play. `trigger` and `commandId` tell the [viewing history](#viewing-history) what started the playback
+([What changes for the TV](#what-changes-for-the-tv)).
 
 ```json
 {
@@ -321,7 +323,7 @@ last allowed episode) marks the item as watched to the end. When a later catalog
 | `PUT /api/v1/admin/devices/:id/home` | `{"itemIds": [...]}` (≤ 12, in display order) | `{"version", "home"}` |
 | `PUT /api/v1/admin/devices/:id/cursor` | `{"itemId", "episodeId"}` | `{"version"}` |
 | `GET /api/v1/admin/devices/:id/progress` | | `{"cursors": [...], "progress": [...]}` with `itemTitle`, `kind`, `season`, `number`, `episodeTitle` (or `missing: true`) |
-| `GET /api/v1/admin/devices/:id/now?seq=&wait=` | | `{"online", "serverNowMs", "seq", "nowPlaying": {itemId, episodeId, sourceId, itemTitle, episodeTitle, positionMs, durationMs, state, updatedAt, playing} \| null, "anchor": {positionMs, atMs, playing, rate} \| null}`; with `seq` equal to the current `seq` and `wait` (0–25 s, default 0) the answer waits for the next resolve or progress report (long-poll), see [Listen along](#listen-along) |
+| `GET /api/v1/admin/devices/:id/now?seq=&wait=` | | `{"online", "serverNowMs", "seq", "nowPlaying": {itemId, episodeId, sourceId, itemTitle, episodeTitle, positionMs, durationMs, state, updatedAt, playing, viewingId} \| null, "anchor": {positionMs, atMs, playing, rate} \| null}`; with `seq` equal to the current `seq` and `wait` (0–25 s, default 0) the answer waits for the next resolve or progress report (long-poll), see [Listen along](#listen-along) |
 | `POST /api/v1/admin/devices/:id/commands` | `{"type": "play", "episodeId"}`, `{"type": "stop"}`, `pause`, `resume`, `next`, `previous`, `{"type": "seek", "deltaMs" \| "positionMs"}`, `{"type": "message", "text", "durationSec"?}`, see [Commands](#commands) | `202 {"id", "online"}`; `online: false`: queued, the TV gets it if it connects within 2 minutes |
 | `GET /api/v1/admin/devices/:id/problems?limit=` | | `{"problems": [Problem]}`, newest first (`limit` default 50, at most 100), see [Problem reports](#problem-reports) |
 | `DELETE /api/v1/admin/devices/:id/problems` | | `204`; forgets the TV's problems |
@@ -447,10 +449,11 @@ language inside the same multi-audio stream) in sync with the picture, from the 
 
 Status: **draft, partly implemented**. Implemented: [access tokens](#access-tokens) and the `Actor`,
 [`GET /admin/status`](#status) and the one rule for `online`, the [event log](#events) with its stream and long-poll
-(every event type except the `playback.*`, `episode.seen`, `command.result` and `history.changed` ones, which come
-with the parts below). Not implemented yet: the [viewing history](#viewing-history),
+(every event type except `command.result` and the `history.changed` of an adoption, which come with the parts
+below), and the [viewing history](#viewing-history) with its routes, marks and events. Not implemented yet:
 [remote play and command results](#remote-play-and-command-results), [home list changes](#home-list-changes) and
-[replacing a TV](#replacing-a-tv). Everything here is additive within v1.
+[replacing a TV](#replacing-a-tv) (with the adoption of a deleted TV's viewings). Everything here is additive
+within v1.
 
 The viewer only watches; the TV is run from elsewhere: by the owner on the admin page, by the owner's own apps, or by
 AI agents. They all use these routes. An MCP server for agents is a thin wrapper around them with an
@@ -509,9 +512,7 @@ active TV in one call. `nowPlaying` is the object of [`GET …/now`](#devices) w
 before). `lastEventId` is read before the rest, so reading the status and then the [events](#events) after
 `lastEventId` misses nothing (a change in between shows twice, never not at all).
 
-`nowPlaying` (here and in `GET …/now`) gains `viewingId`: the running viewing, or null once it ended. Until the
-[viewing history](#viewing-history) is implemented, the status shows the last report while its `state` is not
-`stopped` or `finished`, without `viewingId`.
+`nowPlaying` (here and in `GET …/now`) gains `viewingId`: the running viewing, or null once it ended.
 
 **Online.** A TV is online while it has an event stream open, and for 60 s after its last one closed (a reconnect does
 not flap). `online` in `Device`, in the answer to a command and here all follow this rule; at start every TV is
@@ -565,10 +566,10 @@ Events carry no URLs, headers, refs, tokens, message texts or problem details.
 
 Ordering within one change: when a resolve replaces a running viewing, `playback.ended` comes before
 `playback.started`; `episode.seen` follows its `playback.ended`. New types and fields are added within v1; consumers
-MUST ignore those they do not know. Not implemented yet (they come with the viewing history and command results):
-`playback.*`, `episode.seen`, `command.result`, `history.changed`; `device.paired` always says `replaced: false`
-until [replacing a TV](#replacing-a-tv) is. The `pairing.pending` event has the server as its actor: the TV has no
-id yet.
+MUST ignore those they do not know. Not implemented yet: `command.result` (it comes with the command results) and
+the `{"moved"}` form of `history.changed`; `device.paired` always says `replaced: false` until
+[replacing a TV](#replacing-a-tv) is. The `pairing.pending` event has the server as its actor: the TV has no id
+yet.
 
 ### Viewing history
 

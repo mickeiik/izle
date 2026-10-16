@@ -9,6 +9,16 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Added
 
+- **Viewing history:** the server keeps every playback of an episode on a TV as a viewing (which TV, what, when,
+  how much was watched and which parts, how it ended, whether the episode was seen: at the end, or past 90 %),
+  outliving the TV and the catalog. `GET /api/v1/admin/history/viewings` (filters and pages), `…/viewings/:id`
+  (with the played ranges), `…/titles` and `…/titles/:itemId` (what was seen and covered, with a status:
+  finished, new episodes, watching, idle), `…/days` (watched time per calendar day in a time zone), the owner's
+  marks (`POST …/history/marks`, winning over the viewings) and deletions (`DELETE …/history`, owner token only).
+  The saved positions from before became the first viewings. The TV's resolve may say what started a playback
+  (`trigger`, `commandId`). New events: `playback.started`, `paused`, `resumed`, `seeked`, `stalled`, `recovered`,
+  `ended`, `episode.seen` and `history.changed`; the status's `nowPlaying` shows only a running viewing, with its
+  `viewingId`.
 - **Access tokens for agents and apps:** the owner creates named tokens with a scope (`read`, `control` or
   `manage`) and revokes them at any time, through `GET`/`POST`/`DELETE /api/v1/admin/tokens` or `izle-server token
   create <name> --scope <scope>`, `token list` and `token revoke <id>`. A token lacking a route's scope gets

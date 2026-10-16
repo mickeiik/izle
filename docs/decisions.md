@@ -39,3 +39,18 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
 - The scope table in the middleware already lists the routes of the later slices (single home changes, history
   marks), and every unlisted non-`GET` admin route needs the owner token, so a new route is never open by accident.
 - `pairing.pending` has the server as its actor: the TV has no device id before the code is collected.
+
+## Remote management: viewing history (2026-10-16)
+
+- A TV that has not opened its event stream since the server started counts as offline since then, so the lost
+  sweep's "offline for 2 minutes" rule holds from the start. A TV that reports progress without a stream loses its
+  viewing after 2 minutes (the app always keeps one open); the TV's own resume and cursor are untouched.
+- The pause and stall events are transitions: a second `paused` report in a row (or a repeated stall) emits
+  nothing, so a consumer sees one `playback.paused` per pause.
+- Played ranges are stored as the TV reports them, a consecutive report extending the previous row, and merged
+  when read; the watched time is a running total on the viewing. A lost viewing's `endedAt` is its last report,
+  earlier than its `playback.ended` event.
+- `TitleSummary.episodes` and `seasons` count over the item's playable episodes in the current catalog (so `seen`
+  never exceeds `total`); an episode that left the catalog counts only once the item itself has. `rewatches` are
+  the seen viewings of an episode beyond its first, within the TV asked for; a mark is not a viewing.
+- `sort=title` and the items within a day use the catalog search's collation (`byTitle` in catalog.ts).
