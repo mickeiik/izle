@@ -60,12 +60,27 @@ class ApiClientTest {
             ),
         )
         val api = client()
-        val r = api.resolve(ResolveRequest("m.film", exclude = listOf("b")))
+        val r = api.resolve(ResolveRequest("m.film", exclude = listOf("b"), trigger = Trigger.Command, commandId = 12))
         assertEquals("${server.url("/")}p/x/file.mp4", api.resolve(r.media.url).toString())
         val request = server.takeRequest()
         assertEquals("POST", request.method)
         assertTrue(request.headers["Content-Type"]!!.startsWith("application/json"))
-        assertEquals("""{"episodeId":"m.film","exclude":["b"]}""", request.body?.utf8())
+        assertEquals("""{"episodeId":"m.film","exclude":["b"],"trigger":"command","commandId":12}""", request.body?.utf8())
+    }
+
+    @Test
+    fun commandResultsArePostedToTheCommandsRoute() = runBlocking {
+        server.enqueue(json("""{"ok":true}"""))
+        server.enqueue(json("""{"error":"already_reported"}""", code = 409))
+        client().reportCommandResult(12, CommandResult.ignored(CommandResult.NOT_IN_PLAYER))
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/v1/tv/commands/12/result", request.url.encodedPath)
+        assertEquals("Bearer device-token", request.headers["Authorization"])
+        assertEquals("""{"result":"ignored","reason":"not_in_player"}""", request.body?.utf8())
+        val refused = failsWith<ApiException> { client().reportCommandResult(12, CommandResult.Done) }
+        assertEquals("already_reported", refused.code)
+        assertEquals("""{"result":"done"}""", server.takeRequest().body?.utf8())
     }
 
     @Test

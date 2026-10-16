@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.mickeiik.izle.AppGraph
 import io.github.mickeiik.izle.BuildConfig
+import io.github.mickeiik.izle.data.api.CommandResult
 import io.github.mickeiik.izle.data.api.EpisodeDetails
 import io.github.mickeiik.izle.data.api.HomeEntry
 import io.github.mickeiik.izle.data.api.ItemCard
@@ -13,6 +14,7 @@ import io.github.mickeiik.izle.data.api.ServerUrls
 import io.github.mickeiik.izle.data.api.TvState
 import io.github.mickeiik.izle.data.api.orNullOnFailure
 import io.github.mickeiik.izle.domain.AutoplayPlan
+import io.github.mickeiik.izle.domain.PlaybackOrigin
 import io.github.mickeiik.izle.domain.Problems
 import io.github.mickeiik.izle.domain.RemoteCommand
 import io.github.mickeiik.izle.domain.countDown
@@ -101,6 +103,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         mediaHttp = graph.http,
         repository = repository,
         problems = graph.problems,
+        commandResults = graph.commandResults,
         userAgent = graph.userAgent,
         appVersion = BuildConfig.VERSION_NAME,
         // The emulator decodes H.264 in software; real TVs, debug build or not, get full resolution.
@@ -198,7 +201,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     /** CH+/CH− and |◀◀ ▶▶|: switch episodes while video is showing; everywhere else they do nothing (but are consumed). */
     fun onEpisodeKey(direction: Int) {
-        if (_screen.value == Screen.Player && _menu.value == null) player.stepEpisode(direction)
+        if (_screen.value == Screen.Player && _menu.value == null) player.stepEpisode(direction, PlaybackOrigin.Next)
     }
 
     /** Back: closes the menu, leaves the player, steps back from pairing. Never leaves the app from Home. */
@@ -314,14 +317,17 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         homeFocusItemId = itemId
     }
 
-    fun onTileClicked(entry: HomeEntry) {
+    fun onTileClicked(entry: HomeEntry) = playTile(entry, PlaybackOrigin.Viewer)
+
+    /** OK on a tile, or autoplay on start: the show's `continue` episode under the normal resume rules. */
+    private fun playTile(entry: HomeEntry, origin: PlaybackOrigin) {
         if (!online.value) {
             homeMessages.show(HomeMessage.NoConnection, forMs = 5_000)
             repository.refreshSoon()
             return
         }
         homeFocusItemId = entry.item.id
-        startPlayback(entry.playNext.episodeId, startAtMs = null, hint = entry.item)
+        startPlayback(entry.playNext.episodeId, origin, startAtMs = null, hint = entry.item)
     }
 
     /** The show [itemId] on Home in the latest state, if it is there. */
@@ -360,10 +366,13 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
-    /** "Play now", or the end of the countdown: the show's `continue` episode under the normal resume rules. */
+    /**
+     * "Play now", or the end of the countdown: the show's `continue` episode under the normal resume rules. Both are
+     * autoplay's playback (the viewer only confirmed what autoplay offered).
+     */
     fun onAutoplayPlayNow() {
         val itemId = endAutoplay() ?: return
-        onTileClicked(homeEntry(itemId) ?: return)
+        playTile(homeEntry(itemId) ?: return, PlaybackOrigin.Autoplay)
     }
 
     /** Back, "Not now" or any other key: the viewer stays on Home, with the focus on the offered show. */
@@ -386,11 +395,11 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         _autoplay.value = null
     }
 
-    private fun startPlayback(episodeId: String, startAtMs: Long?, hint: ItemCard?) {
+    private fun startPlayback(episodeId: String, origin: PlaybackOrigin, startAtMs: Long?, hint: ItemCard?, playCommand: Boolean = false) {
         clearAutoplay()
         _menu.value = null
         _screen.value = Screen.Player
-        player.play(episodeId, startAtMs, hint)
+        player.play(episodeId, origin, startAtMs, hint, playCommand = playCommand)
     }
 
     private fun onPlayerExit() {
@@ -401,20 +410,25 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     private fun onCommand(command: ServerEvent.Command) {
         val actions = CommandPlan.actions(RemoteCommand.of(command), _screen.value, player.ui.value.phase, menuOpen = _menu.value != null)
+        // The server the command came from (the repository acknowledged it there).
+        val api = repository.api
+        val report = { result: CommandResult -> if (api != null) graph.commandResults.report(api, command.id, result) }
+        val origin = PlaybackOrigin.command(command.id)
         for (action in actions) {
             when (action) {
                 is CommandPlan.Action.Play -> {
                     action.itemId?.let { homeFocusItemId = it }
-                    startPlayback(action.episodeId, startAtMs = null, hint = homeEntry(action.itemId)?.item)
+                    startPlayback(action.episodeId, origin, action.positionMs, homeEntry(action.itemId)?.item, playCommand = true)
                 }
                 CommandPlan.Action.Exit -> player.exit()
                 CommandPlan.Action.Pause -> player.pause()
                 CommandPlan.Action.Resume -> player.resume()
                 is CommandPlan.Action.Seek -> player.seekRemote(action.command)
-                is CommandPlan.Action.Step -> player.stepEpisode(action.direction)
+                is CommandPlan.Action.Step -> player.stepEpisode(action.direction, origin, report)
                 is CommandPlan.Action.CloseMenu -> closeMenu(action.resume)
                 CommandPlan.Action.StayPausedAfterMenu -> resumeAfterMenu = false
                 is CommandPlan.Action.ShowMessage -> banners.show(action.message.text, forMs = action.message.durationSec * 1_000L)
+                is CommandPlan.Action.Report -> report(action.result)
             }
         }
     }
@@ -462,7 +476,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
                     player.startOver()
                 } else {
                     val home = focusedEntry() ?: return
-                    startPlayback(home.playNext.episodeId, startAtMs = 0, hint = home.item)
+                    startPlayback(home.playNext.episodeId, PlaybackOrigin.Viewer, startAtMs = 0, hint = home.item)
                 }
             }
             RootEntry.Audio -> push(MenuPage.Audio(player.audioTracks()))
@@ -476,7 +490,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         val menu = _menu.value ?: return
         if (!episode.playbackAllowed) return
         menu.item?.let { homeFocusItemId = it.id }
-        startPlayback(episode.id, startAtMs = null, hint = menu.item)
+        startPlayback(episode.id, PlaybackOrigin.Viewer, startAtMs = null, hint = menu.item)
     }
 
     fun onAudioChosen(option: TrackOption?) {

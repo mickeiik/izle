@@ -9,6 +9,10 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Added
 
+- **The TV reports what became of each remote command:** done, ignored (and why: not playing, not ready, no next
+  episode, unknown command) or failed (no playable source, playback error); a remote play reports once the video
+  runs or fails. Every playback tells the server who started it (the viewer, autoplay, auto-next or a command), for
+  the viewing history. A remote play can start at a given position (0 = from the beginning).
 - **Next and previous episode from the remote:** CH+/CH− and the media next/previous keys switch episodes while
   playing.
 - **Autoplay when the TV starts** (per TV, off by default): the show watched last, else the first tile, starts after

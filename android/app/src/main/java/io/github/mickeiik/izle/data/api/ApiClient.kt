@@ -85,6 +85,11 @@ class ApiClient(
         exchange(authorize(Request.Builder().url(url("api/v1/tv/commands/$id/ack")).post(EMPTY_BODY)).build()).requireOk()
     }
 
+    /** `404 unknown_command` (another TV's, or a server from before results) and `409 already_reported` throw as usual. */
+    suspend fun reportCommandResult(id: Long, result: CommandResult) {
+        exchange(jsonPost("api/v1/tv/commands/$id/result", CommandResult.serializer(), result)).requireOk()
+    }
+
     /** `202 {"ok":true}`; a server too old for the route answers 4xx, which the caller ignores like any failure. */
     suspend fun reportProblem(report: ProblemReport) {
         exchange(jsonPost("api/v1/tv/problems", ProblemReport.serializer(), report)).requireOk()
