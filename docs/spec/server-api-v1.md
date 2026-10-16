@@ -1,6 +1,6 @@
 # izle-server API v1
 
-Status: **draft, implemented**, except [Remote management](#remote-management) (draft, not implemented yet).
+Status: **draft, implemented**, except parts of [Remote management](#remote-management) (its status line says which).
 Changes within v1 are additive only (new optional request fields, new response fields, new routes); clients MUST
 ignore unknown response fields.
 
@@ -445,7 +445,12 @@ language inside the same multi-audio stream) in sync with the picture, from the 
 
 ## Remote management
 
-Status: **draft, not implemented**. Everything here is additive within v1.
+Status: **draft, partly implemented**. Implemented: [access tokens](#access-tokens) and the `Actor`,
+[`GET /admin/status`](#status) and the one rule for `online`, the [event log](#events) with its stream and long-poll
+(every event type except the `playback.*`, `episode.seen`, `command.result` and `history.changed` ones, which come
+with the parts below). Not implemented yet: the [viewing history](#viewing-history),
+[remote play and command results](#remote-play-and-command-results), [home list changes](#home-list-changes) and
+[replacing a TV](#replacing-a-tv). Everything here is additive within v1.
 
 The viewer only watches; the TV is run from elsewhere: by the owner on the admin page, by the owner's own apps, or by
 AI agents. They all use these routes. An MCP server for agents is a thin wrapper around them with an
@@ -504,7 +509,9 @@ active TV in one call. `nowPlaying` is the object of [`GET …/now`](#devices) w
 before). `lastEventId` is read before the rest, so reading the status and then the [events](#events) after
 `lastEventId` misses nothing (a change in between shows twice, never not at all).
 
-`nowPlaying` (here and in `GET …/now`) gains `viewingId`: the running viewing, or null once it ended.
+`nowPlaying` (here and in `GET …/now`) gains `viewingId`: the running viewing, or null once it ended. Until the
+[viewing history](#viewing-history) is implemented, the status shows the last report while its `state` is not
+`stopped` or `finished`, without `viewingId`.
 
 **Online.** A TV is online while it has an event stream open, and for 60 s after its last one closed (a reconnect does
 not flap). `online` in `Device`, in the answer to a command and here all follow this rule; at start every TV is
@@ -558,7 +565,10 @@ Events carry no URLs, headers, refs, tokens, message texts or problem details.
 
 Ordering within one change: when a resolve replaces a running viewing, `playback.ended` comes before
 `playback.started`; `episode.seen` follows its `playback.ended`. New types and fields are added within v1; consumers
-MUST ignore those they do not know.
+MUST ignore those they do not know. Not implemented yet (they come with the viewing history and command results):
+`playback.*`, `episode.seen`, `command.result`, `history.changed`; `device.paired` always says `replaced: false`
+until [replacing a TV](#replacing-a-tv) is. The `pairing.pending` event has the server as its actor: the TV has no
+id yet.
 
 ### Viewing history
 
@@ -777,13 +787,14 @@ in `./data` (`izle.db`, `admin.token`). Deployment (systemd, Caddy, Docker): [se
 - `defaults` (default null each): `uiLanguage` (`tr`/`en`) and `preferredAudioLanguage` (a language tag) for devices
   without their own setting; null falls back to the catalog's hints.
 - `log.level`: `debug`, `info` (default), `warn` or `error`.
-- `events.retentionDays` (1–90, default 7): how long the [event log](#events) is kept (remote management draft, not
-  implemented yet: the key is refused until then).
+- `events.retentionDays` (1–90, default 7): how long the [event log](#events) is kept; the housekeeping that runs
+  every 10 minutes deletes older events.
 
 ## Changelog
 
 - **v1 (2026-10-10)** — initial version.
-- **v1, remote management draft (2026-10-16)** — additive, not implemented yet: [access tokens](#access-tokens) with
+- **v1, remote management draft (2026-10-16)** — additive, implemented in steps (the section's status line says
+  where it stands): [access tokens](#access-tokens) with
   scopes and the `Actor` of every change, [`GET /admin/status`](#status) and one rule for `online`, the stored
   [event log](#events) with its stream and long-poll, the permanent [viewing history](#viewing-history) (seen at the
   end or past 90 %, `seenAt`, `coveredFraction`, played ranges) with title summaries and marks, `play` by item and at

@@ -445,8 +445,8 @@ export class Store {
 
   // --- commands ------------------------------------------------------------------------------------------------
 
-  insertCommand(deviceId: string, type: CommandType, payload: Record<string, unknown>, now: number): Command {
-    const row = { deviceId, type, payloadJson: JSON.stringify(payload), createdAt: now };
+  insertCommand(deviceId: string, type: CommandType, payload: Record<string, unknown>, actor: Actor, now: number): Command {
+    const row = { deviceId, type, payloadJson: JSON.stringify(payload), actorJson: JSON.stringify(actor), createdAt: now };
     return fromRow(this.insert("commands", row, undefined, " RETURNING *")!);
   }
 

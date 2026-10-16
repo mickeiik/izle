@@ -30,7 +30,7 @@ test("deleting a device cascades to its rows; transactions roll back on error", 
   s.createDevice({ id: "d1", name: "TV", tokenHash: "h1", now: 1 });
   s.setHome("d1", "c", ["a", "b"], 1);
   s.upsertProgress("d1", { catalogId: "c", itemId: "a", episodeId: "a.1", positionMs: 5, durationMs: 10, status: "watching", updatedAt: 2 });
-  s.insertCommand("d1", "stop", {}, 3);
+  s.insertCommand("d1", "stop", {}, { type: "owner" }, 3);
   assert.throws(() =>
     s.transaction(() => {
       s.setHome("d1", "c", ["x"], 2);
@@ -184,8 +184,10 @@ test("migration 5: saved positions become imported viewings; access tokens and e
   assert.equal(db.prepare("SELECT COUNT(*) AS n FROM viewing_ranges").get()!.n, 0);
   db.close();
 
-  // Commands from before have no actor and no result.
+  // Commands from before have no actor; new ones carry theirs and the result columns.
   assert.deepEqual(s.pendingCommands("d1", 0).map((c) => [c.actor, c.result, c.reason, c.resultAt]), [[null, null, null, null]]);
+  const cmd = s.insertCommand("d1", "pause", {}, { type: "token", tokenId: "t1", name: "agent" }, 6);
+  assert.deepEqual([cmd.actor, cmd.result], [{ type: "token", tokenId: "t1", name: "agent" }, null]);
 
   const token = { id: "tok000000001", name: "agent", scope: "read" as const, createdAt: 7, lastUsedAt: null };
   assert.deepEqual(s.insertAccessToken({ ...token, secretHash: "hash1" }), token);

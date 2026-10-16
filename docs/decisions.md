@@ -26,3 +26,16 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
   (the spec names it), `.dockerignore` entries for untracked local files. Response builders and fixtures now put
   several properties on one line; one commit ("response shapes and options packed onto fewer lines") carries that
   choice and can be reverted alone.
+
+## Remote management foundation (2026-10-16)
+
+- Migration 5 holds the whole remote-management schema (tokens, events, viewings, ranges, marks, command results),
+  although this slice uses only part of it, so that the history and command slices built in parallel do not each
+  claim a migration number. Saved positions are imported as viewings in SQL inside the migration.
+- Events are published to stream and long-poll consumers from `Store.afterCommit` hooks, so a subscriber never hears
+  of a change that rolled back, and the one `append()` call sits inside the change's transaction.
+- `lastEventId` falls back to SQLite's sequence when the log is empty, so a consumer behind a purge that emptied the
+  log still sees `gap: true` instead of a clean "nothing new".
+- The scope table in the middleware already lists the routes of the later slices (single home changes, history
+  marks), and every unlisted non-`GET` admin route needs the owner token, so a new route is never open by accident.
+- `pairing.pending` has the server as its actor: the TV has no device id before the code is collected.

@@ -14,6 +14,12 @@ contract share one version number. How to update (back up, update the server, th
   create <name> --scope <scope>`, `token list` and `token revoke <id>`. A token lacking a route's scope gets
   `403 insufficient_scope`; a wrong or revoked one counts like a wrong admin token. Every change records who made
   it (its `actor`), and the access log names a token by its id, never its secret.
+- **`GET /api/v1/admin/status`:** every active TV in one call (online, last seen, what it plays), the catalog, the
+  pending pairing codes and the id of the latest event.
+- **Event log:** the server keeps every change worth reacting to (TVs coming online and going offline, pairing,
+  settings, home lists, cursors, commands sent and delivered, problems, catalog reloads) for `events.retentionDays`
+  (default 7) and serves it as a stream (`GET /api/v1/admin/events/stream`) and a long-poll (`GET
+  /api/v1/admin/events`), with device and type filters and a `gap` marker when a consumer fell behind.
 - **Next and previous episode from the remote:** CH+/CH− and the media next/previous keys switch episodes while
   playing.
 - **Autoplay when the TV starts** (per TV, off by default): the show watched last, else the first tile, starts after
@@ -48,6 +54,8 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Changed
 
+- **A TV counts as online for a minute after its event stream closed**, so a reconnect does not show it offline
+  and back; the device list, the answer to a command and the status all follow this one rule.
 - **Approving a TV no longer needs a name:** it is called "TV" (then "TV 2", "TV 3", …) and can be renamed later;
   `POST /api/v1/admin/pair/approve` answers with the name it gave.
 - **The TV's pairing screen shows the admin page's address**, where the code is approved, instead of the bare

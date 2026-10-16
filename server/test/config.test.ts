@@ -19,6 +19,7 @@ test("defaults without a config file", () => {
   assert.deepEqual(c.proxy, { always: false, sessionTtlSec: 21600, alignTsSegments: false });
   assert.deepEqual(c.defaults, { uiLanguage: null, preferredAudioLanguage: null });
   assert.deepEqual(c.trustedProxies, []);
+  assert.deepEqual(c.events, { retentionDays: 7 });
 });
 
 test("relative paths in a config file resolve against the file's directory", async () => {
@@ -61,6 +62,8 @@ test("rejects unknown keys, bad values, bad JSON and missing files", async () =>
     return f;
   };
   assert.throws(() => loadConfig({ path: write('{"lisen": {}}'), env: {} }), (e: Error) => e instanceof ConfigError && /unknown property "lisen"/.test(e.message));
+  assert.equal(loadConfig({ path: write('{"events": {"retentionDays": 90}}'), env: {} }).events.retentionDays, 90);
+  assert.throws(() => loadConfig({ path: write('{"events": {"retentionDays": 0}}'), env: {} }), (e: Error) => e instanceof ConfigError && /retentionDays/.test(e.message));
   assert.throws(() => loadConfig({ path: write('{"listen": {"port": 70000}}'), env: {} }), ConfigError);
   assert.throws(() => loadConfig({ path: write('{"defaults": {"uiLanguage": "de"}}'), env: {} }), ConfigError);
   assert.throws(() => loadConfig({ path: write('{"trustedProxies": "127.0.0.1"}'), env: {} }), ConfigError);

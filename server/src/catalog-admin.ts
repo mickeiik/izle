@@ -3,6 +3,7 @@
 // that the admin route and SIGHUP share.
 
 import type { CatalogItem } from "@izle/contract";
+import { SERVER, type Actor } from "./actor.ts";
 import type { CatalogService, ReloadResult } from "./catalog.ts";
 import type { AppContext, Services } from "./context.ts";
 import { errorName } from "./errors.ts";
@@ -36,15 +37,27 @@ export function catalogInfo(ctx: Pick<AppContext, "catalog" | "store" | "resolve
   };
 }
 
-type ReloadDeps = Pick<Services, "catalog" | "notifier">;
+type ReloadDeps = Pick<Services, "catalog" | "notifier" | "store" | "eventLog">;
 
 /**
  * Re-reads the catalog bundle (the admin route and SIGHUP). After a good load every TV's state version is bumped,
  * so the TVs re-read their home screens; after a refused one the previous catalog stays and nothing is bumped.
+ * Either way the event log says what happened, with the counts of the build the catalog history recorded.
  */
-export async function reloadCatalog({ catalog, notifier }: ReloadDeps): Promise<ReloadResult> {
+export async function reloadCatalog({ catalog, notifier, store, eventLog }: ReloadDeps, actor: Actor): Promise<ReloadResult> {
   const r = await catalog.reload();
-  if (r.ok) notifier.bumpAll();
+  if (r.ok) {
+    const { manifest, loadedAt } = r.catalog;
+    // The history records nothing for a build that was already loaded: its counts are then 0.
+    const b = store.listCatalogBuilds(manifest.catalogId, 1)[0];
+    const fresh = b && b.buildId === manifest.buildId && b.loadedAt === loadedAt ? b : null;
+    const added = { items: fresh?.itemsAdded ?? 0, episodes: fresh?.episodesAdded ?? 0 };
+    const removed = { items: fresh?.itemsRemoved ?? 0, episodes: fresh?.episodesRemoved ?? 0 };
+    eventLog.append("catalog.reloaded", null, actor, { buildId: manifest.buildId, added, removed });
+    notifier.bumpAll();
+  } else {
+    eventLog.append("catalog.reload_failed", null, actor, { issues: r.issues.length });
+  }
   return r;
 }
 
@@ -54,7 +67,7 @@ export async function reloadCatalog({ catalog, notifier }: ReloadDeps): Promise<
  */
 export async function reloadOnSignal(deps: ReloadDeps & Pick<Services, "log">, signal: string): Promise<void> {
   try {
-    await reloadCatalog(deps);
+    await reloadCatalog(deps, SERVER);
   } catch (err) {
     deps.log.warn("catalog reload failed", { signal, error: errorName(err) });
   }

@@ -3,6 +3,7 @@
 // not be reached; never "Listen along" ones). Free text from the TV is redacted before it is stored, and detail is
 // never logged.
 
+import { SERVER, tvActor } from "./actor.ts";
 import type { Services } from "./context.ts";
 import { tooManyRequests } from "./errors.ts";
 import { redactReportText } from "./log.ts";
@@ -54,7 +55,7 @@ interface ServerProblem {
   detail?: string | null;
 }
 
-type ProblemDeps = Pick<Services, "store" | "catalog" | "log" | "now" | "sessions">;
+type ProblemDeps = Pick<Services, "store" | "catalog" | "log" | "now" | "sessions" | "eventLog">;
 
 const cap = (text: string) => (text.length > MAX_DETAIL ? `${text.slice(0, MAX_DETAIL - 1)}…` : text);
 
@@ -87,7 +88,13 @@ export class ProblemService {
   private insert(deviceId: string, origin: ProblemOrigin, p: Omit<Problem, "id" | "deviceId" | "origin" | "catalogId" | "itemId">): Problem {
     const ref = p.episodeId ? this.o.catalog.episode(p.episodeId) : undefined;
     const catalogId = ref ? this.o.catalog.catalogId : null;
-    return this.o.store.insertProblem({ ...p, deviceId, origin, catalogId, itemId: ref?.item.id ?? null }, PROBLEMS_KEPT);
+    return this.o.store.transaction(() => {
+      const problem = this.o.store.insertProblem({ ...p, deviceId, origin, catalogId, itemId: ref?.item.id ?? null }, PROBLEMS_KEPT);
+      // Ids, kind and code only: the detail stays in the problem list.
+      const data = { problemId: problem.id, origin, kind: problem.kind, code: problem.code, episodeId: problem.episodeId };
+      this.o.eventLog.append("problem.recorded", deviceId, origin === "tv" ? tvActor(deviceId) : SERVER, data);
+      return problem;
+    });
   }
 
   /** A TV's own report. Free text is redacted before it is stored; 429 beyond the rate limit. */

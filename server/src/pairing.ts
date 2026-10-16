@@ -1,6 +1,9 @@
 import { randomInt } from "node:crypto";
+import { SERVER, tvActor } from "./actor.ts";
 import { newId, newToken, secretsEqual, sha256 } from "./auth.ts";
+import type { Services } from "./context.ts";
 import { HttpError, tooManyRequests } from "./errors.ts";
+import type { EventLog } from "./eventlog.ts";
 import type { Logger } from "./log.ts";
 import { RateLimiter } from "./ratelimit.ts";
 import type { Store } from "./store.ts";
@@ -31,13 +34,15 @@ export class PairingService {
   private readonly store: Store;
   private readonly log: Logger;
   private readonly now: () => number;
+  private readonly eventLog: EventLog;
 
-  constructor(store: Store, log: Logger, now: () => number = Date.now, opts: PairingOptions = {}) {
-    this.store = store;
-    this.log = log;
-    this.now = now;
+  constructor(deps: Pick<Services, "store" | "log" | "now" | "eventLog">, opts: PairingOptions = {}) {
+    this.store = deps.store;
+    this.log = deps.log;
+    this.now = deps.now;
+    this.eventLog = deps.eventLog;
     const limit = opts.startLimit ?? { max: 10, windowMs: 10 * 60_000 };
-    this.limiter = new RateLimiter(limit.max, limit.windowMs, now);
+    this.limiter = new RateLimiter(limit.max, limit.windowMs, this.now);
   }
 
   start(clientKey: string): { code: string; pairToken: string; expiresAt: number } {
@@ -54,7 +59,11 @@ export class PairingService {
     if (!code) throw new HttpError(503, "busy", "no free pairing code");
     const pairToken = newToken();
     const expiresAt = t + PAIR_CODE_TTL_MS;
-    this.store.insertPairCode({ code, pairTokenHash: sha256(pairToken), createdAt: t, expiresAt });
+    this.store.transaction(() => {
+      this.store.insertPairCode({ code, pairTokenHash: sha256(pairToken), createdAt: t, expiresAt });
+      // The TV has no id yet, so the server stands as the actor; the code is what the owner needs to see.
+      this.eventLog.append("pairing.pending", null, SERVER, { code, expiresAt: new Date(expiresAt).toISOString() });
+    });
     this.log.info("pairing started", { expiresInSec: Math.round(PAIR_CODE_TTL_MS / 1000) });
     return { code, pairToken, expiresAt };
   }
@@ -98,6 +107,8 @@ export class PairingService {
     this.store.transaction(() => {
       this.store.setDeviceToken(deviceId, sha256(deviceToken), t);
       this.store.markPairCodeDelivered(code, t);
+      const name = this.store.getDevice(deviceId)?.name ?? "";
+      this.eventLog.append("device.paired", deviceId, tvActor(deviceId), { name, replaced: false });
     });
     this.log.info("pairing completed", { deviceId });
     return { status: "approved", deviceId, deviceToken };

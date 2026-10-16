@@ -1,4 +1,5 @@
 import type { CatalogItem } from "@izle/contract";
+import type { Actor } from "./actor.ts";
 import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
 import { requireEpisode, requireItem, requirePlayable } from "./lookup.ts";
@@ -206,7 +207,7 @@ export class TvService {
    * Owner override "continue from episode X": moves the cursor (an ordinary one, so it wins over episodes added
    * after a wrap) and forgets X's saved position so it starts over.
    */
-  setCursor(deviceId: string, itemId: string, episodeId: string): number {
+  setCursor(deviceId: string, itemId: string, episodeId: string, actor: Actor): number {
     const item = requireItem(this.s.catalog, itemId, 404, "unknown_item");
     const episode = item.episodes.find((e) => e.id === episodeId);
     if (!episode) throw new HttpError(400, "unknown_episode", "the episode does not belong to this item");
@@ -215,11 +216,12 @@ export class TvService {
     this.s.store.transaction(() => {
       this.s.store.setCursor(deviceId, { catalogId, itemId, episodeId, updatedAt: this.s.now() });
       this.s.store.deleteProgress(deviceId, catalogId, episodeId);
+      this.s.eventLog.append("cursor.changed", deviceId, actor, { itemId, episodeId });
     });
     return this.s.notifier.bump(deviceId);
   }
 
-  setHome(deviceId: string, itemIds: string[]): number {
+  setHome(deviceId: string, itemIds: string[], actor: Actor): number {
     if (itemIds.length > HOME_MAX_ITEMS) {
       throw new HttpError(400, "too_many_items", `a home list holds at most ${HOME_MAX_ITEMS} items`, { max: HOME_MAX_ITEMS });
     }
@@ -231,7 +233,15 @@ export class TvService {
       if (!item) throw new HttpError(400, "unknown_item", "no such item in the catalog", { itemId: id });
       if (!isPlayable(item)) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed", { itemId: id });
     }
-    this.s.store.setHome(deviceId, this.s.catalog.catalogId, itemIds, this.s.now());
+    const catalogId = this.s.catalog.catalogId;
+    this.s.store.transaction(() => {
+      const before = new Set(this.s.store.getHomeEntries(deviceId, catalogId).map((e) => e.itemId));
+      this.s.store.setHome(deviceId, catalogId, itemIds, this.s.now());
+      const after = new Set(itemIds);
+      const added = itemIds.filter((id) => !before.has(id));
+      const removed = [...before].filter((id) => !after.has(id));
+      this.s.eventLog.append("home.changed", deviceId, actor, { itemIds, added, removed });
+    });
     return this.s.notifier.bump(deviceId);
   }
 }

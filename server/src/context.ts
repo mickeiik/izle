@@ -3,6 +3,7 @@ import type { CommandService } from "./commands.ts";
 import type { CompanionService } from "./companion.ts";
 import type { ServerConfig } from "./config.ts";
 import type { DeviceService } from "./devices.ts";
+import type { EventLog } from "./eventlog.ts";
 import type { EventHub, Notifier } from "./events.ts";
 import type { Logger } from "./log.ts";
 import type { PairingService } from "./pairing.ts";
@@ -21,6 +22,8 @@ export interface Services {
   catalog: CatalogService;
   events: EventHub;
   notifier: Notifier;
+  /** The stored event log every change appends to (in its transaction). */
+  eventLog: EventLog;
   resolver: ResolveService;
   /** The playback sessions resolve opens; progress and problem reports name them. */
   sessions: PlaybackSessions;

@@ -1,6 +1,7 @@
 // Remote control from the admin page: a command is stored, published to the TV's open event streams, and replayed
 // when the TV (re)connects until the TV acknowledges it or it is too old to act on.
 
+import { tvActor, type Actor } from "./actor.ts";
 import type { Services } from "./context.ts";
 import { requireEpisode, requirePlayable } from "./lookup.ts";
 import type { Command } from "./store.ts";
@@ -52,12 +53,18 @@ export class CommandService {
   }
 
   /** Stores a command for the device and publishes it to the device's open event streams. */
-  send(deviceId: string, body: CommandBody): Command {
-    const cmd = this.s.store.insertCommand(deviceId, body.type, this.payload(body), this.s.now());
+  send(deviceId: string, body: CommandBody, actor: Actor): { command: Command; online: boolean } {
+    const payload = this.payload(body);
+    const online = this.s.events.isOnline(deviceId);
+    const cmd = this.s.store.transaction(() => {
+      const c = this.s.store.insertCommand(deviceId, body.type, payload, actor, this.s.now());
+      this.s.eventLog.append("command.sent", deviceId, actor, { commandId: c.id, type: c.type, online });
+      return c;
+    });
     this.s.notifier.command(cmd);
     // Type and ids only: never a message's text.
     this.s.log.info("command queued", { deviceId, type: cmd.type, commandId: cmd.id });
-    return cmd;
+    return { command: cmd, online };
   }
 
   /** The commands a (re)connecting TV gets again, oldest first. */
@@ -67,7 +74,11 @@ export class CommandService {
 
   /** The TV acknowledges a command; false when the device has no command with this id. */
   ack(deviceId: string, id: number): boolean {
-    return this.s.store.ackCommand(deviceId, id, this.s.now());
+    return this.s.store.transaction(() => {
+      if (!this.s.store.ackCommand(deviceId, id, this.s.now())) return false;
+      this.s.eventLog.append("command.delivered", deviceId, tvActor(deviceId), { commandId: id });
+      return true;
+    });
   }
 
   purge(): void {

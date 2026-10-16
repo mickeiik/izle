@@ -45,25 +45,25 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
   app.patch("/api/v1/admin/devices/:id", async (c) => {
     const d = requireDevice(store, c.req.param("id"));
     const body = await parseBody(c, devicePatchBody);
-    return c.json({ device: devices.view(devices.update(d, body)) });
+    return c.json({ device: devices.view(devices.update(d, body, c.get("actor"))) });
   });
 
   app.delete("/api/v1/admin/devices/:id", (c) => {
-    devices.remove(requireDevice(store, c.req.param("id")));
+    devices.remove(requireDevice(store, c.req.param("id")), c.get("actor"));
     return c.body(null, 204);
   });
 
   app.put("/api/v1/admin/devices/:id/home", async (c) => {
     const d = requireDevice(store, c.req.param("id"));
     const body = await parseBody(c, homeBody);
-    const version = tv.setHome(d.id, body.itemIds);
+    const version = tv.setHome(d.id, body.itemIds, c.get("actor"));
     return c.json({ version, home: devices.home(d) });
   });
 
   app.put("/api/v1/admin/devices/:id/cursor", async (c) => {
     const d = requireDevice(store, c.req.param("id"));
     const body = await parseBody(c, cursorBody);
-    return c.json({ version: tv.setCursor(d.id, body.itemId, body.episodeId) });
+    return c.json({ version: tv.setCursor(d.id, body.itemId, body.episodeId, c.get("actor")) });
   });
 
   app.get("/api/v1/admin/devices/:id/progress", (c) => c.json(devices.progress(requireDevice(store, c.req.param("id")))));
@@ -82,8 +82,8 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
   app.post("/api/v1/admin/devices/:id/commands", async (c) => {
     const d = requireDevice(store, c.req.param("id"));
     const body = await parseBody(c, commandBody);
-    const cmd = ctx.commands.send(d.id, body);
-    return c.json({ id: cmd.id, online: ctx.events.isOnline(d.id) }, 202);
+    const { command, online } = ctx.commands.send(d.id, body, c.get("actor"));
+    return c.json({ id: command.id, online }, 202);
   });
 
   app.get("/api/v1/admin/devices/:id/problems", (c) => {
@@ -123,7 +123,7 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
   });
 
   app.post("/api/v1/admin/catalog/reload", async (c) => {
-    const r = await reloadCatalog(ctx);
+    const r = await reloadCatalog(ctx, c.get("actor"));
     if (!r.ok) {
       return c.json({ error: "invalid_catalog", issues: r.issues.map((i) => ({ severity: i.severity, file: i.file, path: i.path, message: i.message })) }, 422);
     }

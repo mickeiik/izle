@@ -182,13 +182,14 @@ export interface SseMessage {
   event?: string;
   data?: string;
   id?: string;
+  retry?: string;
   comment?: string;
 }
 
-/** Minimal SSE client over fetch for tests. */
-export async function openEvents(base: string, token: string) {
+/** Minimal SSE client over fetch for tests: the TV's stream by default, or `route` (the admin event stream). */
+export async function openEvents(base: string, token: string, route = "/api/v1/tv/events", headers: Record<string, string> = {}) {
   const controller = new AbortController();
-  const res = await fetch(`${base}/api/v1/tv/events`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+  const res = await fetch(`${base}${route}`, { headers: { Authorization: `Bearer ${token}`, ...headers }, signal: controller.signal });
   if (!res.body) throw new Error(`no body (${res.status})`);
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
@@ -211,7 +212,7 @@ export async function openEvents(base: string, token: string) {
           for (const line of block.split("\n")) {
             const [, key, val] = /^([^:]*):? ?(.*)$/.exec(line)!;
             if (key === "") msg.comment = val!.trim();
-            else if (key === "event" || key === "data" || key === "id") msg[key] = val;
+            else if (key === "event" || key === "data" || key === "id" || key === "retry") msg[key] = val;
           }
           queue.push(msg);
           waiting?.();

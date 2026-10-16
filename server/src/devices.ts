@@ -1,6 +1,7 @@
 // The owner's side of the paired TVs (admin API): how a TV appears in the device list and on its page, what it has
 // watched and is playing, settings changes, and deletion.
 
+import type { Actor } from "./actor.ts";
 import type { Services } from "./context.ts";
 import { iso } from "./presenters.ts";
 import type { ProxyService } from "./proxy.ts";
@@ -80,15 +81,24 @@ export class DeviceService {
   }
 
   /** Applies a patch of the name (trimmed) or settings, and tells the TV. */
-  update(d: Device, patch: DevicePatch): Device {
-    const updated = this.s.store.updateDevice(d.id, { ...patch, ...(patch.name !== undefined ? { name: patch.name.trim() } : {}) })!;
+  update(d: Device, patch: DevicePatch, actor: Actor): Device {
+    const { store, eventLog } = this.s;
+    const updated = store.transaction(() => {
+      const u = store.updateDevice(d.id, { ...patch, ...(patch.name !== undefined ? { name: patch.name.trim() } : {}) })!;
+      eventLog.append("device.updated", d.id, actor, { fields: Object.keys(patch) });
+      return u;
+    });
     this.s.notifier.state(d.id, updated.stateVersion);
     return updated;
   }
 
   /** Deletes the device (with everything stored for it), closes its event streams and ends its proxy sessions. */
-  remove(d: Device): void {
-    this.s.store.deleteDevice(d.id);
+  remove(d: Device, actor: Actor): void {
+    const { store, eventLog } = this.s;
+    store.transaction(() => {
+      store.deleteDevice(d.id);
+      eventLog.append("device.removed", d.id, actor, { name: d.name });
+    });
     this.s.events.closeDevice(d.id);
     this.s.proxy.dropDevice(d.id);
     this.s.proxy.dropDevice(companionScope(d.id));
