@@ -26,8 +26,9 @@ contract share one version number. How to update (back up, update the server, th
 - **The TV app updates itself** from the version stored on the server: on Android 12 and newer (with the one-time
   "install unknown apps" permission) silently, once the TV has sat idle on Home for 3 minutes or at once on the
   owner's `update` command; on older TVs on the command only, behind a large "New version — press OK" screen and
-  then the system's Install dialog (Back or 60 s go Home). Never during playback. The hidden menu offers "Install
-  update" and About says whether one is available; every API call's `User-Agent` names the app version, Android
+  then the system's Install dialog (Back or 60 s go Home). Never during playback. After an update Android 10+ shows
+  the TV's launcher until izle is opened again (the system blocks the app from coming back by itself); Android 9 and
+  older bring it back. The hidden menu offers "Install update" and About says whether one is available; every API call's `User-Agent` names the app version, Android
   version and how the TV can update (`izle-tv/0.2.0 (Android 25; 200; guided)`).
 
 - **The admin page follows the TVs live:** it reads the server's event log, so a TV going online, a playback, a

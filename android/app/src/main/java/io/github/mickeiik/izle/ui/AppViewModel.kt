@@ -520,7 +520,10 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
-    private fun updateContext() = UpdatePlan.Context(
+    /** The live facts [UpdatePlan] decides on; the grant is re-read each time (a Settings page over the app does not stop it). */
+    private fun updateContext(): UpdatePlan.Context {
+        updater.refreshCapability()
+        return UpdatePlan.Context(
         capability = updater.capability.value,
         installedVersionCode = updater.installedVersionCode,
         screen = _screen.value,
@@ -533,6 +536,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         now = System.currentTimeMillis(),
         busy = updater.busy,
     )
+    }
 
     /** While in front: every 30 s, whether a silent TV installs the offered version by itself ([UpdatePlan.autoInstall]). */
     private fun startAutoUpdates() {

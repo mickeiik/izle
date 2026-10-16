@@ -51,9 +51,11 @@ Only the `izle` group can read the file, because a resolver module's `config` ma
 ([`izle.example.json`](izle.example.json)) is set up for HTTPS behind Caddy on the same machine: `listen` on
 `127.0.0.1:8787` (`"host": "0.0.0.0"` for the LAN-only setup), `publicUrl` (the address izle is reached at, base of
 the admin sign-in link, §5), `trustedProxies` `["127.0.0.1", "::1"]` (`[]` when nothing sits in front), `dataDir`
-`/var/lib/izle` (database, admin token, the resolver module's directory), no `catalog.dir` (the package's sample
-catalog), `resolver: null`, and `defaults` `en` for the menu and audio language of TVs without their own setting
-(`tr` for Turkish). Every key: [server-api-v1.md § Configuration](../spec/server-api-v1.md#configuration).
+`/var/lib/izle` (database, admin token, the resolver module's directory, the TV app's APK), no `catalog.dir` (the
+package's sample catalog), `resolver: null`, `defaults` `en` for the menu and audio language of TVs without their own
+setting (`tr` for Turkish), and `appUpdates` fetching the TV app from the project's GitHub releases (§ 8; `"source":
+"manual"` to upload APKs yourself instead). Every key:
+[server-api-v1.md § Configuration](../spec/server-api-v1.md#configuration).
 
 ### Your own catalog
 
@@ -299,8 +301,9 @@ a Caddy certificate too.
   `sudo ufw allow from 192.168.1.0/24 to any port 8787 proto tcp`.
 - **With Caddy:** allow 80 and 443 (`sudo ufw allow 80,443/tcp`). Port 8787 needs no rule: the server listens on
   127.0.0.1 only.
-- The server makes outgoing connections only for resolver modules and the media proxy (to the upstream hosts your
-  catalog uses). TVs fetch direct (non-proxied) streams themselves. "Listen along" (companion audio on your phone)
+- The server makes outgoing connections for resolver modules and the media proxy (to the upstream hosts your
+  catalog uses), and, with `appUpdates.source` `github` (the default), once a day to `api.github.com` and
+  `objects.githubusercontent.com` for the TV app's releases (§ 8). TVs fetch direct (non-proxied) streams themselves. "Listen along" (companion audio on your phone)
   runs in the admin page and gets its stream through the server's proxy, so the phone needs only the admin page.
 
 ## 8. Install the TV app
@@ -339,6 +342,33 @@ home screen; the tiles appear on the TV right away. From the server's shell the 
 (`pair pending` lists the waiting codes; `--server <url>` when the server does not listen where the config says).
 Put izle first in the TV launcher's favourites so it is the first thing on screen.
 
+### Updating the TV app
+
+The first install is the only one done at the TV. The server keeps one current APK and offers it to every paired TV:
+
+- **Where the APK comes from.** With the default `"appUpdates": { "source": "github" }` the server checks the
+  project's latest release once a day (and when you press **Check now** on the admin page's **TV app** tab),
+  downloads `izle-tv-X.Y.Z.apk`, verifies it against the release's `SHA256SUMS` and stores it in `dataDir`. With
+  `"source": "manual"` nothing is fetched: upload the release APK on the same tab (from a phone works). The server
+  never installs or runs the file; a TV only installs an APK signed with the key of the app it runs, so a debug APK
+  cannot update a release install.
+- **Allow the app to install updates, once.** Right after the first install, on the TV: Settings → Apps → Security &
+  restrictions (or Special app access) → **Install unknown apps** → izle → allow. On Android 7 it is the single
+  **Unknown sources** switch instead. Without it a TV reports "needs Install now" and the system asks for the
+  permission the first time.
+- **Android 12 and newer** TVs install a newer APK by themselves, with no dialog, once they have sat idle on the home
+  screen for three minutes (never during playback). Android closes the app to replace it and does not let it come
+  back on its own, so the TV shows its launcher afterwards: the next time izle is opened (first in the favourites
+  row) it runs the new version. The admin page shows each TV's installed version and when it changed.
+- **Android 11 and older** (the Freebox Player Mini, for example) cannot install silently: Android always shows an
+  Install/Cancel dialog. Nothing happens on its own. Press **Install now** on the admin page while someone is at the
+  TV: the TV shows a large "New version, press OK" screen; OK opens the system dialog ("Do you want to update this
+  app?"), where the viewer moves to **Update** (the dialog may start on Cancel) and presses OK. Back, or a minute
+  without a press, returns to the home screen and the update waits for the next time. On Android 10 and 11 the TV
+  then shows its launcher as above; Android 9 and older bring izle back by themselves.
+- The TV reports the outcome as the command's result (installing, prompted, ignored because it was playing, or a
+  failure code) and keeps the pairing, the home screen and the progress across updates.
+
 ## 9. Docker (alternative to systemd)
 
 The repository's [`Dockerfile`](../../Dockerfile) builds an image from the same package (Node 24, runs as an
@@ -366,7 +396,8 @@ with `"listen": { "host": "0.0.0.0", "port": 8787 }`, `"dataDir": "/var/lib/izle
 new resolver module (mounted the same way) needs `docker restart izle`. Behind a reverse proxy in another container,
 publish no port (or bind it to `127.0.0.1:8787:8787`) and set `trustedProxies` to the Docker network's range, e.g.
 `["172.16.0.0/12"]`. To update, rebuild the image from the new release's sources and recreate the container; the
-volume keeps the data.
+volume keeps the data (including the TV app's APK, which the container fetches from GitHub unless the config says
+`"appUpdates": { "source": "manual" }`; a container without outgoing network access needs that setting).
 
 ## 10. Updates and backups
 
@@ -418,6 +449,10 @@ install the older package **and** restore the copy taken before the update (`bef
 Catalog tab shows the running server version. Update the server before the TVs: a newer app may report fields an
 older server rejects (the app then falls back, but the first report after each start is lost).
 
+**Update the TVs** from the admin page's **TV app** tab (§ 8, "Updating the TV app"): the server fetches the
+release's APK by itself (or you upload it), TVs on Android 12+ install it while idle, older TVs when you press
+**Install now** and someone at the TV presses OK. The tab lists each TV's installed version.
+
 ## 11. Troubleshooting
 
 | Symptom | Likely cause |
@@ -430,3 +465,6 @@ older server rejects (the app then falls back, but the first report after each s
 | The TV's pairing screen says to wait, and the log shows `429` on `/api/v1/pair/start` | many pairing attempts from one address; behind a proxy, check `trustedProxies` |
 | `429` on admin routes after wrong tokens ("Too many wrong admin tokens" on the admin page) | the sign-in throttle (§5): wait 10 minutes. Behind a proxy, check `trustedProxies` (otherwise every client shares the proxy's address); the log's "admin auth failed" warnings show where the attempts came from |
 | An Android 7 TV cannot reach an HTTPS server | a certificate from a CA other than the TV's or Let's Encrypt's roots; use Caddy's default issuer |
+| The TV app tab says "last check failed" | the server cannot reach GitHub (firewall, § 7), or the release has no `izle-tv-X.Y.Z.apk` (no signing key in the repository); upload the APK instead |
+| A TV stays on "needs Install now" although it runs Android 12+ | "Install unknown apps" was not allowed for izle (§ 8), or the TV refused a silent install once: press **Install now** and allow it on the TV |
+| An update fails with `install_failure_incompatible` | the APK is signed with another key than the installed app (a debug APK over a release one, or a new release key): uninstall and install again, then pair again |

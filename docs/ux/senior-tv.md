@@ -93,8 +93,10 @@ Nothing about it ever interrupts playback: during playback the command answers `
 - **Android 12 and newer, with the one-time "install unknown apps" grant for izle**: the TV updates itself, without
   any dialog, once it has sat on Home for 3 minutes with no key pressed (no hidden menu, no autoplay countdown,
   nothing playing, server reachable), when the owner allows TVs to update by themselves; the owner's command
-  installs at once. "Updating…" shows for the moment of the install, then the new version starts on Home. After a
-  failed attempt the TV waits 6 hours before trying by itself again. If the system asks for a confirmation anyway,
+  installs at once. "Updating…" shows for the moment of the install; Android then closes the app and does not let
+  it come back on its own (Android 10+ blocks background activity starts, verified on the API 36 emulator), so the TV
+  shows its launcher until izle is opened again, which starts the new version on Home. After a failed attempt the TV
+  waits 6 hours before trying by itself again. If the system asks for a confirmation anyway,
   the TV gives up on silent updates and behaves as below until its next update.
 - **Android 11 and older** (the system always asks): only on the owner's command, a full-screen panel says "New
   version", the version, "Press OK to install" and "Home in 60 s" over its bar, **Install** focused and **Not now**

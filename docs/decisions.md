@@ -136,9 +136,13 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
   30 s while in front; the same conditions are checked again after the download, right before committing. A failed
   attempt (download, check or install) and an unanswered commit hold automatic attempts back for 6 h; the command
   and the menu entry ignore that. Cancel in the system dialog is not a failure.
-- Relaunch: the session's status receiver is an activity `PendingIntent` for `MainActivity` (the system sending it
-  is an allowed background activity start; on Android 14+ the creator also opts in). Below Android 10 the
-  `MY_PACKAGE_REPLACED` receiver also starts the activity itself. Status intents only count for a session this
-  process committed and still owns (session ids are random), since the activity is exported.
+- No relaunch after an update on Android 10+: verified on the API 36 emulator, the install session's status intent
+  (an activity `PendingIntent` for `MainActivity`) is sent by the package installer with background activity starts
+  denied, so the system logs "Background activity launch blocked" and the TV shows its launcher until izle is opened
+  again; `AlarmManager` sends every alarm's intent the same way, so an alarm is no way around it. The status intent
+  is kept for the outcome while the app is visible (the guided path) and only counts for a session this process
+  committed and still owns (session ids are random), since the activity is exported. Below Android 10 the
+  `MY_PACKAGE_REPLACED` receiver starts the activity itself, which is allowed there. The deploy guide tells owners
+  to keep izle first in the launcher's favourites.
 - The archive's own versionCode must equal the one `/tv/app` announced (else `bad_archive`) and be newer than the
   running one (else `ignored not_newer`); `404 no_apk` during the download is `ignored up_to_date`.

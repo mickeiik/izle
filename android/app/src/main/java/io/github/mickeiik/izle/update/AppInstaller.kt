@@ -100,9 +100,11 @@ class PackageInstallerAppInstaller(private val context: Context) : AppInstaller 
     }
 
     /**
-     * The status comes back as an activity start of [MainActivity]: one the system sends, which is how the new
-     * version comes back to the front after a silent self-update (the old process is gone by then). Mutable from
-     * Android 12: the system adds the status extras.
+     * The status comes back as an activity start of [MainActivity], delivered while the app is visible (the guided
+     * path's "user action required"). It does not bring the new version back after a silent self-update: the old
+     * process is gone by then and the package installer sends the intent with background activity starts denied
+     * (Android 10+ blocks it; verified on API 36), so the TV shows its launcher until izle is opened again. Mutable
+     * from Android 12: the system adds the status extras.
      */
     private fun statusReceiver(silent: Boolean, commandId: Long?): PendingIntent {
         val intent = Intent(context, MainActivity::class.java)

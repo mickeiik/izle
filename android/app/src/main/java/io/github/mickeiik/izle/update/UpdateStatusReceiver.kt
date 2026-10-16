@@ -11,7 +11,8 @@ import kotlinx.coroutines.launch
 /**
  * `MY_PACKAGE_REPLACED`: this app was just updated (by itself or through the system dialog). Forgets the old
  * update's state, and below Android 10 brings the new version to the front itself (allowed from a receiver there).
- * From Android 10 on, the install session's status intent, an activity start the system sends, does that.
+ * From Android 10 on no background activity start is allowed, not even the install session's status intent (the
+ * system sends it with background starts denied), so the TV shows its launcher until izle is opened again.
  */
 class UpdateStatusReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
