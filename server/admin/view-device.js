@@ -7,7 +7,8 @@ import { ApiError, api, attempt, devicePath } from "./api.js";
 import { companionCard } from "./companion.js";
 import { homeCard } from "./device-home.js";
 import { actionButton, card, chip, h, keepFocus, onSubmit, page, progressBar, setChip, setOff, setProgress, setTitle, slot, statusChip, toast } from "./dom.js";
-import { LANGUAGES, episodeName, errorText, formatClock, formatRelative, languageLabel, percent, playbackState, problemContext } from "./lib.js";
+import { watchEvents } from "./events.js";
+import { LANGUAGES, commandResultText, episodeName, errorText, formatClock, formatDuration, formatRelative, languageLabel, percent, playbackState, problemContext, triggerLabel, viewingEnd } from "./lib.js";
 
 /**
  * What the sections of a TV's page share: `send` sends a command and resolves with whether the server took it,
@@ -87,11 +88,21 @@ export function deviceView(scope, id) {
       body.show(...sections.map(([, el]) => el), removeCard(ctx, () => device));
       top.hidden = false;
       nav.update();
-      scope.poll(now.refresh, 5000, now.fail);
+      const nowJob = scope.poll(now.refresh, 5000, now.fail);
       scope.poll(listenAlong.refresh, 5000, listenAlong.fail);
-      scope.poll(loadDevice, 15000);
-      scope.poll(history.refresh, 15000, history.fail);
-      scope.poll(problems.refresh, 15000, problems.fail);
+      const deviceJob = scope.poll(loadDevice, 15000);
+      const historyJob = scope.poll(history.refresh, 15000, history.fail);
+      const problemsJob = scope.poll(problems.refresh, 15000, problems.fail);
+      // The polls stay as the fallback; the event stream makes the page follow the TV as things happen.
+      watchEvents(scope, { devices: [id] }, (e) => {
+        const type = /** @type {string} */ (e.type);
+        if (type === "gap" || type.startsWith("device.") || type.startsWith("catalog.")) void deviceJob.now();
+        if (type === "gap" || type.startsWith("playback.") || type.startsWith("command.")) void nowJob.now();
+        if (type === "home.changed" || type === "cursor.changed") void deviceJob.now();
+        if (type === "gap" || type.startsWith("playback.") || type === "episode.seen" || type === "history.changed") void historyJob.now();
+        if (type === "gap" || type === "problem.recorded") void problemsJob.now();
+        if (type === "command.result") toast(commandResultText(e.data), e.data.result === "done" ? "ok" : "info");
+      });
     },
     (err, retry) => body.fail(err, retry, "Could not load this TV."),
   );
@@ -307,27 +318,29 @@ function settingsCard(ctx) {
   return { element: card("Settings", form, toggle), update };
 }
 
-/** @param {DeviceContext} ctx @returns {Section} */
+/** The TV's viewings: what it played, who started it, how much was watched and how each ended. @param {DeviceContext} ctx @returns {Section} */
 function historyCard(ctx) {
   const shown = slot();
   const list = rebuiltOnChange();
   const refresh = async () => {
-    const rows = (await ctx.scope.read(`${ctx.path}/progress`)).progress.slice(0, 30);
-    const content = list.content(rows, (time) => {
-      if (rows.length === 0) return h("p", { class: "muted" }, "Nothing watched yet.");
-      const tr = (/** @type {any} */ r) => {
-        const episode = r.missing ? "(no longer in the catalog)" : episodeName({ season: r.season, number: r.number, title: r.episodeTitle }, r.kind);
-        const where = r.status === "finished" ? "watched" : `${formatClock(r.positionMs)} / ${formatClock(r.durationMs)}`;
-        return h("tr", null, [r.itemTitle ?? r.itemId, episode, where].map((t) => h("td", null, t)), time(h("td", { class: "muted" }), () => formatRelative(r.updatedAt)));
+    const id = ctx.path.slice("/devices/".length);
+    const { viewings } = await ctx.scope.read(`/history/viewings?device=${id}&limit=30`);
+    const content = list.content(viewings, (time) => {
+      if (viewings.length === 0) return h("p", { class: "muted" }, "Nothing watched yet.");
+      const tr = (/** @type {any} */ v) => {
+        const episode = v.itemKind === "movie" ? "" : episodeName({ season: v.season, number: v.number, title: v.episodeTitle }, v.itemKind);
+        const cells = [v.itemTitle ?? v.itemId, episode, v.imported ? "–" : formatDuration(v.watchedMs), viewingEnd(v), triggerLabel(v)].map((c) => h("td", null, c));
+        return h("tr", null, time(h("td", { class: "muted" }), () => formatRelative(v.startedAt)), cells);
       };
-      const caption = h("caption", null, "The last 30 episodes this TV played, the latest first.");
-      const head = h("thead", null, h("tr", null, ["Show", "Episode", "Where", "When"].map((t) => h("th", { scope: "col" }, t))));
-      const table = h("table", null, caption, head, h("tbody", null, rows.map(tr)));
+      const caption = h("caption", null, "The last 30 viewings on this TV, the latest first; every viewing is kept in the history.");
+      const head = h("thead", null, h("tr", null, ["Started", "Show", "Episode", "Watched", "Ended", "Started by"].map((t) => h("th", { scope: "col" }, t))));
+      const table = h("table", null, caption, head, h("tbody", null, viewings.map(tr)));
       return h("div", { class: "table-wrap", tabindex: "0", role: "region", "aria-label": "History" }, table);
     });
     shown.show(content);
   };
-  const element = card("History", shown.element);
+  const all = h("a", { href: "#/history" }, "All history");
+  const element = card({ title: "History", aside: all }, shown.element);
   return { element, refresh, fail: (err, retry) => shown.fail(err, retry, "Could not load the history.") };
 }
 

@@ -24,6 +24,9 @@ Everything else is done remotely by the owner from the server's admin page, on a
 - the problems a TV ran into, and a test of every episode's sources
 - **listen along**: the phone plays another source of the episode the TV is showing (a dub in another language) in
   sync with the picture, with an adjustable offset and speed for releases that differ in timing
+- the viewing history: what was watched when and how much of it, per TV and per title, with the owner's own marks
+- access tokens with a scope, so the owner's own scripts or an AI agent can watch the TVs, play something, change a
+  home screen, through the same API and a live event stream
 
 The TV app always talks to the server; there is no standalone mode. The TV app is in English and Turkish.
 

@@ -447,8 +447,7 @@ language inside the same multi-audio stream) in sync with the picture, from the 
 
 ## Remote management
 
-Status: **draft, implemented** on the server and in the TV app (the admin page does not use these routes yet).
-Everything here is additive within v1.
+Status: **draft, implemented** (server, TV app and admin page). Everything here is additive within v1.
 
 The viewer only watches; the TV is run from elsewhere: by the owner on the admin page, by the owner's own apps, or by
 AI agents. They all use these routes. An MCP server for agents is a thin wrapper around them with an

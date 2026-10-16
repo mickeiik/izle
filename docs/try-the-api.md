@@ -34,3 +34,22 @@ curl -s $B/api/v1/tv/state -H "Authorization: Bearer $TV" | jq '.home[0].continu
 
 Live updates for the TV stream from `GET /api/v1/tv/events` (server-sent events): run
 `curl -N $B/api/v1/tv/events -H "Authorization: Bearer $TV"` and change the home list from another terminal.
+
+Remote management, as an app or an agent would do it ([spec](spec/server-api-v1.md#remote-management)): an access
+token with the `control` scope, the status, a `play` by show, what the TV made of it, and the history.
+
+```bash
+# 8. An access token for an agent (the secret is printed once); 9. every TV in one call, and the event log's position.
+SECRET=$(npm run -s -w server dev -- token create Agent --scope control --config server/izle.dev.json | tail -1)
+curl -s $B/api/v1/admin/status -H "Authorization: Bearer $SECRET" | jq '{lastEventId, devices: [.devices[] | {name, online, playing: .nowPlaying.episodeId}]}'
+# 10. Play Caminandes on the TV (whatever OK would play for it); the TV acknowledges and reports the outcome.
+CMD=$(curl -s -X POST $B/api/v1/admin/devices/$DEVICE/commands -H "Authorization: Bearer $SECRET" -H "$JSON" -d '{"type":"play","itemId":"caminandes"}' | jq .id)
+curl -s -X POST $B/api/v1/tv/commands/$CMD/ack -H "Authorization: Bearer $TV" > /dev/null
+curl -s -X POST $B/api/v1/tv/commands/$CMD/result -H "Authorization: Bearer $TV" -H "$JSON" -d '{"result":"done"}' > /dev/null
+# 11. The events since the status was read, and the viewing history.
+curl -s "$B/api/v1/admin/events?after=0&types=command." -H "Authorization: Bearer $SECRET" | jq -c '.events[] | {type, data}'
+curl -s "$B/api/v1/admin/history/titles" -H "Authorization: Bearer $SECRET" | jq -c '.titles[] | {title, status, episodes}'
+```
+
+The stream form, `curl -N "$B/api/v1/admin/events/stream" -H "Authorization: Bearer $SECRET"`, delivers the same
+events as they happen.
