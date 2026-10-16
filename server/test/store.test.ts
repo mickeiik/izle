@@ -224,6 +224,37 @@ test("migration 5: saved positions become imported viewings; access tokens and e
   s.close();
 });
 
+test("migration 6: devices from before read no app version; one APK row at most", async () => {
+  const file = path.join(await tempDir(), "izle.db");
+  const raw = new DatabaseSync(file);
+  for (const m of MIGRATIONS.slice(0, 5)) raw.exec(m);
+  raw.exec("PRAGMA user_version = 5");
+  raw.exec("INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'Salon', 'h', 1)");
+  raw.close();
+
+  const s = new Store(file);
+  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  const d = s.getDevice("d1")!;
+  assert.deepEqual([d.appVersion, d.appVersionCode, d.androidSdk, d.updateCapability, d.appReportedAt], [null, null, null, null, null]);
+  s.setDeviceApp("d1", { version: "0.2.0", versionCode: 200, androidSdk: 25, capability: "guided" }, 7);
+  const after = s.getDevice("d1")!;
+  assert.deepEqual([after.appVersion, after.appVersionCode, after.androidSdk, after.updateCapability, after.appReportedAt], ["0.2.0", 200, 25, "guided", 7]);
+  assert.equal(after.stateVersion, d.stateVersion, "nothing the TV shows changed");
+
+  assert.equal(s.getAppApk(), null);
+  const apk = { versionName: "0.3.0", versionCode: 300, sha256: "a".repeat(64), size: 10, source: "upload" as const, releaseTag: null, storedAt: 5 };
+  s.setAppApk(apk);
+  s.setAppApk({ ...apk, versionName: "0.3.1", versionCode: 301, source: "github", releaseTag: "v0.3.1" });
+  assert.deepEqual(s.getAppApk(), { ...apk, versionName: "0.3.1", versionCode: 301, source: "github", releaseTag: "v0.3.1" });
+  assert.equal(s.deleteAppApk(), true);
+  assert.equal(s.deleteAppApk(), false);
+  const db = new DatabaseSync(file);
+  assert.throws(() => db.exec("INSERT INTO app_apk (id, version_name, version_code, sha256, size, source, stored_at) VALUES (2, 'x', 1, 'x', 1, 'upload', 1)"), /CHECK/);
+  assert.throws(() => db.exec("INSERT INTO app_apk (id, version_name, version_code, sha256, size, source, stored_at) VALUES (1, 'x', 1, 'x', 1, 'web', 1)"), /CHECK/);
+  db.close();
+  s.close();
+});
+
 test("catalog history rows: episodes seen after a date, removal and return, builds newest first", async () => {
   const s = new Store(path.join(await tempDir(), "izle.db"));
   s.insertSeen("c", "b1", 0, [{ episodeId: "a.1", itemId: "a" }, { episodeId: "a.2", itemId: "a" }]);

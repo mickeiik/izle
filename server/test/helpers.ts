@@ -140,7 +140,9 @@ export async function startTestServer(opts: TestServerOptions = {}): Promise<Tes
   const root = await tempDir();
   const bundleDir = givenBundle ?? (await writeBundle(path.join(root, "bundle")));
   const configPath = path.join(root, "izle.json");
-  await writeFile(configPath, JSON.stringify({ listen: { host: "127.0.0.1", port: 0 }, dataDir: "./data", catalog: { dir: bundleDir }, ...configFile }));
+  // The TV app's updates come from uploads only unless a test says otherwise: no test ever reaches GitHub.
+  const file = { listen: { host: "127.0.0.1", port: 0 }, dataDir: "./data", catalog: { dir: bundleDir }, appUpdates: { source: "manual" }, ...configFile };
+  await writeFile(configPath, JSON.stringify(file));
   const config = loadConfig({ path: configPath, env: { IZLE_ADMIN_TOKEN: ADMIN_TOKEN } });
   const logs: string[] = [];
   const clock = fakeClock();

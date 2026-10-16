@@ -22,6 +22,36 @@ export interface Device {
   stateVersion: number;
   /** When the app opens, the show watched last (else the first tile) starts after a countdown. */
   autoplayOnStart: boolean;
+  /** The TV app's version as its User-Agent reported it; null until a TV that sends one connected. */
+  appVersion: string | null;
+  appVersionCode: number | null;
+  androidSdk: number | null;
+  /** Whether the TV installs an update by itself (`silent`, Android 12+) or needs the viewer (`guided`). */
+  updateCapability: UpdateCapability | null;
+  /** When the TV first reported the version it has now (epoch ms). */
+  appReportedAt: number | null;
+}
+
+export type UpdateCapability = "silent" | "guided";
+
+/** What a TV's User-Agent says about its app. */
+export interface TvAppInfo {
+  version: string;
+  versionCode: number;
+  androidSdk: number;
+  capability: UpdateCapability;
+}
+
+/** The TV app APK the server offers its TVs (its bytes are `<dataDir>/app/<sha256>.apk`). */
+export interface StoredApk {
+  versionName: string;
+  versionCode: number;
+  /** Lower-case hex. */
+  sha256: string;
+  size: number;
+  source: "github" | "upload";
+  releaseTag: string | null;
+  storedAt: number;
 }
 
 interface PairCode {
@@ -434,6 +464,29 @@ export class Store {
 
   bumpAllStateVersions(): Array<{ id: string; stateVersion: number }> {
     return this.many("UPDATE devices SET state_version = state_version + 1 RETURNING id, state_version", []);
+  }
+
+  /** Records the app a TV reports; the state version is not bumped (nothing the TV shows changed). */
+  setDeviceApp(id: string, app: TvAppInfo, now: number): void {
+    this.run(
+      "UPDATE devices SET app_version = ?, app_version_code = ?, android_sdk = ?, update_capability = ?, app_reported_at = ? WHERE id = ?",
+      app.version, app.versionCode, app.androidSdk, app.capability, now, id,
+    );
+  }
+
+  // --- the TV app APK ------------------------------------------------------------------------------------------
+
+  getAppApk(): StoredApk | null {
+    return this.one("SELECT * FROM app_apk WHERE id = 1", [], "id");
+  }
+
+  /** Replaces the stored APK's row. */
+  setAppApk(apk: StoredApk): void {
+    this.insert("app_apk", { id: 1, ...apk }, "id");
+  }
+
+  deleteAppApk(): boolean {
+    return this.run("DELETE FROM app_apk WHERE id = 1") > 0;
   }
 
   // --- pairing -------------------------------------------------------------------------------------------------

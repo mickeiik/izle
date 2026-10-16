@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { OWNER } from "../src/actor.ts";
 import { reloadOnSignal } from "../src/catalog-admin.ts";
 import { HOME_MAX_ITEMS } from "../src/tv.ts";
 import { openEvents, publishBuild, startTestServer, type Json } from "./helpers.ts";
@@ -173,8 +174,11 @@ test("commands: every type is validated and stored with its payload; the log nev
     [{ type: "seek", deltaMs: -3_600_000 }, { deltaMs: -3_600_000 }], [{ type: "seek", positionMs: 0 }, { positionMs: 0 }],
     [{ type: "seek", positionMs: 754_000 }, { positionMs: 754_000 }], [{ type: "message", text: `  ${TEXT}\n` }, { text: TEXT, durationSec: 15 }],
     [{ type: "message", text: "x".repeat(200), durationSec: 3 }, { text: "x".repeat(200), durationSec: 3 }],
-    [{ type: "message", text: "Bye", durationSec: 120 }, { text: "Bye", durationSec: 120 }],
+    [{ type: "message", text: "Bye", durationSec: 120 }, { text: "Bye", durationSec: 120 }], [{ type: "update" }, { versionCode: 300 }],
   ];
+  // `update` needs an APK on offer.
+  const apk = new ReadableStream<Uint8Array>({ start: (c) => (c.enqueue(Buffer.from("PK\x03\x04 apk", "latin1")), c.close()) });
+  await s.srv.ctx.appUpdates.store(apk, "izle-tv-0.3.0.apk", "upload", null, OWNER);
   for (const [body] of good) {
     const r = await send(body);
     assert.equal(r.status, 202, JSON.stringify(body));
@@ -195,7 +199,7 @@ test("commands: every type is validated and stored with its payload; the log nev
     { type: "message", text: "\n\t" }, { type: "message", text: "x".repeat(201) }, { type: "message", text: 42 },
     { type: "message", text: "Hi", durationSec: 2 }, { type: "message", text: "Hi", durationSec: 121 },
     { type: "message", text: "Hi", durationSec: 10.5 }, { type: "message", text: "Hi", extra: true }, { type: "pause", episodeId: "show.e1" },
-    { type: "next", deltaMs: 1000 }, { type: "rewind" }, { type: "PAUSE" }, {},
+    { type: "next", deltaMs: 1000 }, { type: "rewind" }, { type: "PAUSE" }, {}, { type: "update", versionCode: 300 }, { type: "update", text: "x" },
   ];
   for (const body of bad) {
     const r = await send(body);

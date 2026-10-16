@@ -211,6 +211,25 @@ export const MIGRATIONS: string[] = [
     FROM progress p JOIN devices d ON d.id = p.device_id
     ORDER BY p.updated_at, p.device_id, p.episode_id;
   `,
+  // 6 — TV app updates: the one APK the server offers its TVs (its bytes are a file in <dataDir>/app named by its
+  // sha256), and the app version each TV reports in its User-Agent.
+  `
+  CREATE TABLE app_apk (
+    id INTEGER PRIMARY KEY CHECK (id = 1),  -- a single row: the current APK
+    version_name TEXT NOT NULL,
+    version_code INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    source TEXT NOT NULL CHECK (source IN ('github', 'upload')),
+    release_tag TEXT,                       -- the GitHub release it came from; NULL for an upload
+    stored_at INTEGER NOT NULL
+  );
+  ALTER TABLE devices ADD COLUMN app_version TEXT;          -- as the TV's User-Agent says; NULL until it does
+  ALTER TABLE devices ADD COLUMN app_version_code INTEGER;
+  ALTER TABLE devices ADD COLUMN android_sdk INTEGER;
+  ALTER TABLE devices ADD COLUMN update_capability TEXT;    -- silent | guided
+  ALTER TABLE devices ADD COLUMN app_reported_at INTEGER;   -- when the TV first reported this version
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

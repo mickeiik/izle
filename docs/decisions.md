@@ -83,6 +83,29 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
 - Results are not queued behind each other (unlike progress reports): each is independent. The reporter drops a
   second result for the same command id (per server connection, last 64) as a safety net.
 
+## TV app updates: server (2026-10-16)
+
+- The APK's metadata is a single SQLite row (`app_apk`, `id = 1`), its bytes a content-addressed file
+  `<dataDir>/app/<sha256>.apk`, written to a temp file in the same directory, synced and renamed; the old file goes
+  in an after-commit hook, and a start forgets a row whose file is missing (a restored backup has only the row).
+- The versionCode is derived from the asset's file name with the Gradle formula (`X·10000 + Y·100 + Z`), so the
+  server never parses the APK; the name pattern keeps minor and patch below 100, as the formula needs.
+- The TV's User-Agent is the version channel: every call carries it, so no new route or field is needed and an
+  older app (OkHttp's default User-Agent) simply stays `unknown`. It is recorded only when it changes, re-read in
+  the transaction so concurrent calls make one `device.app_version` event.
+- The default source is `github` with the first check 60 s after listening: a fresh install offers the matching TV
+  app without any setup, while startup and tests stay offline (tests default to `manual`). A stored APK newer than
+  the latest release (an upload) is kept: the check answers `up_to_date` instead of replacing it with an older one.
+- No signature check on the server: Android refuses an update not signed with the installed app's key, and the TV
+  verifies size and sha256 before installing; the server checks the zip magic, the size cap and, for GitHub, the
+  release's `SHA256SUMS`.
+- The 64 KiB API body limit is skipped for exactly `PUT /api/v1/admin/app/apk` (matched by route template, after
+  the admin token and scope are checked): an APK is megabytes, and the route streams to disk with its own 64 MiB
+  cap instead of buffering.
+- The schedule lives in `AppUpdateService` (started from `server.ts`, stopped in `close()`), so `GET /admin/app`
+  can show `nextAt`; a scheduled check that finds one running is skipped. Release JSON larger than 1 MiB or not an
+  object fails as `bad_release` (a reason beyond the agreed list).
+
 ## TV app updates: admin page (2026-10-16)
 
 - A page of its own ("TV app") rather than per-TV controls only: the stored APK, the GitHub checks and the upload

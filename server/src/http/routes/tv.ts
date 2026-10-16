@@ -1,11 +1,12 @@
 // What the TV calls: pairing (unauthenticated; the owner's approval is an admin route), then with its device token
-// the home state, item details, resolve, playback progress, command acknowledgements and results, problem reports and the event
-// stream (SSE: the state version on connect, then state changes and commands; unacknowledged recent commands are
-// replayed on every (re)connect). Also the media proxy, whose token in the path is the credential: media requests
+// the home state, item details, resolve, playback progress, command acknowledgements and results, problem reports, the
+// TV app APK on offer, and the event stream (SSE: the state version and the APK's versionCode on connect, then state
+// changes, new APKs and commands; unacknowledged recent commands are replayed on every (re)connect). Also the media proxy, whose token in the path is the credential: media requests
 // carry no device token.
 
 import type { Context, Hono } from "hono";
 import { streamSSE } from "hono/streaming";
+import { APK_MEDIA_TYPE } from "../../app-updates.ts";
 import { bearerToken } from "../../auth.ts";
 import type { AppContext } from "../../context.ts";
 import { HttpError, unauthorized } from "../../errors.ts";
@@ -85,6 +86,27 @@ export function registerTv(app: Hono<Env>, ctx: AppContext, clientKey: (c: Conte
     return c.json({ ok: true }, 202);
   });
 
+  // The TV app APK on offer: what it is (204 when none), and its bytes.
+  app.get("/api/v1/tv/app", (c) => {
+    const apk = ctx.appUpdates.current();
+    if (!apk) return c.body(null, 204);
+    const { versionName, versionCode, sha256, size } = apk;
+    return c.json({ versionName, versionCode, sha256, size, auto: ctx.config.appUpdates.auto });
+  });
+
+  app.get("/api/v1/tv/app/apk", async (c) => {
+    const headers = (sha256: string, size: number) => ({ "Content-Type": APK_MEDIA_TYPE, "Content-Length": String(size), ETag: `"${sha256}"`, "Cache-Control": "no-store" });
+    if (c.req.method === "HEAD") {
+      // No file is opened for a HEAD (its stream would never be read).
+      const apk = ctx.appUpdates.current();
+      if (!apk) throw new HttpError(404, "no_apk");
+      return c.body(null, 200, headers(apk.sha256, apk.size));
+    }
+    const opened = await ctx.appUpdates.openApk();
+    if (!opened) throw new HttpError(404, "no_apk");
+    return c.body(opened.body, 200, headers(opened.apk.sha256, opened.size));
+  });
+
   app.get("/api/v1/tv/events", (c) => {
     const device = c.get("device");
     c.header("X-Accel-Buffering", "no");
@@ -96,6 +118,9 @@ export function registerTv(app: Hono<Env>, ctx: AppContext, clientKey: (c: Conte
       const unsubscribe = events.subscribe(device.id, { send: (ev) => void write(ev), close: () => stream.abort() });
       try {
         await stream.writeSSE({ ...message({ type: "state", data: { version: notifier.version(device) } }), retry: 5000 });
+        // A TV that (re)connects learns of the stored APK, as if it had just been stored.
+        const apk = ctx.appUpdates.current();
+        if (apk) await write({ type: "app", data: { versionCode: apk.versionCode } });
         for (const cmd of ctx.commands.replayable(device.id)) await write(commandEvent(cmd));
         ping = setInterval(() => void stream.write(": ping\n\n").catch(() => stream.abort()), ctx.pingMs);
         await closed;

@@ -20,6 +20,7 @@ test("defaults without a config file", () => {
   assert.deepEqual(c.defaults, { uiLanguage: null, preferredAudioLanguage: null });
   assert.deepEqual(c.trustedProxies, []);
   assert.deepEqual(c.events, { retentionDays: 7 });
+  assert.deepEqual(c.appUpdates, { source: "github", repo: "mickeiik/izle", checkIntervalHours: 24, auto: true });
 });
 
 test("relative paths in a config file resolve against the file's directory", async () => {
@@ -65,6 +66,17 @@ test("rejects unknown keys, bad values, bad JSON and missing files", async () =>
   assert.equal(loadConfig({ path: write('{"events": {"retentionDays": 90}}'), env: {} }).events.retentionDays, 90);
   assert.throws(() => loadConfig({ path: write('{"events": {"retentionDays": 0}}'), env: {} }), (e: Error) => e instanceof ConfigError && /retentionDays/.test(e.message));
   assert.throws(() => loadConfig({ path: write('{"listen": {"port": 70000}}'), env: {} }), ConfigError);
+  assert.deepEqual(loadConfig({ path: write('{"appUpdates": {"source": "manual"}}'), env: {} }).appUpdates, { source: "manual", repo: "mickeiik/izle", checkIntervalHours: 24, auto: true });
+  assert.deepEqual(
+    loadConfig({ path: write('{"appUpdates": {"repo": "me/izle-fork", "checkIntervalHours": 168, "auto": false}}'), env: {} }).appUpdates,
+    { source: "github", repo: "me/izle-fork", checkIntervalHours: 168, auto: false },
+  );
+  for (const bad of [
+    { source: "url" }, { repo: "izle" }, { repo: "a/b/c" }, { repo: "../x" }, { repo: "a/.." }, { repo: "./b" }, { repo: "https://evil.example/a/b" }, { checkIntervalHours: 0 },
+    { checkIntervalHours: 169 }, { checkIntervalHours: 1.5 }, { auto: "yes" }, { url: "https://x.example" },
+  ]) {
+    assert.throws(() => loadConfig({ path: write(JSON.stringify({ appUpdates: bad })), env: {} }), (e: Error) => e instanceof ConfigError && /appUpdates/.test(e.message), JSON.stringify(bad));
+  }
   assert.throws(() => loadConfig({ path: write('{"defaults": {"uiLanguage": "de"}}'), env: {} }), ConfigError);
   assert.throws(() => loadConfig({ path: write('{"trustedProxies": "127.0.0.1"}'), env: {} }), ConfigError);
   assert.throws(

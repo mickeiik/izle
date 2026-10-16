@@ -6,7 +6,8 @@ ignore unknown response fields.
 
 ## Conventions
 
-- Base path `/api/v1`. JSON request and response bodies (`Content-Type: application/json`), request bodies ≤ 64 KiB.
+- Base path `/api/v1`. JSON request and response bodies (`Content-Type: application/json`), request bodies ≤ 64 KiB
+  (except the APK upload, [`PUT /admin/app/apk`](#tv-app), which streams up to 64 MiB).
 - **TV routes** (`/api/v1/tv/*`) need `Authorization: Bearer <deviceToken>`, **admin routes** (`/api/v1/admin/*`)
   `Authorization: Bearer <adminToken>`; neither token works on the other's routes. A missing or wrong token answers
   `401` with a `WWW-Authenticate: Bearer` header (on admin routes `429` after repeated failures, see
@@ -73,6 +74,14 @@ server, `pair pending` the next one.
 
 ## TV API
 
+**User-Agent.** The TV app names itself on every API call:
+`izle-tv/<versionName> (Android <sdkInt>; <versionCode>; silent|guided)`, e.g.
+`izle-tv/0.2.0 (Android 25; 200; guided)`; `silent`: the TV can install an update by itself (Android 12+, API 31),
+`guided`: the viewer has to confirm Android's install screen. The server matches it strictly
+(`^izle-tv\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?) \(Android (\d{1,3}); (\d{1,9}); (silent|guided)\)$`, at most 200
+characters) and records a change for the device ([`Device.app`](#devices), event `device.app_version`); anything
+else (an older app sends OkHttp's default) is ignored without an error.
+
 ### `GET /api/v1/tv/state`
 
 Everything the home screen needs:
@@ -117,8 +126,13 @@ Everything the home screen needs:
 
 Server-sent events (`text/event-stream`, `X-Accel-Buffering: no`; reverse proxies must not buffer it).
 
-- On connect: `event: state` `{"version": n}` (id `s<n>`, `retry: 5000`), then every unacknowledged command younger
-  than 2 minutes. Later, `event: state` whenever the state version changes.
+- On connect: `event: state` `{"version": n}` (id `s<n>`, `retry: 5000`), then `event: app` when a TV app APK is
+  stored, then every unacknowledged command younger than 2 minutes. Later, `event: state` whenever the state
+  version changes.
+- `event: app` `{"versionCode": 300}` (id `a<versionCode>`): a TV app APK is on offer ([`GET /tv/app`](#get-apiv1tvapp)),
+  sent to every open TV stream whenever the stored APK changes (an upload, a fetch from GitHub) and on connect. A
+  TV whose own versionCode is lower updates as [TV app updates](#tv-app-updates) says; TVs ignore event types they
+  do not know.
 - `event: command` `{"id": 12, "type": "play", "payload": {"itemId": "…", "episodeId": "…"}}` (id `c<id>`), one of
   the [commands](#commands). The TV acknowledges every command it receives, also those it ignores, with
   `POST /tv/commands/:id/ack`; unacknowledged ones are replayed on reconnect for 2 minutes (deleted after 7 days).
@@ -138,10 +152,38 @@ the TV gets `{"id", "type", "payload"}`. What a command does is the TV's busines
 | `seek` | exactly one of `deltaMs` (integer −3 600 000…3 600 000) and `positionMs` (integer 0…10¹²) | `{"deltaMs"}` or `{"positionMs"}` | jumps by `deltaMs` (negative: back), or to `positionMs` |
 | `next` / `previous` | | `{}` | switches to the nearest `playbackAllowed` episode after / before the current one in play order, if any |
 | `message` | `text` (1–200 characters with a non-space; trimmed), `durationSec`? (integer 3–120, default 15) | `{"text", "durationSec"}` (default applied by the server) | shows `text` as a large banner, on Home and in the player, for `durationSec` seconds |
+| `update` | | `{"versionCode"}` (the stored APK's; `409 no_apk` when none is stored) | installs the stored TV app APK now, guided on the screen when the TV cannot install silently, see [TV app updates](#tv-app-updates) |
 
 The transport commands (`stop`, `pause`, `resume`, `seek`, `next`, `previous`) act only while the TV is in the
 player; otherwise they are acknowledged and ignored. A TV also acknowledges and ignores command types it does not
 know, so new types can be added within v1; the server refuses unknown types (`400 invalid_request`).
+
+### `GET /api/v1/tv/app`
+
+The TV app APK on offer: `200 {"versionName": "0.3.0", "versionCode": 300, "sha256": "<64 hex>", "size": 12345678,
+"auto": true}`, or `204` (no body) when none is stored. `auto` is the config's `appUpdates.auto`: whether a TV that
+can install silently does so by itself.
+
+### `GET /api/v1/tv/app/apk`
+
+The APK's bytes: `Content-Type: application/vnd.android.package-archive`, `Content-Length`, `ETag: "<sha256>"`,
+`Cache-Control: no-store`; `404 no_apk` when none is stored. No range requests. The TV checks the size and sha256
+against `GET /tv/app` before installing; Android checks the signature.
+
+#### TV app updates
+
+- A TV learns of an APK from `event: app` (live or on connect) and from `GET /tv/app`; it compares `versionCode`
+  with its own.
+- `auto: true` and a `silent` TV: it downloads, verifies and installs the APK by itself while idle (on Home, not
+  playing); the owner sees `Device.app.update: "pending"` until the TV reports the new version.
+- A `guided` TV (or `auto: false`): nothing happens on its own; the owner sends the [`update` command](#commands)
+  when someone is at the TV (`Device.app.update: "needs_install_now"`), and the TV shows Android's install screen
+  (a TV that can install silently installs at once).
+- `update` results ([command results](#remote-play-and-command-results)): `done` with `installing` or `prompted`
+  (Android's install screen is up); `ignored` with `up_to_date`, `not_newer`, `busy`, `not_ready`, `declined` or
+  `timeout`; `failed` with `download`, `too_large`, `verify`, `wrong_package`, `bad_archive` or `install_<status>`
+  (Android's install status in lower case, e.g. `install_failure_incompatible`). The new version shows up in the
+  TV's next User-Agent.
 
 ### `GET /api/v1/tv/items/:itemId`
 
@@ -332,13 +374,19 @@ last allowed episode) marks the item as watched to the end. When a later catalog
 "settings": {stored values, null = default}, "effective": {resolved values}, "problems": {"recent", "lastAt"}}`.
 `settings`/`effective` hold `uiLanguage`, `preferredAudioLanguage`, `subtitlesLanguage` and `autoplayOnStart`
 (boolean, false by default; with no server default, both show the stored value). `problems.recent`: problems in the
-last 24 hours; `lastAt`: when the latest stored one happened (ISO, or null).
+last 24 hours; `lastAt`: when the latest stored one happened (ISO, or null). `app` = `{"version", "versionCode",
+"androidSdk", "capability": "silent"|"guided", "reportedAt", "update"}` as the TV's [User-Agent](#tv-api) last
+reported it (each null until it does; `reportedAt`: when it first reported that version), with `update`: `unknown`
+(never reported, or no APK stored), `up_to_date` (its versionCode ≥ the stored APK's), `pending` (an older app on a
+`silent` TV with `appUpdates.auto`: it installs by itself) or `needs_install_now` (an older app on a `guided` TV, or
+`auto` off: send [`update`](#commands)).
 
 Errors. Home list: `400 too_many_items` (`max`), `duplicate_item`, `unknown_item`, `not_playable` (`itemId`).
 Cursor: `404 unknown_item`, `400 unknown_episode` (not in this item), `400 not_allowed`; setting the cursor also
 forgets that episode's saved position, so "continue from episode X" starts X from the beginning. Commands:
 `400 unknown_episode`, `400 not_allowed` (play), `400 invalid_request` (unknown type, a seek with both or neither
-field, a blank or too long message, `durationSec` out of range). Every `:id` route: `404 unknown_device`.
+field, a blank or too long message, `durationSec` out of range), `409 no_apk` (update). Every `:id` route:
+`404 unknown_device`.
 
 Every change that affects the TV bumps the device's state version and emits a `state` event.
 
@@ -445,6 +493,42 @@ language inside the same multi-audio stream) in sync with the picture, from the 
 `404 unknown_episode`, `404 unknown_source`, `403 not_allowed`, `400 unsupported_media` (DASH), `404 no_link`
 (copy without a stored link), `502 no_playable_source`.
 
+### TV app
+
+The server keeps one TV app APK, the **current** one, and offers it to every TV ([TV app updates](#tv-app-updates)).
+It comes from the owner's uploads, or with `appUpdates.source: "github"` (the default, [Configuration](#configuration))
+from the latest release of `appUpdates.repo`: a minute after the server starts, then every `checkIntervalHours`, and
+on demand. The server never downloads or updates its own code, catalogs or resolvers; this APK is the one thing it
+fetches, for the TVs, and only verified against the release's `SHA256SUMS`. It does not check the APK's signature:
+Android refuses an update not signed like the installed app.
+
+| Route | Scope | Body | Response |
+|---|---|---|---|
+| `GET /api/v1/admin/app` | `read` | | `{"apk": StoredApk \| null, "source": "github"\|"manual", "repo", "auto", "check": {"lastAt", "nextAt", "result": "fetched"\|"up_to_date"\|"failed"\|null, "reason", "running"}}` |
+| `PUT /api/v1/admin/app/apk` | `manage` | the APK's bytes, `Content-Type: application/vnd.android.package-archive`, file name in `X-Izle-Filename` (or `?name=`) | `200 {"apk": StoredApk}` |
+| `DELETE /api/v1/admin/app/apk` | `manage` | | `204`; `404 no_apk` |
+| `POST /api/v1/admin/app/check` | `manage` | | `200 {"result", "reason", "apk": StoredApk \| null}` |
+
+`StoredApk` = `{"versionName", "versionCode", "sha256", "size", "source": "github"|"upload", "releaseTag": "v0.3.0" |
+null, "storedAt"}`. `versionCode` comes from the file name as the app's build computes it (`X·10000 + Y·100 + Z`,
+a `-suffix` ignored). Storing an APK (upload or fetch) replaces the previous one and sends `event: app` to every TV.
+
+- **Upload:** the file name must be `izle-tv-X.Y.Z[-suffix].apk` (`^izle-tv-(0|[1-9]\d*)\.([1-9]?\d)\.([1-9]?\d)(-[0-9A-Za-z.-]+)?\.apk$`,
+  at most 128 characters), else `400 invalid_filename`; another media type `400 unsupported_media_type`; a body
+  that does not start like a zip (`PK\x03\x04`) `400 not_an_apk`; more than 64 MiB `413 apk_too_large`
+  (`maxBytes`). This is the only route whose body may exceed 64 KiB.
+- **Check:** `GET /repos/<repo>/releases/latest` (GitHub's API, `User-Agent: izle-server/<version>`, 30 s); the
+  release must not be a prerelease, its tag must be `vX.Y.Z`, and it must carry the assets `izle-tv-X.Y.Z.apk`
+  (never the `-debug` build) and `SHA256SUMS` (≤ 16 KiB, `<sha256>  <name>` lines). When the listed sha256 is the
+  stored APK's, or the stored APK is newer than the release (an upload), the result is `up_to_date` and nothing is
+  downloaded; otherwise the APK is downloaded (5 min) and stored if its sha256 matches: `fetched`. Anything else is
+  `failed` with a `reason` and leaves the stored APK as it was: `network` (also a timeout), `http_<status>`,
+  `rate_limited` (403/429), `no_release`, `bad_release` (not a release object), `prerelease`, `bad_tag`,
+  `no_apk_asset`, `no_checksums`, `checksums_too_large`, `checksum_missing`, `checksum_mismatch`, `too_large`,
+  `not_an_apk`, `internal`. `409 github_disabled` with `source: "manual"`, `409 check_running` while a check runs.
+- The bytes are kept as `<dataDir>/app/<sha256>.apk` (not in the database, so not in a backup): a server whose
+  APK file is gone forgets the APK at start, and the next check fetches it again.
+
 ## Remote management
 
 Status: **draft, implemented** (server, TV app and admin page). Everything here is additive within v1.
@@ -468,8 +552,8 @@ an app, each with one scope, and revokes them at any time:
 | Scope | Allows |
 |---|---|
 | `read` | every `GET` admin route except `GET /admin/tokens`: devices, catalog, problems, Listen along candidates, the pending pairing codes, [status](#status), [events](#events) and [history](#viewing-history) |
-| `control` | `read`, plus [`POST …/commands`](#commands) |
-| `manage` | `control`, plus the home list (`PUT …/home` and the [single changes](#home-list-changes)), `PUT …/cursor`, `PATCH /admin/devices/:id`, [history marks](#viewing-history), `DELETE …/problems` and `POST /admin/catalog/reload` |
+| `control` | `read`, plus [`POST …/commands`](#commands) (`update` included) |
+| `manage` | `control`, plus the home list (`PUT …/home` and the [single changes](#home-list-changes)), `PUT …/cursor`, `PATCH /admin/devices/:id`, [history marks](#viewing-history), `DELETE …/problems`, `POST /admin/catalog/reload` and the [TV app](#tv-app) (`PUT`/`DELETE /admin/app/apk`, `POST /admin/app/check`) |
 
 Every other route needs the owner token: pairing approval, deleting a TV, deleting and adopting history,
 [diagnostics](#diagnostics), [Listen along](#listen-along) resolves and links, and the access tokens themselves (every
@@ -543,6 +627,9 @@ Events carry no URLs, headers, refs, tokens, message texts or problem details.
 | `device.online` / `device.offline` | `{}`, by the rule under [Status](#status) |
 | `device.paired` | `{"name", "replaced"}`: a TV collected its token; `replaced: true`: it took over an existing TV ([Replacing a TV](#replacing-a-tv)) |
 | `device.updated` / `device.removed` | `{"fields"}` (names of the changed settings, `name` included) / `{"name"}` |
+| `device.app_version` | `{"from", "to", "versionCode", "androidSdk", "capability"}`: the TV's [User-Agent](#tv-api) reports another app version, Android version or capability (`from`: the version before, null the first time); the TV is the actor |
+| `app.uploaded` / `app.fetched` | `{"versionName", "versionCode", "source": "upload"}` / `{"versionName", "versionCode", "source": "github", "releaseTag"}`: a new [TV app](#tv-app) APK is on offer |
+| `app.removed` / `app.check_failed` | `{"versionName"}` / `{"reason"}` (a GitHub check failed, see [TV app](#tv-app); the server is the actor of a scheduled check) |
 | `pairing.pending` | `{"code", "expiresAt"}`: a TV shows a new pairing code |
 | `playback.started` | `{"viewingId", "itemId", "itemKind", "itemTitle", "episodeId", "episodeTitle", "season", "number", "sourceId", "positionMs", "trigger"}`: a [viewing](#viewing-history) starts (its first resolve; the re-resolves that continue it send nothing); `positionMs` is where it will start |
 | `playback.paused` / `playback.resumed` | `{"viewingId", "positionMs"}`: a `paused` report / a `playing` report after one |
@@ -718,6 +805,10 @@ as before):
 - `POST /tv/commands/:id/result` after every command, as above; `play` reports once playback runs or fails.
 - Nothing else: the viewing history, events and access tokens are the server's. The TV keeps reporting progress as
   before, and need not heartbeat while paused.
+- TV app updates (additive, later): the [User-Agent](#tv-api) on every call, [`GET /tv/app`](#get-apiv1tvapp) and
+  `/tv/app/apk`, `event: app` on the stream, the `update` command and its results
+  ([TV app updates](#tv-app-updates)). A TV without them is shown with `app.update: "unknown"` and gets no
+  `update` it could not act on (it acknowledges and ignores an unknown type).
 
 ## Static routes
 
@@ -739,6 +830,9 @@ path or query; health checks and successful proxy requests (a steady stream of s
 proxy errors at `info`. Commands are logged with their type and ids (never a message's text), problem reports with
 their kind and code (never their detail). A request made with an [access token](#access-tokens) is logged with the
 token's id (field `actorId`: a key containing the word `token` would be dropped by the redaction), never the secret.
+The TV app APK is logged with its version, size, source and the first 12 hex digits of its sha256
+(`sha256Prefix`), never the whole digest, a file path or a download URL; a failed GitHub check with its `reason`
+and `repo`.
 
 ## Configuration
 
@@ -756,7 +850,8 @@ the file's directory:
   "admin": { "tokenFile": "./data/admin.token" },
   "proxy": { "always": false, "sessionTtlSec": 21600, "alignTsSegments": false },
   "defaults": { "uiLanguage": "en", "preferredAudioLanguage": "en" },
-  "log": { "level": "info" }
+  "log": { "level": "info" },
+  "appUpdates": { "source": "github", "repo": "mickeiik/izle", "checkIntervalHours": 24, "auto": true }
 }
 ```
 
@@ -784,6 +879,10 @@ in `./data` (`izle.db`, `admin.token`). Deployment (systemd, Caddy, Docker): [se
 - `log.level`: `debug`, `info` (default), `warn` or `error`.
 - `events.retentionDays` (1–90, default 7): how long the [event log](#events) is kept; the housekeeping that runs
   every 10 minutes deletes older events.
+- `appUpdates` ([TV app](#tv-app)): `source` `github` (default: the latest release of `repo`, checked a minute after
+  the start and every `checkIntervalHours`) or `manual` (only the owner's uploads; the server makes no request);
+  `repo` (`owner/name`, default `mickeiik/izle`); `checkIntervalHours` (1–168, default 24); `auto` (default true):
+  TVs that can install silently update by themselves when idle.
 
 ## Changelog
 
@@ -796,3 +895,8 @@ in `./data` (`izle.db`, `admin.token`). Deployment (systemd, Caddy, Docker): [se
   a position, command results from the TV, single [home list changes](#home-list-changes), and
   [replacing a TV](#replacing-a-tv) at pairing. Config `events.retentionDays`; TV resolve fields `trigger` and
   `commandId`; see [What changes for the TV](#what-changes-for-the-tv).
+- **v1, TV app updates (2026-10-16)** — additive: the TV's [User-Agent](#tv-api) convention and `Device.app`,
+  [`GET /tv/app`](#get-apiv1tvapp) and `/tv/app/apk`, `event: app`, the `update` command and its result reasons,
+  the admin [TV app](#tv-app) routes (upload, removal, GitHub check; the upload is the one body over 64 KiB),
+  events `app.uploaded`, `app.fetched`, `app.removed`, `app.check_failed` and `device.app_version`, config
+  `appUpdates`.

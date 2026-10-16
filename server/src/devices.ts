@@ -1,16 +1,21 @@
 // The owner's side of the paired TVs (admin API): how a TV appears in the device list and on its page, what it has
 // watched and is playing, settings changes, and deletion.
 
-import type { Actor } from "./actor.ts";
+import { tvActor, type Actor } from "./actor.ts";
 import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
 import { iso } from "./presenters.ts";
 import type { ProxyService } from "./proxy.ts";
 import { companionScope } from "./resolve.ts";
-import type { Device, DevicePatch, NowPlaying } from "./store.ts";
+import type { Device, DevicePatch, NowPlaying, TvAppInfo } from "./store.ts";
 import type { TvService } from "./tv.ts";
 
 type DeviceDeps = Services & { tv: TvService; proxy: ProxyService };
+
+/** Whether the device row already has what the TV reports. */
+export function sameApp(d: Device, info: TvAppInfo): boolean {
+  return d.appVersion === info.version && d.appVersionCode === info.versionCode && d.androidSdk === info.androidSdk && d.updateCapability === info.capability;
+}
 
 export class DeviceService {
   private readonly s: DeviceDeps;
@@ -25,8 +30,41 @@ export class DeviceService {
       id: d.id, name: d.name, status: d.tokenHash ? "active" : "pending", online: this.s.events.isOnline(d.id), createdAt: iso(d.createdAt),
       lastSeenAt: iso(d.lastSeenAt), stateVersion: d.stateVersion,
       settings: { uiLanguage: d.uiLanguage, preferredAudioLanguage: d.preferredAudioLanguage, subtitlesLanguage: d.subtitlesLanguage, autoplayOnStart: d.autoplayOnStart },
-      effective: this.s.tv.settings(d), problems: this.s.problems.stats(d.id),
+      effective: this.s.tv.settings(d), problems: this.s.problems.stats(d.id), app: this.app(d),
     };
+  }
+
+  /**
+   * The TV's app as its User-Agent reported it, and where it stands against the stored APK: `unknown` (no report,
+   * or no APK), `up_to_date`, `pending` (newer APK; the TV installs it by itself when idle) or `needs_install_now`
+   * (newer APK; the TV needs the viewer, or automatic updates are off: an `update` command starts it).
+   */
+  app(d: Device) {
+    const apk = this.s.appUpdates.current();
+    let update: "unknown" | "up_to_date" | "pending" | "needs_install_now" = "unknown";
+    if (d.appVersionCode !== null && apk) {
+      if (d.appVersionCode >= apk.versionCode) update = "up_to_date";
+      else update = d.updateCapability === "silent" && this.s.appUpdates.config.auto ? "pending" : "needs_install_now";
+    }
+    return { version: d.appVersion, versionCode: d.appVersionCode, androidSdk: d.androidSdk, capability: d.updateCapability, reportedAt: iso(d.appReportedAt), update };
+  }
+
+  /** Records the app a TV reports when it differs from what is stored; returns the device as it is now. */
+  recordApp(d: Device, info: TvAppInfo): Device {
+    const { store, eventLog, now } = this.s;
+    const changed = store.transaction(() => {
+      // Read again inside the transaction: two requests with the new User-Agent record it once.
+      const current = store.getDevice(d.id);
+      if (!current || sameApp(current, info)) return null;
+      store.setDeviceApp(d.id, info, now());
+      eventLog.append("device.app_version", d.id, tvActor(d.id), {
+        from: current.appVersion, to: info.version, versionCode: info.versionCode, androidSdk: info.androidSdk, capability: info.capability,
+      });
+      return store.getDevice(d.id);
+    });
+    if (!changed) return d;
+    this.s.log.info("device app version", { deviceId: d.id, appVersion: info.version, versionCode: info.versionCode, androidSdk: info.androidSdk, capability: info.capability });
+    return changed;
   }
 
   /** Every device, with the length of its home list. */
