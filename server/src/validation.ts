@@ -70,6 +70,7 @@ export const commandBody = ajv.compile<CommandBody>({
     object({ type: { const: "seek" }, deltaMs: SEEK_DELTA }, ["type", "deltaMs"]),
     object({ type: { const: "seek" }, positionMs: MS }, ["type", "positionMs"]),
     object({ type: { const: "message" }, text: MESSAGE, durationSec: DURATION_SEC }, ["type", "text"]),
+    object({ type: { const: "update" } }, ["type"]),
   ],
 });
 

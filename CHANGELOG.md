@@ -9,6 +9,15 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Added
 
+- **TV app updates, server side:** the server keeps one TV app APK and offers it to every TV (`GET /api/v1/tv/app`,
+  `/tv/app/apk`, `event: app` on the TV's stream). By default it fetches the latest release's APK from GitHub a
+  minute after the start and once a day, verified against the release's `SHA256SUMS` (config `appUpdates`:
+  `source` `github` or `manual`, `repo`, `checkIntervalHours`, `auto`); the owner can also upload one
+  (`PUT /api/v1/admin/app/apk`), remove it or check now (`GET /api/v1/admin/app`, `DELETE …/app/apk`,
+  `POST …/app/check`). A new `update` command starts the install on a TV that needs the viewer. Each TV's app
+  version, Android version and update capability (from its User-Agent) show in the device list with whether it is
+  up to date (`app`), and the event log gains `app.uploaded`, `app.fetched`, `app.removed`, `app.check_failed` and
+  `device.app_version`.
 - **The admin page follows the TVs live:** it reads the server's event log, so a TV going online, a playback, a
   command's outcome or a change made elsewhere shows up as it happens; the polls stay as a fallback. After a remote
   command, a toast says what the TV made of it ("Play: done", "Pause: ignored (nothing is playing)").
