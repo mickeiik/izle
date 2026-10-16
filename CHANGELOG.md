@@ -9,6 +9,11 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Added
 
+- **TV app page on the admin page** ("TV app"): the APK the server offers to the TVs (version, where it came from,
+  size, when the server last checked GitHub and with what result), Check now, Remove, and an upload for a release
+  APK. Every TV with its installed app and Android version, whether it updates by itself or needs Install now, and
+  an Install now button; a TV's page has the same in its new "TV app" section, and the TV list flags TVs with an
+  update waiting. The update's outcome comes back as a toast ("Update: the TV shows the install screen").
 - **The admin page follows the TVs live:** it reads the server's event log, so a TV going online, a playback, a
   command's outcome or a change made elsewhere shows up as it happens; the polls stay as a fallback. After a remote
   command, a toast says what the TV made of it ("Play: done", "Pause: ignored (nothing is playing)").

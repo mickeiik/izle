@@ -82,3 +82,16 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
   a retried remote play stays the command's in the history.
 - Results are not queued behind each other (unlike progress reports): each is independent. The reporter drops a
   second result for the same command id (per server connection, last 64) as a safety net.
+
+## TV app updates: admin page (2026-10-16)
+
+- A page of its own ("TV app") rather than per-TV controls only: the stored APK, the GitHub checks and the upload
+  belong to the server, not to one TV, and the owner updating several TVs wants their versions side by side. A TV's
+  page repeats its own state and Install now.
+- `GET /admin/app` answering 404 means a server without TV app updates: the page says so and offers nothing, the
+  TV list and a TV's page show "Unknown" and keep Install now off, instead of failing as a load error.
+- Install now stays available for a TV that installs by itself and for one whose state is unknown (an older app):
+  the TV answers with its own result (`up_to_date`, `busy`…), shown as a toast. It is off only for what the page
+  knows for certain: no stored APK, a TV offline or not set up, or one reported up to date.
+- Sizes are in powers of 1000 (`12.3 MB`), the 64 MiB cap is named in MiB where it is quoted; the upload shows no
+  byte progress, because `fetch` reports none for request bodies, only "Uploading …" until the answer.

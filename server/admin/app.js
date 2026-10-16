@@ -7,6 +7,7 @@ import { clearToken, getToken, isUnauthorized, onUnauthorized, signIn } from "./
 import { h, onSubmit, toast } from "./dom.js";
 import { errorText, tokenFromHash } from "./lib.js";
 import { startRouter } from "./router.js";
+import { appView } from "./view-app.js";
 import { catalogView } from "./view-catalog.js";
 import { deviceView } from "./view-device.js";
 import { devicesView } from "./view-devices.js";
@@ -72,6 +73,7 @@ startRouter({
     if (section === "history" && id) return { view: (scope) => historyItemView(scope, id), nav: "#/history" };
     if (section === "history") return { view: historyView, nav: "#/history" };
     if (section === "tokens") return { view: tokensView, nav: "#/tokens" };
+    if (section === "app") return { view: appView, nav: "#/app" };
     return { view: devicesView, nav: "#/devices" };
   },
 });
