@@ -20,6 +20,17 @@ contract share one version number. How to update (back up, update the server, th
   settings, home lists, cursors, commands sent and delivered, problems, catalog reloads) for `events.retentionDays`
   (default 7) and serves it as a stream (`GET /api/v1/admin/events/stream`) and a long-poll (`GET
   /api/v1/admin/events`), with device and type filters and a `gap` marker when a consumer fell behind.
+- **Play any show at any position from the admin API:** `play` takes an `itemId` (the episode OK would play on
+  that TV) and an optional `positionMs`, for any playable show in the catalog, on the TV's home screen or not. The
+  TV reports what it made of every command (`done`, `ignored` or `failed`, with a reason); `GET
+  /api/v1/admin/devices/:id/commands/:commandId` shows it with when the TV received the command, and the event log
+  carries it as `command.result`.
+- **Single home list changes:** `POST`, `PATCH` and `DELETE /api/v1/admin/devices/:id/home/items…` add, move and
+  remove one show, so two editors (the owner, an agent) do not overwrite each other; `PUT …/home` takes an optional
+  `expected` list and answers `409 home_changed` when the list changed in the meantime.
+- **Replacing a TV at pairing:** approving a new TV's code with `replaces` gives it an existing TV with its name,
+  settings, home list and progress; the old TV's token stops working. `POST
+  /api/v1/admin/devices/:id/history/adopt` gives the viewings of a deleted TV to another one.
 - **Next and previous episode from the remote:** CH+/CH− and the media next/previous keys switch episodes while
   playing.
 - **Autoplay when the TV starts** (per TV, off by default): the show watched last, else the first tile, starts after

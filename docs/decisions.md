@@ -39,3 +39,16 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
 - The scope table in the middleware already lists the routes of the later slices (single home changes, history
   marks), and every unlisted non-`GET` admin route needs the owner token, so a new route is never open by accident.
 - `pairing.pending` has the server as its actor: the TV has no device id before the code is collected.
+
+## Remote management: commands and devices (2026-10-16)
+
+- A replacement needs no new column: the pair code is bound to the device it replaces, and collecting it tells a
+  takeover from a new TV by the device already having a token. The purge only deletes devices without one, so an
+  expired replacement code never touches the device it named.
+- The old TV's event streams close like a disconnect, not like a deletion, so the new TV connecting within the
+  online grace keeps the device online without an offline/online flap. Its own proxy sessions end; the owner's
+  Listen along sessions are left to expire.
+- The single home changes rebuild the whole list and go through `setHome`, so an item already on the list that left
+  the catalog blocks an addition with `unknown_item` (its `itemId` says which), as it blocks a whole-list `PUT`.
+- A command result does not count as the acknowledgement: `deliveredAt` stays the ack's time (or null), as the spec
+  keeps the two apart.
