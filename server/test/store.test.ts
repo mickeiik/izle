@@ -30,7 +30,7 @@ test("deleting a device cascades to its rows; transactions roll back on error", 
   s.createDevice({ id: "d1", name: "TV", tokenHash: "h1", now: 1 });
   s.setHome("d1", "c", ["a", "b"], 1);
   s.upsertProgress("d1", { catalogId: "c", itemId: "a", episodeId: "a.1", positionMs: 5, durationMs: 10, status: "watching", updatedAt: 2 });
-  s.insertCommand("d1", "stop", {}, 3);
+  s.insertCommand("d1", "stop", {}, { type: "owner" }, 3);
   assert.throws(() =>
     s.transaction(() => {
       s.setHome("d1", "c", ["x"], 2);
@@ -156,6 +156,71 @@ test("migration 4: home entries keep the date they were added, cursors carry the
   s.upsertProgress("d1", { ...p, episodeId: "a.2", updatedAt: 4 });
   assert.equal(s.lastProgressAt("d1", "c", "a"), 9);
   assert.equal(s.lastProgressAt("d1", "c", "b"), null);
+  s.close();
+});
+
+test("migration 5: saved positions become imported viewings; access tokens and events have rows; hooks run after commit only", async () => {
+  const file = path.join(await tempDir(), "izle.db");
+  const raw = new DatabaseSync(file);
+  for (const m of MIGRATIONS.slice(0, 4)) raw.exec(m);
+  raw.exec("PRAGMA user_version = 4");
+  raw.exec("INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'Salon', 'h', 1), ('d2', 'Kitchen', 'h2', 1)");
+  raw.exec(`INSERT INTO progress (device_id, catalog_id, episode_id, item_id, position_ms, duration_ms, status, updated_at) VALUES
+    ('d1', 'c', 'a.1', 'a', 1200000, 1200000, 'finished', 20), ('d1', 'c', 'a.2', 'a', 300000, NULL, 'watching', 30), ('d2', 'c', 'f.main', 'f', 100, 5000, 'watching', 10)`);
+  raw.exec("INSERT INTO commands (device_id, type, payload_json, created_at) VALUES ('d1', 'stop', '{}', 5)");
+  raw.close();
+
+  const s = new Store(file);
+  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  const db = new DatabaseSync(file);
+  const viewings = db.prepare("SELECT * FROM viewings ORDER BY id").all();
+  assert.deepEqual(viewings.map((v) => [v.device_id, v.device_name, v.episode_id, v.item_id, v.started_at, v.ended_at, v.end_position_ms, v.duration_ms, v.end_reason, v.seen]), [
+    ["d2", "Kitchen", "f.main", "f", 10, 10, 100, 5000, "stopped", 0],
+    ["d1", "Salon", "a.1", "a", 20, 20, 1200000, 1200000, "finished", 1],
+    ["d1", "Salon", "a.2", "a", 30, 30, 300000, null, "stopped", 0],
+  ], "one imported viewing per saved position, oldest first");
+  assert.deepEqual(new Set(viewings.map((v) => [v.imported, v.trigger, v.start_position_ms, v.source_id, v.watched_ms, v.command_id].join())), new Set(["1,unknown,,,,"]));
+  assert.equal(viewings[1]!.actor_json, '{"type":"tv","deviceId":"d1"}');
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM viewing_ranges").get()!.n, 0);
+  db.close();
+
+  // Commands from before have no actor; new ones carry theirs and the result columns.
+  assert.deepEqual(s.pendingCommands("d1", 0).map((c) => [c.actor, c.result, c.reason, c.resultAt]), [[null, null, null, null]]);
+  const cmd = s.insertCommand("d1", "pause", {}, { type: "token", tokenId: "t1", name: "agent" }, 6);
+  assert.deepEqual([cmd.actor, cmd.result], [{ type: "token", tokenId: "t1", name: "agent" }, null]);
+
+  const token = { id: "tok000000001", name: "agent", scope: "read" as const, createdAt: 7, lastUsedAt: null };
+  assert.deepEqual(s.insertAccessToken({ ...token, secretHash: "hash1" }), token);
+  s.insertAccessToken({ ...token, id: "tok000000002", name: "other", secretHash: "hash2", createdAt: 8 });
+  assert.throws(() => s.insertAccessToken({ ...token, id: "tok000000003", name: "again", secretHash: "hash1" }), /UNIQUE/, "one secret, one token");
+  assert.deepEqual(s.getAccessTokenByHash("hash2")?.name, "other");
+  assert.equal(s.getAccessTokenByHash("nope"), null);
+  assert.deepEqual(s.getAccessTokenByName("agent"), token);
+  s.touchAccessToken(token.id, 9);
+  assert.deepEqual(s.listAccessTokens().map((x) => [x.id, x.lastUsedAt]), [["tok000000001", 9], ["tok000000002", null]]);
+  assert.equal(s.deleteAccessToken(token.id), true);
+  assert.equal(s.deleteAccessToken(token.id), false);
+  assert.equal(s.getAccessToken(token.id), null);
+
+  const ran: string[] = [];
+  assert.throws(() =>
+    s.transaction(() => {
+      s.insertEvent({ at: 1, type: "x.y", deviceId: null, actor: { type: "server" }, data: {} });
+      s.afterCommit(() => ran.push("rolled back"));
+      throw new Error("boom");
+    }),
+  );
+  s.transaction(() => {
+    s.afterCommit(() => ran.push("inner"));
+    s.insertEvent({ at: 1, type: "a.b", deviceId: "d1", actor: { type: "server" }, data: { n: 1 } });
+    assert.deepEqual(ran, [], "hooks wait for the commit");
+  });
+  s.afterCommit(() => ran.push("outside"));
+  assert.deepEqual(ran, ["inner", "outside"], "outside a transaction a hook runs at once");
+  assert.deepEqual(s.listEvents({ after: 0, limit: 10 }).map((e) => [e.id, e.type, e.deviceId, e.data]), [[1, "a.b", "d1", { n: 1 }]], "the rolled-back event left nothing");
+  assert.deepEqual([s.lastEventId(), s.oldestEventId()], [1, 1]);
+  assert.equal(s.purgeEvents(2), 1);
+  assert.deepEqual([s.lastEventId(), s.oldestEventId()], [1, null], "the last id survives the purge");
   s.close();
 });
 

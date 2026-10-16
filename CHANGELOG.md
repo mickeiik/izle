@@ -9,6 +9,54 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Added
 
+- **The admin page follows the TVs live:** it reads the server's event log, so a TV going online, a playback, a
+  command's outcome or a change made elsewhere shows up as it happens; the polls stay as a fallback. After a remote
+  command, a toast says what the TV made of it ("Play: done", "Pause: ignored (nothing is playing)").
+- **History tab on the admin page:** what was watched per day over the last week, every title with its status
+  (watching, new episodes, finished, idle) and, per title, its episodes with how much of each was played and the
+  owner's marks (seen, not seen, which win over what the TVs reported). A TV's page lists its viewings: who started
+  each, how much was watched and how it ended.
+- **Access tokens on the admin page** ("Access"): create a token with a scope for an app or an agent, see when it
+  was last used, revoke it. The secret is shown once.
+- **Play any show on a TV from its catalog page** ("Play on"), whether it is on that TV's home screen or not; and
+  when approving a pairing code, a new TV can take over an existing one ("Replaces"), keeping its name, settings,
+  home screen and history.
+- **Viewing history:** the server keeps every playback of an episode on a TV as a viewing (which TV, what, when,
+  how much was watched and which parts, how it ended, whether the episode was seen: at the end, or past 90 %),
+  outliving the TV and the catalog. `GET /api/v1/admin/history/viewings` (filters and pages), `…/viewings/:id`
+  (with the played ranges), `…/titles` and `…/titles/:itemId` (what was seen and covered, with a status:
+  finished, new episodes, watching, idle), `…/days` (watched time per calendar day in a time zone), the owner's
+  marks (`POST …/history/marks`, winning over the viewings) and deletions (`DELETE …/history`, owner token only).
+  The saved positions from before became the first viewings. The TV's resolve may say what started a playback
+  (`trigger`, `commandId`). New events: `playback.started`, `paused`, `resumed`, `seeked`, `stalled`, `recovered`,
+  `ended`, `episode.seen` and `history.changed`; the status's `nowPlaying` shows only a running viewing, with its
+  `viewingId`.
+- **Access tokens for agents and apps:** the owner creates named tokens with a scope (`read`, `control` or
+  `manage`) and revokes them at any time, through `GET`/`POST`/`DELETE /api/v1/admin/tokens` or `izle-server token
+  create <name> --scope <scope>`, `token list` and `token revoke <id>`. A token lacking a route's scope gets
+  `403 insufficient_scope`; a wrong or revoked one counts like a wrong admin token. Every change records who made
+  it (its `actor`), and the access log names a token by its id, never its secret.
+- **`GET /api/v1/admin/status`:** every active TV in one call (online, last seen, what it plays), the catalog, the
+  pending pairing codes and the id of the latest event.
+- **Event log:** the server keeps every change worth reacting to (TVs coming online and going offline, pairing,
+  settings, home lists, cursors, commands sent and delivered, problems, catalog reloads) for `events.retentionDays`
+  (default 7) and serves it as a stream (`GET /api/v1/admin/events/stream`) and a long-poll (`GET
+  /api/v1/admin/events`), with device and type filters and a `gap` marker when a consumer fell behind.
+- **Play any show at any position from the admin API:** `play` takes an `itemId` (the episode OK would play on
+  that TV) and an optional `positionMs`, for any playable show in the catalog, on the TV's home screen or not. The
+  TV reports what it made of every command (`done`, `ignored` or `failed`, with a reason); `GET
+  /api/v1/admin/devices/:id/commands/:commandId` shows it with when the TV received the command, and the event log
+  carries it as `command.result`.
+- **Single home list changes:** `POST`, `PATCH` and `DELETE /api/v1/admin/devices/:id/home/items…` add, move and
+  remove one show, so two editors (the owner, an agent) do not overwrite each other; `PUT …/home` takes an optional
+  `expected` list and answers `409 home_changed` when the list changed in the meantime.
+- **Replacing a TV at pairing:** approving a new TV's code with `replaces` gives it an existing TV with its name,
+  settings, home list and progress; the old TV's token stops working. `POST
+  /api/v1/admin/devices/:id/history/adopt` gives the viewings of a deleted TV to another one.
+- **The TV reports what became of each remote command:** done, ignored (and why: not playing, not ready, no next
+  episode, unknown command) or failed (no playable source, playback error); a remote play reports once the video
+  runs or fails. Every playback tells the server who started it (the viewer, autoplay, auto-next or a command), for
+  the viewing history. A remote play can start at a given position (0 = from the beginning).
 - **Next and previous episode from the remote:** CH+/CH− and the media next/previous keys switch episodes while
   playing.
 - **Autoplay when the TV starts** (per TV, off by default): the show watched last, else the first tile, starts after
@@ -43,6 +91,8 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Changed
 
+- **A TV counts as online for a minute after its event stream closed**, so a reconnect does not show it offline
+  and back; the device list, the answer to a command and the status all follow this one rule.
 - **Approving a TV no longer needs a name:** it is called "TV" (then "TV 2", "TV 3", …) and can be renamed later;
   `POST /api/v1/admin/pair/approve` answers with the name it gave.
 - **The TV's pairing screen shows the admin page's address**, where the code is approved, instead of the bare

@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import { SERVER, tvActor } from "./actor.ts";
 import { loadAdminToken } from "./auth.ts";
 import { CatalogService } from "./catalog.ts";
 import { CommandService } from "./commands.ts";
@@ -10,10 +11,16 @@ import { CompanionService } from "./companion.ts";
 import { databaseFile, DEFAULT_RESOLVE_BUDGET_MS, DEFAULT_RESOLVE_DEADLINE_MS, localServerUrl, type ServerConfig } from "./config.ts";
 import type { AppContext } from "./context.ts";
 import { DeviceService } from "./devices.ts";
+import { EventLog } from "./eventlog.ts";
 import { EventHub, Notifier } from "./events.ts";
 import { CatalogHistory } from "./history.ts";
 import { clientKeyFor, registerMiddleware, type Env } from "./http/middleware.ts";
 import { registerAdmin } from "./http/routes/admin.ts";
+import { registerAdminEvents } from "./http/routes/admin-events.ts";
+import { registerAdminHistory } from "./http/routes/admin-history.ts";
+import { registerAdminHome } from "./http/routes/admin-home.ts";
+import { registerAdminStatus } from "./http/routes/admin-status.ts";
+import { registerAdminTokens } from "./http/routes/admin-tokens.ts";
 import { registerTv } from "./http/routes/tv.ts";
 import { registerStatic } from "./http/static.ts";
 import { createLogger, type Logger } from "./log.ts";
@@ -23,8 +30,10 @@ import { ProxyService } from "./proxy.ts";
 import { PlaybackSessions, ResolveService } from "./resolve.ts";
 import { loadResolver } from "./resolver.ts";
 import { Store } from "./store.ts";
+import { TokenService } from "./tokens.ts";
 import { TvService } from "./tv.ts";
 import { VERSION } from "./version.ts";
+import { ViewingService, VIEWING_SWEEP_MS } from "./viewings.ts";
 
 interface StartOptions {
   config: ServerConfig;
@@ -33,6 +42,8 @@ interface StartOptions {
   now?: () => number;
   /** SSE ping interval (default 20 s). */
   pingMs?: number;
+  /** How long a TV stays online after its last event stream closed (default 60 s; tests shorten it). */
+  offlineGraceMs?: number;
   pairing?: PairingOptions;
   /** Upstream fetch of the media proxy and the diagnostics probe (default: the global fetch). */
   fetch?: typeof fetch;
@@ -68,9 +79,15 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     store.close();
     throw err;
   }
-  const events = new EventHub();
+  const events = new EventHub(opts.offlineGraceMs);
+  const eventLog = new EventLog(store, log, now, config.events.retentionDays);
+  const viewings = new ViewingService({ store, catalog, eventLog, events, log, now });
+  events.onOnline = (deviceId, online) => {
+    viewings.onOnline(deviceId, online);
+    eventLog.append(online ? "device.online" : "device.offline", deviceId, tvActor(deviceId), {});
+  };
   const sessions = new PlaybackSessions(now);
-  const problems = new ProblemService({ store, catalog, log, now, sessions });
+  const problems = new ProblemService({ store, catalog, log, now, sessions, eventLog });
   const { sessionTtlSec, alignTsSegments, always: proxyAlways } = config.proxy;
   const proxy = new ProxyService({ log, now, ttlMs: sessionTtlSec * 1000, alignTsSegments, fetch: fetchUpstream, onProblem: (p) => problems.recordProxy(p) });
   const resolver = new ResolveService({
@@ -78,12 +95,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     deadlineMs: config.resolver?.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,
     budgetMs: config.resolver?.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
   });
-  const services = { config, store, catalog, events, notifier: new Notifier(store, events), resolver, sessions, problems, log, now };
+  const services = { config, store, catalog, events, notifier: new Notifier(store, events), eventLog, resolver, sessions, problems, viewings, log, now };
   const tv = new TvService(services);
   const ctx: AppContext = {
-    ...services, tv, companion: new CompanionService(services), pairing: new PairingService(store, log, now, opts.pairing), proxy,
-    devices: new DeviceService({ ...services, tv, proxy }), commands: new CommandService(services), resolverModule, adminToken,
-    pingMs: opts.pingMs ?? 20_000, fetch: fetchUpstream, adminUiDir: fileURLToPath(new URL("../admin", import.meta.url)),
+    ...services, tv, companion: new CompanionService(services), pairing: new PairingService({ ...services, proxy }, opts.pairing), proxy,
+    devices: new DeviceService({ ...services, tv, proxy }), commands: new CommandService({ ...services, tv }), tokens: new TokenService(store, log, now),
+    resolverModule, adminToken, pingMs: opts.pingMs ?? 20_000, fetch: fetchUpstream, adminUiDir: fileURLToPath(new URL("../admin", import.meta.url)),
   };
 
   // One app with every area's routes, middleware first: access logs name the route template, so no sub-apps.
@@ -93,6 +110,11 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   registerStatic(app, ctx);
   registerTv(app, ctx, clientKey);
   registerAdmin(app, ctx);
+  registerAdminTokens(app, ctx);
+  registerAdminEvents(app, ctx);
+  registerAdminStatus(app, ctx);
+  registerAdminHistory(app, ctx);
+  registerAdminHome(app, ctx);
 
   let server: Server;
   try {
@@ -107,13 +129,19 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   }
   const port = (server.address() as AddressInfo).port;
   log.info("listening", { version: VERSION, host: config.listen.host, port, adminAuth: source, catalogDir: catalog.dir, dataDir: config.dataDir });
+  // Every TV is offline until it connects, and the streams of consumers have to be reopened.
+  eventLog.append("server.started", null, SERVER, { version: VERSION });
 
   const housekeeping = setInterval(() => {
     ctx.pairing.purge();
     ctx.commands.purge();
     problems.purge();
+    eventLog.purge();
   }, 10 * 60_000);
   housekeeping.unref();
+  // Viewings whose TV fell silent or offline end as lost.
+  const sweep = setInterval(() => viewings.sweep(), VIEWING_SWEEP_MS);
+  sweep.unref();
 
   let closing: Promise<void> | null = null;
   return {
@@ -122,6 +150,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     close() {
       closing ??= (async () => {
         clearInterval(housekeeping);
+        clearInterval(sweep);
         events.closeAll();
         await new Promise<void>((resolve) => {
           server.close(() => resolve());

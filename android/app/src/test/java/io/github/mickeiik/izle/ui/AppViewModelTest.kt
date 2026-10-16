@@ -8,6 +8,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.test.core.app.ApplicationProvider
 import io.github.mickeiik.izle.IzleApp
 import io.github.mickeiik.izle.data.api.ContinueInfo
+import io.github.mickeiik.izle.data.api.EpisodeDetails
 import io.github.mickeiik.izle.data.api.HomeEntry
 import io.github.mickeiik.izle.data.api.ItemCard
 import io.github.mickeiik.izle.player.PlayerPhase
@@ -87,7 +88,12 @@ class AppViewModelTest {
                         Thread.sleep(20) // a long poll, shortened
                         json(200, """{"status":"pending"}""")
                     }
-                    path.endsWith("/ack") -> json(200, """{"ok":true}""")
+                    path.endsWith("/ack") || path.endsWith("/result") -> json(200, """{"ok":true}""")
+                    // An episode whose resolve takes a while, so something else can happen meanwhile.
+                    path == "/api/v1/tv/resolve" && request.body?.utf8().orEmpty().contains("\"slow.") -> {
+                        Thread.sleep(2_000)
+                        json(404, """{"error":"not_found"}""")
+                    }
                     // resolve, items and problem reports: nothing is playable here.
                     else -> json(404, """{"error":"not_found"}""")
                 }
@@ -216,9 +222,70 @@ class AppViewModelTest {
         assertEquals("b", vm.homeFocusItemId)
         assertEquals("Show B", vm.player.ui.value.item?.title)
         waitUntil("the resolve request") { count("/api/v1/tv/resolve") == 1 }
-        assertEquals("""{"episodeId":"b.e2"}""", resolveBodies().single())
+        assertEquals("""{"episodeId":"b.e2","trigger":"command","commandId":1}""", resolveBodies().single())
         waitUntil("the error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
         assertEquals("Show B", vm.player.ui.value.item?.title)
+        assertEquals("""{"result":"failed","reason":"no_playable_source"}""", awaitResult(1))
+        // Try again continues that playback: the same trigger and command, and no second result.
+        vm.player.retry()
+        waitUntil("the second resolve") { count("/api/v1/tv/resolve") == 2 }
+        assertEquals("""{"episodeId":"b.e2","trigger":"command","commandId":1}""", resolveBodies().last())
+        waitUntil("the error screen again") { vm.player.ui.value.phase is PlayerPhase.Failed }
+        settle()
+        assertEquals(1, results(1).size)
+    }
+
+    @Test
+    fun aPlayCommandThatDidNotRunYetIsIgnoredWhenReplacedOrLeft() {
+        paired()
+        val vm = startTvOnHome()
+        command("play", """{"itemId":"b","episodeId":"slow.e1"}""")
+        waitUntil("the first resolve") { count("/api/v1/tv/resolve") == 1 }
+        command("play", """{"itemId":"c","episodeId":"c.e2"}""")
+        assertEquals("""{"result":"ignored","reason":"superseded"}""", awaitResult(1))
+        assertEquals("""{"result":"failed","reason":"no_playable_source"}""", awaitResult(2))
+
+        command("play", """{"itemId":"b","episodeId":"slow.e2"}""")
+        waitUntil("the third resolve") { count("/api/v1/tv/resolve") == 3 }
+        vm.onBack()
+        assertEquals(Screen.Home, vm.screen.value)
+        assertEquals("""{"result":"ignored","reason":"stopped"}""", awaitResult(3))
+        settle()
+        assertEquals(listOf(1, 1, 1), (1L..3L).map { results(it).size })
+    }
+
+    @Test
+    fun eachViewerEntryPointResolvesAsTheViewer() {
+        paired()
+        val vm = startTvOnHome()
+        vm.onTileClicked(vm.state.value!!.home.first())
+        waitUntil("the first resolve") { count("/api/v1/tv/resolve") == 1 }
+        vm.onBack()
+        vm.onTileFocused("c")
+        vm.openMenu()
+        vm.onRootEntry(RootEntry.StartOver)
+        waitUntil("the second resolve") { count("/api/v1/tv/resolve") == 2 }
+        vm.onBack()
+        vm.openMenu()
+        vm.onEpisodeChosen(EpisodeDetails("c.e3", index = 2, playbackAllowed = true))
+        waitUntil("the third resolve") { count("/api/v1/tv/resolve") == 3 }
+        assertEquals(
+            listOf("""{"episodeId":"a.film","trigger":"viewer"}""", """{"episodeId":"c.e1","trigger":"viewer"}""", """{"episodeId":"c.e3","trigger":"viewer"}"""),
+            resolveBodies(),
+        )
+    }
+
+    @Test
+    fun commandsThatActAtOnceReportAtOnce() {
+        paired()
+        val vm = startTvOnHome()
+        command("message", """{"text":"Hello"}""")
+        command("dance", """{"style":"tango"}""")
+        command("seek", """{"positionMs":"soon"}""")
+        assertEquals("""{"result":"done"}""", awaitResult(1))
+        assertEquals("""{"result":"ignored","reason":"unknown_type"}""", awaitResult(2))
+        assertEquals("an unusable payload", """{"result":"ignored","reason":"unknown_type"}""", awaitResult(3))
+        assertEquals("Hello", vm.banner.value)
     }
 
     @Test
@@ -228,19 +295,25 @@ class AppViewModelTest {
         vm.onTileClicked(vm.state.value!!.home.first())
         waitUntil("the error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
         for ((type, payload) in listOf("pause" to "{}", "resume" to "{}", "seek" to """{"positionMs":0}""", "next" to "{}", "previous" to "{}")) {
-            awaitAck(command(type, payload))
+            val id = command(type, payload)
+            awaitAck(id)
             assertTrue(type, vm.player.ui.value.phase is PlayerPhase.Failed)
             assertEquals(type, Screen.Player, vm.screen.value)
+            assertEquals(type, """{"result":"ignored","reason":"not_in_player"}""", awaitResult(id))
         }
         settle()
         assertEquals(1, count("/api/v1/tv/resolve"))
-        command("play", """{"itemId":"c","episodeId":"c.e2"}""")
+        assertEquals("""{"episodeId":"a.film","trigger":"viewer"}""", resolveBodies().single())
+        val play = command("play", """{"itemId":"c","episodeId":"c.e2"}""")
         waitUntil("the second resolve") { count("/api/v1/tv/resolve") == 2 }
-        assertEquals("""{"episodeId":"c.e2"}""", resolveBodies().last())
+        assertEquals("""{"episodeId":"c.e2","trigger":"command","commandId":$play}""", resolveBodies().last())
         waitUntil("the error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
-        command("stop")
+        assertEquals("""{"result":"failed","reason":"no_playable_source"}""", awaitResult(play))
+        val stop = command("stop")
         waitUntil("Home") { vm.screen.value == Screen.Home }
         assertEquals(PlayerPhase.Idle, vm.player.ui.value.phase)
+        assertEquals("""{"result":"done"}""", awaitResult(stop))
+        assertEquals("on Home a transport command has no video", """{"result":"ignored","reason":"not_in_player"}""", awaitResult(command("pause")))
     }
 
     @Test
@@ -252,12 +325,16 @@ class AppViewModelTest {
         vm.onSettingsEntry(SettingsEntry.ServerAddress)
         assertEquals(Screen.Setup(canGoBack = true), vm.screen.value)
         assertNull(vm.menu.value)
-        awaitAck(command("play", """{"itemId":"b","episodeId":"b.e2"}"""))
-        awaitAck(command("message", """{"text":"Hello"}"""))
+        val play = command("play", """{"itemId":"b","episodeId":"b.e2"}""")
+        val message = command("message", """{"text":"Hello"}""")
+        awaitAck(play)
+        awaitAck(message)
         settle()
         assertEquals(Screen.Setup(canGoBack = true), vm.screen.value)
         assertNull(vm.banner.value)
         assertEquals(0, count("/api/v1/tv/resolve"))
+        assertEquals("""{"result":"ignored","reason":"not_ready"}""", awaitResult(play))
+        assertEquals("""{"result":"ignored","reason":"not_ready"}""", awaitResult(message))
     }
 
     @Test
@@ -299,7 +376,7 @@ class AppViewModelTest {
         assertNull(vm.autoplay.value)
         assertEquals(Screen.Player, vm.screen.value)
         waitUntil("the resolve request") { count("/api/v1/tv/resolve") == 1 }
-        assertEquals("""{"episodeId":"a.film"}""", resolveBodies().single())
+        assertEquals("""{"episodeId":"a.film","trigger":"autoplay"}""", resolveBodies().single())
     }
 
     @Test
@@ -411,6 +488,15 @@ class AppViewModelTest {
     }
 
     private fun count(path: String) = requests.count { it.url.encodedPath == path }
+
+    /** The bodies of the results the TV sent for command [id]. */
+    private fun results(id: Long) = requests.filter { it.url.encodedPath == "/api/v1/tv/commands/$id/result" }.map { it.body?.utf8().orEmpty() }
+
+    /** The single result of command [id], once it arrived. */
+    private fun awaitResult(id: Long): String {
+        waitUntil("the result of command $id") { results(id).isNotEmpty() }
+        return results(id).single()
+    }
 
     private fun resolveBodies() = requests.filter { it.url.encodedPath == "/api/v1/tv/resolve" }.map { it.body?.utf8().orEmpty() }
 

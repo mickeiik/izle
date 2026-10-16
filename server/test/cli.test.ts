@@ -76,8 +76,45 @@ test("cli: pair pending / pair approve drive the running server's admin API", as
   await refused(["pair", "approve", "123456", ...unreachable], 1, /no izle server answers at http:\/\/127\.0\.0\.1:1; is it running\?/);
   await refused(["pair", "nonsense", ...cfg], 2);
   await refused(["pair", "approve", "123456", "--config", s.config.configPath!, "--server", "ftp://x"], 2);
-  await refused(["admin-token", "--config", s.config.configPath!, "--server", s.base], 2, /--server belongs to the pair command/);
+  await refused(["admin-token", "--config", s.config.configPath!, "--server", s.base], 2, /--server belongs to the pair and token commands/);
   await refused(["check-resolver", "extra", "--config", s.config.configPath!], 2, undefined, "stray arguments are still refused");
+});
+
+test("cli: token create / list / revoke drive the running server's admin API; the secret is printed once, on stdout", async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  const cfg = ["--config", s.config.configPath!, "--server", s.base];
+
+  let r = await run(["token", "list", ...cfg]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /^no access tokens; create one with/);
+
+  await refused(["token", "create", "Kitchen", "agent", ...cfg], 1, /needs --scope read\|control\|manage/);
+  await refused(["token", "create", "--scope", "read", ...cfg], 1, /needs a name/);
+  await refused(["token", "list", "--scope", "read", ...cfg], 2, /--scope belongs to token create/);
+  await refused(["token", "frob", ...cfg], 2, /token needs "create/);
+  await refused(["pair", "pending", "--scope", "read", ...cfg], 2, /--scope belongs to the token command/);
+
+  r = await run(["token", "create", "Kitchen", "agent", "--scope", "control", ...cfg]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /^izat_[A-Za-z0-9_-]{43}\n$/, "the secret alone on stdout, like admin-token");
+  assert.match(r.err, /^created access token "Kitchen agent" \([A-Za-z0-9]{12}, scope control\); its secret, shown only now:\n$/);
+  const secret = r.out.trim();
+  assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: secret })).status, 200);
+  await refused(["token", "create", "Kitchen agent", "--scope", "read", ...cfg], 1, /an access token named "Kitchen agent" exists/);
+
+  r = await run(["token", "list", ...cfg]);
+  assert.equal(r.code, 0);
+  const [, id] = /^([A-Za-z0-9]{12})  control  last used \S+  Kitchen agent$/m.exec(r.out) ?? [];
+  assert.ok(id, r.out);
+  assert.ok(!r.out.includes("izat_"), "the list never has secrets");
+
+  await refused(["token", "revoke", "nope", ...cfg], 1, /no access token with the id nope/);
+  r = await run(["token", "revoke", id!, ...cfg]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.out, `revoked access token ${id}; requests with it answer 401 from now on\n`);
+  assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: secret })).status, 401);
+  assert.ok(!s.logs.some((l) => l.includes(secret)), "the server never logged the secret");
 });
 
 test("cli: pair approve against a wrong admin token is reported, not retried", async (t) => {

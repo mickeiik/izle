@@ -264,6 +264,14 @@ const ERRORS = /** @type {Record<string, string>} */ ({
   unsupported_media: "That source is DASH, which a phone cannot play through the server.",
   no_playable_source: "The source could not be resolved right now.",
   no_link: "Save the timing for this episode first.",
+  insufficient_scope: "This token may not do that; the admin page needs the owner token.",
+  duplicate_name: "A token with that name exists already.",
+  unknown_token: "That token does not exist (any more).",
+  unknown_viewing: "That viewing does not exist (any more).",
+  unknown_command: "That command is not stored (any more).",
+  home_changed: "The home screen changed meanwhile; it was reloaded. Try again.",
+  not_on_home: "That show is not on the home screen.",
+  device_exists: "That TV still exists; forget it first.",
   hls_unsupported: "This browser cannot play HLS.",
   hls_unavailable: "The HLS player did not load. Reload the page and try again.",
 });
@@ -375,6 +383,153 @@ export function episodeStateLabel(s) {
   if (s.watched) return "watched";
   return s.percent !== null ? `${s.percent}%` : "new";
 }
+
+// --- events, history and access tokens ----------------------------------------------------------------------------
+
+/**
+ * The complete server-sent events in `text` (messages end with a blank line) and the unfinished rest. Comment
+ * lines (`: ping`) and `retry:` are skipped; a message without data is nothing.
+ * @param {string} text
+ * @returns {{ events: Array<{ id: string | null, event: string, data: string }>, rest: string }}
+ */
+export function parseSse(text) {
+  const blocks = text.split(/\r?\n\r?\n/);
+  const rest = blocks.pop() ?? "";
+  const events = [];
+  for (const block of blocks) {
+    let id = /** @type {string | null} */ (null);
+    let event = "message";
+    const data = [];
+    for (const line of block.split(/\r?\n/)) {
+      if (line === "" || line.startsWith(":")) continue;
+      const i = line.indexOf(":");
+      const field = i < 0 ? line : line.slice(0, i);
+      const value = i < 0 ? "" : line.slice(i + 1).replace(/^ /, "");
+      if (field === "id") id = value;
+      else if (field === "event") event = value;
+      else if (field === "data") data.push(value);
+    }
+    if (data.length > 0) events.push({ id, event, data: data.join("\n") });
+  }
+  return { events, rest };
+}
+
+/** `2 h 05 min`, `45 min`, `under a minute`; `–` when unknown. @param {number | null | undefined} ms */
+export function formatDuration(ms) {
+  if (ms === null || ms === undefined || !Number.isFinite(ms) || ms < 0) return "–";
+  const min = Math.round(ms / 60_000);
+  if (min < 1) return "under a minute";
+  if (min < 60) return `${min} min`;
+  return `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, "0")} min`;
+}
+
+/**
+ * Who an actor is, for a line of text: the owner (the admin page or the shell), a token by its name, the TV, or the
+ * server.
+ * @param {{ type: string, name?: string } | null | undefined} actor
+ */
+export function actorLabel(actor) {
+  if (!actor) return "";
+  if (actor.type === "owner") return "the owner";
+  if (actor.type === "token") return `token “${actor.name}”`;
+  if (actor.type === "tv") return "the TV";
+  if (actor.type === "server") return "the server";
+  return actor.type;
+}
+
+/**
+ * Who started a viewing: the viewer with the remote, autoplay, auto-next, or whoever sent the command.
+ * @param {{ trigger: string, actor?: { type: string, name?: string } | null }} v
+ */
+export function triggerLabel(v) {
+  if (v.trigger === "viewer") return "the viewer";
+  if (v.trigger === "autoplay") return "autoplay";
+  if (v.trigger === "next") return "auto-next";
+  if (v.trigger === "command") return actorLabel(v.actor) || "a command";
+  return "";
+}
+
+/**
+ * How a viewing ended (or that it runs): `watched to the end`, `stopped at 12:34`, `switched away at 1:02`,
+ * `lost at 0:40` (a power cut, a dead app); `· seen` when it counts as seen without a finished report.
+ * @param {{ endedAt: string | null, endReason: string | null, endPositionMs: number | null, seen: boolean, imported?: boolean }} v
+ */
+export function viewingEnd(v) {
+  if (v.endedAt === null) return "playing now";
+  if (v.endReason === "finished") return "watched to the end";
+  const at = v.imported ? "" : ` at ${formatClock(v.endPositionMs)}`;
+  const how = v.endReason === "stopped" ? "stopped" : v.endReason === "replaced" ? "switched away" : v.endReason === "lost" ? "lost" : (v.endReason ?? "ended");
+  return `${how}${at}${v.seen ? " · seen" : ""}`;
+}
+
+/** The chip of a title's history status. @param {string} status @returns {{ label: string, tone: "ok" | "info" | "warn" | "" }} */
+export function titleStatusLabel(status) {
+  if (status === "finished") return { label: "Finished", tone: "ok" };
+  if (status === "new_episodes") return { label: "New episodes", tone: "info" };
+  if (status === "watching") return { label: "Watching", tone: "" };
+  if (status === "idle") return { label: "Idle", tone: "" };
+  return { label: status, tone: "" };
+}
+
+/**
+ * The muted line of a title in the history: `Series · 5 of 12 episodes seen · last watched 2 days ago · 3 h 20 min`.
+ * @param {{ kind: string | null, inCatalog: boolean, episodes: { total: number, seen: number }, lastWatchedAt: string | null,
+ *   watchedMs: number }} t
+ * @param {number} [now]
+ */
+export function titleLine(t, now = Date.now()) {
+  const parts = [t.kind === "movie" ? (t.episodes.seen > 0 ? "Film · seen" : "Film") : `Series · ${t.episodes.seen} of ${plural(t.episodes.total, "episode")} seen`];
+  if (!t.inCatalog) parts.push("no longer in the catalog");
+  if (t.lastWatchedAt) parts.push(`last watched ${formatRelative(t.lastWatchedAt, now)}`);
+  if (t.watchedMs > 0) parts.push(formatDuration(t.watchedMs));
+  return parts.join(" · ");
+}
+
+/**
+ * What an episode's history says in a few words: `seen 2026-10-10 · 85% played · 3 viewings · 1 h 10 min`, or
+ * `not seen · last at 12:34`.
+ * @param {{ seen: boolean, seenAt: string | null, coveredFraction: number | null, viewings: number, watchedMs: number,
+ *   lastPositionMs: number | null, mark: boolean | null }} e
+ */
+export function episodeHistoryLine(e) {
+  const parts = [];
+  if (e.seen) parts.push(e.seenAt ? `seen ${e.seenAt.slice(0, 10)}` : "seen");
+  else parts.push(e.viewings > 0 ? "not seen" : "never played");
+  if (e.mark !== null) parts.push(e.mark ? "marked seen" : "marked not seen");
+  if (e.coveredFraction !== null) parts.push(`${Math.round(e.coveredFraction * 100)}% played`);
+  if (e.viewings > 0) parts.push(plural(e.viewings, "viewing"));
+  if (e.watchedMs > 0) parts.push(formatDuration(e.watchedMs));
+  if (!e.seen && e.lastPositionMs !== null && e.lastPositionMs > 0) parts.push(`last at ${formatClock(e.lastPositionMs)}`);
+  return parts.join(" · ");
+}
+
+/** The words of a command result reason. */
+const REASONS = /** @type {Record<string, string>} */ ({
+  not_in_player: "nothing is playing", not_ready: "the TV is not set up", no_episode: "no episode that way", unknown_type: "the TV does not know this command",
+  no_playable_source: "no source could be played", playback_error: "the player failed", superseded: "something else started first",
+  stopped: "the player was left first", busy: "the TV was busy", episodes_unavailable: "the episode list could not be fetched",
+});
+
+/**
+ * What became of a command, for a toast: `Play: done`, `Pause: ignored (nothing is playing)`, `Play: failed (the
+ * player failed)`.
+ * @param {{ type: string, result: string, reason: string | null }} d a `command.result` event's data
+ */
+export function commandResultText(d) {
+  const name = d.type.charAt(0).toUpperCase() + d.type.slice(1);
+  const why = d.reason ? ` (${REASONS[d.reason] ?? d.reason.replace(/_/g, " ")})` : "";
+  return `${name}: ${d.result}${why}`;
+}
+
+/** What a token scope allows, for the scope picker and the token list. */
+export const SCOPES = /** @type {const} */ ([
+  ["read", "Read", "sees the TVs, the catalog, the history and the events"],
+  ["control", "Control", "read, and sends commands to the TVs (play, pause, a message)"],
+  ["manage", "Manage", "control, and changes home screens, settings and the history's marks"],
+]);
+
+/** `Read`, `Control`, `Manage`; the scope itself when unknown. @param {string} scope */
+export const scopeLabel = (scope) => SCOPES.find(([s]) => s === scope)?.[1] ?? scope;
 
 // --- Listen along (companion audio on the owner's phone) ----------------------------------------------------------
 

@@ -19,6 +19,17 @@ class RemoteCommandTest {
     }
 
     @Test
+    fun playMayStartAtAPosition() {
+        fun play(payload: String) = command("""{"id":30,"type":"play","payload":{"itemId":"show","episodeId":"show.e2"$payload}}""")
+        assertEquals(RemoteCommand.Play("show", "show.e2", positionMs = 754_000), play(""","positionMs":754000"""))
+        assertEquals("0 starts over", RemoteCommand.Play("show", "show.e2", positionMs = 0), play(""","positionMs":0"""))
+        assertEquals("without one: the saved position", RemoteCommand.Play("show", "show.e2", positionMs = null), play(""))
+        assertEquals(RemoteCommand.Play("show", "show.e2", positionMs = null), play(""","positionMs":-5"""))
+        assertEquals(RemoteCommand.Play("show", "show.e2", positionMs = null), play(""","positionMs":"start""""))
+        assertEquals(RemoteCommand.Play(null, "show.e2", positionMs = 5), command("""{"id":31,"type":"play","payload":{"episodeId":"show.e2","positionMs":5}}"""))
+    }
+
+    @Test
     fun seekIsRelativeOrAbsolute() {
         assertEquals(RemoteCommand.Seek(deltaMs = -30_000, positionMs = null), command("""{"id":7,"type":"seek","payload":{"deltaMs":-30000}}"""))
         assertEquals(RemoteCommand.Seek(deltaMs = null, positionMs = 600_000), command("""{"id":8,"type":"seek","payload":{"positionMs":600000}}"""))

@@ -1,9 +1,11 @@
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync, type SQLInputValue, type SQLOutputValue } from "node:sqlite";
-import type { CommandType } from "./commands.ts";
+import type { Actor } from "./actor.ts";
+import type { CommandResult, CommandType } from "./commands.ts";
 import type { ProgressReportStatus } from "./playback.ts";
 import type { ProblemKind } from "./problems.ts";
+import type { Scope } from "./tokens.ts";
 import { MIGRATIONS } from "./store/migrations.ts";
 
 export { MIGRATIONS, SCHEMA_VERSION } from "./store/migrations.ts";
@@ -98,6 +100,130 @@ export interface Command {
   payload: Record<string, unknown>;
   createdAt: number;
   ackedAt: number | null;
+  /** Who sent it; null for commands stored before actors were recorded. */
+  actor: Actor | null;
+  /** What the TV made of it (`POST /tv/commands/:id/result`); null until it reports, or with a TV that never does. */
+  result: CommandResult | null;
+  reason: string | null;
+  resultAt: number | null;
+}
+
+/** A named token an agent or an app signs in with; only the hash of its secret is kept. */
+export interface AccessToken {
+  id: string;
+  name: string;
+  scope: Scope;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+
+/** One row of the event log, as stored. */
+export interface StoredEvent {
+  id: number;
+  at: number;
+  type: string;
+  deviceId: string | null;
+  actor: Actor;
+  data: Record<string, unknown>;
+}
+
+/** Which events to read: after an id, for some devices (events without a device always pass), of some types. */
+export interface EventFilter {
+  after: number;
+  limit: number;
+  /** Device ids; undefined = every device. */
+  devices?: readonly string[];
+  /** Event types, or prefixes ending in `.`; undefined = every type. */
+  types?: readonly string[];
+}
+
+/** One playback of one episode on one TV, as stored (the running state in the `last*` fields is the history's own). */
+export interface Viewing {
+  id: number;
+  deviceId: string;
+  deviceName: string;
+  catalogId: string;
+  itemId: string;
+  itemKind: string | null;
+  itemTitle: string | null;
+  episodeId: string;
+  episodeTitle: string | null;
+  season: number | null;
+  number: number | null;
+  sourceId: string | null;
+  startedAt: number;
+  /** Null while the viewing runs. */
+  endedAt: number | null;
+  startPositionMs: number | null;
+  endPositionMs: number | null;
+  durationMs: number | null;
+  watchedMs: number | null;
+  endReason: ViewingEndReason | null;
+  seen: boolean;
+  trigger: ViewingTrigger;
+  actor: Actor;
+  commandId: number | null;
+  /** Made from a saved position at the upgrade that introduced the history. */
+  imported: boolean;
+  /** The last progress report applied: when it arrived, what it said, and where it was sampled (null: none yet). */
+  lastReportAt: number | null;
+  lastPositionMs: number | null;
+  lastPlaying: boolean;
+  lastAnchorAt: number | null;
+  lastState: ProgressReportStatus | null;
+}
+
+export type ViewingEndReason = "finished" | "stopped" | "replaced" | "lost";
+export type ViewingTrigger = "viewer" | "autoplay" | "next" | "command" | "unknown";
+
+/** Which viewings to list: of a catalog, a TV, an item or an episode, started in a window, the page after a viewing id. */
+export interface ViewingFilter {
+  catalogId: string;
+  deviceId?: string;
+  itemId?: string;
+  episodeId?: string;
+  from?: number;
+  to?: number;
+  /** The id of the last viewing of the previous page (newest first by `startedAt`, then id). */
+  before?: number;
+  limit: number;
+}
+
+/** Viewings of one episode summed up (the `device` filter applied). */
+export interface EpisodeViewingStats {
+  itemId: string;
+  episodeId: string;
+  viewings: number;
+  watchedMs: number;
+  firstStartedAt: number;
+  lastStartedAt: number;
+  seenViewings: number;
+  /** Ended viewings, not seen, with `watchedMs` under 10 minutes (imported ones, whose `watchedMs` is unknown, never count). */
+  shortViewings: number;
+  /** Whether every viewing of the episode is an imported one. */
+  onlyImported: boolean;
+  /** The position of the newest viewing: its last report while it runs, else where it ended. */
+  lastPositionMs: number | null;
+  lastDurationMs: number | null;
+  /** How the viewings named the episode (for one that left the catalog). */
+  season: number | null;
+  number: number | null;
+  episodeTitle: string | null;
+}
+
+/** When an episode was first seen by a viewing, over every TV. */
+export interface EpisodeSeenAt {
+  itemId: string;
+  episodeId: string;
+  seenAt: number;
+}
+
+/** The owner's word on an episode. */
+export interface EpisodeMark {
+  episodeId: string;
+  itemId: string;
+  seen: boolean;
+  at: number;
 }
 
 export type ProblemOrigin = "tv" | "server";
@@ -160,7 +286,7 @@ type Row = Record<string, SQLOutputValue>;
 
 const PATCHABLE = ["name", "uiLanguage", "preferredAudioLanguage", "subtitlesLanguage", "autoplayOnStart"] as const;
 /** 0/1 columns, read as booleans. */
-const FLAGS = new Set(["autoplay_on_start", "wrapped", "playing", "baseline"]);
+const FLAGS = new Set(["autoplay_on_start", "wrapped", "playing", "baseline", "seen", "imported", "last_playing"]);
 const column = (key: string) => key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 const sqlValue = (v: unknown) => (typeof v === "boolean" ? Number(v) : v) as SQLInputValue;
 
@@ -184,6 +310,8 @@ export class Store {
   // Tracked by hand: DatabaseSync#isOpen / #isTransaction need Node 22.15+ / 22.16+.
   private open = true;
   private inTransaction = false;
+  /** What runs once the open transaction commits (nothing if it rolls back): events are published this way. */
+  private afterCommitHooks: Array<() => void> = [];
 
   constructor(file: string) {
     if (file !== ":memory:") mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
@@ -205,18 +333,29 @@ export class Store {
 
   transaction<T>(fn: () => T): T {
     if (this.inTransaction) return fn();
+    // A fresh hook list per transaction: one that rolled back leaves its hooks behind, never run.
+    const hooks: Array<() => void> = [];
+    this.afterCommitHooks = hooks;
     this.db.exec("BEGIN IMMEDIATE");
     this.inTransaction = true;
+    let result: T;
     try {
-      const result = fn();
+      result = fn();
       this.db.exec("COMMIT");
-      return result;
     } catch (err) {
       this.db.exec("ROLLBACK");
       throw err;
     } finally {
       this.inTransaction = false;
     }
+    for (const hook of hooks) hook();
+    return result;
+  }
+
+  /** Runs `fn` once the open transaction commits (never if it rolls back); outside a transaction, at once. */
+  afterCommit(fn: () => void): void {
+    if (this.inTransaction) this.afterCommitHooks.push(fn);
+    else fn();
   }
 
   private get(sql: string, ...params: SQLInputValue[]): Row | undefined {
@@ -322,7 +461,8 @@ export class Store {
 
   /**
    * Deletes pair codes that expired (or were delivered) more than `graceMs` ago, together with devices that were
-   * approved but never collected their token.
+   * approved but never collected their token. An active device that an expired replacement code was bound to has
+   * a token, and stays.
    */
   purgePairCodes(now: number, graceMs: number): void {
     this.transaction(() => {
@@ -395,8 +535,8 @@ export class Store {
 
   // --- commands ------------------------------------------------------------------------------------------------
 
-  insertCommand(deviceId: string, type: CommandType, payload: Record<string, unknown>, now: number): Command {
-    const row = { deviceId, type, payloadJson: JSON.stringify(payload), createdAt: now };
+  insertCommand(deviceId: string, type: CommandType, payload: Record<string, unknown>, actor: Actor, now: number): Command {
+    const row = { deviceId, type, payloadJson: JSON.stringify(payload), actorJson: JSON.stringify(actor), createdAt: now };
     return fromRow(this.insert("commands", row, undefined, " RETURNING *")!);
   }
 
@@ -409,8 +549,97 @@ export class Store {
     return this.run("UPDATE commands SET acked_at = COALESCE(acked_at, ?) WHERE id = ? AND device_id = ?", now, id, deviceId) > 0;
   }
 
+  /** One of the device's commands; null when it has none with this id. */
+  getCommand(deviceId: string, id: number): Command | null {
+    return this.one("SELECT * FROM commands WHERE id = ? AND device_id = ?", [id, deviceId]);
+  }
+
+  setCommandResult(id: number, result: CommandResult, reason: string | null, now: number): void {
+    this.run("UPDATE commands SET result = ?, reason = ?, result_at = ? WHERE id = ?", result, reason, now, id);
+  }
+
   purgeCommands(before: number): void {
     this.run("DELETE FROM commands WHERE created_at < ?", before);
+  }
+
+  // --- history adoption --------------------------------------------------------------------------------------
+
+  /** Gives the viewings of `fromDeviceId` (a TV that is gone) to another TV, under its name; how many moved. */
+  adoptViewings(fromDeviceId: string, toDeviceId: string, toName: string): number {
+    return this.run("UPDATE viewings SET device_id = ?, device_name = ? WHERE device_id = ?", toDeviceId, toName, fromDeviceId);
+  }
+
+  // --- access tokens -------------------------------------------------------------------------------------------
+
+  insertAccessToken(t: AccessToken & { secretHash: string }): AccessToken {
+    return fromRow(this.insert("access_tokens", t, undefined, " RETURNING id, name, scope, created_at, last_used_at")!);
+  }
+
+  getAccessToken(id: string): AccessToken | null {
+    return this.one("SELECT id, name, scope, created_at, last_used_at FROM access_tokens WHERE id = ?", [id]);
+  }
+
+  getAccessTokenByHash(secretHash: string): AccessToken | null {
+    return this.one("SELECT id, name, scope, created_at, last_used_at FROM access_tokens WHERE secret_hash = ?", [secretHash]);
+  }
+
+  getAccessTokenByName(name: string): AccessToken | null {
+    return this.one("SELECT id, name, scope, created_at, last_used_at FROM access_tokens WHERE name = ?", [name]);
+  }
+
+  /** Every access token, oldest first. */
+  listAccessTokens(): AccessToken[] {
+    return this.many("SELECT id, name, scope, created_at, last_used_at FROM access_tokens ORDER BY created_at, id", []);
+  }
+
+  touchAccessToken(id: string, now: number): void {
+    this.run("UPDATE access_tokens SET last_used_at = ? WHERE id = ?", now, id);
+  }
+
+  deleteAccessToken(id: string): boolean {
+    return this.run("DELETE FROM access_tokens WHERE id = ?", id) > 0;
+  }
+
+  // --- events --------------------------------------------------------------------------------------------------
+
+  /** Appends an event and returns its id (strictly increasing: the order the changes were stored in). */
+  insertEvent(e: Omit<StoredEvent, "id">): number {
+    const row = { at: e.at, type: e.type, deviceId: e.deviceId, actorJson: JSON.stringify(e.actor), dataJson: JSON.stringify(e.data) };
+    return Number(this.insert("events", row, undefined, " RETURNING id")!.id);
+  }
+
+  /** Events after `after` that pass the filter, oldest first, at most `limit`. */
+  listEvents(f: EventFilter): StoredEvent[] {
+    const where = ["id > ?"];
+    const params: SQLInputValue[] = [f.after];
+    if (f.devices) {
+      where.push(`(device_id IS NULL OR device_id IN (${f.devices.map(() => "?").join(", ") || "NULL"}))`);
+      params.push(...f.devices);
+    }
+    if (f.types) {
+      // A type ending in "." is a prefix (`playback.`); the types are validated to letters, dots and underscores,
+      // so a LIKE pattern cannot be smuggled in.
+      const clauses = f.types.map((t) => (t.endsWith(".") ? "type LIKE ? || '%'" : "type = ?"));
+      where.push(`(${clauses.join(" OR ") || "0"})`);
+      params.push(...f.types);
+    }
+    return this.many(`SELECT * FROM events WHERE ${where.join(" AND ")} ORDER BY id LIMIT ?`, [...params, f.limit]);
+  }
+
+  /** The id of the newest event ever appended (also after it was purged), or 0 when there was none. */
+  lastEventId(): number {
+    const r = this.get("SELECT COALESCE((SELECT MAX(id) FROM events), (SELECT seq FROM sqlite_sequence WHERE name = 'events'), 0) AS id")!;
+    return Number(r.id);
+  }
+
+  /** The id of the oldest kept event, or null when none is kept. */
+  oldestEventId(): number | null {
+    const r = this.get("SELECT MIN(id) AS id FROM events")!;
+    return r.id === null ? null : Number(r.id);
+  }
+
+  purgeEvents(before: number): number {
+    return this.run("DELETE FROM events WHERE at < ?", before);
   }
 
   // --- problems ------------------------------------------------------------------------------------------------
@@ -458,6 +687,167 @@ export class Store {
     return this.one("SELECT * FROM now_playing WHERE device_id = ?", [deviceId], "device_id");
   }
 
+  // --- viewings ------------------------------------------------------------------------------------------------
+
+  insertViewing(v: Omit<Viewing, "id">): Viewing {
+    const { actor, ...rest } = v;
+    return fromRow(this.insert("viewings", { ...rest, actorJson: JSON.stringify(actor) }, undefined, " RETURNING *")!);
+  }
+
+  getViewing(id: number): Viewing | null {
+    return this.one("SELECT * FROM viewings WHERE id = ?", [id]);
+  }
+
+  /** The device's running viewing (there is at most one), or null. */
+  runningViewing(deviceId: string): Viewing | null {
+    return this.one("SELECT * FROM viewings WHERE device_id = ? AND ended_at IS NULL AND imported = 0 ORDER BY id DESC LIMIT 1", [deviceId]);
+  }
+
+  listRunningViewings(): Viewing[] {
+    return this.many("SELECT * FROM viewings WHERE ended_at IS NULL AND imported = 0 ORDER BY id", []);
+  }
+
+  /** Writes the given fields of a viewing (the store's own field names, never request input). */
+  updateViewing(id: number, patch: Partial<Omit<Viewing, "id" | "actor">>): void {
+    const keys = Object.keys(patch) as Array<keyof typeof patch>;
+    if (keys.length === 0) return;
+    this.run(`UPDATE viewings SET ${keys.map((k) => `${column(k)} = ?`).join(", ")} WHERE id = ?`, ...keys.map((k) => sqlValue(patch[k])), id);
+  }
+
+  /** Viewings newest first (by `startedAt`, then id), those that pass the filter, at most `limit`. */
+  listViewings(f: ViewingFilter): Viewing[] {
+    const where = ["catalog_id = ?"];
+    const params: SQLInputValue[] = [f.catalogId];
+    const add = (clause: string, value: SQLInputValue | undefined) => {
+      if (value === undefined) return;
+      where.push(clause);
+      params.push(value);
+    };
+    add("device_id = ?", f.deviceId);
+    add("item_id = ?", f.itemId);
+    add("episode_id = ?", f.episodeId);
+    add("started_at >= ?", f.from);
+    add("started_at <= ?", f.to);
+    if (f.before !== undefined) {
+      // The page after a viewing: everything that sorts after it (older, or the same start with a lower id).
+      const anchor = this.getViewing(f.before);
+      if (!anchor) return [];
+      where.push("(started_at < ? OR (started_at = ? AND id < ?))");
+      params.push(anchor.startedAt, anchor.startedAt, anchor.id);
+    }
+    return this.many(`SELECT * FROM viewings WHERE ${where.join(" AND ")} ORDER BY started_at DESC, id DESC LIMIT ?`, [...params, f.limit]);
+  }
+
+  /** One row per episode with a viewing (of `deviceId` when given, else of every TV), in `itemId` when given. */
+  episodeViewingStats(catalogId: string, deviceId: string | null, itemId: string | null = null): EpisodeViewingStats[] {
+    const sql = `SELECT item_id, episode_id, COUNT(*) AS viewings, SUM(COALESCE(watched_ms, 0)) AS watched_ms,
+         MIN(started_at) AS first_started_at, MAX(started_at) AS last_started_at, SUM(seen) AS seen_viewings,
+         SUM(ended_at IS NOT NULL AND seen = 0 AND imported = 0 AND COALESCE(watched_ms, 0) < 600000) AS short_viewings,
+         MIN(imported) AS only_imported, MAX(season) AS season, MAX(number) AS number, MAX(episode_title) AS episode_title,
+         (SELECT COALESCE(n.last_position_ms, n.end_position_ms) FROM viewings n WHERE n.catalog_id = v.catalog_id AND n.episode_id = v.episode_id
+            AND (? IS NULL OR n.device_id = ?) ORDER BY n.started_at DESC, n.id DESC LIMIT 1) AS last_position_ms,
+         (SELECT n.duration_ms FROM viewings n WHERE n.catalog_id = v.catalog_id AND n.episode_id = v.episode_id AND n.duration_ms IS NOT NULL
+            AND (? IS NULL OR n.device_id = ?) ORDER BY n.started_at DESC, n.id DESC LIMIT 1) AS last_duration_ms
+       FROM viewings v WHERE catalog_id = ? AND (? IS NULL OR device_id = ?) AND (? IS NULL OR item_id = ?)
+       GROUP BY item_id, episode_id`;
+    type Raw = Omit<EpisodeViewingStats, "onlyImported"> & { onlyImported: number };
+    return this.many<Raw>(sql, [deviceId, deviceId, deviceId, deviceId, catalogId, deviceId, deviceId, itemId, itemId]).map((r) => ({ ...r, onlyImported: r.onlyImported === 1 }));
+  }
+
+  /** When each episode was first seen by a viewing of any TV (`itemId` narrows to one item). */
+  episodeSeenAt(catalogId: string, itemId: string | null = null): EpisodeSeenAt[] {
+    const sql = "SELECT item_id, episode_id, MIN(ended_at) AS seen_at FROM viewings WHERE catalog_id = ? AND seen = 1 AND (? IS NULL OR item_id = ?) GROUP BY item_id, episode_id";
+    return this.many(sql, [catalogId, itemId, itemId]);
+  }
+
+  /** Whether another viewing than `exceptId` saw the episode. */
+  episodeSeenByOther(catalogId: string, episodeId: string, exceptId: number): boolean {
+    return this.get("SELECT 1 AS x FROM viewings WHERE catalog_id = ? AND episode_id = ? AND seen = 1 AND id != ?", catalogId, episodeId, exceptId) !== undefined;
+  }
+
+  /** The item of an episode the history knows (its newest viewing's), or null. */
+  historyEpisodeItem(catalogId: string, episodeId: string): string | null {
+    const r = this.get("SELECT item_id FROM viewings WHERE catalog_id = ? AND episode_id = ? ORDER BY started_at DESC, id DESC LIMIT 1", catalogId, episodeId);
+    return r ? String(r.item_id) : null;
+  }
+
+  /** The title and kind the history last knew each item under (its newest viewing's), by item id; `itemId` narrows to one. */
+  historyItems(catalogId: string, itemId: string | null = null): Map<string, { kind: string | null; title: string | null }> {
+    // SQLite's bare columns with MAX come from the row holding the maximum: the newest viewing of each item.
+    const sql = "SELECT item_id, item_kind AS kind, item_title AS title, MAX(started_at) FROM viewings WHERE catalog_id = ? AND (? IS NULL OR item_id = ?) GROUP BY item_id";
+    return new Map(this.many<{ itemId: string; kind: string | null; title: string | null }>(sql, [catalogId, itemId, itemId]).map(({ itemId: id, kind, title }) => [id, { kind, title }]));
+  }
+
+  /** The item ids with a viewing or a mark. */
+  historyItemIds(catalogId: string): string[] {
+    const sql = "SELECT item_id FROM viewings WHERE catalog_id = ? UNION SELECT item_id FROM episode_marks WHERE catalog_id = ?";
+    return this.many<{ itemId: string }>(sql, [catalogId, catalogId]).map((r) => r.itemId);
+  }
+
+  /** The viewings started between `from` and `to` (inclusive), for the day counts. */
+  viewingsBetween(catalogId: string, deviceId: string | null, from: number, to: number): Array<Pick<Viewing, "id" | "itemId" | "itemTitle" | "startedAt" | "watchedMs">> {
+    const sql = "SELECT id, item_id, item_title, started_at, watched_ms FROM viewings WHERE catalog_id = ? AND started_at BETWEEN ? AND ? AND (? IS NULL OR device_id = ?) ORDER BY started_at, id";
+    return this.many(sql, [catalogId, from, to, deviceId, deviceId]);
+  }
+
+  deleteViewing(id: number): boolean {
+    return this.run("DELETE FROM viewings WHERE id = ?", id) > 0;
+  }
+
+  /** Deletes the viewings of a TV (when given) started before `before` (when given); every viewing without both. */
+  deleteViewings(catalogId: string, deviceId: string | null, before: number | null): number {
+    return this.run("DELETE FROM viewings WHERE catalog_id = ? AND (? IS NULL OR device_id = ?) AND (? IS NULL OR started_at < ?)", catalogId, deviceId, deviceId, before, before);
+  }
+
+  /** Records that `[fromMs, toMs]` was played; a range that continues the previous one extends it instead of adding a row. */
+  addViewingRange(viewingId: number, fromMs: number, toMs: number): void {
+    const extended = this.run("UPDATE viewing_ranges SET to_ms = MAX(to_ms, ?) WHERE viewing_id = ? AND from_ms <= ? AND to_ms >= ?", toMs, viewingId, fromMs, fromMs);
+    if (extended === 0) this.insert("viewing_ranges", { viewingId, fromMs, toMs });
+  }
+
+  /** The ranges of a viewing, unmerged, in position order. */
+  viewingRanges(viewingId: number): Array<[number, number]> {
+    return this.many<{ fromMs: number; toMs: number }>("SELECT from_ms, to_ms FROM viewing_ranges WHERE viewing_id = ? ORDER BY from_ms, to_ms", [viewingId]).map((r) => [r.fromMs, r.toMs]);
+  }
+
+  /** The ranges of every viewing of the item's episodes (of `deviceId` when given), by episode. */
+  itemRanges(catalogId: string, deviceId: string | null, itemId: string): Map<string, Array<[number, number]>> {
+    const sql = `SELECT v.episode_id, r.from_ms, r.to_ms FROM viewing_ranges r JOIN viewings v ON v.id = r.viewing_id
+       WHERE v.catalog_id = ? AND v.item_id = ? AND (? IS NULL OR v.device_id = ?) ORDER BY v.episode_id, r.from_ms, r.to_ms`;
+    const out = new Map<string, Array<[number, number]>>();
+    for (const r of this.many<{ episodeId: string; fromMs: number; toMs: number }>(sql, [catalogId, itemId, deviceId, deviceId])) {
+      const list = out.get(r.episodeId) ?? [];
+      out.set(r.episodeId, list);
+      list.push([r.fromMs, r.toMs]);
+    }
+    return out;
+  }
+
+  /** The commands a viewing may be the result of: this TV's `play`, `next` or `previous` command with that id. */
+  viewingCommand(deviceId: string, id: number): Command | null {
+    return this.one("SELECT * FROM commands WHERE id = ? AND device_id = ? AND type IN ('play', 'next', 'previous')", [id, deviceId]);
+  }
+
+  // --- marks ---------------------------------------------------------------------------------------------------
+
+  /** Every mark of the catalog (`itemId` narrows to one item), by episode id. */
+  listMarks(catalogId: string, itemId: string | null = null): Map<string, EpisodeMark> {
+    const marks = this.many<EpisodeMark>("SELECT episode_id, item_id, seen, at FROM episode_marks WHERE catalog_id = ? AND (? IS NULL OR item_id = ?)", [catalogId, itemId, itemId]);
+    return new Map(marks.map((m) => [m.episodeId, m]));
+  }
+
+  getMark(catalogId: string, episodeId: string): EpisodeMark | null {
+    return this.one("SELECT episode_id, item_id, seen, at FROM episode_marks WHERE catalog_id = ? AND episode_id = ?", [catalogId, episodeId]);
+  }
+
+  /** Sets the mark of each episode; `seen: null` removes it. */
+  setMarks(catalogId: string, episodes: ReadonlyArray<{ episodeId: string; itemId: string }>, seen: boolean | null, at: number): void {
+    for (const e of episodes) {
+      if (seen === null) this.run("DELETE FROM episode_marks WHERE catalog_id = ? AND episode_id = ?", catalogId, e.episodeId);
+      else this.insert("episode_marks", { catalogId, ...e, seen, at }, "catalog_id, episode_id");
+    }
+  }
+
   // --- catalog history -----------------------------------------------------------------------------------------
 
   /** Every episode the catalog has ever carried, present or removed, ordered by item then episode id. */
@@ -493,6 +883,12 @@ export class Store {
     const sql = `SELECT episode_id FROM catalog_seen WHERE catalog_id = ? AND item_id = ? AND removed_at IS NULL AND first_seen_at > ?
        ORDER BY first_seen_at, episode_id`;
     return this.many<{ episodeId: string }>(sql, [catalogId, itemId, sinceMs]).map((e) => e.episodeId);
+  }
+
+  /** When each present episode of the catalog first appeared, by episode id (`itemId` narrows to one item). */
+  episodeFirstSeen(catalogId: string, itemId: string | null = null): Map<string, number> {
+    const sql = "SELECT episode_id, first_seen_at FROM catalog_seen WHERE catalog_id = ? AND removed_at IS NULL AND (? IS NULL OR item_id = ?)";
+    return new Map(this.many<{ episodeId: string; firstSeenAt: number }>(sql, [catalogId, itemId, itemId]).map((r) => [r.episodeId, r.firstSeenAt]));
   }
 
   /** Stores a loaded build. A build id loaded again later (a rollback) replaces its row with the new load. */

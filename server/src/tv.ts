@@ -1,4 +1,5 @@
 import type { CatalogItem } from "@izle/contract";
+import type { Actor } from "./actor.ts";
 import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
 import { requireEpisode, requireItem, requirePlayable } from "./lookup.ts";
@@ -163,7 +164,11 @@ export class TvService {
     const resume = progress?.status === "watching" ? { positionMs: progress.positionMs, durationMs: progress.durationMs } : null;
     const durationMs = progress?.durationMs ?? episode.durationMs ?? null;
     const row = { catalogId, itemId: item.id, episodeId: episode.id, sourceId: r.source.id, positionMs: resume?.positionMs ?? 0, durationMs };
-    this.s.store.setNowPlaying(device.id, { ...row, state: "starting", updatedAt: this.s.now(), playing: false, anchorAt: this.s.now() });
+    this.s.store.transaction(() => {
+      this.s.store.setNowPlaying(device.id, { ...row, state: "starting", updatedAt: this.s.now(), playing: false, anchorAt: this.s.now() });
+      // The viewing history starts, continues or replaces this TV's viewing, in the same transaction.
+      this.s.viewings.onResolve(device, r.ref, r.source.id, row.positionMs, durationMs, input);
+    });
     this.nowWaiters.wake(device.id);
     return {
       sessionId: r.session.id, sourceId: r.source.id, media: r.media,
@@ -196,6 +201,8 @@ export class TvService {
       const playing = input.playing ?? input.status === "playing";
       const now = { ...ids, sourceId, positionMs: input.positionMs, durationMs, state: input.status, updatedAt: t, playing, anchorAt: t - (input.ageMs ?? 0) };
       this.s.store.setNowPlaying(device.id, now);
+      // The viewing history applies the report to the running viewing of this episode (ignored otherwise).
+      this.s.viewings.onReport(device, { episodeId: episode.id, positionMs: input.positionMs, durationMs, status: input.status, playing, anchorAt: now.anchorAt });
       return cursor.changed;
     });
     this.nowWaiters.wake(device.id);
@@ -206,7 +213,7 @@ export class TvService {
    * Owner override "continue from episode X": moves the cursor (an ordinary one, so it wins over episodes added
    * after a wrap) and forgets X's saved position so it starts over.
    */
-  setCursor(deviceId: string, itemId: string, episodeId: string): number {
+  setCursor(deviceId: string, itemId: string, episodeId: string, actor: Actor): number {
     const item = requireItem(this.s.catalog, itemId, 404, "unknown_item");
     const episode = item.episodes.find((e) => e.id === episodeId);
     if (!episode) throw new HttpError(400, "unknown_episode", "the episode does not belong to this item");
@@ -215,11 +222,16 @@ export class TvService {
     this.s.store.transaction(() => {
       this.s.store.setCursor(deviceId, { catalogId, itemId, episodeId, updatedAt: this.s.now() });
       this.s.store.deleteProgress(deviceId, catalogId, episodeId);
+      this.s.eventLog.append("cursor.changed", deviceId, actor, { itemId, episodeId });
     });
     return this.s.notifier.bump(deviceId);
   }
 
-  setHome(deviceId: string, itemIds: string[]): number {
+  /**
+   * Replaces the home list. With `expected` (the list the caller saw), answers 409 `home_changed` when the list is
+   * no longer that, so two editors do not overwrite each other.
+   */
+  setHome(deviceId: string, itemIds: string[], actor: Actor, expected?: string[]): number {
     if (itemIds.length > HOME_MAX_ITEMS) {
       throw new HttpError(400, "too_many_items", `a home list holds at most ${HOME_MAX_ITEMS} items`, { max: HOME_MAX_ITEMS });
     }
@@ -231,7 +243,48 @@ export class TvService {
       if (!item) throw new HttpError(400, "unknown_item", "no such item in the catalog", { itemId: id });
       if (!isPlayable(item)) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed", { itemId: id });
     }
-    this.s.store.setHome(deviceId, this.s.catalog.catalogId, itemIds, this.s.now());
+    this.s.store.transaction(() => {
+      const before = this.homeIds(deviceId);
+      if (expected && (before.length !== expected.length || before.some((id, i) => id !== expected[i]))) {
+        throw new HttpError(409, "home_changed", "the home list changed in the meantime", { itemIds: before });
+      }
+      this.s.store.setHome(deviceId, this.s.catalog.catalogId, itemIds, this.s.now());
+      const was = new Set(before);
+      const is = new Set(itemIds);
+      this.s.eventLog.append("home.changed", deviceId, actor, { itemIds, added: itemIds.filter((id) => !was.has(id)), removed: before.filter((id) => !is.has(id)) });
+    });
     return this.s.notifier.bump(deviceId);
+  }
+
+  // --- single home changes: each builds the new list and goes through setHome ----------------------------------
+
+  /** The device's home list as item ids, in display order (items gone from the catalog included). */
+  homeIds(deviceId: string): string[] {
+    return this.s.store.getHomeEntries(deviceId, this.s.catalog.catalogId).map((e) => e.itemId);
+  }
+
+  /** Puts the item at `position` (0-based; default and upper bound: the end). */
+  addHomeItem(deviceId: string, itemId: string, position: number | undefined, actor: Actor): number {
+    const ids = this.homeIds(deviceId);
+    ids.splice(Math.min(position ?? ids.length, ids.length), 0, itemId);
+    return this.setHome(deviceId, ids, actor);
+  }
+
+  /** Moves an item of the list to `position` (clamped to the end). */
+  moveHomeItem(deviceId: string, itemId: string, position: number, actor: Actor): number {
+    const ids = this.withoutHomeItem(deviceId, itemId);
+    ids.splice(Math.min(position, ids.length), 0, itemId);
+    return this.setHome(deviceId, ids, actor);
+  }
+
+  removeHomeItem(deviceId: string, itemId: string, actor: Actor): number {
+    return this.setHome(deviceId, this.withoutHomeItem(deviceId, itemId), actor);
+  }
+
+  /** The list without the item; 404 `not_on_home` when it is not on it. */
+  private withoutHomeItem(deviceId: string, itemId: string): string[] {
+    const ids = this.homeIds(deviceId);
+    if (!ids.includes(itemId)) throw new HttpError(404, "not_on_home", "the item is not on this TV's home list");
+    return ids.filter((id) => id !== itemId);
   }
 }

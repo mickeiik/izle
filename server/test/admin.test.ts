@@ -59,6 +59,60 @@ test("home list: order kept, capped, validated", async (t) => {
   assert.deepEqual((await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: [] })).json.home, []);
 });
 
+test("home list: single changes go through the same checks, bump the version and say what came and went; expected guards a PUT", async (t) => {
+  const { s, tv } = await setup(t);
+  const home = (method: string, route: string, body?: unknown) => s.admin(method, `/devices/${tv.deviceId}/home${route}`, body);
+  const ids = (r: Json) => r.json.home.map((h: { itemId: string }) => h.itemId);
+  const v0 = (await s.admin("GET", `/devices/${tv.deviceId}`)).json.device.stateVersion;
+  const after = (await s.admin("GET", "/events")).json.last;
+
+  // [method, route, body, the list afterwards]
+  const changes: Array<[string, string, unknown, string[]]> = [
+    ["POST", "/items", { itemId: "show" }, ["show"]],
+    ["POST", "/items", { itemId: "film", position: 0 }, ["film", "show"]],
+    ["POST", "/items", { itemId: "silent", position: 99 }, ["film", "show", "silent"]],
+    ["PATCH", "/items/show", { position: 0 }, ["show", "film", "silent"]],
+    ["PATCH", "/items/film", { position: 99 }, ["show", "silent", "film"]],
+    ["DELETE", "/items/silent", undefined, ["show", "film"]],
+  ];
+  for (const [i, [method, route, body, list]] of changes.entries()) {
+    const r = await home(method, route, body);
+    assert.equal(r.status, 200, `${method} ${route}`);
+    assert.deepEqual([r.json.version, ids(r)], [v0 + i + 1, list], `${method} ${route}`);
+  }
+  const events = (await s.admin("GET", `/events?after=${after}&types=home.changed`)).json.events;
+  assert.deepEqual(events.map((e: Json) => [e.data.added, e.data.removed]), [[["show"], []], [["film"], []], [["silent"], []], [[], []], [[], []], [[], ["silent"]]]);
+  assert.deepEqual(events.at(-1).data.itemIds, ["show", "film"]);
+
+  const refused: Array<[string, string, unknown, number, string]> = [
+    ["POST", "/items", { itemId: "show" }, 400, "duplicate_item"],
+    ["POST", "/items", { itemId: "ghost" }, 400, "unknown_item"],
+    ["POST", "/items", { itemId: "locked" }, 400, "not_playable"],
+    ["POST", "/items", { itemId: "silent", position: -1 }, 400, "invalid_request"],
+    ["POST", "/items", { position: 0 }, 400, "invalid_request"],
+    ["PATCH", "/items/silent", { position: 0 }, 404, "not_on_home"],
+    ["PATCH", "/items/show", {}, 400, "invalid_request"],
+    ["PATCH", "/items/show", { position: 1.5 }, 400, "invalid_request"],
+    ["DELETE", "/items/silent", undefined, 404, "not_on_home"],
+    ["DELETE", "/items/not-an-id!", undefined, 404, "not_on_home"],
+    ["PUT", "", { itemIds: ["film"], expected: ["film", "show"] }, 409, "home_changed"],
+    ["PUT", "", { itemIds: ["film"], expected: ["show"] }, 409, "home_changed"],
+  ];
+  for (const [method, route, body, status, error] of refused) {
+    const r = await home(method, route, body);
+    assert.deepEqual([r.status, r.json.error], [status, error], `${method} ${route} ${JSON.stringify(body)}`);
+    if (error === "home_changed") assert.deepEqual(r.json.itemIds, ["show", "film"], "a conflict answers the current list");
+  }
+  assert.equal((await s.admin("POST", "/devices/ghost/home/items", { itemId: "show" })).json.error, "unknown_device");
+  const put = await home("PUT", "", { itemIds: ["film"], expected: ["show", "film"] });
+  assert.deepEqual([put.status, ids(put)], [200, ["film"]]);
+
+  const fillers = Array.from({ length: HOME_MAX_ITEMS - 1 }, (_, i) => `filler-${String(i + 1).padStart(2, "0")}`);
+  await home("PUT", "", { itemIds: ["film", ...fillers] });
+  const full = await home("POST", "/items", { itemId: "show" });
+  assert.deepEqual([full.status, full.json.error, full.json.max], [400, "too_many_items", HOME_MAX_ITEMS]);
+});
+
 test("cursor override: continue from episode X and forget X's position", async (t) => {
   const { s, tv } = await setup(t);
   const as = (m: string, r: string, b?: unknown) => s.call(m, `/api/v1/tv${r}`, { token: tv.token, body: b });

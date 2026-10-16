@@ -2,11 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import {
-  buildSummary, candidateOptions, catalogSearchPath, clockOffset, companionTarget, continueText, episodeName,
-  episodeStateLabel, episodeStates, errorText, formatClock, formatCode, formatCountdown, formatDrift, formatPosition,
-  formatRelative, groupEpisodeChanges, isActive, issueLine, languageLabel, moveItem, parseCandidate, percent,
-  playbackState, plural, problemContext, resumes, sameLanguage, searchSummary, serverAddress, shortId, showMeta,
-  sourceReport, syncDecision, tokenFromHash, tvPositionAt,
+  actorLabel, buildSummary, candidateOptions, catalogSearchPath, clockOffset, commandResultText, companionTarget,
+  continueText, episodeHistoryLine, episodeName, episodeStateLabel, episodeStates, errorText, formatClock, formatCode,
+  formatCountdown, formatDrift, formatDuration, formatPosition, formatRelative, groupEpisodeChanges, isActive, issueLine,
+  languageLabel, moveItem, parseCandidate, parseSse, percent, playbackState, plural, problemContext, resumes,
+  sameLanguage, scopeLabel, searchSummary, serverAddress, shortId, showMeta, sourceReport, syncDecision, titleLine,
+  titleStatusLabel, tokenFromHash, triggerLabel, tvPositionAt, viewingEnd,
 } from "../admin/lib.js";
 import { ADMIN_FILES, ADMIN_VENDOR_FILES } from "../src/admin-files.ts";
 import { startTestServer } from "./helpers.ts";
@@ -209,6 +210,42 @@ test("admin helpers: a diagnostics source, line by line", () => {
   const media = sourceReport({ sourceId: "m", type: "direct", ok: true, ms: 0, stream: { ...direct, delivery: "unsupported" }, probe: { ok: true, ms: 4, playlist: { master: false, segments: 1 } } }, at);
   assert.deepEqual(media.lines.slice(-1), ["probe ok (1 segment, 4 ms)"]);
   assert.match(media.lines[0]!, /cannot be served$/);
+});
+
+test("admin helpers: the event stream, durations, viewings, titles, episodes, command results and scopes", () => {
+  const stream = "retry: 5000\n: ping\n\nid: 7\nevent: playback.started\ndata: {\"id\":7}\n\nid: 8\nevent: gap\ndata: {\"oldest\":9}\n\ndata: part";
+  assert.deepEqual(parseSse(stream), {
+    events: [{ id: "7", event: "playback.started", data: '{"id":7}' }, { id: "8", event: "gap", data: '{"oldest":9}' }],
+    rest: "data: part",
+  }, "comments and retry are skipped; the unfinished message stays for the next chunk");
+  assert.deepEqual(parseSse("data: a\r\ndata: b\r\n\r\n"), { events: [{ id: null, event: "message", data: "a\nb" }], rest: "" });
+  const ended = { endedAt: ago(1000), endPositionMs: 754_000, seen: false, imported: false };
+  cases([
+    [formatDuration(0), "under a minute"], [formatDuration(45 * 60_000), "45 min"], [formatDuration(2 * 3_600_000 + 5 * 60_000), "2 h 05 min"],
+    [formatDuration(null), "–"],
+    [actorLabel({ type: "owner" }), "the owner"], [actorLabel({ type: "token", name: "Home assistant" }), "token “Home assistant”"],
+    [actorLabel({ type: "tv" }), "the TV"], [actorLabel({ type: "server" }), "the server"], [actorLabel(null), ""],
+    [triggerLabel({ trigger: "viewer" }), "the viewer"], [triggerLabel({ trigger: "autoplay" }), "autoplay"], [triggerLabel({ trigger: "next" }), "auto-next"],
+    [triggerLabel({ trigger: "command", actor: { type: "token", name: "Bot" } }), "token “Bot”"], [triggerLabel({ trigger: "unknown" }), ""],
+    [viewingEnd({ ...ended, endedAt: null, endReason: null }), "playing now"],
+    [viewingEnd({ ...ended, endReason: "finished" }), "watched to the end"],
+    [viewingEnd({ ...ended, endReason: "stopped" }), "stopped at 12:34"],
+    [viewingEnd({ ...ended, endReason: "replaced", seen: true }), "switched away at 12:34 · seen", "the 90 % rule"],
+    [viewingEnd({ ...ended, endReason: "lost" }), "lost at 12:34"],
+    [viewingEnd({ ...ended, endReason: "stopped", imported: true }), "stopped", "an imported viewing has no position worth a time"],
+    [titleStatusLabel("finished"), { label: "Finished", tone: "ok" }], [titleStatusLabel("new_episodes"), { label: "New episodes", tone: "info" }],
+    [titleStatusLabel("watching"), { label: "Watching", tone: "" }], [titleStatusLabel("idle"), { label: "Idle", tone: "" }],
+    [titleLine({ kind: "series", inCatalog: true, episodes: { total: 12, seen: 5 }, lastWatchedAt: ago(2 * 86400_000), watchedMs: 12_000_000 }, NOW), "Series · 5 of 12 episodes seen · last watched 2 days ago · 3 h 20 min"],
+    [titleLine({ kind: "movie", inCatalog: false, episodes: { total: 1, seen: 1 }, lastWatchedAt: null, watchedMs: 0 }, NOW), "Film · seen · no longer in the catalog"],
+    [episodeHistoryLine({ seen: true, seenAt: "2026-10-10T20:00:00Z", coveredFraction: 0.85, viewings: 3, watchedMs: 4_200_000, lastPositionMs: 1000, mark: null }), "seen 2026-10-10 · 85% played · 3 viewings · 1 h 10 min"],
+    [episodeHistoryLine({ seen: false, seenAt: null, coveredFraction: null, viewings: 1, watchedMs: 600_000, lastPositionMs: 754_000, mark: false }), "not seen · marked not seen · 1 viewing · 10 min · last at 12:34"],
+    [episodeHistoryLine({ seen: false, seenAt: null, coveredFraction: null, viewings: 0, watchedMs: 0, lastPositionMs: null, mark: null }), "never played"],
+    [commandResultText({ type: "play", result: "done", reason: null }), "Play: done"],
+    [commandResultText({ type: "pause", result: "ignored", reason: "not_in_player" }), "Pause: ignored (nothing is playing)"],
+    [commandResultText({ type: "play", result: "failed", reason: "odd_reason" }), "Play: failed (odd reason)", "a reason the page does not know"],
+    [scopeLabel("manage"), "Manage"], [scopeLabel("x"), "x"],
+    [errorText({ code: "insufficient_scope" }), "This token may not do that; the admin page needs the owner token."],
+  ]);
 });
 
 test("the admin UI is served from an allow-list with a strict CSP and no inline code", async (t) => {

@@ -26,3 +26,59 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
   (the spec names it), `.dockerignore` entries for untracked local files. Response builders and fixtures now put
   several properties on one line; one commit ("response shapes and options packed onto fewer lines") carries that
   choice and can be reverted alone.
+
+## Remote management foundation (2026-10-16)
+
+- Migration 5 holds the whole remote-management schema (tokens, events, viewings, ranges, marks, command results),
+  although this slice uses only part of it, so that the history and command slices built in parallel do not each
+  claim a migration number. Saved positions are imported as viewings in SQL inside the migration.
+- Events are published to stream and long-poll consumers from `Store.afterCommit` hooks, so a subscriber never hears
+  of a change that rolled back, and the one `append()` call sits inside the change's transaction.
+- `lastEventId` falls back to SQLite's sequence when the log is empty, so a consumer behind a purge that emptied the
+  log still sees `gap: true` instead of a clean "nothing new".
+- The scope table in the middleware already lists the routes of the later slices (single home changes, history
+  marks), and every unlisted non-`GET` admin route needs the owner token, so a new route is never open by accident.
+- `pairing.pending` has the server as its actor: the TV has no device id before the code is collected.
+
+## Remote management: viewing history (2026-10-16)
+
+- A TV that has not opened its event stream since the server started counts as offline since then, so the lost
+  sweep's "offline for 2 minutes" rule holds from the start. A TV that reports progress without a stream loses its
+  viewing after 2 minutes (the app always keeps one open); the TV's own resume and cursor are untouched.
+- The pause and stall events are transitions: a second `paused` report in a row (or a repeated stall) emits
+  nothing, so a consumer sees one `playback.paused` per pause.
+- Played ranges are stored as the TV reports them, a consecutive report extending the previous row, and merged
+  when read; the watched time is a running total on the viewing. A lost viewing's `endedAt` is its last report,
+  earlier than its `playback.ended` event.
+- `TitleSummary.episodes` and `seasons` count over the item's playable episodes in the current catalog (so `seen`
+  never exceeds `total`); an episode that left the catalog counts only once the item itself has. `rewatches` are
+  the seen viewings of an episode beyond its first, within the TV asked for; a mark is not a viewing.
+- `sort=title` and the items within a day use the catalog search's collation (`byTitle` in catalog.ts).
+
+## Remote management: commands and devices (2026-10-16)
+
+- A replacement needs no new column: the pair code is bound to the device it replaces, and collecting it tells a
+  takeover from a new TV by the device already having a token. The purge only deletes devices without one, so an
+  expired replacement code never touches the device it named.
+- The old TV's event streams close like a disconnect, not like a deletion, so the new TV connecting within the
+  online grace keeps the device online without an offline/online flap. Its own proxy sessions end; the owner's
+  Listen along sessions are left to expire.
+- The single home changes rebuild the whole list and go through `setHome`, so an item already on the list that left
+  the catalog blocks an addition with `unknown_item` (its `itemId` says which), as it blocks a whole-list `PUT`.
+- A command result does not count as the acknowledgement: `deliveredAt` stays the ack's time (or null), as the spec
+  keeps the two apart.
+
+## Remote management, TV side (2026-10-16)
+
+- Result reasons beyond the spec's list: `superseded` (another playback or episode step started before a `play` ran,
+  or the playback changed while `next`/`previous` fetched the episode list), `stopped` (the player was left before a
+  `play` ran: Back, `stop`, standby), `busy` (an earlier step is still fetching the list) and `episodes_unavailable`
+  (that fetch failed: `failed`). A known type with an unusable payload reports `unknown_type`, like an unknown type.
+- `play` fails with `no_playable_source` whenever its resolves end without a stream (also a 403/404 or a network
+  failure), `playback_error` when the player failed or the media URL was unusable. It reports `done` at the first
+  frame of any resolve of its playback, a source fallback included; Try again after `failed` sends no second result.
+- The autoplay countdown's "Play now" is trigger `autoplay`: the viewer confirmed what autoplay offered.
+- Try again repeats the trigger and `commandId` (the spec's trigger list had it under `viewer`; changed to match), so
+  a retried remote play stays the command's in the history.
+- Results are not queued behind each other (unlike progress reports): each is independent. The reporter drops a
+  second result for the same command id (per server connection, last 64) as a safety net.

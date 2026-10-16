@@ -81,8 +81,31 @@ data class EpisodeDetails(
 @Serializable
 data class EpisodeProgress(val positionMs: Long, val status: String)
 
+/**
+ * `trigger` and `commandId` say who or what started the playback, for the server's viewing history; every resolve of
+ * one playback (fallbacks, expiry refreshes, Try again) repeats them. See [io.github.mickeiik.izle.domain.PlaybackOrigin].
+ */
 @Serializable
-data class ResolveRequest(val episodeId: String, val sourceId: String? = null, val exclude: List<String>? = null)
+data class ResolveRequest(
+    val episodeId: String,
+    val sourceId: String? = null,
+    val exclude: List<String>? = null,
+    val trigger: Trigger? = null,
+    val commandId: Long? = null,
+)
+
+/** A resolve's `trigger`, spelled on the wire as the server expects. */
+@Serializable
+enum class Trigger {
+    @SerialName("viewer") // OK on Home, the hidden menu's episode list or Start over
+    Viewer,
+    @SerialName("autoplay") // autoplay on start
+    Autoplay,
+    @SerialName("next") // auto-next, Up next's Play now, CH+/CH−
+    Next,
+    @SerialName("command") // the owner's play, next or previous, with its `commandId`
+    Command,
+}
 
 /**
  * What to play. `expiresAt` (ISO 8601) is the stream's validity hint, or null; the TV resolves the same source again
@@ -189,6 +212,45 @@ data class ProblemReport(
     val detail: String? = null,
     val appVersion: String? = null,
 )
+
+/**
+ * `POST /tv/commands/:id/result`: what became of an owner command, sent once per command after its acknowledgement.
+ * `reason` matches `[A-Za-z0-9_.:-]{1,64}`; the server and its consumers accept reasons they do not know.
+ */
+@Serializable
+data class CommandResult(val result: Outcome, val reason: String? = null) {
+    @Serializable
+    enum class Outcome {
+        @SerialName("done")
+        Done,
+        @SerialName("ignored")
+        Ignored,
+        @SerialName("failed")
+        Failed,
+    }
+
+    companion object {
+        val Done = CommandResult(Outcome.Done)
+
+        fun ignored(reason: String) = CommandResult(Outcome.Ignored, reason)
+
+        fun failed(reason: String) = CommandResult(Outcome.Failed, reason)
+
+        // The spec's reasons.
+        const val NOT_IN_PLAYER = "not_in_player" // a transport command without video showing
+        const val NOT_READY = "not_ready" // the pairing or server address screen
+        const val NO_EPISODE = "no_episode" // next/previous at the end of the item
+        const val UNKNOWN_TYPE = "unknown_type" // a type this TV does not know, or an unusable payload
+        const val NO_PLAYABLE_SOURCE = "no_playable_source" // a play whose resolve found nothing
+        const val PLAYBACK_ERROR = "playback_error" // a play that failed in the player
+
+        // This TV's own (see docs/decisions.md).
+        const val SUPERSEDED = "superseded" // another playback (or episode step) started before this one ran
+        const val STOPPED = "stopped" // the player was left (Back, stop, standby) before the playback ran
+        const val BUSY = "busy" // next/previous while an earlier step is still fetching the episode list
+        const val EPISODES_UNAVAILABLE = "episodes_unavailable" // next/previous: the episode list could not be fetched
+    }
+}
 
 @Serializable
 data class PairStart(val code: String, val pairToken: String)

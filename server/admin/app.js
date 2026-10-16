@@ -10,7 +10,9 @@ import { startRouter } from "./router.js";
 import { catalogView } from "./view-catalog.js";
 import { deviceView } from "./view-device.js";
 import { devicesView } from "./view-devices.js";
+import { historyItemView, historyView } from "./view-history.js";
 import { itemView } from "./view-item.js";
+import { tokensView } from "./view-tokens.js";
 
 const app = /** @type {HTMLElement} */ (document.getElementById("app"));
 
@@ -67,6 +69,9 @@ startRouter({
     if (section === "devices" && id) return { view: (scope) => deviceView(scope, id), nav: "#/devices" };
     if (section === "catalog" && id === "items" && itemId) return { view: (scope) => itemView(scope, itemId), nav: "#/catalog" };
     if (section === "catalog") return { view: catalogView, nav: "#/catalog" };
+    if (section === "history" && id) return { view: (scope) => historyItemView(scope, id), nav: "#/history" };
+    if (section === "history") return { view: historyView, nav: "#/history" };
+    if (section === "tokens") return { view: tokensView, nav: "#/tokens" };
     return { view: devicesView, nav: "#/devices" };
   },
 });

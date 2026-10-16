@@ -3,8 +3,8 @@
 // source of an episode through the server's resolve path and shows what came back (no URLs: hosts and header
 // names only).
 
-import { ApiError, api, attempt } from "./api.js";
-import { actionButton, card, h, page, poster, setTitle, slot, srOnly } from "./dom.js";
+import { ApiError, api, attempt, devicePath } from "./api.js";
+import { actionButton, card, h, page, poster, setTitle, slot, srOnly, toast } from "./dom.js";
 import { episodeName, errorText, formatClock, plural, showMeta, sourceReport } from "./lib.js";
 
 /** @param {any} report the answer of POST /admin/diagnostics/resolve */
@@ -47,6 +47,22 @@ function episodeEntry(e, item) {
   return h(film ? "div" : "li", null, h("div", { class: "row top-align" }, what, e.sources.length ? test : null), out);
 }
 
+/**
+ * "Play on": one button per paired TV; the TV plays what OK would play for the show (its next episode, or where it
+ * left off), on its home screen or not.
+ * @param {string} itemId @param {any[]} devices
+ */
+function playOnCard(itemId, devices) {
+  const active = devices.filter((d) => d.status === "active");
+  if (active.length === 0) return null;
+  const button = (/** @type {any} */ d) =>
+    actionButton(d.name, { "aria-label": `Play on ${d.name}` }, async () => {
+      const r = await attempt(() => api("POST", `${devicePath(d.id)}/commands`, { type: "play", itemId }));
+      if (r.ok) toast(r.value.online ? `Play sent to ${d.name}.` : `Play queued: ${d.name} is offline and gets it if it connects within 2 minutes.`, r.value.online ? "ok" : "info");
+    });
+  return card({ title: "Play on", intro: "The TV plays the episode OK would play for this show, whether it is on its home screen or not." }, h("div", { class: "buttons play-on" }, active.map(button)));
+}
+
 /** @param {import("./router.js").Scope} scope @param {string} itemId */
 export function itemView(scope, itemId) {
   const title = h("h1", null, "Show");
@@ -54,7 +70,7 @@ export function itemView(scope, itemId) {
 
   scope.load(
     async () => {
-      const { item } = await scope.read(`/catalog/items/${encodeURIComponent(itemId)}`);
+      const [{ item }, { devices }] = await Promise.all([scope.read(`/catalog/items/${encodeURIComponent(itemId)}`), scope.read("/devices")]);
       setTitle(title, item.title);
       const episodeCount = item.kind === "series" ? item.episodes.length : undefined;
       const meta = [
@@ -69,7 +85,7 @@ export function itemView(scope, itemId) {
         item.kind === "movie" && item.episodes.length === 1
           ? card({ title: "Sources", intro: "Where the film is played from, in the order the TV tries them." }, episodeEntry(item.episodes[0], item))
           : card({ title: "Episodes", intro: "In play order, with their sources in the order the TV tries them." }, h("ol", { class: "list" }, item.episodes.map((/** @type {any} */ e) => episodeEntry(e, item))));
-      body.show(head, entries);
+      body.show(head, ...[playOnCard(itemId, devices)].filter((c) => c !== null), entries);
     },
     (err, retry) => {
       if (err instanceof ApiError && err.code === "unknown_item") body.show(h("p", { class: "error" }, errorText(err)));

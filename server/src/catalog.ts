@@ -27,6 +27,9 @@ type CatalogLoadedHook = (next: LoadedCatalog, previous: LoadedCatalog | null) =
 
 const POSTER_FILE = /^[0-9a-f]{64}\.(jpg|png|webp)$/;
 
+/** How titles are ordered: the catalog search and the viewing history sort alike. */
+export const byTitle = (a: string, b: string): number => a.localeCompare(b);
+
 /** Case-, accent- and Turkish-dotless-i-insensitive form used for catalog search. */
 function fold(text: string): string {
   return text.normalize("NFD").replace(/\p{M}/gu, "").replace(/ı/g, "i").toLowerCase();
@@ -145,6 +148,6 @@ export class CatalogService {
   search(query: string, limit: number): CatalogItem[] {
     const q = fold(query.trim());
     const matches = (i: CatalogItem) => q === "" || fold(i.title).includes(q) || (i.originalTitle && fold(i.originalTitle).includes(q)) || fold(i.id).includes(q);
-    return this.current.items.filter(matches).sort((a, b) => a.title.localeCompare(b.title)).slice(0, limit);
+    return this.current.items.filter(matches).sort((a, b) => byTitle(a.title, b.title)).slice(0, limit);
   }
 }

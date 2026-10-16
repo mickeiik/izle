@@ -1,5 +1,5 @@
 // What the TV calls: pairing (unauthenticated; the owner's approval is an admin route), then with its device token
-// the home state, item details, resolve, playback progress, command acknowledgements, problem reports and the event
+// the home state, item details, resolve, playback progress, command acknowledgements and results, problem reports and the event
 // stream (SSE: the state version on connect, then state changes and commands; unacknowledged recent commands are
 // replayed on every (re)connect). Also the media proxy, whose token in the path is the credential: media requests
 // carry no device token.
@@ -13,7 +13,7 @@ import { commandEvent, eventId, type ServerEvent } from "../../events.ts";
 import { MAX_PAIR_WAIT_MS, PAIR_CODE } from "../../pairing.ts";
 import { iso } from "../../presenters.ts";
 import { PROXY_TOKEN, type ProxyTarget } from "../../proxy.ts";
-import { isId, parseBody, parseWait, problemBody, progressBody, resolveBody } from "../../validation.ts";
+import { commandResultBody, intParam, isId, parseBody, parseWait, problemBody, progressBody, resolveBody } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
 
 export function registerTv(app: Hono<Env>, ctx: AppContext, clientKey: (c: Context) => string): void {
@@ -61,11 +61,20 @@ export function registerTv(app: Hono<Env>, ctx: AppContext, clientKey: (c: Conte
     return c.json({ ok: true, version: tv.recordProgress(c.get("device"), body).version });
   });
 
+  const commandId = (c: Context) => intParam(c.req.param("id"), "unknown_command");
+
   app.post("/api/v1/tv/commands/:id/ack", (c) => {
-    const id = Number(c.req.param("id"));
-    if (!Number.isSafeInteger(id) || id <= 0 || !ctx.commands.ack(c.get("device").id, id)) {
-      throw new HttpError(404, "unknown_command");
-    }
+    if (!ctx.commands.ack(c.get("device").id, commandId(c))) throw new HttpError(404, "unknown_command");
+    return c.json({ ok: true });
+  });
+
+  // What the TV made of a command, after acting on it (the ack above came at once): reported once per command.
+  app.post("/api/v1/tv/commands/:id/result", async (c) => {
+    const id = commandId(c);
+    const body = await parseBody(c, commandResultBody);
+    const outcome = ctx.commands.report(c.get("device").id, id, body.result, body.reason ?? null);
+    if (outcome === "unknown") throw new HttpError(404, "unknown_command");
+    if (outcome === "already_reported") throw new HttpError(409, "already_reported", "this command's result is already reported");
     return c.json({ ok: true });
   });
 

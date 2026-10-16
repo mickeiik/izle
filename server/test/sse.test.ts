@@ -75,7 +75,7 @@ test("SSE: commands reach the TV with their payloads, and come again in order un
   // Unacknowledged commands come again, in order and with the same payloads, when the TV reconnects; acked ones not.
   await s.call("POST", `/api/v1/tv/commands/${ids[0]}/ack`, { token: tv.token });
   es.close();
-  await eventually(() => !s.srv.ctx.events.isOnline(tv.deviceId));
+  assert.equal(s.srv.ctx.events.isOnline(tv.deviceId), true, "a closed stream keeps the TV online for a minute, so a reconnect does not flap");
   const again = await openEvents(s.base, tv.token);
   t.after(() => again.close());
   await again.next((m) => m.event === "state");

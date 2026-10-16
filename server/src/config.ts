@@ -24,6 +24,8 @@ export interface ServerConfig {
   /** Server-wide defaults for devices without their own setting (null = fall back to the catalog's hints). */
   defaults: { uiLanguage: "tr" | "en" | null; preferredAudioLanguage: string | null };
   log: { level: Level };
+  /** How long the event log is kept. */
+  events: { retentionDays: number };
 }
 
 export class ConfigError extends Error {
@@ -34,6 +36,7 @@ export class ConfigError extends Error {
 export const SAMPLE_CATALOG_DIR = fileURLToPath(new URL("../../sample-catalog", import.meta.url));
 
 const DEFAULT_PORT = 8787;
+const DEFAULT_EVENT_RETENTION_DAYS = 7;
 export const DEFAULT_RESOLVE_DEADLINE_MS = 12_000;
 export const DEFAULT_RESOLVE_BUDGET_MS = 30_000;
 
@@ -66,6 +69,7 @@ const CONFIG_SCHEMA = objectSchema({
     preferredAudioLanguage: { anyOf: [{ type: "string", pattern: LANGUAGE_TAG_PATTERN }, NULL] },
   }),
   log: objectSchema({ level: { enum: ["debug", "info", "warn", "error"] } }),
+  events: objectSchema({ retentionDays: { type: "integer", minimum: 1, maximum: 90 } }),
 });
 
 const validateConfigFile = new Ajv2020({ strict: true, allErrors: true }).compile(CONFIG_SCHEMA);
@@ -81,6 +85,7 @@ interface ConfigFile {
   proxy?: { always?: boolean; sessionTtlSec?: number; alignTsSegments?: boolean };
   defaults?: { uiLanguage?: "tr" | "en" | null; preferredAudioLanguage?: string | null };
   log?: { level?: Level };
+  events?: { retentionDays?: number };
 }
 
 interface LoadConfigOptions {
@@ -157,5 +162,6 @@ export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
     proxy: { always: false, sessionTtlSec: 21600, alignTsSegments: false, ...file.proxy },
     defaults: { uiLanguage: null, preferredAudioLanguage: null, ...file.defaults },
     log: { level: "info", ...file.log },
+    events: { retentionDays: DEFAULT_EVENT_RETENTION_DAYS, ...file.events },
   };
 }

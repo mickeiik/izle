@@ -237,6 +237,25 @@ sudo -u izle /opt/izle/bin/izle-server admin-token --config /etc/izle/izle.json 
 sudo systemctl restart izle
 ```
 
+### Access tokens for apps and agents
+
+The admin token is the owner's and stays out of scripts. An app, a home-automation hook or an AI agent gets its
+own **access token** with one scope: `read` (sees the TVs, the catalog, the history and the events), `control`
+(read, plus commands: play, pause, a message), or `manage` (control, plus home screens, settings and history
+marks). Pairing, deleting a TV or its history, diagnostics, Listen along and the tokens themselves stay with the
+owner token. Create one on the admin page under **Access**, or from the shell:
+
+```bash
+sudo -u izle /opt/izle/bin/izle-server token create "Home assistant" --scope control --config /etc/izle/izle.json
+```
+
+It prints the secret once (`izat_…`); the server keeps only its hash. `token list` shows the tokens with when each
+was last used, `token revoke <id>` cuts one off at once. A revoked or wrong token counts like a wrong admin token
+for the throttle above, so stop an app before revoking its token, or it locks its address out for 10 minutes.
+
+What a token can call is in the [server API](../spec/server-api-v1.md#remote-management): `GET /api/v1/admin/status`
+(every TV in one call), the event stream and long-poll, the viewing history, and the commands.
+
 ## 6. HTTPS with Caddy
 
 Prerequisites: a domain or subdomain whose DNS A/AAAA record points at your public address, and ports 80 and 443
