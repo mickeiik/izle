@@ -21,6 +21,7 @@ import io.github.mickeiik.izle.ui.setup.PairingScreen
 import io.github.mickeiik.izle.ui.setup.SetupScreen
 import io.github.mickeiik.izle.ui.theme.IzleColors
 import io.github.mickeiik.izle.ui.theme.IzleTheme
+import io.github.mickeiik.izle.ui.update.UpdateScreen
 
 @Composable
 fun IzleRoot(vm: AppViewModel) {
@@ -35,7 +36,8 @@ fun IzleRoot(vm: AppViewModel) {
             val autoplay by vm.autoplay.collectAsStateWithLifecycle()
             val banner by vm.banner.collectAsStateWithLifecycle()
             // The owner's message: on Home in the top band, where it covers nothing; over the video, the hidden menu
-            // and the (opaque) autoplay countdown as an overlay at the top. Other screens ignore messages.
+            // and the (opaque) autoplay countdown as an overlay at the top. Other screens (the update screen included)
+            // ignore messages.
             val homeCovered = menu != null || autoplay != null
             val bannerOverlay = banner.takeIf { screen == Screen.Player || (screen == Screen.Home && homeCovered) }
             Box(Modifier.fillMaxSize().background(IzleColors.Background)) {
@@ -72,6 +74,7 @@ fun IzleRoot(vm: AppViewModel) {
                         val player by vm.player.player.collectAsStateWithLifecycle()
                         PlayerScreen(ui, player, onPlayNext = vm.player::playNextNow, onHome = vm.player::exit, onRetry = vm.player::retry)
                     }
+                    is Screen.Update -> UpdateScreen((screen as Screen.Update).ui, onInstall = vm::onUpdateInstall, onHome = vm::onUpdateHome)
                 }
                 menu?.let { m ->
                     val override by vm.uiLanguageOverride.collectAsStateWithLifecycle()

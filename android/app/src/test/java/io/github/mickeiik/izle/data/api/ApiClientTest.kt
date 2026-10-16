@@ -45,6 +45,34 @@ class ApiClientTest {
     }
 
     @Test
+    fun everyApiCallSaysWhichAppAndHowItUpdates() = runBlocking {
+        server.enqueue(json("""{"version":3,"device":{"id":"d","name":"TV"},"catalog":{"id":"c","buildId":"b","name":"n"},"home":[]}"""))
+        server.enqueue(json("""{"code":"483920","pairToken":"pair-secret"}"""))
+        var agent = "izle-tv/0.2.0 (Android 25; 200; guided)"
+        val api = ApiClient(server.url("/"), "device-token", http, userAgent = { agent })
+        api.state()
+        assertEquals(agent, server.takeRequest().headers["User-Agent"])
+        // Read anew for each request: the capability may change.
+        agent = "izle-tv/0.2.0 (Android 31; 200; silent)"
+        api.pairStart()
+        assertEquals(agent, server.takeRequest().headers["User-Agent"])
+    }
+
+    @Test
+    fun appIsTheOfferedVersionOrNothing() = runBlocking {
+        val sha = "AB".repeat(32)
+        server.enqueue(json("""{"versionName":"0.3.0","versionCode":300,"sha256":"$sha","size":12345678,"auto":false,"uploadedAt":"x"}"""))
+        server.enqueue(MockResponse.Builder().code(204).build())
+        server.enqueue(json("""{"versionName":"0.3.0","versionCode":300,"sha256":"nope","size":1}"""))
+        assertEquals(io.github.mickeiik.izle.update.AvailableUpdate("0.3.0", 300, sha.lowercase(), 12_345_678, auto = false), client().app())
+        val request = server.takeRequest()
+        assertEquals("/api/v1/tv/app", request.url.encodedPath)
+        assertEquals("Bearer device-token", request.headers["Authorization"])
+        assertNull("204: nothing stored", client().app())
+        assertEquals("bad_response", failsWith<ApiException> { client().app() }.code)
+    }
+
+    @Test
     fun worksBelowAPathPrefix() = runBlocking {
         server.enqueue(json("""{"item":{"id":"caminandes","kind":"series","title":"C"},"cursorEpisodeId":null,"episodes":[]}"""))
         client(path = "/izle/").item("caminandes")

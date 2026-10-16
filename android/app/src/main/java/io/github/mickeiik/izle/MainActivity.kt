@@ -1,22 +1,30 @@
 package io.github.mickeiik.izle
 
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.mickeiik.izle.ui.AppViewModel
 import io.github.mickeiik.izle.ui.IzleRoot
 import io.github.mickeiik.izle.ui.Screen
 import io.github.mickeiik.izle.ui.input.OkPressDetector
+import io.github.mickeiik.izle.update.AppInstaller
+import kotlinx.coroutines.launch
 
 /**
  * The only activity. Key routing lives here because a remote's OK has two meanings (click / long-press menu),
  * the player owns the D-pad while video is showing, channel keys must never reach the system, and the autoplay
- * countdown gives way to any key; everything else goes to Compose as usual.
+ * countdown gives way to any key; everything else goes to Compose as usual (the update screen's buttons included).
+ * It also receives the status of the app's own install sessions ([AppInstaller.ACTION_INSTALL_STATUS]) and starts the
+ * system's Install dialog of a guided update.
  */
 class MainActivity : ComponentActivity() {
     private val vm: AppViewModel by viewModels {
@@ -26,8 +34,22 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        handleIntent(intent)
+        // A recreated activity gets its old intent again: an install status must not be handled twice.
+        if (savedInstanceState == null) handleIntent(intent)
         setContent { IzleRoot(vm) }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                vm.launchIntents.collect { target ->
+                    try {
+                        startActivity(target)
+                    } catch (e: ActivityNotFoundException) {
+                        vm.onLaunchFailed()
+                    } catch (e: SecurityException) {
+                        vm.onLaunchFailed()
+                    }
+                }
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -36,6 +58,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
+        if (intent?.action == AppInstaller.ACTION_INSTALL_STATUS) return vm.onInstallStatus(intent)
         if (!BuildConfig.DEBUG) return
         intent?.getStringExtra(EXTRA_SERVER)?.let(vm::onLaunchServer)
     }

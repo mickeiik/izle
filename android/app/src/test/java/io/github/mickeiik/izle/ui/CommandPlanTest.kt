@@ -82,8 +82,23 @@ class CommandPlanTest {
     }
 
     @Test
+    fun updateIsLeftToTheUpdatePlanOnHomeAndInThePlayer() {
+        val update = RemoteCommand.Update(versionCode = 300)
+        for (menuOpen in listOf(false, true)) {
+            assertEquals(listOf(Action.Update(update)), CommandPlan.actions(update, Screen.Home, PlayerPhase.Idle, menuOpen))
+            // Which answers `busy`: never during playback.
+            assertEquals(listOf(Action.Update(update)), CommandPlan.actions(update, Screen.Player, PlayerPhase.Playing, menuOpen))
+        }
+        assertEquals(notReady, CommandPlan.actions(update, Screen.Setup(canGoBack = true), PlayerPhase.Idle, menuOpen = false))
+        // The update screen takes no other command.
+        val updating = Screen.Update(UpdateUi("0.3.0", UpdatePhase.Installing))
+        assertEquals(listOf(Action.Update(update)), CommandPlan.actions(update, updating, PlayerPhase.Idle, menuOpen = false))
+        assertEquals(notReady, CommandPlan.actions(play, updating, PlayerPhase.Idle, menuOpen = false))
+    }
+
+    @Test
     fun otherScreensIgnoreEveryCommandAsNotReady() {
-        val everything = transport + listOf(play, message, RemoteCommand.Stop)
+        val everything = transport + listOf(play, message, RemoteCommand.Stop, RemoteCommand.Update(null))
         for (screen in listOf(Screen.Starting, Screen.Setup(canGoBack = false), Screen.Setup(canGoBack = true), Screen.Pairing)) {
             for (command in everything) {
                 assertEquals("$command on $screen", notReady, CommandPlan.actions(command, screen, PlayerPhase.Idle, menuOpen = false))
@@ -95,11 +110,12 @@ class CommandPlanTest {
     @Test
     fun everyCommandEndsInExactlyOneResult() {
         // A Report, a Play or a Step: one of them, once, and last.
-        val everything = transport + listOf(play, message, RemoteCommand.Stop, RemoteCommand.Ignored("launch"))
-        val screens = listOf(Screen.Starting, Screen.Setup(canGoBack = true), Screen.Pairing, Screen.Home, Screen.Player)
+        val everything = transport + listOf(play, message, RemoteCommand.Stop, RemoteCommand.Ignored("launch"), RemoteCommand.Update(300))
+        val updating = Screen.Update(UpdateUi("0.3.0", UpdatePhase.Prompt(60)))
+        val screens = listOf(Screen.Starting, Screen.Setup(canGoBack = true), Screen.Pairing, Screen.Home, Screen.Player, updating)
         for (screen in screens) for (phase in noVideo + PlayerPhase.Playing) for (menuOpen in listOf(false, true)) for (command in everything) {
             val actions = CommandPlan.actions(command, screen, phase, menuOpen)
-            val answering = actions.filter { it is Action.Report || it is Action.Play || it is Action.Step }
+            val answering = actions.filter { it is Action.Report || it is Action.Play || it is Action.Step || it is Action.Update }
             assertEquals("$command on $screen in $phase", listOf(actions.last()), answering)
         }
     }
