@@ -52,7 +52,7 @@ async function setup(t: { after(fn: () => unknown): void }) {
     ],
   });
   const bundleDir = await writeBundle(path.join(await tempDir(), "bundle"), fixtureManifest(), items);
-  const s = await startTestServer({ bundleDir });
+  const s = await startTestServer({ bundleDir, configFile: { proxy: { privateUpstreams: ["127.0.0.1"] } } }); // a loopback upstream
   t.after(() => s.close());
   const tv = await s.pair("Salon");
   const as = (method: string, route: string, body?: unknown) => s.call(method, `/api/v1/tv${route}`, { token: tv.token, body });

@@ -232,7 +232,10 @@ async function setupServerOrigin(t: { after(fn: () => unknown): void }) {
   const bundleDir = await writeBundle(path.join(await tempDir(), "bundle"), { ...fixtureManifest(), adapters: ["example", "test"] }, items);
   const s = await startTestServer({
     bundleDir,
-    configFile: { resolver: { module: TEST_RESOLVER, config: { apiBase: up.url, apiKey: DEFAULT_API_KEY }, deadlineMs: 200, budgetMs: 5000 } },
+    configFile: {
+      resolver: { module: TEST_RESOLVER, config: { apiBase: up.url, apiKey: DEFAULT_API_KEY }, deadlineMs: 200, budgetMs: 5000 },
+      proxy: { privateUpstreams: ["127.0.0.1"] }, // the test upstreams listen on loopback
+    },
   });
   const env = await setup(t, s);
   const rows = (code?: string) => env.s.srv.ctx.store.listProblems(env.tv.deviceId, 100).filter((p) => code === undefined || p.code === code);

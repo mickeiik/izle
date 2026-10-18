@@ -277,15 +277,27 @@ sessions.
   are resolved against the playlist's own URL (after redirects) or the inline `baseUrl` and written as relative
   `u/<ref>` links. `data:` and other non-HTTP URIs are left alone. DASH manifests are not rewritten (v1).
 - **`<ref>`** = `<p|r>.<base64url of the URL>.<HMAC>[.<extension>]`, signed with a per-session key: only URLs the
-  proxy wrote itself can be fetched, so a session cannot reach other hosts. A wrong or foreign ref answers `404`. The
-  extension is a hint for players that infer the format from the path.
+  proxy wrote itself can be fetched. A wrong or foreign ref answers `404`. The extension is a hint for players that
+  infer the format from the path.
+- **Destinations:** upstream playlist text and redirects name the URLs the proxy fetches, so every upstream request
+  (the session's URL, each URL a playlist names, each redirect) is checked first. The server resolves the host
+  itself and connects only to an address it checked. Loopback, private (RFC 1918, unique-local `fc00::/7`),
+  link-local (`169.254.0.0/16`, the cloud metadata address, `fe80::/10`), CGNAT (`100.64.0.0/10`), multicast,
+  reserved and unspecified addresses, the same addresses inside IPv4-mapped or NAT64 IPv6, and IP literals in these
+  ranges are refused with `502 {"error":"egress_denied"}`, unless the owner lists the upstream in
+  `proxy.privateUpstreams` ([Configuration](#configuration)). So are URLs with credentials (`user:pass@`) and
+  non-HTTP schemes. The proxy follows redirects (`301`/`302`/`303`/`307`/`308`) itself, at most 5 per request, each
+  `Location` checked like the first URL; one more answers `502 upstream_error`. Credential-type request headers
+  (`Authorization`, `Cookie`, and names containing `token`, `secret`, `passw`, `api-key`/`apikey` or `session`) go
+  only to the origin of the session's own URL (the adapter's inline `baseUrl`; a subtitle track's own URL for
+  `/sub/`); the other headers (`Referer`, `User-Agent`, …) go with every request of the session.
 - **Streaming:** segments and MP4 bodies pass through as they arrive, never buffered; a TV that disconnects cancels
   the upstream request. Only `Content-Type`, `Content-Length`, `Content-Range`, `Accept-Ranges`, `Last-Modified` and
   `ETag` are passed back; cookies, redirects and other upstream headers are not.
 - **Errors:** unknown or expired session `410 {"error":"gone"}`. An upstream `401`/`403`/`410` marks the session
   **stale**: this and every later request answer `410 {"error":"stale"}`, so the TV re-resolves (the same source
   first when the playback ran for more than 5 minutes: an expired signed URL). Upstream `404` → `404`, other upstream
-  errors or unreachable → `502`, no headers within 20 s → `504`.
+  errors or unreachable → `502`, a refused destination → `502 egress_denied`, no headers within 20 s → `504`.
 - **`proxy.alignTsSegments`** (off by default): for segments of proxied HLS (no `Range`, not
   `.m4s/.mp4/.aac/.vtt/…`), junk before the first MPEG-TS packet (up to 4 KiB, recognized by five 0x47 sync bytes
   188 bytes apart) is cut off and the type set to `video/mp2t`. Some sites prefix segments with such bytes; Media3
@@ -404,6 +416,7 @@ What went wrong on a TV, kept for the owner: the TV's own reports (`origin: "tv"
 | `proxy` · `upstream_error` | the upstream answered 5xx, or a playlist broke off | `httpStatus`; `detail` as above |
 | `proxy` · `upstream_unreachable` | network error, or no answer within 20 s | `detail`: what was requested and why (`ECONNREFUSED`, `no answer within 20 s`) |
 | `proxy` · `not_a_playlist` / `playlist_too_large` | the upstream sent something else than a playlist (`detail` gives its media type), or more than 4 MiB | |
+| `proxy` · `egress_denied` | a URL or redirect of the session named a destination the [proxy refuses](#media-proxy) | `detail`: what was requested and why (`segment: private address`, `credentials in url`, `scheme`); never the URL |
 
 Server-origin proxy problems are recorded at most once per TV and code a minute, so a flapping upstream cannot flood
 the list. [Listen along](#listen-along) resolves and companion proxy sessions are never recorded: they are not the
@@ -853,7 +866,7 @@ the file's directory:
   "catalog": { "dir": "./sample-catalog" },
   "resolver": { "module": "/opt/izle/resolver/index.js", "config": {}, "deadlineMs": 12000, "budgetMs": 30000 },
   "admin": { "tokenFile": "./data/admin.token" },
-  "proxy": { "always": false, "sessionTtlSec": 21600, "alignTsSegments": false },
+  "proxy": { "always": false, "sessionTtlSec": 21600, "alignTsSegments": false, "privateUpstreams": [] },
   "defaults": { "uiLanguage": "en", "preferredAudioLanguage": "en" },
   "log": { "level": "info" },
   "appUpdates": { "source": "github", "repo": "mickeiik/izle", "checkIntervalHours": 24, "auto": true }
@@ -878,7 +891,11 @@ in `./data` (`izle.db`, `admin.token`). Deployment (systemd, Caddy, Docker): [se
 - `admin.tokenFile` (default `<dataDir>/admin.token`); `IZLE_ADMIN_TOKEN` in the environment wins over it.
 - `proxy.always` sends every HLS/MP4 stream through the proxy (the TV never contacts upstream hosts);
   `proxy.sessionTtlSec` (60–86400) is the sliding session lifetime; `proxy.alignTsSegments`: see
-  [Media proxy](#media-proxy).
+  [Media proxy](#media-proxy). `proxy.privateUpstreams` (default `[]`, at most 64): the loopback, private or
+  link-local upstreams the proxy may reach anyway (see Destinations under [Media proxy](#media-proxy)), each a host
+  name (`nas.lan`, any address it resolves to), an IP address or CIDR range (`192.168.1.20`, `10.0.0.0/8`), or one
+  of those with a port (`127.0.0.1:8788`, `[::1]:9000`, `nas.lan:8080`), which then matches that port only. Public
+  upstreams need no entry.
 - `defaults` (default null each): `uiLanguage` (`tr`/`en`) and `preferredAudioLanguage` (a language tag) for devices
   without their own setting; null falls back to the catalog's hints.
 - `log.level`: `debug`, `info` (default), `warn` or `error`.
@@ -905,3 +922,7 @@ in `./data` (`izle.db`, `admin.token`). Deployment (systemd, Caddy, Docker): [se
   the admin [TV app](#tv-app) routes (upload, removal, GitHub check; the upload is the one body over 64 KiB),
   events `app.uploaded`, `app.fetched`, `app.removed`, `app.check_failed` and `device.app_version`, config
   `appUpdates`.
+- **v1, proxy destinations (2026-10-18)** — the media proxy refuses loopback, private, link-local and other
+  non-public [destinations](#media-proxy) on every request and redirect (`502 egress_denied`, problem code
+  `egress_denied`), follows redirects itself (at most 5) and sends credential-type headers only to the session's own
+  origin; config `proxy.privateUpstreams` lists the exceptions. Before, a session could be made to fetch any host.
