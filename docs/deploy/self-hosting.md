@@ -220,12 +220,24 @@ send anywhere, and the page removes it from the address bar once signed in. The 
 QR code is drawn for a dark terminal; on a light one it appears inverted, which phone cameras usually read anyway.
 
 **A passphrase instead of the random token:** any token of 24 characters or more without spaces is accepted, so a
-memorable one such as `correct-horse-battery-staple-9` works for typing on a phone. Put it in the token file
-(`IZLE_ADMIN_TOKEN` in the unit's environment works too, but then the shell commands need it as well) and restart:
+memorable one such as `correct-horse-battery-staple-9` works for typing on a phone. Put it in the token file and
+restart:
 
 ```bash
 echo 'correct-horse-battery-staple-9' | sudo -u izle tee /var/lib/izle/admin.token > /dev/null
 sudo systemctl restart izle
+```
+
+Keep the token in that file. **Never put `IZLE_ADMIN_TOKEN` in the unit with `Environment=`** (in the unit or in a
+`systemctl edit` drop-in): systemd shows a unit's `Environment=` to every local user (`systemctl show izle`), and
+drop-in files are world-readable. If the variable is needed anyway, keep it in a file only root can read and name
+that file with `EnvironmentFile=` (systemd then shows only its path), and remember that the shell commands need the
+variable as well:
+
+```bash
+sudo install -m 0600 -o root -g root /dev/null /etc/izle/admin.env
+echo 'IZLE_ADMIN_TOKEN=correct-horse-battery-staple-9' | sudo tee /etc/izle/admin.env > /dev/null
+sudo systemctl edit izle    # add:  [Service]  EnvironmentFile=/etc/izle/admin.env
 ```
 
 Guessing is throttled: after 10 wrong tokens from one address within 10 minutes, the server refuses every admin

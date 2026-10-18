@@ -194,6 +194,10 @@ contract share one version number. How to update (back up, update the server, th
   token file that the server ignored in favour of the variable. It now refuses with a message to change or remove
   the variable, and the server warns at startup ("IZLE_ADMIN_TOKEN overrides the admin token file") when the
   variable shadows a token file.
+- **Self-hosting guide: the admin token stays out of the unit's `Environment=`.** The guide offered
+  `IZLE_ADMIN_TOKEN` in the systemd unit's environment as an alternative to the token file, but systemd shows a
+  unit's `Environment=` to every local user. It now says to keep the token in the token file, or, if the variable
+  is needed, in a root-only `EnvironmentFile=`.
 
 ### Compatibility
 
