@@ -16,10 +16,9 @@ test("admin auth: ten failures lock the address out until the window ends, even 
   const tv = await s.pair("Salon");
   const devices = (token: string | null) => s.call("GET", "/api/v1/admin/devices", { token });
 
-  // Nine failures (wrong tokens on one route, missing ones on another); the right token keeps working in between and
-  // is never counted.
+  // Nine failures (wrong tokens on two routes); the right token keeps working in between and is never counted.
   for (let i = 0; i < 9; i++) {
-    const r = i % 3 === 2 ? await devices(null) : await s.call("POST", "/api/v1/admin/pair/approve", { token: GUESS, body: { code: "123456" } });
+    const r = i % 3 === 2 ? await devices(GUESS) : await s.call("POST", "/api/v1/admin/pair/approve", { token: GUESS, body: { code: "123456" } });
     assert.equal(r.status, 401);
     assert.equal(r.headers.get("www-authenticate"), 'Bearer realm="izle-admin"', "a 401 still signs the admin page out");
     assert.equal((await devices(ADMIN_TOKEN)).status, 200);
@@ -53,7 +52,7 @@ test("admin auth: ten failures lock the address out until the window ends, even 
   assert.ok(failed.every((l) => l.level === "warn" && l.client === "127.0.0.1"));
   assert.deepEqual(
     failed.slice(0, 3).map((l) => [l.route, l.reason]),
-    [["/api/v1/admin/pair/approve", "wrong token"], ["/api/v1/admin/pair/approve", "wrong token"], ["/api/v1/admin/devices", "no token"]],
+    [["/api/v1/admin/pair/approve", "wrong token"], ["/api/v1/admin/pair/approve", "wrong token"], ["/api/v1/admin/devices", "wrong token"]],
     "the route template and what was wrong",
   );
   const locked = logged(s, "admin auth locked out");
@@ -67,6 +66,24 @@ test("admin auth: ten failures lock the address out until the window ends, even 
       assert.ok(!line.includes(secret), `leaked ${secret}: ${line}`);
     }
   }
+});
+
+test("admin auth: requests without a token answer 401 but never count toward the lockout", async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  // What another site's page in the owner's browser can send: no credentials, cross-site fetch metadata.
+  const crossSite = { "Origin": "https://elsewhere.example", "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "no-cors" };
+  for (let i = 0; i < 50; i++) {
+    const r = await s.call("GET", "/api/v1/admin/devices", { token: null, headers: crossSite });
+    assert.equal(r.status, 401);
+    assert.equal(r.headers.get("www-authenticate"), 'Bearer realm="izle-admin"', "a 401 still signs the admin page out");
+  }
+  assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: ADMIN_TOKEN })).status, 200, "the owner is not locked out");
+  assert.equal(logged(s, "admin auth failed").length, 0, "nor are they logged as failures");
+
+  for (let i = 0; i < 9; i++) assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: GUESS })).status, 401);
+  assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: null })).status, 401, "a tokenless request is not the tenth failure");
+  assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: ADMIN_TOKEN })).status, 200);
 });
 
 test("admin auth: behind a trusted reverse proxy each X-Forwarded-For client is counted on its own", async (t) => {

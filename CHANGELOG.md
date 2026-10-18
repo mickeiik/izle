@@ -170,6 +170,12 @@ contract share one version number. How to update (back up, update the server, th
 - **The TV's clock changes language at once** when the owner switches the menu language while Home shows (it kept
   "PM" for up to a minute after a switch to Turkish).
 
+### Security
+
+- **Requests without a token no longer count toward the admin sign-in lockout:** they still answer 401, but another
+  site's page open in the owner's browser can no longer lock the owner out of the admin API for 10 minutes by sending
+  tokenless requests to it. Wrong and revoked tokens are counted as before.
+
 ### Compatibility
 
 - **Database migrations 3 and 4**, applied on the first start; an older server refuses the migrated database. To go

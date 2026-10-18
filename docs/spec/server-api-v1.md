@@ -33,10 +33,12 @@ ignore unknown response fields.
 
 Tokens are compared in constant time and never logged ([Logging](#logging)).
 
-Failed admin authentications (a missing or wrong token on `/api/v1/admin/*`) are counted per client address
+Failed admin authentications (a wrong or revoked token on `/api/v1/admin/*`) are counted per client address
 (`trustedProxies`, [Configuration](#configuration)): after 10 within 10 minutes of the first, every admin request
 from that address, even with the right token, answers `429 too_many_attempts` with `Retry-After` until those 10
-minutes are over. Successes are never counted. Each failure is logged as a warning with the client address and the
+minutes are over. Successes are never counted, nor are requests without a token (they answer `401` with
+`WWW-Authenticate`, but are no guess, so tokenless requests that another site's page sends from the owner's browser
+cannot lock the owner out). Each failure is logged as a warning with the client address and the
 route template, never the presented token. TV routes and pairing are not affected.
 
 ## Pairing
