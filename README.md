@@ -68,7 +68,9 @@ adb install izle-tv-X.Y.Z-debug.apk
 
 The debug APK is meant for trying izle: a later APK cannot be installed over it. For a TV you will keep using, take
 `izle-tv-X.Y.Z.apk` instead. Other ways to install (without a computer, with a USB stick):
-[self-hosting guide § 8](docs/deploy/self-hosting.md#8-install-the-tv-app).
+[self-hosting guide § 8](docs/deploy/self-hosting.md#8-install-the-tv-app). This first install is the only one
+done at the TV: later releases reach it through the server (the admin page's **TV app** tab), and a TV on Android 12
+or newer installs them by itself while idle.
 
 **4. Pair the TV.** Start izle on the TV and enter the server's address, `http://<computer's address>:8787` (on the
 emulator, keep the prefilled `http://10.0.2.2:8787`). The TV shows a 6-digit code: approve it on the admin page under

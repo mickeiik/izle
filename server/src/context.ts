@@ -1,3 +1,4 @@
+import type { AppUpdateService } from "./app-updates.ts";
 import type { CatalogService } from "./catalog.ts";
 import type { CommandService } from "./commands.ts";
 import type { CompanionService } from "./companion.ts";
@@ -31,6 +32,8 @@ export interface Services {
   problems: ProblemService;
   /** The viewing history: resolves and progress reports feed it. */
   viewings: ViewingService;
+  /** The TV app APK the server offers its TVs, and where it comes from. */
+  appUpdates: AppUpdateService;
   log: Logger;
   now: () => number;
 }

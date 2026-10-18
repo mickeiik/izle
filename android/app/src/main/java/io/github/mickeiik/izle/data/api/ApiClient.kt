@@ -1,5 +1,6 @@
 package io.github.mickeiik.izle.data.api
 
+import io.github.mickeiik.izle.update.AvailableUpdate
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.KSerializer
 import okhttp3.Call
@@ -28,13 +29,15 @@ inline fun <T> orNullOnFailure(block: () -> T): T? = try {
 /**
  * The TV side of the server API. Network failures surface as [IOException], error answers as [ApiException].
  * The device token is attached per request (never through an interceptor) so it cannot leak to media hosts that
- * share the OkHttp connection pool.
+ * share the OkHttp connection pool. So is [userAgent] (`izle-tv/0.2.0 (Android 25; 200; guided)`, read anew for each
+ * request: it changes with the TV's update capability), on every API call and never on media.
  */
 class ApiClient(
     private val baseUrl: HttpUrl,
     private val deviceToken: String?,
     private val http: OkHttpClient,
     private val longPollHttp: OkHttpClient = http,
+    private val userAgent: () -> String? = { null },
 ) {
     private fun url(path: String): HttpUrl = baseUrl.resolve(path) ?: error("bad path $path")
 
@@ -43,8 +46,15 @@ class ApiClient(
 
     val eventsUrl: HttpUrl get() = url("api/v1/tv/events")
 
-    fun authorize(builder: Request.Builder): Request.Builder =
-        if (deviceToken != null) builder.header("Authorization", "Bearer $deviceToken") else builder
+    fun authorize(builder: Request.Builder): Request.Builder {
+        withUserAgent(builder)
+        return if (deviceToken != null) builder.header("Authorization", "Bearer $deviceToken") else builder
+    }
+
+    private fun withUserAgent(builder: Request.Builder): Request.Builder {
+        userAgent()?.let { builder.header("User-Agent", it) }
+        return builder
+    }
 
     suspend fun healthz() {
         exchange(Request.Builder().url(url("healthz")).build()).requireOk()
@@ -95,6 +105,18 @@ class ApiClient(
         exchange(jsonPost("api/v1/tv/problems", ProblemReport.serializer(), report)).requireOk()
     }
 
+    /** The TV app version the server offers, or null when it stores none (`204`). */
+    suspend fun app(): AvailableUpdate? {
+        val raw = exchange(authorize(Request.Builder().url(url("api/v1/tv/app"))).build())
+        if (raw.status == 204) return null
+        val info = raw.decode(AppInfo.serializer())
+        if (info.versionCode <= 0 || info.size <= 0 || !SHA256.matches(info.sha256)) throw ApiException(raw.status, "bad_response")
+        return AvailableUpdate(info.versionName, info.versionCode, info.sha256.lowercase(), info.size, info.auto)
+    }
+
+    /** `GET /tv/app/apk`, streamed by the caller ([io.github.mickeiik.izle.update.ApkDownloader]). */
+    fun apkRequest(): Request = authorize(Request.Builder().url(url("api/v1/tv/app/apk"))).build()
+
     private suspend fun <T> get(url: HttpUrl, serializer: KSerializer<T>): T =
         exchange(authorize(Request.Builder().url(url)).build()).decode(serializer)
 
@@ -128,7 +150,7 @@ class ApiClient(
     /** Runs the call on OkHttp's threads (the body is read there too) and cancels it with the coroutine. */
     private suspend fun exchange(request: Request, client: OkHttpClient = http): RawResponse =
         suspendCancellableCoroutine { cont ->
-            val call = client.newCall(request)
+            val call = client.newCall(withUserAgent(request.newBuilder()).build())
             cont.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
                 override fun onFailure(call: Call, e: IOException) {
@@ -150,5 +172,6 @@ class ApiClient(
     private companion object {
         val JSON = "application/json".toMediaType()
         val EMPTY_BODY: RequestBody = ByteArray(0).toRequestBody(null)
+        val SHA256 = Regex("^[0-9a-fA-F]{64}$")
     }
 }

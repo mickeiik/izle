@@ -27,6 +27,9 @@ sealed interface ServerEvent {
     /** The device's state version changed; re-fetch `/tv/state` when it differs from the one shown. */
     data class State(val version: Long) : ServerEvent
 
+    /** The TV app version the server offers changed (also sent on connect when it stores one): re-fetch `/tv/app`. */
+    data class App(val versionCode: Long) : ServerEvent
+
     /**
      * An owner command; the TV acknowledges it once handled. The payload fields of every known type are flattened
      * here (null when absent or of the wrong JSON type), so a command of a type this TV does not know, or with an
@@ -41,6 +44,7 @@ sealed interface ServerEvent {
         val positionMs: Long? = null,
         val text: String? = null,
         val durationSec: Int? = null,
+        val versionCode: Long? = null,
     ) : ServerEvent
 
     companion object {
@@ -48,6 +52,7 @@ sealed interface ServerEvent {
         fun parse(type: String?, data: String): ServerEvent? = try {
             when (type) {
                 "state" -> State(ApiJson.decodeFromString(StateData.serializer(), data).version)
+                "app" -> App(ApiJson.decodeFromString(AppData.serializer(), data).versionCode)
                 "command" -> ApiJson.decodeFromString(CommandData.serializer(), data).let {
                     val payload = it.payload as? JsonObject ?: JsonObject(emptyMap())
                     Command(
@@ -59,6 +64,7 @@ sealed interface ServerEvent {
                         positionMs = payload.number("positionMs")?.longOrNull,
                         text = payload.string("text"),
                         durationSec = payload.number("durationSec")?.intOrNull,
+                        versionCode = payload.number("versionCode")?.longOrNull,
                     )
                 }
                 else -> null
@@ -71,6 +77,9 @@ sealed interface ServerEvent {
 
 @Serializable
 private data class StateData(val version: Long)
+
+@Serializable
+private data class AppData(val versionCode: Long)
 
 @Serializable
 private data class CommandData(val id: Long, val type: String, val payload: JsonElement? = null)

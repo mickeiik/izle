@@ -6,7 +6,8 @@ import io.github.mickeiik.izle.player.TrackOption
 
 enum class RootEntry { Episodes, StartOver, Audio, Subtitles, Settings, About }
 
-enum class SettingsEntry { ServerAddress, Language, PairAgain }
+/** [InstallUpdate]: only while the server offers a newer version of the app. */
+enum class SettingsEntry { ServerAddress, Language, PairAgain, InstallUpdate }
 
 sealed interface MenuPage {
     /** [focused]: the entry that opened the page above, so Back returns to it. */
@@ -54,4 +55,10 @@ object MenuPlan {
         add(RootEntry.Settings)
         add(RootEntry.About)
     }
+
+    /**
+     * The version Settings offers to install ("Install update"), if any: [updateVersion], the newer one the server
+     * offers, but never over the player (an update never interrupts playback).
+     */
+    fun installUpdateVersion(updateVersion: String?, fromPlayer: Boolean): String? = updateVersion?.takeIf { !fromPlayer }
 }

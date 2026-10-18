@@ -1,9 +1,11 @@
 package io.github.mickeiik.izle
 
 import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
 import android.os.SystemClock
 import android.view.KeyEvent
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
@@ -22,12 +24,16 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.printToString
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import io.github.mickeiik.izle.ui.AppViewModel
 import io.github.mickeiik.izle.ui.Screen
+import io.github.mickeiik.izle.ui.SettingsEntry
+import io.github.mickeiik.izle.ui.UpdatePhase
+import io.github.mickeiik.izle.update.AppInstaller
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.Dispatcher
@@ -44,10 +50,14 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import okio.Buffer
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowLooper
+import java.io.File
+import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
@@ -78,6 +88,10 @@ class SeniorInvariantsTest {
     /** An owner's message (shown for 5 s) that the event stream hands out once, on the TV's next connection. */
     @Volatile private var message: String? = null
 
+    /** The APK the server offers as version 0.3.0. */
+    private val apk = ByteArray(4_000) { it.toByte() }
+    private val installs = CopyOnWriteArrayList<Boolean>()
+
     @Before
     fun setUp() {
         server.dispatcher = object : Dispatcher() {
@@ -93,12 +107,22 @@ class SeniorInvariantsTest {
                         MockResponse.Builder().code(200).addHeader("Content-Type", "text/event-stream")
                             .body("event: command\ndata: $command\n\n").build()
                     } ?: json(404, """{"error":"not_found"}""")
+                    "/api/v1/tv/app" -> json(200, """{"versionName":"0.3.0","versionCode":300,"sha256":"${sha256(apk)}","size":${apk.size},"auto":false}""")
+                    "/api/v1/tv/app/apk" -> MockResponse.Builder().body(Buffer().write(apk)).build()
                     // resolve included: nothing is playable.
                     else -> json(404, """{"error":"not_found"}""")
                 }
             }
         }
         server.start()
+        // Installs nothing: the update screen is what is tested here.
+        app.graph.installer = object : AppInstaller {
+            override suspend fun verifyArchive(file: File, expectedVersionCode: Long) = Unit
+            override suspend fun install(file: File, silent: Boolean, commandId: Long?): Int = 1.also { installs += silent }
+            override fun ownsSession(sessionId: Int) = true
+            override fun isSystemConfirmation(intent: Intent) = true
+            override fun abandon(sessionId: Int) = Unit
+        }
         runBlocking {
             app.graph.deviceStore.setServer(server.url("/").toString())
             app.graph.deviceStore.savePairing("tv-1", "device-token")
@@ -321,6 +345,58 @@ class SeniorInvariantsTest {
         assertTrue("the menu language stays English", exists(string(R.string.home_hint)))
         tv.assertOnHome()
     }
+
+    @Test
+    fun theUpdateScreenIsLargeOkInstallsAndBackGoesHome() = onTv { tv ->
+        awaitTiles("Show A", "Show B", "Show C")
+        // An Android 7 TV (or one without the "install unknown apps" grant): guided.
+        shadowOf(app.packageManager).setCanRequestPackageInstalls(false)
+        tv.onActivity { vm(it).onSettingsEntry(SettingsEntry.InstallUpdate) }
+        waitUntil("the press OK screen") { exists(string(R.string.update_press_ok)) }
+        compose.onNodeWithText(string(R.string.update_overline)).assertIsDisplayed()
+        compose.onNodeWithText("0.3.0").assertIsDisplayed()
+        compose.onNodeWithText(string(R.string.auto_home_countdown, 60)).assertIsDisplayed()
+        compose.onNodeWithText(string(R.string.not_now)).assertIsDisplayed()
+        assertAllTextAtLeast24Sp()
+        // The first button has the focus; channel keys and the Menu key do nothing here.
+        compose.onNode(isFocused()).assert(hasText(string(R.string.update_install)))
+        tv.press(KeyEvent.KEYCODE_MENU)
+        tv.press(KeyEvent.KEYCODE_CHANNEL_UP)
+        compose.onNode(isFocused()).assert(hasText(string(R.string.update_install)))
+
+        // Back: Home, the focus back on the tiles.
+        tv.press(KeyEvent.KEYCODE_BACK)
+        tv.assertOnHome()
+        waitUntil("the focus back on the tiles") { focusedTitle() == "Show A" }
+
+        // Again, and OK this time: it installs.
+        tv.onActivity { vm(it).onSettingsEntry(SettingsEntry.InstallUpdate) }
+        waitUntil("the press OK screen") { exists(string(R.string.update_press_ok)) }
+        tv.press(KeyEvent.KEYCODE_DPAD_CENTER)
+        waitUntil("Updating…") { exists(string(R.string.update_installing)) }
+        assertTrue((tv.vm.screen.value as Screen.Update).ui.phase == UpdatePhase.Installing)
+        assertAllTextAtLeast24Sp()
+        waitUntil("the install") { installs.isNotEmpty() }
+        assertEquals(listOf(false), installs.toList())
+        tv.press(KeyEvent.KEYCODE_BACK)
+        tv.assertOnHome()
+    }
+
+    /** Every text on the screen is drawn at 24 sp or more. */
+    private fun assertAllTextAtLeast24Sp() {
+        fun collect(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::collect)
+        val texts = collect(compose.onRoot(useUnmergedTree = true).fetchSemanticsNode()).flatMap { node ->
+            val layouts = mutableListOf<TextLayoutResult>()
+            node.config.getOrNull(SemanticsActions.GetTextLayoutResult)?.action?.invoke(layouts)
+            layouts.map { it.layoutInput.text.text to it.layoutInput.style.fontSize }
+        }
+        assertTrue("texts on screen", texts.isNotEmpty())
+        for ((text, size) in texts) assertTrue("\"$text\" at $size", size.isSp && size.value >= 24f)
+    }
+
+    private fun vm(activity: MainActivity): AppViewModel = ViewModelProvider(activity)[AppViewModel::class.java]
+
+    private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     /** Starts the app as the launcher does and closes it after [block], before the server goes away. */
     private fun onTv(block: (ActivityScenario<MainActivity>) -> Unit) {

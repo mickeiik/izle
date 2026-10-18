@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import {
+  APK_MAX_BYTES, androidText, apkVersion, appCheckReasonText, appCheckText, appUpdateChip, capabilityText, checkResultText,
+  formatBytes, installNowBlocked, newApkText,
   actorLabel, buildSummary, candidateOptions, catalogSearchPath, clockOffset, commandResultText, companionTarget,
   continueText, episodeHistoryLine, episodeName, episodeStateLabel, episodeStates, errorText, formatClock, formatCode,
   formatCountdown, formatDrift, formatDuration, formatPosition, formatRelative, groupEpisodeChanges, isActive, issueLine,
@@ -245,6 +247,109 @@ test("admin helpers: the event stream, durations, viewings, titles, episodes, co
     [commandResultText({ type: "play", result: "failed", reason: "odd_reason" }), "Play: failed (odd reason)", "a reason the page does not know"],
     [scopeLabel("manage"), "Manage"], [scopeLabel("x"), "x"],
     [errorText({ code: "insufficient_scope" }), "This token may not do that; the admin page needs the owner token."],
+  ]);
+});
+
+test("admin helpers: TV app sizes, APK names, update chips, Android versions and how a TV updates", () => {
+  cases([
+    [formatBytes(0), "0 B"], [formatBytes(999), "999 B"], [formatBytes(1000), "1.0 kB"], [formatBytes(12_345), "12.3 kB"],
+    [formatBytes(12_300_000), "12.3 MB"], [formatBytes(164_400_000), "164 MB"], [formatBytes(999_999), "1.0 MB", "rounds up a unit"],
+    [formatBytes(2_500_000_000), "2.5 GB"], [formatBytes(null), "–"], [formatBytes(-1), "–"], [formatBytes(Number.NaN), "–"],
+    [APK_MAX_BYTES, 64 * 1024 * 1024],
+    [apkVersion("izle-tv-0.3.0.apk"), "0.3.0"], [apkVersion("izle-tv-1.12.99.apk"), "1.12.99"],
+    [apkVersion("izle-tv-0.3.0-rc.1.apk"), "0.3.0-rc.1", "a pre-release suffix is part of the version"],
+    [apkVersion("izle-tv-0.3.0.APK"), null], [apkVersion("app-release.apk"), null], [apkVersion("izle-tv-0.3.apk"), null],
+    [apkVersion("izle-tv-01.3.0.apk"), null, "no leading zeros"], [apkVersion("izle-tv-0.03.0.apk"), null],
+    [apkVersion("izle-tv-0.100.0.apk"), null, "minor and patch below 100, as the server's versionCode needs"],
+    [apkVersion("izle-tv-0.3.0.apk.zip"), null], [apkVersion("x/izle-tv-0.3.0.apk"), null], [apkVersion(""), null],
+    [appUpdateChip({ update: "up_to_date" }), { text: "Up to date", tone: "ok" }],
+    [appUpdateChip({ update: "pending" }), { text: "Update available", tone: "info" }],
+    [appUpdateChip({ update: "needs_install_now" }), { text: "Needs Install now", tone: "warn" }],
+    [appUpdateChip({ update: "unknown" }), { text: "Unknown", tone: "" }],
+    [appUpdateChip({ update: null }), { text: "Unknown", tone: "" }, "an older app"],
+    [appUpdateChip(undefined), { text: "Unknown", tone: "" }, "an older server"],
+    [androidText(28), "Android 9 (API 28)"], [androidText(31), "Android 12 (API 31)"], [androidText(32), "Android 12L (API 32)"],
+    [androidText(99), "API 99"], [androidText(null), "unknown"], [androidText(undefined), "unknown"],
+    [capabilityText({ capability: "silent", androidSdk: 34 }), "Installs updates by itself while nobody is watching."],
+    [capabilityText({ capability: "silent", androidSdk: 34 }, true), "Installs updates by itself while nobody is watching."],
+    [capabilityText({ capability: "silent", androidSdk: 34 }, false), "Can install updates by itself, but automatic installs are off on this server: an update needs Install now here.", "appUpdates.auto off"],
+    [capabilityText({ capability: "guided", androidSdk: 28 }, false), "On Android 11 or older, an update needs Install now here, and someone at the TV pressing OK when the screen appears.", "auto does not change guided TVs"],
+    [capabilityText({ capability: "guided", androidSdk: 28 }), "On Android 11 or older, an update needs Install now here, and someone at the TV pressing OK when the screen appears."],
+    [capabilityText({ capability: "guided", androidSdk: 33 }), "The TV lacks the one-time permission to install apps, so an update needs Install now here, and someone at the TV pressing OK when the screen appears.", "Android 12+ without the grant"],
+    [capabilityText({ capability: null }), "Unknown: the TV has not said how it installs updates (an older app)."],
+    [capabilityText(undefined), "Unknown: the TV has not said how it installs updates (an older app)."],
+  ]);
+  const active = { status: "active", online: true };
+  cases([
+    [installNowBlocked({ ...active, app: { update: "pending" } }, true), null],
+    [installNowBlocked({ ...active, app: { update: "needs_install_now" } }, true), null],
+    [installNowBlocked({ ...active }, true), null, "an older app: the TV answers for itself"],
+    [installNowBlocked({ ...active, app: { update: "pending" } }, false), "No TV app is stored on the server."],
+    [installNowBlocked({ ...active, online: false, app: { update: "pending" } }, true), "The TV is offline."],
+    [installNowBlocked({ status: "pending", online: false }, true), "The TV is not set up yet."],
+    [installNowBlocked({ ...active, app: { update: "up_to_date" } }, true), "The TV is up to date."],
+  ]);
+});
+
+test("admin helpers: TV app checks, their reasons and the update command's results", () => {
+  const reasons: Array<[string | null, string]> = [
+    ["network", "GitHub could not be reached"], ["http_502", "GitHub answered HTTP 502"],
+    ["rate_limited", "GitHub's rate limit was reached; a later check tries again"],
+    ["no_release", "the repository has no release yet"],
+    ["prerelease", "the latest release is a pre-release, which is not offered to TVs"],
+    ["bad_tag", "the latest release's tag is not a version (vX.Y.Z)"], ["no_apk_asset", "the latest release has no izle-tv APK"],
+    ["no_checksums", "the latest release has no checksum file"], ["checksums_too_large", "the release's checksum file is too large"],
+    ["checksum_missing", "the checksum file does not list the APK"], ["checksum_mismatch", "the downloaded APK does not match its checksum"],
+    ["too_large", "the APK is larger than 64 MiB"], ["not_an_apk", "the download is not an APK"],
+    ["new_reason", "new reason"], [null, "for an unknown reason"],
+  ];
+  for (const [reason, text] of reasons) assert.equal(appCheckReasonText(reason), text, String(reason));
+  const check = (o: Record<string, unknown>) => ({ lastAt: null, nextAt: null, result: null, reason: null, running: false, ...o });
+  const later = (ms: number) => new Date(NOW + ms).toISOString();
+  cases([
+    [appCheckText(check({ lastAt: ago(2 * 3600_000), result: "up_to_date", nextAt: later(4 * 3600_000) }), "github", NOW), "Last check 2 h ago: up to date · next check in 4 h"],
+    [appCheckText(check({ lastAt: ago(5_000), result: "failed", reason: "network", nextAt: later(30 * 60_000) }), "github", NOW), "Last check failed just now: GitHub could not be reached · next check in 30 min"],
+    [appCheckText(check({ lastAt: ago(60_000), result: "fetched", nextAt: later(26 * 3600_000) }), "github", NOW), "Last check 1 min ago: fetched a new version · next check in 1 day"],
+    [appCheckText(check({ lastAt: ago(60_000), result: "fetched", nextAt: later(10_000) }), "github", NOW), "Last check 1 min ago: fetched a new version · next check soon"],
+    [appCheckText(check({ running: true, lastAt: ago(60_000), nextAt: later(60_000) }), "github", NOW), "Checking now…"],
+    [appCheckText(check({ nextAt: later(5 * 60_000) }), "github", NOW), "Not checked yet · next check in 5 min"],
+    [appCheckText(check({ lastAt: ago(60_000), result: "up_to_date" }), "github", NOW), "Last check 1 min ago: up to date", "no automatic checks: no next one"],
+    [appCheckText(check({}), "manual", NOW), "Checks disabled (manual source): the server offers the APK uploaded here."],
+    [appCheckText(null, "github", NOW), ""],
+    [checkResultText({ result: "fetched", reason: null, apk: { versionName: "0.3.0" } }, true), { text: "Fetched 0.3.0 from GitHub. TVs that install by themselves update when idle; the others need Install now.", kind: "ok" }],
+    [checkResultText({ result: "fetched", reason: null, apk: { versionName: "0.3.0" } }, false), { text: "Fetched 0.3.0 from GitHub. Automatic installs are off: every TV needs Install now.", kind: "ok" }, "appUpdates.auto off"],
+    [checkResultText({ result: "fetched", reason: null, apk: null }, true), { text: "Fetched a new version from GitHub. TVs that install by themselves update when idle; the others need Install now.", kind: "ok" }],
+    [checkResultText({ result: "up_to_date", reason: null, apk: { versionName: "0.3.0" } }, true), { text: "Up to date: 0.3.0 is the latest release.", kind: "info" }],
+    [checkResultText({ result: "up_to_date", reason: null, apk: { versionName: "0.3.0" } }, false), { text: "Up to date: 0.3.0 is the latest release.", kind: "info" }],
+    [checkResultText({ result: "failed", reason: "checksum_mismatch", apk: null }, false), { text: "The check failed: the downloaded APK does not match its checksum.", kind: "error" }],
+    [newApkText(true), "TVs that install by themselves update when idle; the others need Install now."],
+    [newApkText(false), "Automatic installs are off: every TV needs Install now."],
+  ]);
+  const update = (result: string, reason: string | null) => commandResultText({ type: "update", result, reason });
+  cases([
+    [update("done", "installing"), "Update: the TV is installing"],
+    [update("done", "prompted"), "Update: the TV shows the install screen; someone has to press OK"],
+    [update("done", null), "Update: done"],
+    [update("ignored", "up_to_date"), "Update: ignored, the TV is up to date"],
+    [update("ignored", "not_newer"), "Update: ignored, the TV has this version or a newer one"],
+    [update("ignored", "busy"), "Update: ignored, the TV is playing", "not the generic “busy”"],
+    [update("ignored", "not_ready"), "Update: ignored, the TV is not set up"],
+    [update("ignored", "declined"), "Update: declined on the TV (Back was pressed)"],
+    [update("ignored", "timeout"), "Update: nobody pressed OK on the TV within 60 s"],
+    [update("failed", "download"), "Update failed: the TV could not download the APK"],
+    [update("failed", "too_large"), "Update failed: the APK is too large for the TV"],
+    [update("failed", "verify"), "Update failed: the download did not match its checksum"],
+    [update("failed", "wrong_package"), "Update failed: the APK is not the izle TV app"],
+    [update("failed", "bad_archive"), "Update failed: the APK is damaged"],
+    [update("failed", "install_failure_incompatible"), "Update failed: different signing key (only a release APK installs over a release install)"],
+    [update("failed", "install_failure_storage"), "Update failed: the TV's installer refused (failure storage)"],
+    [update("failed", "odd_thing"), "Update failed (odd thing)"],
+    [update("ignored", "odd_thing"), "Update: ignored (odd thing)"],
+    [commandResultText({ type: "play", result: "ignored", reason: "busy" }), "Play: ignored (the TV was busy)", "other commands keep their words"],
+    [errorText({ code: "no_apk" }), "No TV app is stored on the server yet: fetch or upload one on the TV app page."],
+    [errorText({ code: "invalid_filename" }), "Name the file izle-tv-X.Y.Z.apk, as on the releases page."],
+    [errorText({ code: "apk_too_large" }), "That APK is larger than 64 MiB, the server's limit."],
+    [errorText({ code: "github_disabled" }), "Checks are off: this server is set to uploaded APKs only."],
   ]);
 });
 

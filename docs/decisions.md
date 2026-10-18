@@ -82,3 +82,67 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
   a retried remote play stays the command's in the history.
 - Results are not queued behind each other (unlike progress reports): each is independent. The reporter drops a
   second result for the same command id (per server connection, last 64) as a safety net.
+
+## TV app updates: server (2026-10-16)
+
+- The APK's metadata is a single SQLite row (`app_apk`, `id = 1`), its bytes a content-addressed file
+  `<dataDir>/app/<sha256>.apk`, written to a temp file in the same directory, synced and renamed; the old file goes
+  in an after-commit hook, and a start forgets a row whose file is missing (a restored backup has only the row).
+- The versionCode is derived from the asset's file name with the Gradle formula (`X·10000 + Y·100 + Z`), so the
+  server never parses the APK; the name pattern keeps minor and patch below 100, as the formula needs.
+- The TV's User-Agent is the version channel: every call carries it, so no new route or field is needed and an
+  older app (OkHttp's default User-Agent) simply stays `unknown`. It is recorded only when it changes, re-read in
+  the transaction so concurrent calls make one `device.app_version` event.
+- The default source is `github` with the first check 60 s after listening: a fresh install offers the matching TV
+  app without any setup, while startup and tests stay offline (tests default to `manual`). A stored APK newer than
+  the latest release (an upload) is kept: the check answers `up_to_date` instead of replacing it with an older one.
+- No signature check on the server: Android refuses an update not signed with the installed app's key, and the TV
+  verifies size and sha256 before installing; the server checks the zip magic, the size cap and, for GitHub, the
+  release's `SHA256SUMS`.
+- The 64 KiB API body limit is skipped for exactly `PUT /api/v1/admin/app/apk` (matched by route template, after
+  the admin token and scope are checked): an APK is megabytes, and the route streams to disk with its own 64 MiB
+  cap instead of buffering.
+- The schedule lives in `AppUpdateService` (started from `server.ts`, stopped in `close()`), so `GET /admin/app`
+  can show `nextAt`; a scheduled check that finds one running is skipped. Release JSON larger than 1 MiB or not an
+  object fails as `bad_release` (a reason beyond the agreed list).
+
+## TV app updates: admin page (2026-10-16)
+
+- A page of its own ("TV app") rather than per-TV controls only: the stored APK, the GitHub checks and the upload
+  belong to the server, not to one TV, and the owner updating several TVs wants their versions side by side. A TV's
+  page repeats its own state and Install now.
+- `GET /admin/app` answering 404 means a server without TV app updates: the page says so and offers nothing, the
+  TV list and a TV's page show "Unknown" and keep Install now off, instead of failing as a load error.
+- Install now stays available for a TV that installs by itself and for one whose state is unknown (an older app):
+  the TV answers with its own result (`up_to_date`, `busy`…), shown as a toast. It is off only for what the page
+  knows for certain: no stored APK, a TV offline or not set up, or one reported up to date.
+- Sizes are in powers of 1000 (`12.3 MB`), the 64 MiB cap is named in MiB where it is quoted; the upload shows no
+  byte progress, because `fetch` reports none for request bodies, only "Uploading …" until the answer.
+
+## TV app updates: TV side (2026-10-16)
+
+- The `update` command's single result goes out, and is waited for (two tries), right before `session.commit()`:
+  `done installing` (silent) or `done prompted` (guided, once OK was pressed and the archive checked out, as the
+  system dialog comes up). A successful install ends the process, so nothing could be sent afterwards; install
+  failures after that point only reach the owner as problem reports (`update_failure_storage`, …). On the guided
+  "press OK" screen the result waits for the viewer: Back, Not now or HOME is `declined`, 60 s is `timeout`, also
+  while a guided download is still running. `update` during the update screen answers `busy`, other commands
+  `not_ready`.
+- Capability is decided at runtime (Android 12+, the "install unknown apps" grant, no refusal yet) and re-read when
+  the app comes to the front. A silent session that comes back `STATUS_PENDING_USER_ACTION` is abandoned, stored as
+  `silentRefused` (the `User-Agent` says `guided` from then on) and reported as `update_needs_user_action`; a
+  `MY_PACKAGE_REPLACED` clears it, so each new version tries silent once again.
+- Idle means 3 minutes since the last key press, the app coming to the front or the end of playback, checked every
+  30 s while in front; the same conditions are checked again after the download, right before committing. A failed
+  attempt (download, check or install) and an unanswered commit hold automatic attempts back for 6 h; the command
+  and the menu entry ignore that. Cancel in the system dialog is not a failure.
+- No relaunch after an update on Android 10+: verified on the API 36 emulator, the install session's status intent
+  (an activity `PendingIntent` for `MainActivity`) is sent by the package installer with background activity starts
+  denied, so the system logs "Background activity launch blocked" and the TV shows its launcher until izle is opened
+  again; `AlarmManager` sends every alarm's intent the same way, so an alarm is no way around it. The status intent
+  is kept for the outcome while the app is visible (the guided path) and only counts for a session this process
+  committed and still owns (session ids are random), since the activity is exported. Below Android 10 the
+  `MY_PACKAGE_REPLACED` receiver starts the activity itself, which is allowed there. The deploy guide tells owners
+  to keep izle first in the launcher's favourites.
+- The archive's own versionCode must equal the one `/tv/app` announced (else `bad_archive`) and be newer than the
+  running one (else `ignored not_newer`); `404 no_apk` during the download is `ignored up_to_date`.

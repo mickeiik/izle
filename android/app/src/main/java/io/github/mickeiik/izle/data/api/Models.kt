@@ -232,6 +232,8 @@ data class CommandResult(val result: Outcome, val reason: String? = null) {
     companion object {
         val Done = CommandResult(Outcome.Done)
 
+        fun done(reason: String) = CommandResult(Outcome.Done, reason)
+
         fun ignored(reason: String) = CommandResult(Outcome.Ignored, reason)
 
         fun failed(reason: String) = CommandResult(Outcome.Failed, reason)
@@ -249,8 +251,27 @@ data class CommandResult(val result: Outcome, val reason: String? = null) {
         const val STOPPED = "stopped" // the player was left (Back, stop, standby) before the playback ran
         const val BUSY = "busy" // next/previous while an earlier step is still fetching the episode list
         const val EPISODES_UNAVAILABLE = "episodes_unavailable" // next/previous: the episode list could not be fetched
+
+        // `update` (see docs/decisions.md, "TV app updates: TV side"). BUSY and NOT_READY above apply too.
+        const val INSTALLING = "installing" // done: silent, the archive checked out and the install starts
+        const val PROMPTED = "prompted" // done: guided, OK was pressed, the archive checked out, the system dialog comes up
+        const val UP_TO_DATE = "up_to_date" // ignored: no APK, or not newer than the installed version
+        const val NOT_NEWER = "not_newer" // ignored: the downloaded archive is not newer than the installed version
+        const val DECLINED = "declined" // ignored: Back (or HOME) on the "press OK" screen
+        const val TIMEOUT = "timeout" // ignored: nobody pressed OK within 60 s
+        const val DOWNLOAD = "download" // failed: the download broke off or the server refused it
+        const val TOO_LARGE = "too_large" // failed: over 64 MiB
+        const val VERIFY = "verify" // failed: another SHA-256 than announced
+        const val WRONG_PACKAGE = "wrong_package" // failed: not this app
+        const val BAD_ARCHIVE = "bad_archive" // failed: not an APK, or another version than announced
+        const val INSTALL_PREFIX = "install_" // failed: + the PackageInstaller status (install_failure_storage)
+        const val INTERNAL = "internal" // failed: something this TV did not expect went wrong (no crash, Home again)
     }
 }
+
+/** `GET /tv/app`: the TV app version the server stores (`204` when none). [auto]: TVs may install it by themselves. */
+@Serializable
+data class AppInfo(val versionName: String, val versionCode: Long, val sha256: String, val size: Long, val auto: Boolean = true)
 
 @Serializable
 data class PairStart(val code: String, val pairToken: String)

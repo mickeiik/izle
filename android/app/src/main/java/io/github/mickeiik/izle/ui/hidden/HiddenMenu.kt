@@ -37,6 +37,7 @@ import io.github.mickeiik.izle.domain.EpisodeNames
 import io.github.mickeiik.izle.player.TrackOption
 import io.github.mickeiik.izle.ui.AboutInfo
 import io.github.mickeiik.izle.ui.MenuPage
+import io.github.mickeiik.izle.ui.MenuPlan
 import io.github.mickeiik.izle.ui.MenuUi
 import io.github.mickeiik.izle.ui.RootEntry
 import io.github.mickeiik.izle.ui.SettingsEntry
@@ -112,6 +113,15 @@ fun HiddenMenu(
                         item(key = "pair") {
                             MenuRow(stringResource(R.string.settings_pair_again), modifier = focus(2)) { actions.onSettings(SettingsEntry.PairAgain) }
                         }
+                        // Only while the server offers a newer version, not over the player; last, so the focus never
+                        // starts on it.
+                        MenuPlan.installUpdateVersion(about.updateVersion, menu.fromPlayer)?.let { version ->
+                            item(key = "update") {
+                                MenuRow(stringResource(R.string.settings_install_update), version, modifier = focus(3)) {
+                                    actions.onSettings(SettingsEntry.InstallUpdate)
+                                }
+                            }
+                        }
                     }
                     MenuPage.About -> MenuList(page, initial = 0) { focus ->
                         val rows = listOf(
@@ -123,6 +133,14 @@ fun HiddenMenu(
                         )
                         rows.forEachIndexed { i, (label, value) ->
                             item(key = label) { MenuRow(stringResource(label), value ?: "–", modifier = focus(i)) {} }
+                        }
+                        item(key = "update") {
+                            val version = about.updateVersion
+                            if (version != null) {
+                                MenuRow(stringResource(R.string.about_update_available), version, modifier = focus(rows.size)) {}
+                            } else {
+                                MenuRow(stringResource(R.string.about_up_to_date), modifier = focus(rows.size)) {}
+                            }
                         }
                     }
                 }

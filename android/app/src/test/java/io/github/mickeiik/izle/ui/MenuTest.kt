@@ -7,6 +7,7 @@ import io.github.mickeiik.izle.ui.RootEntry.Settings
 import io.github.mickeiik.izle.ui.RootEntry.StartOver
 import io.github.mickeiik.izle.ui.RootEntry.Subtitles
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class MenuTest {
@@ -22,5 +23,12 @@ class MenuTest {
         assertEquals(listOf(Episodes, StartOver, Audio, Subtitles, Settings, About), MenuPlan.rootEntries("series", fromPlayer = true, audioTrackCount = 2))
         assertEquals(listOf(StartOver, Subtitles, Settings, About), MenuPlan.rootEntries("movie", fromPlayer = true, audioTrackCount = 1))
         assertEquals(listOf(StartOver, Subtitles, Settings, About), MenuPlan.rootEntries("movie", fromPlayer = true, audioTrackCount = 0))
+    }
+
+    @Test
+    fun installUpdateIsOfferedWhileANewerVersionIsButNeverOverThePlayer() {
+        assertEquals("0.3.0", MenuPlan.installUpdateVersion("0.3.0", fromPlayer = false))
+        assertNull(MenuPlan.installUpdateVersion("0.3.0", fromPlayer = true))
+        assertNull(MenuPlan.installUpdateVersion(null, fromPlayer = false))
     }
 }

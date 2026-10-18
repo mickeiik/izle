@@ -28,11 +28,43 @@ class CommandResultReporter(
     private val answered = ArrayDeque<Pair<ApiClient, Long>>()
 
     fun report(api: ApiClient, commandId: Long, result: CommandResult) {
+        if (!claim(api, commandId)) return
+        scope.launch { deliver(api, commandId, result) }
+    }
+
+    /**
+     * Sends [result] now and waits for it: [attempts] tries, [ProgressReporter.RETRY_STEP_MS] apart. For a result
+     * that has to arrive before the process may die (a self-update installing). True when the server took it; false
+     * when it did not, or the command was already answered. Only a result the server took claims the command: after
+     * a failed one, a later [report] (what became of it after all) may still go out.
+     */
+    suspend fun reportNow(api: ApiClient, commandId: Long, result: CommandResult, attempts: Int = 2): Boolean {
+        if (claimed(api, commandId)) return false
+        for (attempt in 0 until attempts) {
+            if (attempt > 0) delay(ProgressReporter.RETRY_STEP_MS)
+            try {
+                send(api, commandId, result)
+                // (A report() meanwhile may have claimed it already: the server keeps the first to arrive.)
+                claim(api, commandId)
+                return true
+            } catch (e: IOException) {
+                // retried
+            } catch (e: ApiException) {
+                if (e.status < 500) return false
+            }
+        }
+        return false
+    }
+
+    private fun claimed(api: ApiClient, commandId: Long): Boolean = (api to commandId) in answered
+
+    /** The first result for this command claims it; false for any later one. */
+    private fun claim(api: ApiClient, commandId: Long): Boolean {
         val key = api to commandId
-        if (key in answered) return
+        if (claimed(api, commandId)) return false
         answered.addLast(key)
         while (answered.size > REMEMBERED) answered.removeFirst()
-        scope.launch { deliver(api, commandId, result) }
+        return true
     }
 
     private suspend fun deliver(api: ApiClient, commandId: Long, result: CommandResult) {
