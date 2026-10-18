@@ -23,6 +23,7 @@ const USAGE = `usage:
   izle-server pair pending [--config <file>]       list the pairing codes waiting for approval
   izle-server pair approve <code> [<name…>] [--config <file>]
                                                    approve the code a TV shows (name: "TV", "TV 2", … when omitted)
+  izle-server pair cancel <code> [--config <file>] clear a waiting code that none of your TVs shows
                                                    pair talks to the running server; --server <url> if it does not
                                                    listen where the config says
   izle-server token create <name…> --scope <read|control|manage> [--config <file>]
@@ -91,10 +92,13 @@ async function checkResolver(config: ServerConfig): Promise<number> {
   return ok ? 0 : 1;
 }
 
-/** `pair pending` / `pair approve <code> [name…]` against the running server's admin API. Exit status 1 on any problem. */
+/**
+ * `pair pending` / `pair approve <code> [name…]` / `pair cancel <code>` against the running server's admin API. Exit
+ * status 1 on any problem.
+ */
 async function pair(config: ServerConfig, args: string[], serverUrl: string | undefined): Promise<number> {
   const [sub, ...rest] = args;
-  if (sub !== "pending" && sub !== "approve") return usage(`pair needs "pending" or "approve <code> [name…]"`);
+  if (sub !== "pending" && sub !== "approve" && sub !== "cancel") return usage(`pair needs "pending", "approve <code> [name…]" or "cancel <code>"`);
   const server = serverUrl ?? localServerUrl(config);
   const { token } = loadAdminToken(config, stderrLog, { create: false });
   try {
@@ -109,6 +113,16 @@ async function pair(config: ServerConfig, args: string[], serverUrl: string | un
         const left = Math.max(0, Math.round((Date.parse(c.expiresAt) - Date.now()) / 1000));
         out(`${c.code}  ${c.approved ? "approved, waiting for the TV to collect its token" : `waiting for approval, expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`}`);
       }
+      return 0;
+    }
+    if (sub === "cancel") {
+      const [code, ...more] = rest;
+      if (!PAIR_CODE.test(code ?? "") || more.length > 0) return fail("pair cancel needs one 6-digit code (pair pending lists them)");
+      const r = await adminCall<{ message?: string }>(server, token, "DELETE", `/api/v1/admin/pair/pending/${code}`);
+      if (r.status === 404) return fail(`no code ${code} is waiting; it was collected, cleared or expired`);
+      if (r.status === 401) return fail(TOKEN_REFUSED);
+      if (r.status !== 204) return fail(`unexpected answer ${r.status} from ${server}${r.json?.message ? `: ${r.json.message}` : ""}`);
+      out(`cleared: the code ${code} no longer pairs; a TV that showed it asks for a new one`);
       return 0;
     }
     const [code, ...nameWords] = rest;

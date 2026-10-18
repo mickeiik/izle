@@ -65,7 +65,8 @@ The server listens on port 8787 with the example catalog and keeps its state in 
 through the 10-minute video, to watch the TV recover (the proxy answers 410, the TV resolves again and continues).
 
 The example configuration turns on `proxy.alignTsSegments`, because one of its shows ("Junk before segments")
-only plays with it. The server default is off.
+only plays with it. The server default is off. It also lists the stand-in site in `proxy.privateUpstreams`
+(`127.0.0.1:8788`): the media proxy refuses loopback and private addresses unless the owner lists them.
 
 ## Writing your own
 

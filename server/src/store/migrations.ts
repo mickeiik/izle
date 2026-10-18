@@ -230,6 +230,10 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE devices ADD COLUMN update_capability TEXT;    -- silent | guided
   ALTER TABLE devices ADD COLUMN app_reported_at INTEGER;   -- when the TV first reported this version
   `,
+  // 7 — pairing codes remember who asked for them, so one client cannot hold every open code.
+  `
+  ALTER TABLE pair_codes ADD COLUMN client_hash TEXT;       -- sha256 of the client address that started it; NULL before
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

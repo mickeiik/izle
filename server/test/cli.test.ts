@@ -75,6 +75,16 @@ test("cli: pair pending / pair approve drive the running server's admin API", as
   const unreachable = ["--config", s.config.configPath!, "--server", "http://127.0.0.1:1"];
   await refused(["pair", "approve", "123456", ...unreachable], 1, /no izle server answers at http:\/\/127\.0\.0\.1:1; is it running\?/);
   await refused(["pair", "nonsense", ...cfg], 2);
+
+  // pair cancel: a code none of the owner's TVs shows stops pairing.
+  const stray = await s.call("POST", "/api/v1/pair/start");
+  r = await run(["pair", "cancel", stray.json.code, ...cfg]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, new RegExp(`^cleared: the code ${stray.json.code} no longer pairs`, "m"));
+  assert.equal((await s.call("GET", `/api/v1/pair/wait?code=${stray.json.code}&wait=0`, { token: stray.json.pairToken })).status, 410);
+  await refused(["pair", "cancel", stray.json.code, ...cfg], 1, new RegExp(`no code ${stray.json.code} is waiting`));
+  await refused(["pair", "cancel", "12ab", ...cfg], 1, /one 6-digit code/);
+  await refused(["pair", "cancel", "123456", "654321", ...cfg], 1, /one 6-digit code/);
   await refused(["pair", "approve", "123456", "--config", s.config.configPath!, "--server", "ftp://x"], 2);
   await refused(["admin-token", "--config", s.config.configPath!, "--server", s.base], 2, /--server belongs to the pair and token commands/);
   await refused(["check-resolver", "extra", "--config", s.config.configPath!], 2, undefined, "stray arguments are still refused");

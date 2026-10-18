@@ -1,5 +1,5 @@
 import { randomInt } from "node:crypto";
-import { SERVER, tvActor } from "./actor.ts";
+import { SERVER, tvActor, type Actor } from "./actor.ts";
 import { newId, newToken, secretsEqual, sha256 } from "./auth.ts";
 import type { Services } from "./context.ts";
 import { HttpError, tooManyRequests } from "./errors.ts";
@@ -8,7 +8,10 @@ import { RateLimiter } from "./ratelimit.ts";
 import { Waiters } from "./waiters.ts";
 
 const PAIR_CODE_TTL_MS = 10 * 60_000;
-const MAX_OPEN_PAIR_CODES = 5;
+/** Server-wide backstop; the per-client cap is what stops one client from holding the pool. */
+const MAX_OPEN_PAIR_CODES = 10;
+/** One TV needs one code; the second covers an app restart mid-pairing. */
+const MAX_OPEN_PAIR_CODES_PER_CLIENT = 2;
 export const MAX_PAIR_WAIT_MS = 25_000;
 /** Expired and delivered pair codes (and the devices never collected) are deleted this long afterwards. */
 const PAIR_CODE_PURGE_GRACE_MS = 60 * 60_000;
@@ -44,7 +47,15 @@ export class PairingService {
     if (!rate.ok) throw tooManyRequests("rate_limited", "too many pairing attempts", rate.retryAfterSec);
     const t = this.s.now();
     this.purge(t);
-    if (this.s.store.listOpenPairCodes(t).length >= MAX_OPEN_PAIR_CODES) throw new HttpError(429, "too_many_pending", "too many pairing codes are waiting for approval");
+    // Refused by its own codes waiting for approval first; a start never touches another client's code (clients
+    // behind one NAT, or every client without trustedProxies behind a proxy, share an address and pair one after
+    // the other).
+    const open = this.s.store.listOpenPairCodes(t);
+    const clientHash = sha256(clientKey);
+    const retryAfterSec = (rows: typeof open) => Math.max(1, Math.ceil((Math.min(...rows.map((r) => r.expiresAt)) - t) / 1000));
+    const own = open.filter((r) => r.clientHash === clientHash && r.approvedAt === null);
+    if (own.length >= MAX_OPEN_PAIR_CODES_PER_CLIENT) throw tooManyRequests("too_many_pending", "this client already has pairing codes waiting for approval", retryAfterSec(own));
+    if (open.length >= MAX_OPEN_PAIR_CODES) throw tooManyRequests("too_many_pending", "too many pairing codes are waiting for approval", retryAfterSec(open));
     let code = "";
     for (let attempt = 0; attempt < 50 && !code; attempt++) {
       const candidate = String(randomInt(0, 1_000_000)).padStart(6, "0");
@@ -54,7 +65,7 @@ export class PairingService {
     const pairToken = newToken();
     const expiresAt = t + PAIR_CODE_TTL_MS;
     this.s.store.transaction(() => {
-      this.s.store.insertPairCode({ code, pairTokenHash: sha256(pairToken), createdAt: t, expiresAt });
+      this.s.store.insertPairCode({ code, pairTokenHash: sha256(pairToken), clientHash, createdAt: t, expiresAt });
       // The TV has no id yet, so the server stands as the actor; the code is what the owner needs to see.
       this.s.eventLog.append("pairing.pending", null, SERVER, { code, expiresAt: new Date(expiresAt).toISOString() });
     });
@@ -89,6 +100,25 @@ export class PairingService {
     this.s.log.info("pairing approved", { deviceId: device.deviceId, replaces: replaces !== undefined });
     this.waiters.wake(code);
     return device;
+  }
+
+  /**
+   * Owner cancellation of an open code (one the owner's TV does not show): it expires now, so the TV's `pair/wait`
+   * answers 410, and a new device approved on it but never collected is deleted. False: no open code.
+   */
+  cancel(code: string, actor: Actor): boolean {
+    const t = this.s.now();
+    const cancelled = this.s.store.transaction(() => {
+      const row = this.s.store.getPairCode(code);
+      if (!row || row.deliveredAt !== null || row.expiresAt <= t) return false;
+      this.s.store.cancelPairCode(code, t);
+      this.s.eventLog.append("pairing.cancelled", null, actor, { code });
+      return true;
+    });
+    if (!cancelled) return false;
+    this.s.log.info("pairing cancelled", { by: actor.type });
+    this.waiters.wake(code);
+    return true;
   }
 
   private defaultName(): string {

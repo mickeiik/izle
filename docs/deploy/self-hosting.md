@@ -322,6 +322,14 @@ a Caddy certificate too.
   catalog uses), and, with `appUpdates.source` `github` (the default), once a day to `api.github.com` and
   `objects.githubusercontent.com` for the TV app's releases (§ 8). TVs fetch direct (non-proxied) streams themselves. "Listen along" (companion audio on your phone)
   runs in the admin page and gets its stream through the server's proxy, so the phone needs only the admin page.
+- The media proxy never connects to loopback, private (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`), link-local
+  (including the cloud metadata address `169.254.169.254`) or CGNAT addresses, whatever an upstream's playlist or
+  redirect names: such requests answer `502 egress_denied` and show as a problem on the TV's page. If your own
+  upstream lives on this machine or your LAN (a NAS, the [resolver example](../../server/examples/resolver-example/)'s
+  stand-in site), list it in the config: `"proxy": { "privateUpstreams": ["192.168.1.20", "127.0.0.1:8788"] }`
+  (host names, addresses, CIDR ranges, each optionally with `:port`;
+  [configuration](../spec/server-api-v1.md#configuration)). List as little as you can: a listed address is open to
+  whatever the upstream's playlists name.
 
 ## 8. Install the TV app
 
@@ -356,7 +364,9 @@ then shows a 6-digit pairing code and the admin page's address. On the admin pag
 code (a name is optional; the TV is called "TV" otherwise and can be renamed later), then add shows to that TV's
 home screen; the tiles appear on the TV right away. From the server's shell the same approval is
 `sudo -u izle /opt/izle/bin/izle-server pair approve 483920 Living room --config /etc/izle/izle.json`
-(`pair pending` lists the waiting codes; `--server <url>` when the server does not listen where the config says).
+(`pair pending` lists the waiting codes, `pair cancel <code>` clears one that none of your TVs shows; `--server <url>`
+when the server does not listen where the config says). A code you did not expect (someone else asked the server for
+it) can be cleared with **Clear** next to it; never approve a code your TV does not show.
 Put izle first in the TV launcher's favourites so it is the first thing on screen.
 
 ### Updating the TV app

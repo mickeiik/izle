@@ -70,6 +70,8 @@ async function setupProxy(t: { after(fn: () => unknown): void }, opts: SetupOpti
     configFile: {
       resolver: { module: TEST_RESOLVER, config: { apiBase: up.url, apiKey: DEFAULT_API_KEY }, deadlineMs: 2000, budgetMs: 5000, ...opts.resolver },
       ...opts.configFile,
+      // The test upstreams listen on loopback, which the proxy refuses unless the owner lists it.
+      proxy: { privateUpstreams: ["127.0.0.1"], ...opts.configFile?.proxy },
     },
   });
   t.after(() => s.close());

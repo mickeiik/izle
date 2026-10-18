@@ -5,6 +5,7 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { newToken } from "./auth.ts";
+import { egressFetch, egressPolicy, egressRefusal, type EgressPolicy, type UpstreamFetch } from "./egress.ts";
 import { isPlaylistText, PlaylistTooLarge, rewritePlaylist, tsSyncOffset, TS_ALIGN_LOOKAHEAD, type LinkKind, type RewriteLimits } from "./hls.ts";
 import { errorName } from "./errors.ts";
 import type { Logger } from "./log.ts";
@@ -21,6 +22,11 @@ export const MAX_PLAYLIST_BYTES = 4 * 1024 * 1024;
 export const REWRITE_LIMITS: RewriteLimits = { maxLines: 250_000, maxLength: 4 * MAX_PLAYLIST_BYTES, maxUrlLength: 4096 };
 /** Time allowed for an upstream to answer with headers; the body then streams for as long as the TV reads. */
 const UPSTREAM_HEADERS_TIMEOUT_MS = 20_000;
+/** Redirects followed for one request; each Location is vetted like the first URL. */
+const MAX_REDIRECTS = 5;
+const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
+/** Request headers that carry a credential: sent only to the origin they were given for. */
+const CREDENTIAL_HEADER = /authorization|cookie|token|secret|passw|api-?key|session/i;
 
 /** Session tokens are 32 random bytes, base64url. */
 export const PROXY_TOKEN = /^[A-Za-z0-9_-]{43}$/;
@@ -59,9 +65,16 @@ export type ProxyTarget = { type: "index" } | { type: "video" } | { type: "u"; r
 
 /**
  * `upstream_<status>` (401/403/410: the session went stale), `upstream_error` (5xx, or a playlist that broke off),
- * `upstream_unreachable` (network error or no answer in time), `not_a_playlist`, `playlist_too_large`.
+ * `upstream_unreachable` (network error or no answer in time), `not_a_playlist`, `playlist_too_large`,
+ * `egress_denied` (a URL or redirect named a loopback, private or other non-public address, see egress.ts).
  */
-export type ProxyProblemCode = `upstream_${401 | 403 | 410}` | "upstream_error" | "upstream_unreachable" | "not_a_playlist" | "playlist_too_large";
+export type ProxyProblemCode =
+  | `upstream_${401 | 403 | 410}`
+  | "upstream_error"
+  | "upstream_unreachable"
+  | "not_a_playlist"
+  | "playlist_too_large"
+  | "egress_denied";
 
 /** An upstream request of a session that failed in a way the owner should hear about. */
 export interface ProxyProblem {
@@ -81,7 +94,10 @@ interface ProxyOptions {
   /** Sliding session lifetime. */
   ttlMs: number;
   alignTsSegments?: boolean;
-  fetch?: typeof fetch;
+  /** `proxy.privateUpstreams`: the non-public upstreams the proxy may reach anyway. */
+  privateUpstreams?: string[];
+  /** Upstream transport (tests); default: node:http(s) with the egress policy applied to every connection. */
+  fetch?: UpstreamFetch;
   /** Told about failed upstream requests (problem reports). */
   onProblem?: (problem: ProxyProblem) => void;
 }
@@ -96,6 +112,21 @@ function extensionOf(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** The origin of `url`, or null when it has none. */
+function originOf(url: string): string | null {
+  try {
+    const origin = new URL(url).origin;
+    return origin === "null" ? null : origin;
+  } catch {
+    return null;
+  }
+}
+
+/** `headers` without the credential-type ones, for a request to another origin than the one they were given for. */
+function withoutCredentials(headers: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(headers).filter(([name]) => !CREDENTIAL_HEADER.test(name)));
 }
 
 function json(status: number, error: string, extra: Record<string, unknown> = {}): Response {
@@ -145,13 +176,15 @@ export class ProxyService {
   private readonly o: ProxyOptions;
   private readonly log: Logger;
   private readonly now: () => number;
-  private readonly fetch: typeof fetch;
+  private readonly fetch: UpstreamFetch;
+  private readonly policy: EgressPolicy;
 
   constructor(opts: ProxyOptions) {
     this.o = opts;
     this.log = opts.log.child({ component: "proxy" });
     this.now = opts.now ?? Date.now;
-    this.fetch = opts.fetch ?? globalThis.fetch;
+    this.policy = egressPolicy(opts.privateUpstreams);
+    this.fetch = opts.fetch ?? egressFetch(this.policy);
   }
 
   private problem(s: Session, code: ProxyProblemCode, httpStatus: number | null, detail: string): void {
@@ -214,24 +247,26 @@ export class ProxyService {
     if (s.stale) return json(410, "stale");
     s.lastUsedAt = t;
 
+    // The session's credential-type headers go to the origin of the URL the catalog or adapter gave, nowhere else.
+    const mainOrigin = s.main === null ? null : originOf(s.main.playlist !== undefined ? s.main.baseUrl : s.main.url);
     switch (target.type) {
       case "index":
         if (s.main?.kind !== "hls") return json(404, "not_found");
         if (s.main.playlist !== undefined) return this.playlistResponse(s, s.main.playlist, s.main.baseUrl, "u/", null, "playlist");
-        return this.forward(req, s, s.main.url, s.headers, { kind: "p", prefix: "u/", what: "playlist" });
+        return this.forward(req, s, s.main.url, s.headers, { kind: "p", prefix: "u/", what: "playlist", origin: mainOrigin });
       case "video":
         if (s.main?.kind !== "mp4") return json(404, "not_found");
-        return this.forward(req, s, s.main.url, s.headers, { kind: "r", prefix: null, what: "video" });
+        return this.forward(req, s, s.main.url, s.headers, { kind: "r", prefix: null, what: "video", origin: mainOrigin });
       case "u": {
         const link = this.verify(s, target.ref);
         if (!link) return json(404, "not_found");
-        return this.forward(req, s, link.url, s.headers, { kind: link.kind, prefix: "", what: link.kind === "p" ? "playlist" : "segment" });
+        return this.forward(req, s, link.url, s.headers, { kind: link.kind, prefix: "", what: link.kind === "p" ? "playlist" : "segment", origin: mainOrigin });
       }
       case "sub": {
         const m = /^(\d{1,2})\.(vtt|srt|ttml)$/.exec(target.file);
         const sub = m ? s.subtitles[Number(m[1])] : undefined;
         if (!m || !sub) return json(404, "not_found");
-        return this.forward(req, s, sub.url, sub.headers, { kind: "r", prefix: null, contentType: SUBTITLE_TYPES[m[2]!], what: "subtitles" });
+        return this.forward(req, s, sub.url, sub.headers, { kind: "r", prefix: null, contentType: SUBTITLE_TYPES[m[2]!], what: "subtitles", origin: originOf(sub.url) });
       }
     }
   }
@@ -253,27 +288,54 @@ export class ProxyService {
    * Fetches `url` with the upstream headers. Playlists (`kind` p, or a playlist content type) are read, rewritten
    * and answered; anything else streams through with `Range` forwarded. `prefix` is how rewritten URIs are
    * written relative to the requested path (null: the response is never treated as a playlist). `what` names the
-   * request in problem reports.
+   * request in problem reports. Credential-type headers are sent only to `origin`. Redirects are followed here,
+   * up to MAX_REDIRECTS, each Location checked by the egress policy like the first URL.
    */
   private async forward(
     req: Request,
     s: Session,
     url: string,
     headers: Record<string, string>,
-    opts: { kind: LinkKind; prefix: string | null; contentType?: string | undefined; what: string },
+    opts: { kind: LinkKind; prefix: string | null; contentType?: string | undefined; what: string; origin: string | null },
   ): Promise<Response> {
     const range = opts.kind === "r" ? req.headers.get("range") : null;
+    const extra = { ...(range ? { Range: range } : {}), ...(opts.kind === "r" ? { "Accept-Encoding": "identity" } : {}) };
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(), UPSTREAM_HEADERS_TIMEOUT_MS);
+    const signal = AbortSignal.any([req.signal, timeout.signal]);
     let upstream: Response;
     try {
-      upstream = await this.fetch(url, {
-        headers: { ...headers, ...(range ? { Range: range } : {}), ...(opts.kind === "r" ? { "Accept-Encoding": "identity" } : {}) },
-        redirect: "follow",
-        signal: AbortSignal.any([req.signal, timeout.signal]),
-      });
+      for (let hops = 0; ; hops++) {
+        const target = new URL(url);
+        this.policy.check(target);
+        const sent = target.origin === opts.origin ? headers : withoutCredentials(headers);
+        upstream = await this.fetch(target.href, { headers: { ...sent, ...extra }, redirect: "manual", signal });
+        if (!REDIRECT_STATUS.has(upstream.status)) break;
+        await upstream.body?.cancel().catch(() => {});
+        const location = upstream.headers.get("location");
+        let next: URL | null = null;
+        try {
+          next = location === null ? null : new URL(location, target);
+        } catch {
+          // an unparsable Location
+        }
+        if (next === null || hops >= MAX_REDIRECTS) {
+          this.log.warn("upstream redirect not followed", { deviceId: s.deviceId, status: upstream.status, hops, reason: next === null ? "no_location" : "too_many" });
+          this.problem(s, "upstream_error", upstream.status, `${opts.what}: ${next === null ? "redirect without a valid Location" : `more than ${MAX_REDIRECTS} redirects`}`);
+          return json(502, "upstream_error", { status: upstream.status });
+        }
+        next.hash = "";
+        url = next.href;
+      }
     } catch (err) {
       if (req.signal.aborted) return json(503, "aborted");
+      const refused = egressRefusal(err);
+      if (refused) {
+        // The URL came from upstream playlist text or a redirect; it is never logged (nor its address).
+        this.log.warn("upstream destination refused", { deviceId: s.deviceId, reason: refused.reason });
+        this.problem(s, "egress_denied", null, `${opts.what}: ${refused.reason.replaceAll("_", " ")}`);
+        return json(502, "egress_denied");
+      }
       const timedOut = timeout.signal.aborted;
       this.log.warn("upstream unreachable", { deviceId: s.deviceId, code: timedOut ? "timeout" : "network", error: errorName(err) });
       const why = timedOut ? `no answer within ${Math.round(UPSTREAM_HEADERS_TIMEOUT_MS / 1000)} s` : networkReason(err);
@@ -334,7 +396,8 @@ export class ProxyService {
       this.problem(s, "not_a_playlist", status, `${what}: ${/^[\w.+-]{1,40}\/[\w.+-]{1,60}$/.test(type) ? type : "unknown content type"}`);
       return json(502, "not_a_playlist");
     }
-    return this.playlistResponse(s, text, upstream.url || url, prefix, status, what);
+    // `url` is the playlist's own URL after redirects: relative URIs resolve against it.
+    return this.playlistResponse(s, text, url, prefix, status, what);
   }
 
   /**

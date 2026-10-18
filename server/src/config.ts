@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { compileTrustedProxies } from "./clientip.ts";
+import { invalidPrivateUpstream } from "./egress.ts";
 import type { Level } from "./log.ts";
 
 export interface ServerConfig {
@@ -19,8 +20,12 @@ export interface ServerConfig {
   resolver: { module: string; config: Record<string, unknown>; deadlineMs: number; budgetMs: number } | null;
   /** `token` comes from IZLE_ADMIN_TOKEN and wins over `tokenFile`. */
   admin: { tokenFile: string; token: string | null };
-  /** `alignTsSegments` trims junk bytes before the first MPEG-TS sync byte of proxied HLS segments. */
-  proxy: { always: boolean; sessionTtlSec: number; alignTsSegments: boolean };
+  /**
+   * `alignTsSegments` trims junk bytes before the first MPEG-TS sync byte of proxied HLS segments;
+   * `privateUpstreams` lists the loopback, private or link-local upstreams the proxy may reach anyway (hosts,
+   * addresses or CIDR ranges, optionally with a port).
+   */
+  proxy: { always: boolean; sessionTtlSec: number; alignTsSegments: boolean; privateUpstreams: string[] };
   /** Server-wide defaults for devices without their own setting (null = fall back to the catalog's hints). */
   defaults: { uiLanguage: "tr" | "en" | null; preferredAudioLanguage: string | null };
   log: { level: Level };
@@ -73,7 +78,10 @@ const CONFIG_SCHEMA = objectSchema({
   catalog: objectSchema({ dir: TEXT }, ["dir"]),
   resolver: { anyOf: [RESOLVER, NULL] },
   admin: objectSchema({ tokenFile: TEXT }),
-  proxy: objectSchema({ always: { type: "boolean" }, sessionTtlSec: { type: "integer", minimum: 60, maximum: 86400 }, alignTsSegments: { type: "boolean" } }),
+  proxy: objectSchema({
+    always: { type: "boolean" }, sessionTtlSec: { type: "integer", minimum: 60, maximum: 86400 }, alignTsSegments: { type: "boolean" },
+    privateUpstreams: { type: "array", items: TEXT, maxItems: 64 },
+  }),
   // Unlike the API's, the config file's language tags have no length limit.
   defaults: objectSchema({
     uiLanguage: { anyOf: [{ enum: ["tr", "en"] }, NULL] },
@@ -97,7 +105,7 @@ interface ConfigFile {
   catalog?: { dir: string };
   resolver?: { module: string; config?: Record<string, unknown>; deadlineMs?: number; budgetMs?: number } | null;
   admin?: { tokenFile?: string };
-  proxy?: { always?: boolean; sessionTtlSec?: number; alignTsSegments?: boolean };
+  proxy?: { always?: boolean; sessionTtlSec?: number; alignTsSegments?: boolean; privateUpstreams?: string[] };
   defaults?: { uiLanguage?: "tr" | "en" | null; preferredAudioLanguage?: string | null };
   log?: { level?: Level };
   events?: { retentionDays?: number };
@@ -151,6 +159,10 @@ function readConfigFile(configPath: string): ConfigFile {
   const file = parsed as ConfigFile;
   const { invalid } = compileTrustedProxies(file.trustedProxies ?? []);
   if (invalid !== null) throw new ConfigError(`invalid config file ${configPath}: /trustedProxies "${invalid}" is not an IP address or CIDR range`);
+  const upstream = invalidPrivateUpstream(file.proxy?.privateUpstreams ?? []);
+  if (upstream !== null) {
+    throw new ConfigError(`invalid config file ${configPath}: /proxy/privateUpstreams "${upstream}" is not a host name, IP address or CIDR range (optionally with :port)`);
+  }
   return file;
 }
 
@@ -175,7 +187,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
       tokenFile: file.admin?.tokenFile ? resolve(file.admin.tokenFile) : path.join(dataDir, "admin.token"),
       token: (opts.env ?? process.env).IZLE_ADMIN_TOKEN?.trim() || null,
     },
-    proxy: { always: false, sessionTtlSec: 21600, alignTsSegments: false, ...file.proxy },
+    proxy: { always: false, sessionTtlSec: 21600, alignTsSegments: false, privateUpstreams: [], ...file.proxy },
     defaults: { uiLanguage: null, preferredAudioLanguage: null, ...file.defaults },
     log: { level: "info", ...file.log },
     events: { retentionDays: DEFAULT_EVENT_RETENTION_DAYS, ...file.events },

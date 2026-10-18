@@ -203,10 +203,25 @@ contract share one version number. How to update (back up, update the server, th
   error's class name is kept only when it is a short identifier, scrubbed like any string. The resolver module spec
   now describes the redaction as the heuristic it is: modules must not pass header maps, refs, config, playlist
   text, URLs or tokens to `ctx.log` in any shape.
+- **The media proxy no longer reaches into the server's own network.** An upstream's playlist (a URI line or an
+  `EXT-X-KEY` URI) or redirect could make the server fetch any address it can reach, loopback and LAN services or the
+  cloud metadata address included, with the session's upstream headers, and stream the answer to the TV. Every
+  proxied request and every redirect is now checked: the server resolves the host itself, connects only to the
+  address it checked, and refuses loopback, private, link-local, CGNAT, multicast and other non-public addresses
+  (`502 egress_denied`, recorded as the TV's problem `egress_denied`, never with the URL in the log). Redirects are
+  followed by the proxy (at most 5), and `Authorization`, `Cookie` and other credential-type headers go only to the
+  session's own origin. **If your upstream is on this machine or your LAN**, list it in the new config setting
+  `proxy.privateUpstreams` (for example `["192.168.1.20", "127.0.0.1:8788"]`); the resolver example's config does.
+- **One client can no longer keep every TV from pairing.** Anyone who reached `POST /api/v1/pair/start` could hold
+  all 5 open pairing codes, refilling them as they expired, so no TV got a code. Now each client address has at most
+  2 codes waiting for approval (10 open server-wide), a start never ends someone else's code, and
+  `429 too_many_pending` says when to try again (`Retry-After`). Codes you did not expect can be cleared: **Clear**
+  next to Approve on the admin page's TVs list, `izle-server pair cancel <code>`, or
+  `DELETE /api/v1/admin/pair/pending/:code` (owner only); the event log records `pairing.cancelled`.
 
 ### Compatibility
 
-- **Database migrations 3 and 4**, applied on the first start; an older server refuses the migrated database. To go
+- **Database migrations 3 to 7**, applied on the first start; an older server refuses the migrated database. To go
   back, install the older package and restore the backup taken before the update
   ([updates and backups](docs/deploy/self-hosting.md#10-updates-and-backups)).
 - Update the server before the TVs. The new remote commands and autoplay need the new TV app; a 0.2.0 app ignores

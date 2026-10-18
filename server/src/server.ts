@@ -48,7 +48,10 @@ interface StartOptions {
   /** How long a TV stays online after its last event stream closed (default 60 s; tests shorten it). */
   offlineGraceMs?: number;
   pairing?: PairingOptions;
-  /** Upstream fetch of the media proxy, the diagnostics probe and the TV app check (default: the global fetch). */
+  /**
+   * Upstream fetch of the media proxy, the diagnostics probe and the TV app check (default: the global fetch; the
+   * proxy's own transport, which applies the egress policy, for the proxy).
+   */
   fetch?: typeof fetch;
   /** Where the TV app check finds GitHub's API (default `https://api.github.com`; tests serve a fake). */
   githubApiBase?: string;
@@ -100,8 +103,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   appUpdates.reconcile();
   const sessions = new PlaybackSessions(now);
   const problems = new ProblemService({ store, catalog, log, now, sessions, eventLog });
-  const { sessionTtlSec, alignTsSegments, always: proxyAlways } = config.proxy;
-  const proxy = new ProxyService({ log, now, ttlMs: sessionTtlSec * 1000, alignTsSegments, fetch: fetchUpstream, onProblem: (p) => problems.recordProxy(p) });
+  const { sessionTtlSec, alignTsSegments, always: proxyAlways, privateUpstreams } = config.proxy;
+  // The proxy's own transport applies the egress policy; a test's fetch replaces it.
+  const proxy = new ProxyService({ log, now, ttlMs: sessionTtlSec * 1000, alignTsSegments, privateUpstreams, fetch: opts.fetch, onProblem: (p) => problems.recordProxy(p) });
   const resolver = new ResolveService({
     catalog, log, now, proxy, sessions, adapters: resolverModule?.adapters ?? null, proxyAlways,
     deadlineMs: config.resolver?.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,

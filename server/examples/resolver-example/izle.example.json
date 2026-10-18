@@ -6,7 +6,7 @@
     "module": "./index.js",
     "config": { "apiBase": "http://127.0.0.1:8788/", "apiKey": "example-api-key" }
   },
-  "proxy": { "alignTsSegments": true },
+  "proxy": { "alignTsSegments": true, "privateUpstreams": ["127.0.0.1:8788"] },
   "defaults": { "uiLanguage": "en", "preferredAudioLanguage": "en" },
   "log": { "level": "info" },
   "appUpdates": { "source": "manual" }
