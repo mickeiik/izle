@@ -27,16 +27,18 @@ ignore unknown response fields.
 
 | Secret | Where it comes from | Stored as |
 |---|---|---|
-| Admin token | `IZLE_ADMIN_TOKEN`, else `admin.tokenFile` (created with 32 random bytes, mode 0600, on first start). Shorter than 24 characters → the server refuses to start. `izle-server admin-token [--rotate]` prints / replaces it; `--link` prints a sign-in link for the admin page (`<base>/admin/#token=<token>`, the token in the URL fragment, which browsers never send) and its QR code. | the file (owner's responsibility) |
+| Admin token | `IZLE_ADMIN_TOKEN`, else `admin.tokenFile` (created with 32 random bytes, mode 0600, on first start). Shorter than 24 characters → the server refuses to start. `izle-server admin-token [--rotate]` prints / replaces it (`--rotate` is refused while `IZLE_ADMIN_TOKEN` is set, and the server warns at startup when the variable shadows a token file); `--link` prints a sign-in link for the admin page (`<base>/admin/#token=<token>`, the token in the URL fragment, which browsers never send) and its QR code. | the file (owner's responsibility) |
 | Pair token | `POST /pair/start`, 32 random bytes base64url | sha256 |
 | Device token | handed out once by `GET /pair/wait` after approval, 32 random bytes base64url | sha256 |
 
 Tokens are compared in constant time and never logged ([Logging](#logging)).
 
-Failed admin authentications (a missing or wrong token on `/api/v1/admin/*`) are counted per client address
-(`trustedProxies`, [Configuration](#configuration)): after 10 within 10 minutes of the first, every admin request
+Failed admin authentications (a wrong or revoked token on `/api/v1/admin/*`) are counted per client address
+(`trustedProxies`, [Configuration](#configuration); an IPv6 address is counted by its /64): after 10 within 10 minutes of the first, every admin request
 from that address, even with the right token, answers `429 too_many_attempts` with `Retry-After` until those 10
-minutes are over. Successes are never counted. Each failure is logged as a warning with the client address and the
+minutes are over. Successes are never counted, nor are requests without a token (they answer `401` with
+`WWW-Authenticate`, but are no guess, so tokenless requests that another site's page sends from the owner's browser
+cannot lock the owner out). Each failure is logged as a warning with the client address and the
 route template, never the presented token. TV routes and pairing are not affected.
 
 ## Pairing
@@ -47,7 +49,7 @@ device token.
 ### `POST /api/v1/pair/start`
 
 No body. → `200 {"code": "483920", "pairToken": "<secret>", "expiresAt": "…"}`; codes live 10 minutes. Errors:
-`429 rate_limited` (more than 10 starts per client address in 10 minutes; `Retry-After`; behind a reverse proxy see
+`429 rate_limited` (more than 10 starts per client address, an IPv6 one by its /64, in 10 minutes; `Retry-After`; behind a reverse proxy see
 `trustedProxies`), `429 too_many_pending` (5 codes are already open).
 
 ### `GET /api/v1/pair/wait?code=<6 digits>[&wait=<0..25>]`
@@ -403,7 +405,7 @@ What went wrong on a TV, kept for the owner: the TV's own reports (`origin: "tv"
 | `proxy` · `upstream_401` / `upstream_403` / `upstream_410` | the upstream refused a request of a TV's proxy session, which is now stale | `httpStatus`; `detail`: what was requested (`playlist`, `segment`, `video`, `subtitles`) |
 | `proxy` · `upstream_error` | the upstream answered 5xx, or a playlist broke off | `httpStatus`; `detail` as above |
 | `proxy` · `upstream_unreachable` | network error, or no answer within 20 s | `detail`: what was requested and why (`ECONNREFUSED`, `no answer within 20 s`) |
-| `proxy` · `not_a_playlist` / `playlist_too_large` | the upstream sent something else than a playlist (`detail` gives its media type), or more than 4 MiB | |
+| `proxy` · `not_a_playlist` / `playlist_too_large` | the upstream sent something else than a playlist (`detail` gives its media type), or more than 4 MiB, or one the rewrite cannot keep in bounds (more than 250,000 lines, more than 16 MiB rewritten, or a URI longer than 4096 characters) | |
 
 Server-origin proxy problems are recorded at most once per TV and code a minute, so a flapping upstream cannot flood
 the list. [Listen along](#listen-along) resolves and companion proxy sessions are never recorded: they are not the
@@ -569,7 +571,7 @@ needs, or `owner`); it does not count as a failed sign-in.
 |---|---|---|
 | `GET /api/v1/admin/tokens` | | `{"tokens": [AccessToken]}`, oldest first |
 | `POST /api/v1/admin/tokens` | `{"name", "scope"}` (`name`: 1–60 characters, trimmed, unique) | `201 {"token": AccessToken, "secret": "izat_…"}`; the secret is shown only here |
-| `DELETE /api/v1/admin/tokens/:id` | | `204`; requests with that token answer `401` from now on |
+| `DELETE /api/v1/admin/tokens/:id` | | `204`; requests with that token answer `401` from now on, and an [event stream](#events) it has open ends at once (a long-poll answers `401`) |
 
 `AccessToken` = `{"id", "name", "scope", "createdAt", "lastUsedAt"}` (`id`: 12 alphanumeric characters, like a device
 id; `lastUsedAt` is written at most once a minute). The secret is `izat_` and 32 random bytes base64url (the prefix
@@ -614,7 +616,11 @@ Events carry no URLs, headers, refs, tokens, message texts or problem details.
   [`/tv/events`](#get-apiv1tvevents): each event as `id: <id>`, `event: <type>`, `data: <Event>`, starting after
   `after`, else after `Last-Event-ID` (without either: new events only); `retry: 5000`, a `: ping` comment every
   20 s. The token goes in the `Authorization` header as on every admin route, never in the query string (a browser's
-  `EventSource` cannot set it; the admin page reads the stream with `fetch`).
+  `EventSource` cannot set it; the admin page reads the stream with `fetch`). A replay sends at most the newest 500
+  events; when more were stored after `after`, it starts with `event: gap` (`oldest`: the first id it sends). A
+  client that stops reading while events keep coming is disconnected (it reconnects with `Last-Event-ID`). At most
+  10 streams are open at once per access token, and per client address for the owner token; one more answers
+  `429 too_many_streams` (`Retry-After`).
 - **Long-poll:** `GET /api/v1/admin/events?after=&wait=&limit=&devices=&types=` → `{"events": [Event], "last",
   "gap"}`, oldest first (`limit` ≤ 500, default 100); with no event after `after` it waits up to `wait` seconds (0–25,
   default 0). For clients that cannot keep a stream open: MCP tools, scripts. `last` is the id of the last event
@@ -828,8 +834,10 @@ as before):
 
 One JSON object per line on stdout: `time`, `level`, `msg` and fields. Every line passes through one redaction step:
 fields whose name contains a word like `url`, `headers`, `authorization`, `cookie`, `token`, `ref`, `config`,
-`playlist`, `password`, `secret` or `body` are dropped; `scheme://…` in strings becomes `<url host>`; runs of 20 or
-more base64url characters become `<token>`; errors are reduced to their class name (and a short `code`). The access
+`playlist`, `password`, `secret` or `body` are dropped; a string starting with `#EXTM3U` becomes `<playlist>`;
+`scheme://…` and protocol-relative `//host…` in strings become `<url host>`; runs of 20 or more base64url
+characters become `<token>`; errors are reduced to their class name (an identifier of at most 60 characters, else
+`Error`) and a short `code`. The access
 log records the **route template** (e.g. `/api/v1/tv/items/:itemId`), status, duration and device id, never the raw
 path or query; health checks and successful proxy requests (a steady stream of segments) at `debug` level only,
 proxy errors at `info`. Commands are logged with their type and ids (never a message's text), problem reports with

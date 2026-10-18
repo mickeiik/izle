@@ -44,7 +44,7 @@ export interface ResolverModule { apiVersion: 1; createAdapters(ctx: AdapterCont
 | `config` | The `resolver.config` object from the server configuration (paths, keys). Never logged. |
 | `dataDir` | A directory owned by the module for caches or state (created by the server). |
 | `fetch` | The `fetch` to use. Pass the request's `signal` to it. |
-| `log(level, msg, fields?)` | The server's logger. Output passes through the same redaction as the server's own logs (URLs reduced to their host, tokens, headers, refs and config removed). |
+| `log(level, msg, fields?)` | The server's logger. Output passes through the same redaction as the server's own logs, which is a heuristic: a field whose name contains `url`, `uri`, `href`, `header`, `authorization`, `cookie`, `token`, `ref`, `config`, `playlist`, `password`, `secret` or `body` is dropped; in every other string, URLs (`scheme://…` or `//host…`) become `<url host>`, text starting with `#EXTM3U` becomes `<playlist>` and runs of 20 or more base64url characters become `<token>`; an `Error` keeps only its class name and a short `code`. Everything else is written as given, for example a header map or `req.ref` passed as `fields` itself, a short API key, a host without a scheme. |
 
 ## Adapter
 
@@ -114,8 +114,10 @@ Results are validated against `resolve-result.v1.schema.json`; an invalid result
   `req.ref` is a copy: changing it does not change the catalog.
 - Direct bundle sources never reach adapters.
 - The module is in-process, owner-trusted code, with no sandbox beyond deadlines and result validation. Modules
-  MUST honour `signal`, SHOULD avoid long synchronous work, and MUST NOT log URLs, headers or tokens except through
-  `ctx.log` (which redacts them).
+  MUST honour `signal`, SHOULD avoid long synchronous work, and MUST log only through `ctx.log`. The redaction is a
+  safety net, not a licence: modules MUST NOT pass header maps, `req.ref`, `ctx.config`, playlist text, stream URLs
+  or tokens to `ctx.log` in any shape (as `fields`, nested, or in `msg`); log ids, counts, status codes, hosts and
+  error names instead.
 - Source-specific logic MUST NOT go into izle itself: izle stays generic, the module lives with the owner's catalog,
   out of tree.
 
@@ -133,3 +135,6 @@ version it does not implement.
   that a catalog reload is refused when it needs an adapter the module does not provide.
 - **v1, Listen along (2026-10-11)** — no API change. An adapter may be called a second time for an episode the TV
   is playing (the owner's phone); failures of such calls do not penalize the source for the TV.
+- **v1, log redaction (2026-10-18)** — no API change. `ctx.log` is described as the heuristic it is, and modules
+  must not pass header maps, refs, config, playlist text, URLs or tokens to it in any shape. The server now also
+  treats protocol-relative URLs as URLs and replaces playlist text by `<playlist>`.

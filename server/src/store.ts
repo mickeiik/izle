@@ -165,6 +165,8 @@ export interface EventFilter {
   devices?: readonly string[];
   /** Event types, or prefixes ending in `.`; undefined = every type. */
   types?: readonly string[];
+  /** The newest `limit` events after `after` (still oldest first) instead of the oldest. */
+  newest?: boolean;
 }
 
 /** One playback of one episode on one TV, as stored (the running state in the `last*` fields is the history's own). */
@@ -676,7 +678,8 @@ export class Store {
       where.push(`(${clauses.join(" OR ") || "0"})`);
       params.push(...f.types);
     }
-    return this.many(`SELECT * FROM events WHERE ${where.join(" AND ")} ORDER BY id LIMIT ?`, [...params, f.limit]);
+    const rows = this.many<StoredEvent>(`SELECT * FROM events WHERE ${where.join(" AND ")} ORDER BY id ${f.newest ? "DESC" : ""} LIMIT ?`, [...params, f.limit]);
+    return f.newest ? rows.reverse() : rows;
   }
 
   /** The id of the newest event ever appended (also after it was purged), or 0 when there was none. */

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isPlaylistText, rewritePlaylist, summarizePlaylist, tsSyncOffset } from "../src/hls.ts";
+import { isPlaylistText, PlaylistTooLarge, rewritePlaylist, summarizePlaylist, tsSyncOffset } from "../src/hls.ts";
 import { junkBytes, syntheticTsSegment } from "../examples/resolver-example/upstream.js";
 
 const BASE = "https://cdn.example.test/vod/show/master.m3u8?sig=abc";
@@ -99,4 +99,21 @@ test("TS sync detection: aligned data, junk prefixes, and data that is not TS", 
   assert.equal(tsSyncOffset(notTs), 2, "a perfectly regular pattern is indistinguishable from TS");
   const random = Buffer.from(Array.from({ length: 8192 }, (_, i) => (i * 2654435761) >>> 24));
   assert.equal(tsSyncOffset(random), 0);
+});
+
+test("rewrite limits: lines, rewritten length and URL length are capped; a URL too long is refused, not kept", () => {
+  const limits = { maxLines: 100, maxLength: 10_000, maxUrlLength: 200 };
+  const sign = (url: string, kind: string) => `${kind}.${Buffer.from(url).toString("base64url")}`;
+  const ok = ["#EXTM3U", "#EXTINF:4,", "seg0.ts", "#EXT-X-ENDLIST"].join("\n");
+  assert.equal(rewritePlaylist(ok, BASE, sign, limits).split("\n")[2], sign("https://cdn.example.test/vod/show/seg0.ts", "r"), "within the limits");
+
+  const tooLarge = (text: string, base: string, why: RegExp) =>
+    assert.throws(() => rewritePlaylist(text, base, sign, limits), (e: unknown) => e instanceof PlaylistTooLarge && why.test(e.message) && !e.message.includes("example"));
+  tooLarge(["#EXTM3U", ...Array<string>(100).fill("#EXTINF:4,")].join("\n"), BASE, /more than 100 lines/);
+  // Many 1-byte lines against a long base: each embeds the whole base, the input stays tiny.
+  const longBase = `https://cdn.example.test/${"x".repeat(150)}/index.m3u8`;
+  tooLarge(["#EXTM3U", ...Array<string>(60).fill("a")].join("\n"), longBase, /more than 10000 characters/);
+  tooLarge(["#EXTM3U", `${"y".repeat(200)}.ts`].join("\n"), BASE, /a URI longer than 200 characters/);
+  tooLarge(["#EXTM3U", `#EXT-X-KEY:METHOD=AES-128,URI="${"k".repeat(200)}"`].join("\n"), BASE, /a URI longer than 200 characters/);
+  assert.equal(rewritePlaylist(["#EXTM3U", `#EXT-X-KEY:METHOD=SAMPLE-AES,URI="data:${"k".repeat(300)}"`].join("\n"), BASE, sign, limits).length > 300, true, "a data: URI is kept as it is");
 });

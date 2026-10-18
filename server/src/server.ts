@@ -7,6 +7,7 @@ import { SERVER, tvActor } from "./actor.ts";
 import { AppUpdateService, FIRST_CHECK_DELAY_MS } from "./app-updates.ts";
 import { loadAdminToken } from "./auth.ts";
 import { CatalogService } from "./catalog.ts";
+import { limiterKey } from "./clientip.ts";
 import { CommandService } from "./commands.ts";
 import { CompanionService } from "./companion.ts";
 import { databaseFile, DEFAULT_RESOLVE_BUDGET_MS, DEFAULT_RESOLVE_DEADLINE_MS, localServerUrl, type ServerConfig } from "./config.ts";
@@ -68,7 +69,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const now = opts.now ?? Date.now;
   const fetchUpstream = opts.fetch ?? globalThis.fetch;
 
-  const { token: adminToken, source } = loadAdminToken(config, log);
+  const { token: adminToken, source } = loadAdminToken(config, log, { warnShadowed: true });
   // The resolver module comes from a local path in the config; nothing is ever downloaded.
   const resolverModule = config.resolver
     ? await loadResolver({ module: config.resolver.module, config: config.resolver.config, dataDir: config.dataDir, log })
@@ -119,11 +120,12 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const clientKey = clientKeyFor(config);
   registerMiddleware(app, ctx, clientKey);
   registerStatic(app, ctx);
-  registerTv(app, ctx, clientKey);
+  // pair/start's rate limit counts an IPv6 client by its /64.
+  registerTv(app, ctx, (c) => limiterKey(clientKey(c)));
   registerAdmin(app, ctx);
   registerAdminTokens(app, ctx);
   registerAdminApp(app, ctx);
-  registerAdminEvents(app, ctx);
+  registerAdminEvents(app, ctx, clientKey);
   registerAdminStatus(app, ctx);
   registerAdminHistory(app, ctx);
   registerAdminHome(app, ctx);

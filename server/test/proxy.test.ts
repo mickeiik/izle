@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import path from "node:path";
 import { DEFAULT_API_KEY, DEFAULT_REFERER, junkBytes, startUpstream, syntheticMedia, syntheticTsSegment } from "../examples/resolver-example/upstream.js";
+import { REWRITE_LIMITS } from "../src/proxy.ts";
 import { fixtureManifest, listen, startTestServer, tempDir, TEST_RESOLVER, writeBundle, type Json } from "./helpers.ts";
 import { seenSignals } from "./fixtures/test-resolver.js";
 
@@ -185,6 +186,54 @@ test("inline playlists are served as the session's entry; header-bound bundle so
   assert.match(st.json.media.url, PROXY_URL);
   assert.equal((await text(st.json.media.url)).status, 200);
   assert.equal(up.requests.at(-1)!.referer, DEFAULT_REFERER);
+});
+
+test("a playlist whose rewrite would be too large answers 502 playlist_too_large and is reported", async (t) => {
+  // An upstream whose master names variants with long URLs; each variant has many 1-byte lines, which the rewrite
+  // would expand by the whole URL each.
+  const longPath = `/${"v".repeat(2000)}/index.m3u8`;
+  const tiny = ["#EXTM3U", ...Array<string>(20_000).fill("a")].join("\n");
+  const upstream = createServer((req, res) => {
+    res.setHeader("Content-Type", "application/vnd.apple.mpegurl");
+    if (req.url === "/master.m3u8") {
+      res.end(["#EXTM3U", "#EXT-X-STREAM-INF:BANDWIDTH=1", longPath, "#EXT-X-STREAM-INF:BANDWIDTH=3", "/lines.m3u8"].join("\n"));
+    } else if (req.url === "/too-long.m3u8") {
+      res.end(["#EXTM3U", "#EXT-X-STREAM-INF:BANDWIDTH=1", "/short.m3u8", "#EXT-X-STREAM-INF:BANDWIDTH=2", `/${"w".repeat(REWRITE_LIMITS.maxUrlLength)}.m3u8`].join("\n"));
+    } else if (req.url === longPath) res.end(tiny);
+    else if (req.url === "/lines.m3u8") res.end(`#EXTM3U\n${"#\n".repeat(REWRITE_LIMITS.maxLines)}`);
+    else res.writeHead(404).end();
+  });
+  const local = await listen(upstream);
+  t.after(() => local.close());
+  const items = () => ({
+    items: [
+      movie("big", [direct("big", { kind: "hls", url: `${local.url}/master.m3u8`, headers: REF })]),
+      movie("long", [direct("long", { kind: "hls", url: `${local.url}/too-long.m3u8`, headers: REF })]),
+    ],
+  });
+  const { s, tv, resolve, text } = await setupProxy(t, { items });
+
+  const r = await resolve("big.main");
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  const master = await text(r.json.media.url);
+  assert.equal(master.status, 200);
+  const variants = uris(master.body);
+  assert.equal(variants.length, 2);
+  const dir = r.json.media.url.replace(/index\.m3u8$/, "");
+  for (const variant of variants) {
+    const v = await text(dir + variant);
+    assert.equal(v.status, 502);
+    assert.equal(JSON.parse(v.body).error, "playlist_too_large");
+  }
+  // A URL too long to sign is not left in the playlist as it is (the TV would fetch it without the headers): the
+  // whole playlist is refused.
+  const long = await text((await resolve("long.main")).json.media.url);
+  assert.deepEqual([long.status, JSON.parse(long.body).error], [502, "playlist_too_large"]);
+  assert.ok(!long.body.includes("wwww"));
+  const problems = (await s.admin("GET", `/devices/${tv.deviceId}/problems`)).json;
+  const details = JSON.stringify(problems);
+  assert.match(details, /playlist_too_large/);
+  assert.ok(!details.includes("vvvv") && !details.includes("127.0.0.1"), "no URL in the report");
 });
 
 test("MP4 through the proxy: Range requests pass through", async (t) => {

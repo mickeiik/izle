@@ -12,6 +12,21 @@ const LINE_BREAK = /\r?\n|\r/;
 const withoutBom = (text: string): string => text.replace(/^﻿/, "");
 const tagName = (line: string): string => line.split(":", 1)[0]!.trim().toUpperCase();
 
+/** Bounds on a rewrite, so its work and output stay proportional to the playlist read, whatever its URIs resolve to. */
+export interface RewriteLimits {
+  /** Most lines a playlist may have. */
+  maxLines: number;
+  /** Most characters the rewritten playlist may have. */
+  maxLength: number;
+  /** Longest absolute URL a URI may resolve to. */
+  maxUrlLength: number;
+}
+
+const NO_LIMITS: RewriteLimits = { maxLines: Infinity, maxLength: Infinity, maxUrlLength: Infinity };
+
+/** A playlist over one of the rewrite limits; `message` says which (no URL in it). */
+export class PlaylistTooLarge extends Error {}
+
 export function isPlaylistText(text: string): boolean {
   return withoutBom(text).trimStart().startsWith("#EXTM3U");
 }
@@ -20,9 +35,10 @@ export function isPlaylistText(text: string): boolean {
  * Rewrites every URI of an HLS playlist (master or media): URI lines (variants, segments) and `URI="…"` attributes
  * (keys, maps, renditions, i-frame playlists, parts, preload hints). Each URI is resolved against `baseUrl`; http(s)
  * results are replaced by `link(absoluteUrl, kind)`, anything else (`data:`, `skd:`, unparsable) is kept as it is.
- * Line endings are normalized to `\n`; a leading BOM is dropped.
+ * Line endings are normalized to `\n`; a leading BOM is dropped. Throws PlaylistTooLarge past one of `limits`
+ * (a URL too long to rewrite is refused, not passed on as it is).
  */
-export function rewritePlaylist(text: string, baseUrl: string, link: (url: string, kind: LinkKind) => string): string {
+export function rewritePlaylist(text: string, baseUrl: string, link: (url: string, kind: LinkKind) => string, limits: RewriteLimits = NO_LIMITS): string {
   const rewrite = (uri: string, kind: LinkKind): string => {
     let abs: URL;
     try {
@@ -32,11 +48,15 @@ export function rewritePlaylist(text: string, baseUrl: string, link: (url: strin
     }
     if (abs.protocol !== "http:" && abs.protocol !== "https:") return uri;
     abs.hash = "";
+    if (abs.href.length > limits.maxUrlLength) throw new PlaylistTooLarge(`a URI longer than ${limits.maxUrlLength} characters`);
     return link(abs.href, kind);
   };
 
   let nextIsPlaylist = false;
-  const lines = withoutBom(text).split(LINE_BREAK).map((line) => {
+  let length = 0;
+  const input = withoutBom(text).split(LINE_BREAK);
+  if (input.length > limits.maxLines) throw new PlaylistTooLarge(`more than ${limits.maxLines} lines`);
+  const rewriteLine = (line: string): string => {
     const trimmed = line.trim();
     if (trimmed === "") return line;
     if (trimmed.startsWith("#")) {
@@ -50,6 +70,12 @@ export function rewritePlaylist(text: string, baseUrl: string, link: (url: strin
     const kind: LinkKind = nextIsPlaylist ? "p" : "r";
     nextIsPlaylist = false;
     return rewrite(trimmed, kind);
+  };
+  const lines = input.map((line) => {
+    const out = rewriteLine(line);
+    length += out.length + 1;
+    if (length > limits.maxLength) throw new PlaylistTooLarge(`more than ${limits.maxLength} characters rewritten`);
+    return out;
   });
   return lines.join("\n");
 }

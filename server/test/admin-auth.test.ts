@@ -16,10 +16,9 @@ test("admin auth: ten failures lock the address out until the window ends, even 
   const tv = await s.pair("Salon");
   const devices = (token: string | null) => s.call("GET", "/api/v1/admin/devices", { token });
 
-  // Nine failures (wrong tokens on one route, missing ones on another); the right token keeps working in between and
-  // is never counted.
+  // Nine failures (wrong tokens on two routes); the right token keeps working in between and is never counted.
   for (let i = 0; i < 9; i++) {
-    const r = i % 3 === 2 ? await devices(null) : await s.call("POST", "/api/v1/admin/pair/approve", { token: GUESS, body: { code: "123456" } });
+    const r = i % 3 === 2 ? await devices(GUESS) : await s.call("POST", "/api/v1/admin/pair/approve", { token: GUESS, body: { code: "123456" } });
     assert.equal(r.status, 401);
     assert.equal(r.headers.get("www-authenticate"), 'Bearer realm="izle-admin"', "a 401 still signs the admin page out");
     assert.equal((await devices(ADMIN_TOKEN)).status, 200);
@@ -53,7 +52,7 @@ test("admin auth: ten failures lock the address out until the window ends, even 
   assert.ok(failed.every((l) => l.level === "warn" && l.client === "127.0.0.1"));
   assert.deepEqual(
     failed.slice(0, 3).map((l) => [l.route, l.reason]),
-    [["/api/v1/admin/pair/approve", "wrong token"], ["/api/v1/admin/pair/approve", "wrong token"], ["/api/v1/admin/devices", "no token"]],
+    [["/api/v1/admin/pair/approve", "wrong token"], ["/api/v1/admin/pair/approve", "wrong token"], ["/api/v1/admin/devices", "wrong token"]],
     "the route template and what was wrong",
   );
   const locked = logged(s, "admin auth locked out");
@@ -67,6 +66,24 @@ test("admin auth: ten failures lock the address out until the window ends, even 
       assert.ok(!line.includes(secret), `leaked ${secret}: ${line}`);
     }
   }
+});
+
+test("admin auth: requests without a token answer 401 but never count toward the lockout", async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  // What another site's page in the owner's browser can send: no credentials, cross-site fetch metadata.
+  const crossSite = { "Origin": "https://elsewhere.example", "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "no-cors" };
+  for (let i = 0; i < 50; i++) {
+    const r = await s.call("GET", "/api/v1/admin/devices", { token: null, headers: crossSite });
+    assert.equal(r.status, 401);
+    assert.equal(r.headers.get("www-authenticate"), 'Bearer realm="izle-admin"', "a 401 still signs the admin page out");
+  }
+  assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: ADMIN_TOKEN })).status, 200, "the owner is not locked out");
+  assert.equal(logged(s, "admin auth failed").length, 0, "nor are they logged as failures");
+
+  for (let i = 0; i < 9; i++) assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: GUESS })).status, 401);
+  assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: null })).status, 401, "a tokenless request is not the tenth failure");
+  assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: ADMIN_TOKEN })).status, 200);
 });
 
 test("admin auth: behind a trusted reverse proxy each X-Forwarded-For client is counted on its own", async (t) => {
@@ -86,6 +103,72 @@ test("admin auth: behind a trusted reverse proxy each X-Forwarded-For client is 
   assert.deepEqual(logged(s, "admin auth failed").map((l) => l.client), [...Array<string>(10).fill("203.0.113.1"), "203.0.113.2"]);
   assert.deepEqual(logged(s, "admin auth locked out").map((l) => l.client), ["203.0.113.1"]);
   assert.ok(!s.logs.some((l) => l.includes(GUESS) || l.includes(ADMIN_TOKEN)));
+});
+
+test("admin auth: an IPv6 client is counted by its /64, so it cannot escape the lockout by changing addresses", async (t) => {
+  const s = await startTestServer({ configFile: { trustedProxies: ["127.0.0.1", "::1"] } });
+  t.after(() => s.close());
+  const devices = (client: string, token: string) => s.call("GET", "/api/v1/admin/devices", { token, headers: { "X-Forwarded-For": client } }).then((r) => r.status);
+  for (let i = 0; i < 10; i++) assert.equal(await devices(`2001:db8:1:2::${(i + 1).toString(16)}`, GUESS), 401);
+  assert.equal(await devices("2001:db8:1:2:ffff::1", GUESS), 429, "a fresh address in the same /64 is locked out");
+  assert.equal(await devices("2001:db8:1:3::1", ADMIN_TOKEN), 200, "the next /64 is not");
+  assert.deepEqual(logged(s, "admin auth failed").map((l) => l.client).slice(0, 2), ["2001:db8:1:2::1", "2001:db8:1:2::2"], "the log keeps the full address");
+});
+
+test("RateLimiter: each hit drops a few expired windows, oldest first, without scanning the others", () => {
+  let now = 0;
+  const limiter = new RateLimiter(10, 60_000, () => now);
+  // Count every window the limiter's own map yields to an iteration.
+  let visited = 0;
+  const windows = limiter["windows"];
+  const iterate = windows[Symbol.iterator].bind(windows);
+  Object.defineProperty(windows, Symbol.iterator, {
+    *value() {
+      for (const entry of iterate()) {
+        visited++;
+        yield entry;
+      }
+    },
+  });
+  for (let i = 0; i < 20_000; i++) limiter.hit(`k${i}`);
+  assert.equal(limiter.size, 20_000);
+  visited = 0;
+  for (let i = 0; i < 1000; i++) limiter.hit(`live${i}`);
+  assert.ok(visited <= 1000, `upkeep looked at ${visited} windows for 1000 hits on 21,000 live ones`);
+
+  now = 60_000;
+  visited = 0;
+  for (let i = 0; i < 100; i++) limiter.hit("one");
+  assert.ok(visited <= 300, `upkeep looked at ${visited} windows for 100 hits`);
+  assert.equal(limiter.size, 21_000 - 200 + 1, "two expired windows dropped per hit");
+  for (let i = 0; i < 20_000; i++) limiter.hit("one");
+  assert.equal(limiter.size, 1, "until only the live one is left");
+
+  // A key whose window restarts moves to the end, so the oldest windows stay at the front.
+  now = 0;
+  const order = new RateLimiter(10, 1000, () => now);
+  order.hit("a");
+  now = 500;
+  order.hit("b");
+  now = 1000;
+  order.hit("a");
+  now = 1500;
+  order.hit("c");
+  assert.equal(order.size, 2, "b expired and was dropped; a (restarted) was not");
+  assert.equal(order.check("a").ok, true);
+});
+
+test("RateLimiter: when full, a new key evicts the oldest window", () => {
+  let now = 0;
+  const limiter = new RateLimiter(1, 60_000, () => now, 3);
+  for (const k of ["a", "b", "c"]) assert.equal(limiter.hit(k).ok, true);
+  assert.equal(limiter.hit("a").ok, false);
+  now = 1;
+  limiter.hit("d");
+  assert.equal(limiter.size, 3, "the table does not grow past its maximum");
+  assert.equal(limiter.check("a").ok, true, "the oldest window (a) was evicted");
+  assert.equal(limiter.check("d").ok, false);
+  assert.equal(limiter.hit("b").ok, false, "the others are still counted");
 });
 
 test("RateLimiter.check reports a used-up key without counting a hit", () => {

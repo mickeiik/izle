@@ -2,9 +2,12 @@
 // reads it with fetch), and a long-poll for clients that cannot keep a stream open (MCP tools, scripts).
 
 import type { Context, Hono } from "hono";
-import { streamSSE } from "hono/streaming";
+import type { StreamingApi } from "hono/utils/stream";
+import { streamSSE, type SSEStreamingApi } from "hono/streaming";
+import { limiterKey } from "../../clientip.ts";
 import type { AppContext } from "../../context.ts";
-import { EVENT_LIST_DEFAULT, EVENT_LIST_MAX, EVENT_TYPE, MAX_EVENT_WAIT_MS, type Event } from "../../eventlog.ts";
+import { tooManyRequests, unauthorized } from "../../errors.ts";
+import { EVENT_LIST_DEFAULT, EVENT_LIST_MAX, EVENT_REPLAY_MAX, EVENT_TYPE, MAX_EVENT_WAIT_MS, type Event } from "../../eventlog.ts";
 import type { EventFilter } from "../../store.ts";
 import { intQuery, isId, limitQuery, listQuery, parseWait } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
@@ -24,8 +27,32 @@ function passes(e: Event, f: Pick<EventFilter, "devices" | "types">): boolean {
   return true;
 }
 
-export function registerAdminEvents(app: Hono<Env>, ctx: AppContext): void {
+/** Frames a stream may have waiting for a reader that fell behind before it is closed (it reconnects and replays). */
+export const MAX_QUEUED_FRAMES = 2 * EVENT_REPLAY_MAX;
+/** Event streams open at once per access token, and for the owner token per client address. */
+export const MAX_ADMIN_STREAMS = 10;
+
+/**
+ * One writer for a stream's frames, in the order they were queued. When more than `max` wait (the reader stopped
+ * reading), the stream is aborted instead of queuing without bound.
+ */
+export function frameWriter(stream: Pick<StreamingApi, "abort" | "aborted">, max: number): (frame: () => Promise<unknown>) => void {
+  let queue: Promise<unknown> = Promise.resolve();
+  let waiting = 0;
+  return (frame) => {
+    if (stream.aborted) return;
+    if (++waiting > max) return stream.abort();
+    queue = queue
+      .then(frame)
+      .catch(() => stream.abort())
+      .finally(() => waiting--);
+  };
+}
+
+export function registerAdminEvents(app: Hono<Env>, ctx: AppContext, clientKey: (c: Context) => string): void {
   const { eventLog } = ctx;
+  /** Open streams per access token id, or per client address for the owner. */
+  const open = new Map<string, number>();
 
   app.get("/api/v1/admin/events", async (c) => {
     const after = intQuery(c.req.query("after"), "after", 0);
@@ -34,42 +61,62 @@ export function registerAdminEvents(app: Hono<Env>, ctx: AppContext): void {
     const f = filters(c);
     // Without `after` the caller is finding out where to start following from.
     if (after === undefined) return c.json({ events: [], last: eventLog.lastId(), gap: false });
-    return c.json(await eventLog.wait({ after, limit, ...f }, waitSec * 1000, c.req.raw.signal));
+    // A token revoked while its long-poll waits gets the 401 any later request would.
+    const actor = c.get("actor");
+    const revoked = new AbortController();
+    const unregister = actor.type === "token" ? ctx.tokens.onRevoke(actor.tokenId, () => revoked.abort()) : () => {};
+    try {
+      const page = await eventLog.wait({ after, limit, ...f }, waitSec * 1000, AbortSignal.any([c.req.raw.signal, revoked.signal]));
+      if (revoked.signal.aborted) throw unauthorized("izle-admin", "missing or invalid admin token");
+      return c.json(page);
+    } finally {
+      unregister();
+    }
   });
 
   // Replays the stored events after `after` / `Last-Event-ID`, then the live ones; without either, live ones only.
   app.get("/api/v1/admin/events/stream", (c) => {
     const after = intQuery(c.req.query("after") ?? c.req.header("Last-Event-ID"), "after", 0);
     const f = filters(c);
+    const actor = c.get("actor");
+    const tokenId = actor.type === "token" ? actor.tokenId : null;
+    const key = tokenId === null ? `owner ${limiterKey(clientKey(c))}` : `token ${tokenId}`;
+    const count = open.get(key) ?? 0;
+    if (count >= MAX_ADMIN_STREAMS) throw tooManyRequests("too_many_streams", "too many event streams are open with this token", 5);
+    open.set(key, count + 1);
+    const release = () => {
+      const left = (open.get(key) ?? 1) - 1;
+      if (left > 0) open.set(key, left);
+      else open.delete(key);
+    };
     c.header("X-Accel-Buffering", "no");
-    return streamSSE(c, async (stream) => {
+    return streamSSE(c, (stream) => follow(stream).finally(release));
+
+    async function follow(stream: SSEStreamingApi): Promise<void> {
       let ping: ReturnType<typeof setInterval> | undefined;
       const closed = new Promise<void>((resolve) => stream.onAbort(resolve));
-      // Every frame goes through one writer, in the order it was queued.
-      let queue: Promise<unknown> = Promise.resolve();
-      const write = (frame: () => Promise<unknown>) => void (queue = queue.then(frame).catch(() => stream.abort()));
+      const write = frameWriter(stream, MAX_QUEUED_FRAMES);
       const send = (e: Event) => write(() => stream.writeSSE({ id: String(e.id), event: e.type, data: JSON.stringify(e) }));
       // The stored events are read and the live subscription made in one synchronous run (the store is synchronous,
       // so nothing is committed in between): no event is missed, none is sent twice.
-      const replay: Event[] = [];
-      let gap = false;
-      for (let from = after; from !== undefined; ) {
-        const page = eventLog.list({ after: from, limit: EVENT_LIST_MAX, ...f });
-        if (from === after) gap = page.gap;
-        replay.push(...page.events);
-        from = page.events.length < EVENT_LIST_MAX ? undefined : page.last;
-      }
+      const replay = after === undefined ? null : eventLog.replay({ after, limit: EVENT_REPLAY_MAX, ...f });
       const unsubscribe = eventLog.subscribe((e) => void (passes(e, f) && send(e)));
+      // Revoking the access token the stream was opened with ends it at once; each ping checks again.
+      const unregister = tokenId === null ? () => {} : ctx.tokens.onRevoke(tokenId, () => stream.abort());
       try {
         write(() => stream.write("retry: 5000\n\n"));
-        if (gap) write(() => stream.writeSSE({ event: "gap", data: JSON.stringify({ oldest: eventLog.oldestId() }) }));
-        for (const e of replay) send(e);
-        ping = setInterval(() => void stream.write(": ping\n\n").catch(() => stream.abort()), ctx.pingMs);
+        if (replay?.gap) write(() => stream.writeSSE({ event: "gap", data: JSON.stringify({ oldest: replay.oldest }) }));
+        for (const e of replay?.events ?? []) send(e);
+        ping = setInterval(() => {
+          if (tokenId !== null && !ctx.tokens.exists(tokenId)) stream.abort();
+          else write(() => stream.write(": ping\n\n"));
+        }, ctx.pingMs);
         await closed;
       } finally {
         clearInterval(ping);
         unsubscribe();
+        unregister();
       }
-    });
+    }
   });
 }

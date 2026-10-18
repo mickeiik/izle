@@ -170,6 +170,40 @@ contract share one version number. How to update (back up, update the server, th
 - **The TV's clock changes language at once** when the owner switches the menu language while Home shows (it kept
   "PM" for up to a minute after a switch to Turkish).
 
+### Security
+
+- **Requests without a token no longer count toward the admin sign-in lockout:** they still answer 401, but another
+  site's page open in the owner's browser can no longer lock the owner out of the admin API for 10 minutes by sending
+  tokenless requests to it. Wrong and revoked tokens are counted as before.
+- **Revoking an access token ends the admin event stream it has open:** a stream opened with the token closed
+  only when the client disconnected, so it went on receiving events after the revocation; it now ends at once (and
+  at the next ping, should the token be gone some other way), and a long-poll waiting with it answers 401.
+- **The admin event stream's work is bounded:** opening it replays at most the newest 500 stored events (after a
+  `gap`, so the admin page re-reads what it shows) instead of the whole retained log in one go, a client that stops
+  reading is disconnected instead of queuing events for it without end, and each access token (or, for the owner
+  token, each client address) may have at most 10 streams open (`429 too_many_streams`).
+- **The per-address limits count an IPv6 client by its /64**, so one client cannot get a fresh pair/start allowance
+  or admin sign-in budget by changing addresses, and their bookkeeping costs the same per request however many
+  addresses are seen: it no longer scans every tracked address on each request once 10,000 are tracked, and holds
+  at most 50,000.
+- **A rewritten playlist stays in bounds:** every link the media proxy writes into a playlist embeds its URL, so an
+  upstream playlist of many short lines behind a long URL could grow a hundredfold and stall the server while it
+  was rewritten. A playlist with more than 250,000 lines, more than 16 MiB once rewritten, or a URI longer than 4096
+  characters now answers 502 `playlist_too_large` and is reported, like one over 4 MiB.
+- **`admin-token --rotate` no longer leaves the old token valid when `IZLE_ADMIN_TOKEN` is set:** it wrote a new
+  token file that the server ignored in favour of the variable. It now refuses with a message to change or remove
+  the variable, and the server warns at startup ("IZLE_ADMIN_TOKEN overrides the admin token file") when the
+  variable shadows a token file.
+- **Self-hosting guide: the admin token stays out of the unit's `Environment=`.** The guide offered
+  `IZLE_ADMIN_TOKEN` in the systemd unit's environment as an alternative to the token file, but systemd shows a
+  unit's `Environment=` to every local user. It now says to keep the token in the token file, or, if the variable
+  is needed, in a root-only `EnvironmentFile=`.
+- **Log redaction catches more:** protocol-relative URLs (`//host/…`) are reduced to their host like other URLs,
+  playlist text (a string starting with `#EXTM3U`) is written as `<playlist>` whatever the field is called, and an
+  error's class name is kept only when it is a short identifier, scrubbed like any string. The resolver module spec
+  now describes the redaction as the heuristic it is: modules must not pass header maps, refs, config, playlist
+  text, URLs or tokens to `ctx.log` in any shape.
+
 ### Compatibility
 
 - **Database migrations 3 and 4**, applied on the first start; an older server refuses the migrated database. To go

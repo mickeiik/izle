@@ -159,6 +159,15 @@ test("cli: admin-token --link prints the sign-in link and its QR code", async (t
   await refused(["--link", "--config", s.config.configPath!], 2, /--link belongs to the admin-token command/);
 });
 
+test("cli: admin-token --rotate is refused while IZLE_ADMIN_TOKEN is set, and the token stays", async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  await refused(["admin-token", "--rotate", "--config", s.config.configPath!], 1, /IZLE_ADMIN_TOKEN is set and overrides the token file.*change or remove the variable/);
+  const r = await run(["admin-token", "--config", s.config.configPath!]);
+  assert.deepEqual([r.code, r.out], [0, `${ADMIN_TOKEN}\n`]);
+  assert.match(r.err, /note: IZLE_ADMIN_TOKEN is set and overrides the token file/);
+});
+
 test("shell helpers: local address, link base and link format", () => {
   const config = (listen: { host: string; port: number }, publicUrl: string | null = null) => ({ listen, publicUrl }) as any;
   assert.equal(localServerUrl(config({ host: "0.0.0.0", port: 8787 })), "http://127.0.0.1:8787");

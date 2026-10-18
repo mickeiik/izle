@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { EVENT_REPLAY_MAX } from "../src/eventlog.ts";
+import { frameWriter, MAX_ADMIN_STREAMS } from "../src/http/routes/admin-events.ts";
 import { ADMIN_TOKEN, eventually, openEvents, publishBuild, startTestServer, type Json, type TestServer } from "./helpers.ts";
 
 const types = (events: Json[]) => events.map((e) => e.type);
@@ -168,6 +170,90 @@ test("stream: retry, replay from after or Last-Event-ID (gap first), then live e
   const gap = await behind.next();
   assert.deepEqual([gap.event, JSON.parse(gap.data!)], ["gap", { oldest: 8 }]);
   assert.equal((await behind.next()).id, "8");
+});
+
+test("stream: a replay sends at most the newest 500 events, after a gap naming where it starts", async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  const { store } = s.srv.ctx;
+  store.transaction(() => {
+    for (let i = 0; i < 3 * EVENT_REPLAY_MAX; i++) store.insertEvent({ at: s.clock.now(), type: "device.updated", deviceId: null, actor: { type: "server" }, data: { fields: ["name"] } });
+  });
+  const last = (await admin(s, "")).json.last as number;
+
+  const es = await openAdminStream(s, "?after=0");
+  t.after(() => es.close());
+  assert.equal((await es.next()).retry, "5000");
+  const gap = await es.next();
+  assert.deepEqual([gap.event, JSON.parse(gap.data!)], ["gap", { oldest: last - EVENT_REPLAY_MAX + 1 }]);
+  const ids: number[] = [];
+  for (let i = 0; i < EVENT_REPLAY_MAX; i++) ids.push(Number((await es.next()).id));
+  assert.deepEqual(ids, Array.from({ length: EVENT_REPLAY_MAX }, (_, i) => last - EVENT_REPLAY_MAX + 1 + i), "the newest ones, oldest first");
+  await s.admin("POST", "/catalog/reload");
+  assert.equal(Number((await es.next()).id), last + 1, "then the live ones");
+
+  // Exactly the cap: everything, no gap.
+  const exact = await openAdminStream(s, `?after=${last + 1 - EVENT_REPLAY_MAX}`);
+  t.after(() => exact.close());
+  await exact.next();
+  assert.equal((await exact.next()).id, String(last + 2 - EVENT_REPLAY_MAX), "no gap first");
+});
+
+test("stream: a writer closes the stream once more frames wait than it may queue", async () => {
+  const stalled = { aborted: false, aborts: 0, abort() { this.aborts++; this.aborted = true; } };
+  const write = frameWriter(stalled, 3);
+  let started = 0;
+  // The reader never reads: the first frame never completes, the rest wait behind it.
+  for (let i = 0; i < 10; i++) write(() => (started++, new Promise(() => {})));
+  await new Promise((r) => setImmediate(r));
+  assert.equal(stalled.aborts, 1, "aborted when the fourth frame was queued, once");
+  assert.equal(started, 1, "frames run one at a time");
+
+  const flowing = { aborted: false, aborts: 0, abort() { this.aborts++; this.aborted = true; } };
+  const writeFlowing = frameWriter(flowing, 3);
+  let written = 0;
+  for (let round = 0; round < 50; round++) {
+    for (let i = 0; i < 3; i++) writeFlowing(async () => void written++);
+    await new Promise((r) => setImmediate(r));
+  }
+  assert.deepEqual([flowing.aborts, written], [0, 150], "a reader that keeps up is never cut off");
+});
+
+test("stream: at most 10 open per access token and per client address for the owner token", async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  const token = (await s.admin("POST", "/tokens", { name: "agent", scope: "read" })).json;
+  const route = "/api/v1/admin/events/stream";
+  const streams = [];
+  for (let i = 0; i < MAX_ADMIN_STREAMS; i++) {
+    const es = await openEvents(s.base, token.secret, route);
+    t.after(() => es.close());
+    assert.equal(es.status, 200);
+    await es.next();
+    streams.push(es);
+  }
+  const refused = await s.call("GET", route, { token: token.secret });
+  assert.deepEqual([refused.status, refused.json.error, refused.headers.get("retry-after")], [429, "too_many_streams", "5"]);
+  const other = (await s.admin("POST", "/tokens", { name: "other", scope: "read" })).json;
+  const otherStream = await openEvents(s.base, other.secret, route);
+  t.after(() => otherStream.close());
+  assert.equal(otherStream.status, 200, "another token has its own count");
+  const ownerStream = await openEvents(s.base, ADMIN_TOKEN, route);
+  t.after(() => ownerStream.close());
+  assert.equal(ownerStream.status, 200, "and so does the owner");
+
+  streams.pop()!.close();
+  await eventually(() => s.srv.ctx.eventLog["subscribers"].size === MAX_ADMIN_STREAMS + 1, 2000);
+  const again = await openEvents(s.base, token.secret, route);
+  t.after(() => again.close());
+  assert.equal(again.status, 200, "a closed stream frees its place");
+
+  for (let i = 1; i < MAX_ADMIN_STREAMS; i++) {
+    const es = await openEvents(s.base, ADMIN_TOKEN, route);
+    t.after(() => es.close());
+    assert.equal(es.status, 200);
+  }
+  assert.equal((await s.call("GET", route, { token: ADMIN_TOKEN })).status, 429, "the owner token is counted per address");
 });
 
 test("online: a TV is online while a stream is open and for the grace period after; a reconnect does not flap; events say so", async (t) => {

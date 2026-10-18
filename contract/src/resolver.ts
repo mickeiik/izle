@@ -22,7 +22,12 @@ export interface AdapterContext {
   /** A directory the module may use for its own state (created by the server). */
   dataDir: string;
   fetch: typeof fetch;
-  /** Redacted logger: URLs, tokens, headers and refs are stripped before anything is written. */
+  /**
+   * The server's logger. Its redaction is a heuristic (fields named like url/headers/token/ref/config/playlist are
+   * dropped; URLs, playlist text and runs of 20+ base64url characters are scrubbed from strings; anything else is
+   * written as given), so never pass header maps, `req.ref`, `config`, playlist text, URLs or tokens to it, in any
+   * shape: not as `fields`, not nested, not in `msg`.
+   */
   log(level: LogLevel, msg: string, fields?: Record<string, unknown>): void;
 }
 

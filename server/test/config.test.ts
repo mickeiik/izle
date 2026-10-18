@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { loadAdminToken, newId } from "../src/auth.ts";
 import { ConfigError, loadConfig, SAMPLE_CATALOG_DIR } from "../src/config.ts";
 import { isId } from "../src/validation.ts";
-import { silentLogger, tempDir } from "./helpers.ts";
+import { createLogger } from "../src/log.ts";
+import { ADMIN_TOKEN, silentLogger, startTestServer, tempDir } from "./helpers.ts";
 
 test("defaults without a config file", () => {
   const c = loadConfig({ cwd: "/srv/izle", env: {} });
@@ -103,6 +104,35 @@ test("the admin token file: rotated on request, refused when short, needed with 
   writeFileSync(c.admin.tokenFile, "too-short\n");
   assert.throws(() => loadAdminToken(c, silentLogger), ConfigError);
   assert.throws(() => loadAdminToken(loadConfig({ cwd: path.join(dir, "elsewhere"), env: {} }), silentLogger, { create: false }), /does not exist/);
+});
+
+test("--rotate is refused while IZLE_ADMIN_TOKEN is set: it would leave the token in use valid", async () => {
+  const dir = await tempDir();
+  const c = loadConfig({ cwd: dir, env: { IZLE_ADMIN_TOKEN: "x".repeat(24) } });
+  assert.throws(() => loadAdminToken(c, silentLogger, { rotate: true }), (e) => e instanceof ConfigError && /IZLE_ADMIN_TOKEN is set .* change or remove the variable/.test(e.message));
+  assert.equal(existsSync(c.admin.tokenFile), false, "no token file was written");
+});
+
+test("a token file shadowed by IZLE_ADMIN_TOKEN is warned about at startup, and its token is refused", async (t) => {
+  const dir = await tempDir();
+  const fileToken = "rotated-without-the-variable-0123456789";
+  const tokenFile = path.join(dir, "admin.token");
+  writeFileSync(tokenFile, `${fileToken}\n`, { mode: 0o600 });
+  const s = await startTestServer({ configFile: { admin: { tokenFile } } });
+  t.after(() => s.close());
+  const warned = s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg.startsWith("IZLE_ADMIN_TOKEN overrides the admin token file"));
+  assert.deepEqual(warned.map((l) => [l.level, l.file]), [["warn", tokenFile]]);
+  assert.equal((await s.call("GET", "/api/v1/admin/status", { token: fileToken })).status, 401);
+  assert.equal((await s.call("GET", "/api/v1/admin/status", { token: ADMIN_TOKEN })).status, 200);
+  assert.ok(!s.logs.some((l) => l.includes(fileToken) || l.includes(ADMIN_TOKEN)), "neither token is logged");
+
+  // Without a token file nothing is said; the CLI (which says so on its own) does not ask for the warning.
+  const lines: string[] = [];
+  const log = createLogger({ write: (l) => void lines.push(l) });
+  const noFile = loadConfig({ cwd: path.join(dir, "none"), env: { IZLE_ADMIN_TOKEN: "x".repeat(24) } });
+  loadAdminToken(noFile, log, { warnShadowed: true });
+  loadAdminToken(loadConfig({ cwd: dir, env: { IZLE_ADMIN_TOKEN: "x".repeat(24) } }), log);
+  assert.deepEqual(lines, []);
 });
 
 test("generated ids are alphanumeric and valid ids", () => {
