@@ -88,7 +88,7 @@ class SeniorInvariantsTest {
     /** An owner's message (shown for 5 s) that the event stream hands out once, on the TV's next connection. */
     @Volatile private var message: String? = null
 
-    /** The APK the server offers as version 0.3.0. */
+    /** The APK the server offers as version 99.0.0. */
     private val apk = ByteArray(4_000) { it.toByte() }
     private val installs = CopyOnWriteArrayList<Boolean>()
 
@@ -107,7 +107,7 @@ class SeniorInvariantsTest {
                         MockResponse.Builder().code(200).addHeader("Content-Type", "text/event-stream")
                             .body("event: command\ndata: $command\n\n").build()
                     } ?: json(404, """{"error":"not_found"}""")
-                    "/api/v1/tv/app" -> json(200, """{"versionName":"0.3.0","versionCode":300,"sha256":"${sha256(apk)}","size":${apk.size},"auto":false}""")
+                    "/api/v1/tv/app" -> json(200, """{"versionName":"99.0.0","versionCode":990000,"sha256":"${sha256(apk)}","size":${apk.size},"auto":false}""")
                     "/api/v1/tv/app/apk" -> MockResponse.Builder().body(Buffer().write(apk)).build()
                     // resolve included: nothing is playable.
                     else -> json(404, """{"error":"not_found"}""")
@@ -354,7 +354,7 @@ class SeniorInvariantsTest {
         tv.onActivity { vm(it).onSettingsEntry(SettingsEntry.InstallUpdate) }
         waitUntil("the press OK screen") { exists(string(R.string.update_press_ok)) }
         compose.onNodeWithText(string(R.string.update_overline)).assertIsDisplayed()
-        compose.onNodeWithText("0.3.0").assertIsDisplayed()
+        compose.onNodeWithText("99.0.0").assertIsDisplayed()
         compose.onNodeWithText(string(R.string.auto_home_countdown, 60)).assertIsDisplayed()
         compose.onNodeWithText(string(R.string.not_now)).assertIsDisplayed()
         assertAllTextAtLeast24Sp()

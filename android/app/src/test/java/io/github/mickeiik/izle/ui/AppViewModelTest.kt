@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.test.core.app.ApplicationProvider
+import io.github.mickeiik.izle.BuildConfig
 import io.github.mickeiik.izle.IzleApp
 import io.github.mickeiik.izle.data.api.ContinueInfo
 import io.github.mickeiik.izle.data.api.EpisodeDetails
@@ -108,7 +109,7 @@ class AppViewModelTest {
                     }
                     path.endsWith("/ack") || path.endsWith("/result") -> json(200, """{"ok":true}""")
                     path == "/api/v1/tv/app" -> apk?.let { bytes ->
-                        json(200, """{"versionName":"0.3.0","versionCode":300,"sha256":"${sha256(bytes)}","size":${bytes.size},"auto":$apkAuto}""")
+                        json(200, """{"versionName":"99.0.0","versionCode":990000,"sha256":"${sha256(bytes)}","size":${bytes.size},"auto":$apkAuto}""")
                     } ?: MockResponse.Builder().code(204).build()
                     path == "/api/v1/tv/app/apk" -> apk?.let { bytes ->
                         MockResponse.Builder().addHeader("Content-Type", "application/vnd.android.package-archive").body(Buffer().write(bytes)).build()
@@ -477,13 +478,13 @@ class AppViewModelTest {
         grantInstalls(false)
         val vm = startTvOnHome()
         assertEquals(UpdateCapability.Guided, app.graph.updater.capability.value)
-        assertEquals("izle-tv/0.2.0 (Android 36; 200; guided)", requests.last { it.url.encodedPath == "/api/v1/tv/state" }.headers["User-Agent"])
+        assertEquals("izle-tv/${BuildConfig.VERSION_NAME} (Android 36; ${BuildConfig.VERSION_CODE}; guided)", requests.last { it.url.encodedPath == "/api/v1/tv/state" }.headers["User-Agent"])
         vm.openMenu()
-        val id = command("update", """{"versionCode":300}""")
-        waitUntil("the press OK screen") { vm.screen.value == Screen.Update(UpdateUi("0.3.0", UpdatePhase.Prompt(UpdatePlan.GUIDED_TIMEOUT_SEC))) }
+        val id = command("update", """{"versionCode":990000}""")
+        waitUntil("the press OK screen") { vm.screen.value == Screen.Update(UpdateUi("99.0.0", UpdatePhase.Prompt(UpdatePlan.GUIDED_TIMEOUT_SEC))) }
         assertNull("the menu closed", vm.menu.value)
         advance(1_000)
-        assertEquals(Screen.Update(UpdateUi("0.3.0", UpdatePhase.Prompt(59))), vm.screen.value)
+        assertEquals(Screen.Update(UpdateUi("99.0.0", UpdatePhase.Prompt(59))), vm.screen.value)
         vm.onBack()
         assertEquals(Screen.Home, vm.screen.value)
         assertEquals("""{"result":"ignored","reason":"declined"}""", awaitResult(id))
@@ -513,16 +514,16 @@ class AppViewModelTest {
         apk = bytes
         grantInstalls(false)
         val vm = startTvOnHome()
-        val id = command("update", """{"versionCode":300}""")
+        val id = command("update", """{"versionCode":990000}""")
         waitUntil("the press OK screen") { vm.screen.value is Screen.Update }
         vm.onUpdateInstall()
-        assertEquals(Screen.Update(UpdateUi("0.3.0", UpdatePhase.Installing)), vm.screen.value)
+        assertEquals(Screen.Update(UpdateUi("99.0.0", UpdatePhase.Installing)), vm.screen.value)
         waitUntil("the install") { installer.installs.isNotEmpty() }
         val install = installer.installs.single()
         assertFalse(install.silent)
         assertTrue("the result went out before the install", install.resultSentBefore)
         assertArrayEquals(bytes, install.bytes)
-        assertEquals(listOf(300L), installer.verified)
+        assertEquals(listOf(990_000L), installer.verified)
         assertEquals("""{"result":"done","reason":"prompted"}""", awaitResult(id))
         assertEquals("Bearer device-token", requests.last { it.url.encodedPath == "/api/v1/tv/app/apk" }.headers["Authorization"])
 
@@ -544,14 +545,14 @@ class AppViewModelTest {
         grantInstalls(true)
         val vm = startTvOnHome()
         assertEquals(UpdateCapability.Silent, app.graph.updater.capability.value)
-        val id = command("update", """{"versionCode":300}""")
+        val id = command("update", """{"versionCode":990000}""")
         waitUntil("the install") { installer.installs.isNotEmpty() }
         val install = installer.installs.single()
         assertTrue(install.silent)
         assertTrue("the result went out before the install", install.resultSentBefore)
         assertEquals("""{"result":"done","reason":"installing"}""", awaitResult(id))
-        assertEquals(Screen.Update(UpdateUi("0.3.0", UpdatePhase.Installing)), vm.screen.value)
-        assertEquals("izle-tv/0.2.0 (Android 36; 200; silent)", requests.last { it.url.encodedPath == "/api/v1/tv/app/apk" }.headers["User-Agent"])
+        assertEquals(Screen.Update(UpdateUi("99.0.0", UpdatePhase.Installing)), vm.screen.value)
+        assertEquals("izle-tv/${BuildConfig.VERSION_NAME} (Android 36; ${BuildConfig.VERSION_CODE}; silent)", requests.last { it.url.encodedPath == "/api/v1/tv/app/apk" }.headers["User-Agent"])
 
         // The system wants it confirmed after all: abandoned, guided from now on, the owner told, back Home.
         vm.onInstallStatus(status(PackageInstaller.STATUS_PENDING_USER_ACTION).putExtra(Intent.EXTRA_INTENT, Intent("x")))
@@ -564,7 +565,7 @@ class AppViewModelTest {
         waitUntil("the stored refusal") { runBlocking { app.graph.deviceStore.current().updateSilentRefused } }
         app.graph.repository.refreshSoon()
         waitUntil("a guided state request") {
-            requests.lastOrNull { it.url.encodedPath == "/api/v1/tv/state" }?.headers?.get("User-Agent") == "izle-tv/0.2.0 (Android 36; 200; guided)"
+            requests.lastOrNull { it.url.encodedPath == "/api/v1/tv/state" }?.headers?.get("User-Agent") == "izle-tv/${BuildConfig.VERSION_NAME} (Android 36; ${BuildConfig.VERSION_CODE}; guided)"
         }
     }
 
@@ -576,7 +577,7 @@ class AppViewModelTest {
         val vm = startTvOnHome()
         vm.onTileClicked(vm.state.value!!.home.first())
         assertEquals(Screen.Player, vm.screen.value)
-        val id = command("update", """{"versionCode":300}""")
+        val id = command("update", """{"versionCode":990000}""")
         assertEquals("""{"result":"ignored","reason":"busy"}""", awaitResult(id))
         assertEquals(Screen.Player, vm.screen.value)
         assertEquals(0, count("/api/v1/tv/app/apk"))
@@ -587,7 +588,7 @@ class AppViewModelTest {
         paired()
         grantInstalls(true)
         startTvOnHome()
-        assertEquals("""{"result":"ignored","reason":"up_to_date"}""", awaitResult(command("update", """{"versionCode":300}""")))
+        assertEquals("""{"result":"ignored","reason":"up_to_date"}""", awaitResult(command("update", """{"versionCode":990000}""")))
     }
 
     @Test
@@ -596,8 +597,8 @@ class AppViewModelTest {
         apk = ByteArray(5_000) { it.toByte() }
         grantInstalls(true)
         val vm = startTvOnHome()
-        waitUntil("the offered version") { app.graph.updater.available.value?.versionCode == 300L }
-        assertEquals("0.3.0", vm.aboutInfo().updateVersion)
+        waitUntil("the offered version") { app.graph.updater.available.value?.versionCode == 990_000L }
+        assertEquals("99.0.0", vm.aboutInfo().updateVersion)
         advance(150_000)
         vm.onKeyDown() // someone is there: the three minutes start over
         advance(150_000)
@@ -607,7 +608,7 @@ class AppViewModelTest {
         advance(60_000)
         waitUntil("the install") { installer.installs.isNotEmpty() }
         assertTrue(installer.installs.single().silent)
-        assertEquals(Screen.Update(UpdateUi("0.3.0", UpdatePhase.Installing)), vm.screen.value)
+        assertEquals(Screen.Update(UpdateUi("99.0.0", UpdatePhase.Installing)), vm.screen.value)
         assertEquals(0, requests.count { it.url.encodedPath.endsWith("/result") })
     }
 
@@ -618,7 +619,7 @@ class AppViewModelTest {
         apkAuto = false
         grantInstalls(true)
         startTvOnHome()
-        waitUntil("the offered version") { app.graph.updater.available.value?.versionCode == 300L }
+        waitUntil("the offered version") { app.graph.updater.available.value?.versionCode == 990_000L }
         advance(10 * 60_000)
         settle()
         assertTrue(installer.installs.isEmpty())
@@ -633,7 +634,7 @@ class AppViewModelTest {
         val vm = startTv()
         waitUntil("the autoplay countdown") { vm.autoplay.value != null }
         vm.cancelAutoplay()
-        val id = command("update", """{"versionCode":300}""")
+        val id = command("update", """{"versionCode":990000}""")
         waitUntil("the press OK screen") { vm.screen.value is Screen.Update }
         vm.onUpdateInstall()
         waitUntil("the install") { installer.installs.isNotEmpty() }
@@ -643,7 +644,7 @@ class AppViewModelTest {
         assertEquals("x", runBlocking { withTimeout(5_000) { vm.launchIntents.first() } }.action)
 
         // The system's dialog covers the app: it stops and comes back, still "Updating…".
-        val installing = Screen.Update(UpdateUi("0.3.0", UpdatePhase.Installing))
+        val installing = Screen.Update(UpdateUi("99.0.0", UpdatePhase.Installing))
         vm.onBackground()
         assertEquals(installing, vm.screen.value)
         val states = count("/api/v1/tv/state")
@@ -669,7 +670,7 @@ class AppViewModelTest {
         apk = ByteArray(5_000) { it.toByte() }
         grantInstalls(false)
         val vm = startTvOnHome()
-        val id = command("update", """{"versionCode":300}""")
+        val id = command("update", """{"versionCode":990000}""")
         waitUntil("the press OK screen") { vm.screen.value is Screen.Update }
         advance(1_000)
         // The server forgot this TV meanwhile.
@@ -690,10 +691,10 @@ class AppViewModelTest {
         grantInstalls(false)
         installer.installFailure = RuntimeException("installation services unavailable")
         val vm = startTvOnHome()
-        val id = command("update", """{"versionCode":300}""")
+        val id = command("update", """{"versionCode":990000}""")
         waitUntil("the press OK screen") { vm.screen.value is Screen.Update }
         vm.onUpdateInstall()
-        waitUntil("Could not update") { vm.screen.value == Screen.Update(UpdateUi("0.3.0", UpdatePhase.Failed(UpdatePlan.FAILED_HOME_SEC))) }
+        waitUntil("Could not update") { vm.screen.value == Screen.Update(UpdateUi("99.0.0", UpdatePhase.Failed(UpdatePlan.FAILED_HOME_SEC))) }
         assertEquals("""{"result":"done","reason":"prompted"}""", awaitResult(id))
         waitUntil("the problem report") {
             requests.any { it.url.encodedPath == "/api/v1/tv/problems" && it.body?.utf8().orEmpty().contains("\"code\":\"update_internal\"") }
@@ -710,7 +711,7 @@ class AppViewModelTest {
         apk = ByteArray(5_000) { it.toByte() }
         grantInstalls(true)
         val vm = startTvOnHome()
-        waitUntil("the offered version") { app.graph.updater.available.value?.versionCode == 300L }
+        waitUntil("the offered version") { app.graph.updater.available.value?.versionCode == 990_000L }
         vm.onTileClicked(vm.state.value!!.home.first())
         assertEquals(Screen.Player, vm.screen.value)
         val checks = count("/api/v1/tv/app")
