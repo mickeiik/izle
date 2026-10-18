@@ -178,6 +178,12 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     /** The update screen's countdown, or its "Updating…" time limit. */
     private var updateScreenJob: Job? = null
+
+    /**
+     * The system's Install dialog of a guided update was started and has not answered yet: it covers the app (which
+     * stops), and leaving "Updating…" for Home then would undo what the viewer is in the middle of.
+     */
+    private var confirming = false
     private var autoUpdateJob: Job? = null
 
     private val _launchIntents = Channel<Intent>(Channel.BUFFERED)
@@ -221,8 +227,9 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         // The "install unknown apps" grant may have changed while the app was away.
         updater.refreshCapability()
         startAutoUpdates()
-        // Autoplay on start: the app starts, or comes back from the launcher / standby, on Home.
-        autoplayArmed = _screen.value == Screen.Home || _screen.value == Screen.Starting
+        // Autoplay on start: the app starts, or comes back from the launcher / standby, on Home (not from the
+        // system's Install dialog).
+        autoplayArmed = !confirming && (_screen.value == Screen.Home || _screen.value == Screen.Starting)
         when (_screen.value) {
             // On the server address screen too: Back from there returns to a live Home.
             Screen.Home, Screen.Player, is Screen.Setup, is Screen.Update -> repository.start()
@@ -231,11 +238,14 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
-    /** HOME was pressed or the TV went to standby: save progress, release the player; we come back on Home. */
+    /**
+     * HOME was pressed or the TV went to standby: save progress, release the player; we come back on Home. Not while
+     * the system's Install dialog is over the app: "Updating…" waits for its answer.
+     */
     fun onBackground() {
         foreground = false
         autoUpdateJob?.cancel()
-        leaveUpdateScreen()
+        if (!confirming) leaveUpdateScreen()
         clearAutoplay()
         banners.clear()
         if (_screen.value == Screen.Player || player.inUse) {
@@ -351,6 +361,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     private fun showPairing() {
         clearAutoplay()
+        endUpdateScreen()
         _screen.value = Screen.Pairing
         _pairing.value = PairingUi(adminUrl = serverUrl?.let(ServerUrls::adminPage).orEmpty())
         startPairing()
@@ -560,6 +571,14 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         updateScreenJob?.cancel()
         updateScreenJob = viewModelScope.launch {
             countDown(UpdatePlan.GUIDED_TIMEOUT_SEC) { left ->
+                // Something else took the screen meanwhile: it stays.
+                if (left < UpdatePlan.GUIDED_TIMEOUT_SEC && _screen.value !is Screen.Update) {
+                    if (prompt === request) {
+                        prompt = null
+                        request.report(CommandResult.ignored(CommandResult.DECLINED))
+                    }
+                    return@launch
+                }
                 _screen.value = Screen.Update(UpdateUi(request.update.versionName, UpdatePhase.Prompt(left)))
             }
             endPrompt(CommandResult.TIMEOUT)
@@ -590,15 +609,23 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
      * a guided install still downloading; one already handed to the system goes on.
      */
     private fun leaveUpdateScreen() {
-        if (prompt != null) return endPrompt(CommandResult.DECLINED)
+        endUpdateScreen()
+        if (_screen.value is Screen.Update) showHome()
+    }
+
+    /** What the update screen was doing ends as [leaveUpdateScreen] ends it, for a screen that takes its place. */
+    private fun endUpdateScreen() {
+        updateScreenJob?.cancel()
+        prompt?.let { request ->
+            prompt = null
+            request.report(CommandResult.ignored(CommandResult.DECLINED))
+        }
         val run = updateRun
         if (run != null && !run.committing && updateRunJob?.isActive == true && _screen.value is Screen.Update) {
             updateRunJob?.cancel()
             updateRun = null
             run.report(CommandResult.ignored(CommandResult.DECLINED))
         }
-        updateScreenJob?.cancel()
-        if (_screen.value is Screen.Update) showHome()
     }
 
     private fun showUpdatePhase(versionName: String, phase: UpdatePhase) {
@@ -615,6 +642,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         updateScreenJob?.cancel()
         updateScreenJob = viewModelScope.launch {
             delay(UpdatePlan.INSTALLING_MAX_MS)
+            confirming = false
             if ((_screen.value as? Screen.Update)?.ui?.phase == UpdatePhase.Installing) showHome()
         }
     }
@@ -623,7 +651,11 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     private fun showUpdateFailed(versionName: String) {
         updateScreenJob?.cancel()
         updateScreenJob = viewModelScope.launch {
-            countDown(UpdatePlan.FAILED_HOME_SEC) { left -> showUpdatePhase(versionName, UpdatePhase.Failed(left)) }
+            countDown(UpdatePlan.FAILED_HOME_SEC) { left ->
+                // Something else took the screen meanwhile: it stays.
+                if (left < UpdatePlan.FAILED_HOME_SEC && _screen.value !is Screen.Update) return@launch
+                showUpdatePhase(versionName, UpdatePhase.Failed(left))
+            }
             if (_screen.value is Screen.Update) showHome()
         }
     }
@@ -679,6 +711,8 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     private fun onInstallStatusEvent(status: InstallStatus) {
         val showing = (_screen.value as? Screen.Update)?.ui
+        // Any later answer means the dialog is gone (or never came).
+        confirming = status is InstallStatus.NeedsConfirmation
         when (status) {
             is InstallStatus.NeedsConfirmation -> _launchIntents.trySend(status.intent)
             InstallStatus.SilentRefused, InstallStatus.Succeeded -> if (showing != null) showHome()
@@ -690,6 +724,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     /** The system's Install dialog could not be opened. */
     fun onLaunchFailed() {
+        confirming = false
         val showing = (_screen.value as? Screen.Update)?.ui ?: return
         showUpdateFailed(showing.versionName)
     }
@@ -782,6 +817,8 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             }
             SettingsEntry.PairAgain -> viewModelScope.launch { pairAgain() }
             SettingsEntry.InstallUpdate -> {
+                // Never over the player (the row is not offered there): the video goes on.
+                if (_screen.value == Screen.Player || player.inUse) return closeMenu(resume = true)
                 closeMenu(resume = false)
                 onUpdate(versionCode = null, commandId = null, api = repository.api, report = {})
             }

@@ -55,4 +55,10 @@ object MenuPlan {
         add(RootEntry.Settings)
         add(RootEntry.About)
     }
+
+    /**
+     * The version Settings offers to install ("Install update"), if any: [updateVersion], the newer one the server
+     * offers, but never over the player (an update never interrupts playback).
+     */
+    fun installUpdateVersion(updateVersion: String?, fromPlayer: Boolean): String? = updateVersion?.takeIf { !fromPlayer }
 }

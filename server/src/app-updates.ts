@@ -135,6 +135,8 @@ export class AppUpdateService {
   private nextAt: number | null = null;
   private timer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
+  /** The tail of the commit queue: stores and removals commit and delete files one at a time. */
+  private committing: Promise<unknown> = Promise.resolve();
 
   constructor(deps: AppUpdateDeps) {
     this.s = deps;
@@ -159,10 +161,21 @@ export class AppUpdateService {
     return path.join(this.dir, `${sha256}.apk`);
   }
 
-  /** Unlinks an APK file, unless it is (again) the current one. */
+  /** Unlinks an APK file, unless it is (again) the current one. Called in `serially` only. */
   private async discard(sha256: string): Promise<void> {
     if (this.current()?.sha256 === sha256) return;
     await unlink(this.file(sha256)).catch(() => {});
+  }
+
+  /**
+   * Runs `fn` once every earlier one ended. A store's rename, its row and the deletion of the file it replaced, or a
+   * removal and the deletion of its file, never interleave with another: a file is never deleted after a concurrent
+   * store of the same bytes made it current again.
+   */
+  private serially<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.committing.then(fn);
+    this.committing = run.catch(() => {});
+    return run;
   }
 
   /**
@@ -211,8 +224,10 @@ export class AppUpdateService {
   /**
    * Stores `body` as the current APK: at most `maxBytes`, a zip (`PK\x03\x04`), with `expectedSha` when given
    * (lower-case hex). Written to a temp file, synced and renamed to its content address; the row and its event in
-   * one transaction; the file of the APK it replaces is deleted once that committed. Every open TV stream hears
-   * of it. Throws ApkRejected; nothing changes then.
+   * one transaction; the file of the APK it replaces is deleted once that committed (the rename, the commit and
+   * that deletion in `serially`). Every open TV stream hears of it. Throws ApkRejected; nothing changes then, and
+   * `body` is left to the caller, unread past the refusal (cancelling a request's body can drop its connection
+   * before the answer); any other error cancels it.
    */
   async store(body: ReadableStream<Uint8Array> | null, name: string, source: StoredApk["source"], releaseTag: string | null, actor: Actor, expectedSha?: string): Promise<StoredApk> {
     const version = parseApkName(name);
@@ -225,6 +240,7 @@ export class AppUpdateService {
     const reader = body.getReader();
     let size = 0;
     let complete = false;
+    let rejected = false;
     try {
       for (;;) {
         const { value, done } = await reader.read();
@@ -240,10 +256,14 @@ export class AppUpdateService {
       if (size < ZIP_MAGIC.length) throw new ApkRejected("not_an_apk");
       await handle.sync();
       complete = true;
+    } catch (err) {
+      rejected = err instanceof ApkRejected;
+      throw err;
     } finally {
       await handle.close();
       if (!complete) {
-        await reader.cancel().catch(() => {});
+        if (rejected) reader.releaseLock();
+        else await reader.cancel().catch(() => {});
         await unlink(temp).catch(() => {});
       }
     }
@@ -252,47 +272,57 @@ export class AppUpdateService {
       await unlink(temp).catch(() => {});
       throw new ApkRejected("checksum_mismatch");
     }
-    try {
-      await rename(temp, this.file(sha256));
-    } catch (err) {
-      await unlink(temp).catch(() => {});
-      throw err;
-    }
-
-    const apk: StoredApk = { ...version, sha256, size, source, releaseTag, storedAt: this.s.now() };
-    const { store, eventLog } = this.s;
-    try {
-      store.transaction(() => {
-        const previous = store.getAppApk();
-        store.setAppApk(apk);
-        const { versionName, versionCode } = apk;
-        if (source === "upload") eventLog.append("app.uploaded", null, actor, { versionName, versionCode, source });
-        else eventLog.append("app.fetched", null, actor, { versionName, versionCode, source, releaseTag });
-        if (previous && previous.sha256 !== sha256) store.afterCommit(() => void this.discard(previous.sha256));
-      });
-    } catch (err) {
-      await this.discard(sha256);
-      throw err;
-    }
-    this.s.events.publishAll({ type: "app", data: { versionCode: apk.versionCode } });
-    // A prefix of the digest only: the redaction would turn the whole one into <token>.
-    this.s.log.info("apk stored", { versionName: apk.versionName, versionCode: apk.versionCode, size, source, sha256Prefix: sha256.slice(0, 12) });
-    return apk;
-  }
-
-  /** Forgets the current APK and deletes its file; null when none was stored. */
-  remove(actor: Actor): StoredApk | null {
-    const { store, eventLog } = this.s;
-    const removed = store.transaction(() => {
-      const apk = store.getAppApk();
-      if (!apk) return null;
-      store.deleteAppApk();
-      eventLog.append("app.removed", null, actor, { versionName: apk.versionName });
-      store.afterCommit(() => void this.discard(apk.sha256));
+    return this.serially(async () => {
+      try {
+        await rename(temp, this.file(sha256));
+      } catch (err) {
+        await unlink(temp).catch(() => {});
+        throw err;
+      }
+      const apk: StoredApk = { ...version, sha256, size, source, releaseTag, storedAt: this.s.now() };
+      const { store, eventLog } = this.s;
+      let previous: StoredApk | null;
+      try {
+        previous = store.transaction(() => {
+          const before = store.getAppApk();
+          store.setAppApk(apk);
+          const { versionName, versionCode } = apk;
+          if (source === "upload") eventLog.append("app.uploaded", null, actor, { versionName, versionCode, source });
+          else eventLog.append("app.fetched", null, actor, { versionName, versionCode, source, releaseTag });
+          return before;
+        });
+      } catch (err) {
+        await this.discard(sha256);
+        throw err;
+      }
+      this.s.events.publishAll({ type: "app", data: { versionCode: apk.versionCode } });
+      // A prefix of the digest only: the redaction would turn the whole one into <token>.
+      this.s.log.info("apk stored", { versionName: apk.versionName, versionCode: apk.versionCode, size, source, sha256Prefix: sha256.slice(0, 12) });
+      if (previous && previous.sha256 !== sha256) await this.discard(previous.sha256);
       return apk;
     });
-    if (removed) this.s.log.info("apk removed", { versionName: removed.versionName, versionCode: removed.versionCode });
-    return removed;
+  }
+
+  /**
+   * Forgets the current APK and deletes its file; null when none was stored. Every open TV stream hears of it
+   * (`event: app` with versionCode 0: nothing on offer).
+   */
+  remove(actor: Actor): Promise<StoredApk | null> {
+    return this.serially(async () => {
+      const { store, eventLog } = this.s;
+      const removed = store.transaction(() => {
+        const apk = store.getAppApk();
+        if (!apk) return null;
+        store.deleteAppApk();
+        eventLog.append("app.removed", null, actor, { versionName: apk.versionName });
+        return apk;
+      });
+      if (!removed) return null;
+      this.s.events.publishAll({ type: "app", data: { versionCode: 0 } });
+      this.s.log.info("apk removed", { versionName: removed.versionName, versionCode: removed.versionCode });
+      await this.discard(removed.sha256);
+      return removed;
+    });
   }
 
   /** The GitHub check as the admin API shows it. */
@@ -421,10 +451,13 @@ export class AppUpdateService {
     const expected = checksumFor(sums, assetName);
     if (!expected) throw new CheckFailed("checksum_missing");
 
-    // The same APK, or one newer than the release (an upload): nothing to fetch.
+    // The same APK, one newer than the release, or the owner's upload of the release's version (a patched build:
+    // its suffix leaves the versionCode alone): nothing to fetch. A fetched APK of the same version with other
+    // bytes is fetched again (the release asset was re-published).
     const current = this.current();
-    if (current && (current.sha256 === expected || current.versionCode > version.versionCode)) {
-      this.s.log.debug("app check: up to date", { versionCode: current.versionCode, releaseVersionCode: version.versionCode });
+    const { versionCode } = version;
+    if (current && (current.sha256 === expected || current.versionCode > versionCode || (current.source === "upload" && current.versionCode === versionCode))) {
+      this.s.log.debug("app check: up to date", { versionCode: current.versionCode, releaseVersionCode: versionCode });
       return { result: "up_to_date", reason: null, apk: current };
     }
 
@@ -434,7 +467,11 @@ export class AppUpdateService {
     try {
       return { result: "fetched", reason: null, apk: await this.store(apkRes.body, assetName, "github", tag, actor, expected) };
     } catch (err) {
-      if (err instanceof ApkRejected) throw err;
+      if (err instanceof ApkRejected) {
+        // store() leaves a refused body to its caller.
+        void apkRes.body?.cancel().catch(() => {});
+        throw err;
+      }
       // The download broke off (network, timeout, the server stopping).
       throw new CheckFailed("network");
     }

@@ -624,6 +624,104 @@ class AppViewModelTest {
         assertTrue(installer.installs.isEmpty())
     }
 
+    @Test
+    fun theSystemDialogOverTheAppKeepsUpdatingAndBringsNoAutoplay() {
+        paired()
+        autoplayOnStart = true
+        apk = ByteArray(5_000) { it.toByte() }
+        grantInstalls(false)
+        val vm = startTv()
+        waitUntil("the autoplay countdown") { vm.autoplay.value != null }
+        vm.cancelAutoplay()
+        val id = command("update", """{"versionCode":300}""")
+        waitUntil("the press OK screen") { vm.screen.value is Screen.Update }
+        vm.onUpdateInstall()
+        waitUntil("the install") { installer.installs.isNotEmpty() }
+        assertEquals("""{"result":"done","reason":"prompted"}""", awaitResult(id))
+        vm.onInstallStatus(status(PackageInstaller.STATUS_PENDING_USER_ACTION).putExtra(Intent.EXTRA_INTENT, Intent("x")))
+        mainLooper.idle()
+        assertEquals("x", runBlocking { withTimeout(5_000) { vm.launchIntents.first() } }.action)
+
+        // The system's dialog covers the app: it stops and comes back, still "Updating…".
+        val installing = Screen.Update(UpdateUi("0.3.0", UpdatePhase.Installing))
+        vm.onBackground()
+        assertEquals(installing, vm.screen.value)
+        val states = count("/api/v1/tv/state")
+        vm.onForeground()
+        waitUntil("a fresh state") { count("/api/v1/tv/state") > states }
+        settle()
+        assertEquals(installing, vm.screen.value)
+        assertNull("no autoplay over the dialog's answer", vm.autoplay.value)
+
+        // Cancel in the dialog: Home, and still no autoplay.
+        vm.onInstallStatus(status(PackageInstaller.STATUS_FAILURE_ABORTED))
+        mainLooper.idle()
+        assertEquals(Screen.Home, vm.screen.value)
+        advance(15_000)
+        settle()
+        assertNull(vm.autoplay.value)
+        assertEquals(Screen.Home, vm.screen.value)
+    }
+
+    @Test
+    fun pairingAgainDuringThePressOkScreenStaysOnTheCode() {
+        paired()
+        apk = ByteArray(5_000) { it.toByte() }
+        grantInstalls(false)
+        val vm = startTvOnHome()
+        val id = command("update", """{"versionCode":300}""")
+        waitUntil("the press OK screen") { vm.screen.value is Screen.Update }
+        advance(1_000)
+        // The server forgot this TV meanwhile.
+        stateCode = 401
+        app.graph.repository.refreshSoon()
+        waitUntil("the pairing code") { vm.screen.value == Screen.Pairing && vm.pairing.value.code == "999999" }
+        assertEquals("""{"result":"ignored","reason":"declined"}""", awaitResult(id))
+        advance(UpdatePlan.GUIDED_TIMEOUT_SEC * 1_000L)
+        settle()
+        assertEquals(Screen.Pairing, vm.screen.value)
+        assertEquals(1, results(id).size)
+    }
+
+    @Test
+    fun aFailedInstallAfterThePromptedResultIsAProblemReportAndCouldNotUpdate() {
+        paired()
+        apk = ByteArray(5_000) { it.toByte() }
+        grantInstalls(false)
+        installer.installFailure = RuntimeException("installation services unavailable")
+        val vm = startTvOnHome()
+        val id = command("update", """{"versionCode":300}""")
+        waitUntil("the press OK screen") { vm.screen.value is Screen.Update }
+        vm.onUpdateInstall()
+        waitUntil("Could not update") { vm.screen.value == Screen.Update(UpdateUi("0.3.0", UpdatePhase.Failed(UpdatePlan.FAILED_HOME_SEC))) }
+        assertEquals("""{"result":"done","reason":"prompted"}""", awaitResult(id))
+        waitUntil("the problem report") {
+            requests.any { it.url.encodedPath == "/api/v1/tv/problems" && it.body?.utf8().orEmpty().contains("\"code\":\"update_internal\"") }
+        }
+        settle()
+        assertEquals("one result per command", 1, results(id).size)
+        advance(UpdatePlan.FAILED_HOME_SEC * 1_000L)
+        assertEquals(Screen.Home, vm.screen.value)
+    }
+
+    @Test
+    fun installUpdateFromThePlayerLeavesThePlaybackAlone() {
+        paired()
+        apk = ByteArray(5_000) { it.toByte() }
+        grantInstalls(true)
+        val vm = startTvOnHome()
+        waitUntil("the offered version") { app.graph.updater.available.value?.versionCode == 300L }
+        vm.onTileClicked(vm.state.value!!.home.first())
+        assertEquals(Screen.Player, vm.screen.value)
+        val checks = count("/api/v1/tv/app")
+        vm.onSettingsEntry(SettingsEntry.InstallUpdate)
+        settle()
+        assertEquals(Screen.Player, vm.screen.value)
+        assertEquals(checks, count("/api/v1/tv/app"))
+        assertEquals(0, count("/api/v1/tv/app/apk"))
+        assertTrue(installer.installs.isEmpty())
+    }
+
     private fun grantInstalls(granted: Boolean) = shadowOf(app.packageManager).setCanRequestPackageInstalls(granted)
 
     /** What the system sends back for session 7. */
@@ -641,11 +739,15 @@ class AppViewModelTest {
         val installs = CopyOnWriteArrayList<Install>()
         val abandoned = CopyOnWriteArrayList<Int>()
 
+        /** What [install] throws, if anything. */
+        @Volatile var installFailure: Exception? = null
+
         override suspend fun verifyArchive(file: File, expectedVersionCode: Long) {
             verified += expectedVersionCode
         }
 
         override suspend fun install(file: File, silent: Boolean, commandId: Long?): Int {
+            installFailure?.let { throw it }
             val sent = commandId != null && results(commandId).isNotEmpty()
             installs += Install(silent, file.readBytes(), sent)
             return 7

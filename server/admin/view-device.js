@@ -335,6 +335,8 @@ function appCard(ctx) {
   let device = null;
   /** Whether the server stores an APK; null before it was read; "unsupported" on a server without TV app updates. */
   let stored = /** @type {boolean | null | "unsupported"} */ (null);
+  /** The server's `appUpdates.auto`; on until it was read. */
+  let auto = true;
   const version = h("dd");
   const android = h("dd");
   const how = h("dd");
@@ -351,7 +353,7 @@ function appCard(ctx) {
     const a = device.app;
     version.textContent = a?.version ? `${a.version}${a.versionCode !== null && a.versionCode !== undefined ? ` (code ${a.versionCode})` : ""}` : "unknown";
     android.textContent = androidText(a?.androidSdk);
-    how.textContent = capabilityText(a);
+    how.textContent = capabilityText(a, auto);
     const c = appUpdateChip(a);
     setChip(state, c.text, c.tone);
     guided.hidden = a?.capability !== "guided";
@@ -362,7 +364,9 @@ function appCard(ctx) {
 
   const refresh = async () => {
     try {
-      stored = Boolean((await ctx.scope.read("/app")).apk);
+      const app = await ctx.scope.read("/app");
+      stored = Boolean(app.apk);
+      auto = app.auto !== false;
     } catch (err) {
       if (!(err instanceof ApiError && err.status === 404)) throw err;
       stored = "unsupported";

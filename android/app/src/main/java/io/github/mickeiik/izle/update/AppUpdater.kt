@@ -9,7 +9,11 @@ import io.github.mickeiik.izle.data.api.ApiException
 import io.github.mickeiik.izle.data.api.CommandResult
 import io.github.mickeiik.izle.domain.Problems
 import io.github.mickeiik.izle.settings.DeviceStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -65,9 +69,12 @@ class AppUpdater(
     private val _capability = MutableStateFlow(capabilityOf(false))
     val capability: StateFlow<UpdateCapability> = _capability.asStateFlow()
 
-    /** The `User-Agent` of every API call; changes with [capability]. */
+    /**
+     * The `User-Agent` of every API call; changes with [capability]. Null until the stored refusal is read (OkHttp's
+     * own then goes out, which the server does not record): a refused TV must not say `silent` meanwhile.
+     */
     @Volatile
-    var userAgent: String = UpdateCapabilities.userAgent(versionName, installedVersionCode, sdkInt, _capability.value)
+    var userAgent: String? = null
         private set
 
     private val _installStatus = MutableSharedFlow<InstallStatus>(extraBufferCapacity = 8)
@@ -87,13 +94,18 @@ class AppUpdater(
     var busy: Boolean = false
         private set
 
-    init {
-        scope.launch {
-            val settings = store.current()
-            silentRefused = settings.updateSilentRefused
-            lastFailureStored = settings.lastUpdateFailureAt
-            refreshCapability()
-        }
+    /** The stored refusal and last failure have been read ([loaded]). */
+    @Volatile
+    private var ready = false
+
+    /** Reads the stored refusal and last failure, once at start (last here: it may run at once). */
+    private val loaded: Job = scope.launch {
+        val settings = store.current()
+        // Without losing what happened meanwhile.
+        silentRefused = silentRefused || settings.updateSilentRefused
+        lastFailureStored = lastFailureStored ?: settings.lastUpdateFailureAt
+        ready = true
+        refreshCapability()
     }
 
     /** No automatic attempt for a while after this (wall clock): the last failure, or a commit still unanswered. */
@@ -104,7 +116,7 @@ class AppUpdater(
     fun refreshCapability() {
         val capability = capabilityOf(silentRefused)
         _capability.value = capability
-        userAgent = UpdateCapabilities.userAgent(versionName, installedVersionCode, sdkInt, capability)
+        if (ready) userAgent = UpdateCapabilities.userAgent(versionName, installedVersionCode, sdkInt, capability)
     }
 
     /** Whether the server offers a version newer than this one. */
@@ -125,11 +137,14 @@ class AppUpdater(
     /**
      * Downloads [update], checks the archive, then [beforeCommit] (false: not now after all, `ignored busy`; this is
      * where a command's result goes out, as the process ends when the install succeeds), then commits the session.
-     * Failures without a command ([commandId] null) go to the owner as problem reports.
+     * Failures go to the owner as problem reports when no command result tells of them: without a command
+     * ([commandId] null), or once [beforeCommit] let the install go ahead (the command's `done` is out). Cancelled
+     * (Back on the guided screen) is no failure: nothing is remembered or reported, and no file is kept.
      */
     suspend fun run(api: ApiClient, update: AvailableUpdate, silent: Boolean, commandId: Long?, beforeCommit: suspend () -> Boolean): UpdateRun {
         if (busy) return UpdateRun.Ignored(CommandResult.BUSY)
         busy = true
+        var committing = false
         try {
             val file = downloader.download(api, update)
             installer().verifyArchive(file, update.versionCode)
@@ -137,21 +152,37 @@ class AppUpdater(
                 downloader.clear()
                 return UpdateRun.Ignored(CommandResult.BUSY)
             }
+            committing = true
             val sessionId = installer().install(file, silent, commandId)
             committed[sessionId] = silent
             lastCommitAt = wallClock()
             return UpdateRun.Committed
         } catch (e: UpdateException) {
             downloader.clear()
+            // A cancelled download ends in an interrupted read, which surfaces here.
+            currentCoroutineContext().ensureActive()
             if (e.ignored) return UpdateRun.Ignored(e.reason)
-            failed(e.reason, report = commandId == null)
+            failed(e.reason, report = commandId == null || committing)
             return UpdateRun.Failed(e.reason)
         } catch (e: ApiException) {
             downloader.clear()
-            // Nothing stored any more (the owner removed it meanwhile).
-            if (e.status == 404) return UpdateRun.Ignored(CommandResult.UP_TO_DATE)
-            failed(CommandResult.DOWNLOAD, report = commandId == null)
+            currentCoroutineContext().ensureActive()
+            if (e.status == 404) {
+                // Nothing stored any more (the owner removed it meanwhile): nothing to offer either.
+                _available.value = null
+                return UpdateRun.Ignored(CommandResult.UP_TO_DATE)
+            }
+            failed(CommandResult.DOWNLOAD, report = commandId == null || committing)
             return UpdateRun.Failed(CommandResult.DOWNLOAD)
+        } catch (e: CancellationException) {
+            downloader.clear()
+            throw e
+        } catch (e: Exception) {
+            // Anything else still ends on Home ("Could not update"), never in a crash.
+            downloader.clear()
+            currentCoroutineContext().ensureActive()
+            failed(CommandResult.INTERNAL, report = commandId == null || committing)
+            return UpdateRun.Failed(CommandResult.INTERNAL)
         } finally {
             busy = false
         }
@@ -167,7 +198,10 @@ class AppUpdater(
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, NO_STATUS)
         val sessionId = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1)
         if (status == PackageInstaller.STATUS_SUCCESS) {
-            // Usually seen by the new version, started by this very intent: nothing else to do.
+            // Usually seen by the new version, started by this very intent (a new process: no sessions, nothing
+            // under way). Otherwise only for a session this process committed.
+            val ours = sessionId in committed || (committed.isEmpty() && !busy)
+            if (!ours) return
             committed.remove(sessionId)
             downloader.clear()
             _installStatus.tryEmit(InstallStatus.Succeeded)
@@ -212,6 +246,8 @@ class AppUpdater(
 
     /** The app was replaced by a newer version (`MY_PACKAGE_REPLACED`): silent may work again; nothing to keep. */
     suspend fun onReplaced() {
+        // The start's read must not bring back what is cleared here.
+        loaded.join()
         silentRefused = false
         store.setUpdateSilentRefused(false)
         store.setLastUpdateFailureAt(null)

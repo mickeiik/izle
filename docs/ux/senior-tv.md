@@ -100,8 +100,8 @@ Nothing about it ever interrupts playback: during playback the command answers `
   the TV gives up on silent updates and behaves as below until its next update.
 - **Android 11 and older** (the system always asks): only on the owner's command, a full-screen panel says "New
   version", the version, "Press OK to install" and "Home in 60 s" over its bar, **Install** focused and **Not now**
-  beside it. OK shows "Updating…" while it downloads, then the system's own Install/Cancel dialog. Back, Not now,
-  Cancel or 60 s without a press: Home.
+  beside it. OK shows "Updating…" while it downloads, then the system's own Install/Cancel dialog ("Updating…"
+  stays behind it until it is answered). Back, Not now, Cancel or 60 s without a press: Home.
 - A failure says "Could not update" for 15 s (with **Home** focused), then Home; "Updating…" goes Home by itself
   after 2 minutes if the system never answers (Back too, without stopping an install already under way). Owner messages are not shown on
   this screen; the Menu key and holding OK do nothing on it.
@@ -119,7 +119,7 @@ and closes it.
 | Start over | always for a show | plays the episode OK would play from the beginning (in the player: seeks to 0) |
 | Audio language | player, ≥ 2 audio tracks | Automatic (the owner's preference) or a specific track, for this playback |
 | Subtitles | player | Off or one of the stream's subtitle tracks, for this playback |
-| Settings | always | Server address (back to the address screen), Language (Automatic → Türkçe → English), Pair again; Install update (with the version) while the server offers a newer one, as the owner's command |
+| Settings | always | Server address (back to the address screen), Language (Automatic → Türkçe → English), Pair again; Install update (with the version) while the server offers a newer one, as the owner's command (not in the player's menu) |
 | About | always | app version, TV name, server, catalog and catalog build; "Update available" with the version, or "Up to date" |
 
 ### First run
@@ -167,7 +167,7 @@ izle.
 | Stream refresh | when a resolve answer's `expiresAt` is ≥ 90 s away (measured on the server's clock): resolve the same source again at `expiresAt` − 60 s, playing or paused; new media only when the URL changed, at the same position; at most one refresh per 60 s; a network or server failure is retried once after 30 s while the URL is still valid, else the 403/410 rule above applies |
 | Episode keys (CH+/CH−, ▶▶\|/\|◀◀, next/previous commands) | the nearest `playbackAllowed` episode after / before the current one in play order; no wrap-around; the current one is reported like Back (stopped, or finished within the end threshold) |
 | Owner's message | up to 200 characters, 3–120 s (the server's default: 15 s); a new one replaces the current one |
-| Problem reports (to the owner) | one attempt in the background, never retried, failures ignored: player errors (Media3 error code, HTTP status, exception class names — never messages or URLs), failed resolves (the server's error code or `network`), "Can't play right now" (`gave_up`), the server unreachable for ≥ 5 min (`server_unreachable`, sent once it answers again), a self-update that failed (`update_…`: the download or archive check without a command, the install status, `update_needs_user_action`) |
+| Problem reports (to the owner) | one attempt in the background, never retried, failures ignored: player errors (Media3 error code, HTTP status, exception class names — never messages or URLs), failed resolves (the server's error code or `network`), "Can't play right now" (`gave_up`), the server unreachable for ≥ 5 min (`server_unreachable`, sent once it answers again), a self-update that failed (`update_…`: the download or archive check without a command, the install once the command's result went out — its session write or status —, `update_needs_user_action`) |
 | Languages | audio: the owner's preferred language (and its primary subtag), else the stream default; subtitles: off unless the owner set a language |
 
 ## Copy (en / tr)

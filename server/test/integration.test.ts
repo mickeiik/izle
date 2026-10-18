@@ -28,6 +28,8 @@ test("full boot with the shipped sample catalog on an ephemeral port", async (t)
   const root = await tempDir();
   const config = loadConfig({ cwd: root, env: { IZLE_ADMIN_TOKEN: ADMIN_TOKEN } });
   config.listen = { host: "127.0.0.1", port: 0 };
+  // No scheduled check of the real GitHub, should this process live past its first delay.
+  config.appUpdates = { ...config.appUpdates, source: "manual" };
   assert.equal(config.catalog.dir, SAMPLE_CATALOG_DIR);
   const logs: string[] = [];
   const srv = await startServer({ config, log: createLogger({ write: (l) => void logs.push(l) }) });
@@ -121,7 +123,7 @@ test("CLI: admin-token creates, reuses and rotates; validate-catalog; bad config
 test("CLI: the server starts, answers and stops on SIGTERM", async (t) => {
   const dir = await tempDir();
   const cfg = path.join(dir, "izle.json");
-  writeFileSync(cfg, JSON.stringify({ listen: { host: "127.0.0.1", port: 0 }, dataDir: "./data" }));
+  writeFileSync(cfg, JSON.stringify({ listen: { host: "127.0.0.1", port: 0 }, dataDir: "./data", appUpdates: { source: "manual" } }));
   const { INIT_CWD: _ignored, ...env } = process.env;
   const child = spawn(process.execPath, [BIN, "--config", cfg], { env, stdio: ["ignore", "pipe", "pipe"] });
   t.after(() => child.kill("SIGKILL"));

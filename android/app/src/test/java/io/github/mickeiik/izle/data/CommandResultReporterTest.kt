@@ -12,6 +12,8 @@ import kotlinx.coroutines.test.runTest
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
 
@@ -71,6 +73,37 @@ class CommandResultReporterTest {
         reporter.report(api, 3, CommandResult.ignored("something_new"))
         advanceUntilIdle()
         assertEquals(listOf(1L, 2L, 3L), sent.map { it.id })
+    }
+
+    @Test
+    fun aResultSentNowThatDidNotArriveLeavesTheCommandOpen() = runTest {
+        val reporter = reporter()
+        answers += failWith(IOException("unreachable"))
+        answers += failWith(IOException("unreachable"))
+        assertFalse(reporter.reportNow(api, 12, CommandResult.done(CommandResult.INSTALLING)))
+        assertEquals(listOf(0L, 2_000L), sent.map { it.atMs })
+
+        // What became of it after all can still be told.
+        reporter.report(api, 12, CommandResult.failed("install_write"))
+        advanceUntilIdle()
+        assertEquals(CommandResult.failed("install_write"), sent.last().result)
+        assertEquals(3, sent.size)
+    }
+
+    @Test
+    fun aResultSentNowClaimsTheCommand() = runTest {
+        val reporter = reporter()
+        assertTrue(reporter.reportNow(api, 12, CommandResult.done(CommandResult.INSTALLING)))
+        reporter.report(api, 12, CommandResult.failed("install_write"))
+        assertFalse("already answered", reporter.reportNow(api, 12, CommandResult.Done))
+        advanceUntilIdle()
+        assertEquals(listOf(CommandResult.done(CommandResult.INSTALLING)), sent.map { it.result })
+
+        // A command answered before is not sent now.
+        reporter.report(api, 13, CommandResult.Done)
+        assertFalse(reporter.reportNow(api, 13, CommandResult.done(CommandResult.INSTALLING)))
+        advanceUntilIdle()
+        assertEquals(listOf(CommandResult.Done), sent.filter { it.id == 13L }.map { it.result })
     }
 
     @Test

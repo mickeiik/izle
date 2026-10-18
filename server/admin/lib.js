@@ -628,9 +628,17 @@ export function androidText(sdk) {
   return ANDROID[sdk] ? `Android ${ANDROID[sdk]} (API ${sdk})` : `API ${sdk}`;
 }
 
-/** How a TV takes an update, in a sentence. @param {DeviceApp | null | undefined} app */
-export function capabilityText(app) {
-  if (app?.capability === "silent") return "Installs updates by itself while nobody is watching.";
+/**
+ * How a TV takes an update, in a sentence.
+ * @param {DeviceApp | null | undefined} app
+ * @param {boolean} [auto] the server's `appUpdates.auto`; unknown (not read yet) counts as on
+ */
+export function capabilityText(app, auto = true) {
+  if (app?.capability === "silent") {
+    return auto
+      ? "Installs updates by itself while nobody is watching."
+      : "Can install updates by itself, but automatic installs are off on this server: an update needs Install now here.";
+  }
   if (app?.capability === "guided") {
     const sdk = app.androidSdk;
     const why = sdk !== null && sdk !== undefined && sdk >= 31 ? "The TV lacks the one-time permission to install apps, so" : "On Android 11 or older,";
@@ -704,12 +712,24 @@ export function appCheckText(check, source, now = Date.now()) {
 }
 
 /**
+ * Who installs a new APK by themselves, after one was stored: with `appUpdates.auto` on, the TVs that can install
+ * silently (when idle); with it off, none.
+ * @param {boolean} auto
+ */
+export function newApkText(auto) {
+  return auto
+    ? "TVs that install by themselves update when idle; the others need Install now."
+    : "Automatic installs are off: every TV needs Install now.";
+}
+
+/**
  * The toast after "Check now" (`POST /admin/app/check`).
  * @param {{ result: string, reason: string | null, apk: { versionName: string } | null }} r
+ * @param {boolean} auto the server's `appUpdates.auto`
  * @returns {{ text: string, kind: "ok" | "info" | "error" }}
  */
-export function checkResultText(r) {
-  if (r.result === "fetched") return { text: `Fetched ${r.apk?.versionName ?? "a new version"} from GitHub. TVs that install by themselves update when idle.`, kind: "ok" };
+export function checkResultText(r, auto) {
+  if (r.result === "fetched") return { text: `Fetched ${r.apk?.versionName ?? "a new version"} from GitHub. ${newApkText(auto)}`, kind: "ok" };
   if (r.result === "up_to_date") return { text: `Up to date: ${r.apk ? `${r.apk.versionName} is the latest release` : "nothing new on GitHub"}.`, kind: "info" };
   return { text: `The check failed: ${appCheckReasonText(r.reason)}.`, kind: "error" };
 }

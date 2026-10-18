@@ -265,6 +265,7 @@ data class CommandResult(val result: Outcome, val reason: String? = null) {
         const val WRONG_PACKAGE = "wrong_package" // failed: not this app
         const val BAD_ARCHIVE = "bad_archive" // failed: not an APK, or another version than announced
         const val INSTALL_PREFIX = "install_" // failed: + the PackageInstaller status (install_failure_storage)
+        const val INTERNAL = "internal" // failed: something this TV did not expect went wrong (no crash, Home again)
     }
 }
 

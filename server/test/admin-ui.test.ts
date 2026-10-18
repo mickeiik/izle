@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import {
   APK_MAX_BYTES, androidText, apkVersion, appCheckReasonText, appCheckText, appUpdateChip, capabilityText, checkResultText,
-  formatBytes, installNowBlocked,
+  formatBytes, installNowBlocked, newApkText,
   actorLabel, buildSummary, candidateOptions, catalogSearchPath, clockOffset, commandResultText, companionTarget,
   continueText, episodeHistoryLine, episodeName, episodeStateLabel, episodeStates, errorText, formatClock, formatCode,
   formatCountdown, formatDrift, formatDuration, formatPosition, formatRelative, groupEpisodeChanges, isActive, issueLine,
@@ -271,6 +271,9 @@ test("admin helpers: TV app sizes, APK names, update chips, Android versions and
     [androidText(28), "Android 9 (API 28)"], [androidText(31), "Android 12 (API 31)"], [androidText(32), "Android 12L (API 32)"],
     [androidText(99), "API 99"], [androidText(null), "unknown"], [androidText(undefined), "unknown"],
     [capabilityText({ capability: "silent", androidSdk: 34 }), "Installs updates by itself while nobody is watching."],
+    [capabilityText({ capability: "silent", androidSdk: 34 }, true), "Installs updates by itself while nobody is watching."],
+    [capabilityText({ capability: "silent", androidSdk: 34 }, false), "Can install updates by itself, but automatic installs are off on this server: an update needs Install now here.", "appUpdates.auto off"],
+    [capabilityText({ capability: "guided", androidSdk: 28 }, false), "On Android 11 or older, an update needs Install now here, and someone at the TV pressing OK when the screen appears.", "auto does not change guided TVs"],
     [capabilityText({ capability: "guided", androidSdk: 28 }), "On Android 11 or older, an update needs Install now here, and someone at the TV pressing OK when the screen appears."],
     [capabilityText({ capability: "guided", androidSdk: 33 }), "The TV lacks the one-time permission to install apps, so an update needs Install now here, and someone at the TV pressing OK when the screen appears.", "Android 12+ without the grant"],
     [capabilityText({ capability: null }), "Unknown: the TV has not said how it installs updates (an older app)."],
@@ -313,9 +316,14 @@ test("admin helpers: TV app checks, their reasons and the update command's resul
     [appCheckText(check({ lastAt: ago(60_000), result: "up_to_date" }), "github", NOW), "Last check 1 min ago: up to date", "no automatic checks: no next one"],
     [appCheckText(check({}), "manual", NOW), "Checks disabled (manual source): the server offers the APK uploaded here."],
     [appCheckText(null, "github", NOW), ""],
-    [checkResultText({ result: "fetched", reason: null, apk: { versionName: "0.3.0" } }), { text: "Fetched 0.3.0 from GitHub. TVs that install by themselves update when idle.", kind: "ok" }],
-    [checkResultText({ result: "up_to_date", reason: null, apk: { versionName: "0.3.0" } }), { text: "Up to date: 0.3.0 is the latest release.", kind: "info" }],
-    [checkResultText({ result: "failed", reason: "checksum_mismatch", apk: null }), { text: "The check failed: the downloaded APK does not match its checksum.", kind: "error" }],
+    [checkResultText({ result: "fetched", reason: null, apk: { versionName: "0.3.0" } }, true), { text: "Fetched 0.3.0 from GitHub. TVs that install by themselves update when idle; the others need Install now.", kind: "ok" }],
+    [checkResultText({ result: "fetched", reason: null, apk: { versionName: "0.3.0" } }, false), { text: "Fetched 0.3.0 from GitHub. Automatic installs are off: every TV needs Install now.", kind: "ok" }, "appUpdates.auto off"],
+    [checkResultText({ result: "fetched", reason: null, apk: null }, true), { text: "Fetched a new version from GitHub. TVs that install by themselves update when idle; the others need Install now.", kind: "ok" }],
+    [checkResultText({ result: "up_to_date", reason: null, apk: { versionName: "0.3.0" } }, true), { text: "Up to date: 0.3.0 is the latest release.", kind: "info" }],
+    [checkResultText({ result: "up_to_date", reason: null, apk: { versionName: "0.3.0" } }, false), { text: "Up to date: 0.3.0 is the latest release.", kind: "info" }],
+    [checkResultText({ result: "failed", reason: "checksum_mismatch", apk: null }, false), { text: "The check failed: the downloaded APK does not match its checksum.", kind: "error" }],
+    [newApkText(true), "TVs that install by themselves update when idle; the others need Install now."],
+    [newApkText(false), "Automatic installs are off: every TV needs Install now."],
   ]);
   const update = (result: string, reason: string | null) => commandResultText({ type: "update", result, reason });
   cases([

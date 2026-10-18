@@ -13,20 +13,24 @@ contract share one version number. How to update (back up, update the server, th
   `/tv/app/apk`, `event: app` on the TV's stream). By default it fetches the latest release's APK from GitHub a
   minute after the start and once a day, verified against the release's `SHA256SUMS` (config `appUpdates`:
   `source` `github` or `manual`, `repo`, `checkIntervalHours`, `auto`); the owner can also upload one
-  (`PUT /api/v1/admin/app/apk`), remove it or check now (`GET /api/v1/admin/app`, `DELETE …/app/apk`,
-  `POST …/app/check`). A new `update` command starts the install on a TV that needs the viewer. Each TV's app
+  (`PUT /api/v1/admin/app/apk`; an upload of the release's own version is kept over the release), remove it (the TVs
+  hear of it: `event: app` with `versionCode` 0) or check now (`GET /api/v1/admin/app`, which also shows
+  `checkIntervalHours`, `DELETE …/app/apk`, `POST …/app/check`). A new `update` command starts the install on a TV
+  that needs the viewer. Each TV's app
   version, Android version and update capability (from its User-Agent) show in the device list with whether it is
   up to date (`app`), and the event log gains `app.uploaded`, `app.fetched`, `app.removed`, `app.check_failed` and
   `device.app_version`.
 - **TV app page on the admin page** ("TV app"): the APK the server offers to the TVs (version, where it came from,
-  size, when the server last checked GitHub and with what result), Check now, Remove, and an upload for a release
-  APK. Every TV with its installed app and Android version, whether it updates by itself or needs Install now, and
+  size, how often and when the server last checked GitHub and with what result, whether TVs install by themselves),
+  Check now, Remove, and an upload for a release APK. Every TV with its installed app and Android version, whether it updates by itself or needs Install now, and
   an Install now button; a TV's page has the same in its new "TV app" section, and the TV list flags TVs with an
   update waiting. The update's outcome comes back as a toast ("Update: the TV shows the install screen").
 - **The TV app updates itself** from the version stored on the server: on Android 12 and newer (with the one-time
   "install unknown apps" permission) silently, once the TV has sat idle on Home for 3 minutes or at once on the
   owner's `update` command; on older TVs on the command only, behind a large "New version — press OK" screen and
-  then the system's Install dialog (Back or 60 s go Home). Never during playback. After an update Android 10+ shows
+  then the system's Install dialog ("Updating…" waits behind it; Back or 60 s go Home). Never during playback: the
+  hidden menu's "Install update" is not offered over the player. An install that fails after the owner's command
+  was answered reaches the owner as a problem report. After an update Android 10+ shows
   the TV's launcher until izle is opened again (the system blocks the app from coming back by itself); Android 9 and
   older bring it back. The hidden menu offers "Install update" and About says whether one is available; every API call's `User-Agent` names the app version, Android
   version and how the TV can update (`izle-tv/0.2.0 (Android 25; 200; guided)`).

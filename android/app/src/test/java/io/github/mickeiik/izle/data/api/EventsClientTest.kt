@@ -53,6 +53,12 @@ class EventsClientTest {
     }
 
     @Test
+    fun anAppEventWithVersionZeroSaysNothingIsOffered() {
+        // The owner removed the stored APK: the TV checks `/tv/app` again like for any other app event.
+        assertEquals(ServerEvent.App(0), ServerEvent.parse("app", "{\"versionCode\":0}"))
+    }
+
+    @Test
     fun aRemovedDeviceGets401() = runBlocking {
         server.enqueue(MockResponse.Builder().code(401).body("""{"error":"unauthorized"}""").build())
         var failure: Throwable? = null

@@ -12,24 +12,25 @@ import androidx.core.content.pm.PackageInfoCompat
 import io.github.mickeiik.izle.BuildConfig
 import io.github.mickeiik.izle.MainActivity
 import io.github.mickeiik.izle.data.api.CommandResult
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.IOException
 
 /** The system side of an update; replaced by a fake in the tests. */
 interface AppInstaller {
     /**
-     * Throws [UpdateException] unless [file] is this app (`wrong_package`), newer than the running version
-     * (`not_newer`, ignored) and the version the server announced; `bad_archive` when it is no APK at all or another
-     * version than announced.
+     * Throws [UpdateException] unless [file] is this app (`wrong_package`), the version the server announced
+     * (`bad_archive`, as when it is no APK at all) and newer than the running version (`not_newer`, ignored). In
+     * that order: a mislabelled archive is a failure, not an older version.
      */
     suspend fun verifyArchive(file: File, expectedVersionCode: Long)
 
     /**
      * Writes [file] into an install session and commits it; the outcome comes back to [MainActivity] as an
      * [ACTION_INSTALL_STATUS] intent. [silent]: asks the system not to show its dialog. Returns the session id.
-     * Throws [UpdateException] `install_write` when the session could not be written.
+     * Throws [UpdateException] `install_write` when the session could not be created or written (installation
+     * services unavailable included).
      */
     suspend fun install(file: File, silent: Boolean, commandId: Long?): Int
 
@@ -59,24 +60,28 @@ class PackageInstallerAppInstaller(private val context: Context) : AppInstaller 
         val info = context.packageManager.getPackageArchiveInfo(file.path, 0) ?: throw UpdateException(CommandResult.BAD_ARCHIVE)
         if (info.packageName != context.packageName) throw UpdateException(CommandResult.WRONG_PACKAGE)
         val code = PackageInfoCompat.getLongVersionCode(info)
-        if (code <= installedVersionCode) throw UpdateException(CommandResult.NOT_NEWER, ignored = true)
         if (code != expectedVersionCode) throw UpdateException(CommandResult.BAD_ARCHIVE)
+        if (code <= installedVersionCode) throw UpdateException(CommandResult.NOT_NEWER, ignored = true)
     }
 
     override suspend fun install(file: File, silent: Boolean, commandId: Long?): Int = withContext(Dispatchers.IO) {
-        val installer = context.packageManager.packageInstaller
-        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
-            setAppPackageName(context.packageName)
-            setSize(file.length())
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                setRequireUserAction(
-                    if (silent) PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED else PackageInstaller.SessionParams.USER_ACTION_REQUIRED,
-                )
+        // IOException, SecurityException (installation services unavailable), IllegalArgumentException (parameters
+        // this Android refuses): all `install_write`.
+        val (installer, sessionId) = try {
+            val installer = context.packageManager.packageInstaller
+            val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
+                setAppPackageName(context.packageName)
+                setSize(file.length())
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    setRequireUserAction(
+                        if (silent) PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED else PackageInstaller.SessionParams.USER_ACTION_REQUIRED,
+                    )
+                }
             }
-        }
-        val sessionId = try {
-            installer.createSession(params)
-        } catch (e: IOException) {
+            installer to installer.createSession(params)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
             throw UpdateException(INSTALL_WRITE)
         }
         try {
@@ -90,11 +95,9 @@ class PackageInstallerAppInstaller(private val context: Context) : AppInstaller 
                 session.commit(statusReceiver(silent, commandId).intentSender)
             }
         } catch (e: Exception) {
-            if (e is SecurityException || e is IOException || e is IllegalStateException) {
-                runCatching { installer.abandonSession(sessionId) }
-                throw UpdateException(INSTALL_WRITE)
-            }
-            throw e
+            runCatching { installer.abandonSession(sessionId) }
+            if (e is CancellationException) throw e
+            throw UpdateException(INSTALL_WRITE)
         }
         sessionId
     }

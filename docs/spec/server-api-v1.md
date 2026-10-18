@@ -132,7 +132,8 @@ Server-sent events (`text/event-stream`, `X-Accel-Buffering: no`; reverse proxie
 - `event: app` `{"versionCode": 300}` (id `a<versionCode>`): a TV app APK is on offer ([`GET /tv/app`](#get-apiv1tvapp)),
   sent to every open TV stream whenever the stored APK changes (an upload, a fetch from GitHub) and on connect. A
   TV whose own versionCode is lower updates as [TV app updates](#tv-app-updates) says; TVs ignore event types they
-  do not know.
+  do not know. `{"versionCode": 0}` (id `a0`) is sent to every open stream when the owner removes the APK: nothing
+  is on offer any more (`GET /tv/app` answers `204`). Nothing is sent on connect while no APK is stored.
 - `event: command` `{"id": 12, "type": "play", "payload": {"itemId": "…", "episodeId": "…"}}` (id `c<id>`), one of
   the [commands](#commands). The TV acknowledges every command it receives, also those it ignores, with
   `POST /tv/commands/:id/ack`; unacknowledged ones are replayed on reconnect for 2 minutes (deleted after 7 days).
@@ -173,7 +174,7 @@ against `GET /tv/app` before installing; Android checks the signature.
 #### TV app updates
 
 - A TV learns of an APK from `event: app` (live or on connect) and from `GET /tv/app`; it compares `versionCode`
-  with its own.
+  with its own. `versionCode: 0` means the APK was removed: nothing is on offer.
 - `auto: true` and a `silent` TV: it downloads, verifies and installs the APK by itself while idle (on Home, not
   playing); the owner sees `Device.app.update: "pending"` until the TV reports the new version.
 - A `guided` TV (or `auto: false`): nothing happens on its own; the owner sends the [`update` command](#commands)
@@ -504,24 +505,28 @@ Android refuses an update not signed like the installed app.
 
 | Route | Scope | Body | Response |
 |---|---|---|---|
-| `GET /api/v1/admin/app` | `read` | | `{"apk": StoredApk \| null, "source": "github"\|"manual", "repo", "auto", "check": {"lastAt", "nextAt", "result": "fetched"\|"up_to_date"\|"failed"\|null, "reason", "running"}}` |
+| `GET /api/v1/admin/app` | `read` | | `{"apk": StoredApk \| null, "source": "github"\|"manual", "repo", "auto", "checkIntervalHours", "check": {"lastAt", "nextAt", "result": "fetched"\|"up_to_date"\|"failed"\|null, "reason", "running"}}` |
 | `PUT /api/v1/admin/app/apk` | `manage` | the APK's bytes, `Content-Type: application/vnd.android.package-archive`, file name in `X-Izle-Filename` (or `?name=`) | `200 {"apk": StoredApk}` |
-| `DELETE /api/v1/admin/app/apk` | `manage` | | `204`; `404 no_apk` |
+| `DELETE /api/v1/admin/app/apk` | `manage` | | `204` (every TV stream gets `event: app` `{"versionCode": 0}`); `404 no_apk` |
 | `POST /api/v1/admin/app/check` | `manage` | | `200 {"result", "reason", "apk": StoredApk \| null}` |
 
 `StoredApk` = `{"versionName", "versionCode", "sha256", "size", "source": "github"|"upload", "releaseTag": "v0.3.0" |
 null, "storedAt"}`. `versionCode` comes from the file name as the app's build computes it (`X·10000 + Y·100 + Z`,
 a `-suffix` ignored). Storing an APK (upload or fetch) replaces the previous one and sends `event: app` to every TV.
+`source`, `repo`, `auto` and `checkIntervalHours` are the server's `appUpdates` [configuration](#configuration).
 
 - **Upload:** the file name must be `izle-tv-X.Y.Z[-suffix].apk` (`^izle-tv-(0|[1-9]\d*)\.([1-9]?\d)\.([1-9]?\d)(-[0-9A-Za-z.-]+)?\.apk$`,
   at most 128 characters), else `400 invalid_filename`; another media type `400 unsupported_media_type`; a body
   that does not start like a zip (`PK\x03\x04`) `400 not_an_apk`; more than 64 MiB `413 apk_too_large`
-  (`maxBytes`). This is the only route whose body may exceed 64 KiB.
+  (`maxBytes`). A body refused part-way is still read to its end (up to `maxBytes` more bytes), so a client that is
+  still sending gets the answer. This is the only route whose body may exceed 64 KiB.
 - **Check:** `GET /repos/<repo>/releases/latest` (GitHub's API, `User-Agent: izle-server/<version>`, 30 s); the
   release must not be a prerelease, its tag must be `vX.Y.Z`, and it must carry the assets `izle-tv-X.Y.Z.apk`
   (never the `-debug` build) and `SHA256SUMS` (≤ 16 KiB, `<sha256>  <name>` lines). When the listed sha256 is the
-  stored APK's, or the stored APK is newer than the release (an upload), the result is `up_to_date` and nothing is
-  downloaded; otherwise the APK is downloaded (5 min) and stored if its sha256 matches: `fetched`. Anything else is
+  stored APK's, the stored APK's versionCode is higher than the release's, or the stored APK is an upload with the
+  release's versionCode (a patched build: its `-suffix` leaves the versionCode alone), the result is `up_to_date`
+  and nothing is downloaded (a fetched APK of the release's version with another sha256 is fetched again: the asset
+  was re-published); otherwise the APK is downloaded (5 min) and stored if its sha256 matches: `fetched`. Anything else is
   `failed` with a `reason` and leaves the stored APK as it was: `network` (also a timeout), `http_<status>`,
   `rate_limited` (403/429), `no_release`, `bad_release` (not a release object), `prerelease`, `bad_tag`,
   `no_apk_asset`, `no_checksums`, `checksums_too_large`, `checksum_missing`, `checksum_mismatch`, `too_large`,
@@ -896,7 +901,7 @@ in `./data` (`izle.db`, `admin.token`). Deployment (systemd, Caddy, Docker): [se
   [replacing a TV](#replacing-a-tv) at pairing. Config `events.retentionDays`; TV resolve fields `trigger` and
   `commandId`; see [What changes for the TV](#what-changes-for-the-tv).
 - **v1, TV app updates (2026-10-16)** — additive: the TV's [User-Agent](#tv-api) convention and `Device.app`,
-  [`GET /tv/app`](#get-apiv1tvapp) and `/tv/app/apk`, `event: app`, the `update` command and its result reasons,
+  [`GET /tv/app`](#get-apiv1tvapp) and `/tv/app/apk`, `event: app` (`versionCode: 0` after a removal), the `update` command and its result reasons,
   the admin [TV app](#tv-app) routes (upload, removal, GitHub check; the upload is the one body over 64 KiB),
   events `app.uploaded`, `app.fetched`, `app.removed`, `app.check_failed` and `device.app_version`, config
   `appUpdates`.

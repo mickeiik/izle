@@ -37,6 +37,7 @@ import io.github.mickeiik.izle.domain.EpisodeNames
 import io.github.mickeiik.izle.player.TrackOption
 import io.github.mickeiik.izle.ui.AboutInfo
 import io.github.mickeiik.izle.ui.MenuPage
+import io.github.mickeiik.izle.ui.MenuPlan
 import io.github.mickeiik.izle.ui.MenuUi
 import io.github.mickeiik.izle.ui.RootEntry
 import io.github.mickeiik.izle.ui.SettingsEntry
@@ -112,8 +113,9 @@ fun HiddenMenu(
                         item(key = "pair") {
                             MenuRow(stringResource(R.string.settings_pair_again), modifier = focus(2)) { actions.onSettings(SettingsEntry.PairAgain) }
                         }
-                        // Only while the server offers a newer version; last, so the focus never starts on it.
-                        about.updateVersion?.let { version ->
+                        // Only while the server offers a newer version, not over the player; last, so the focus never
+                        // starts on it.
+                        MenuPlan.installUpdateVersion(about.updateVersion, menu.fromPlayer)?.let { version ->
                             item(key = "update") {
                                 MenuRow(stringResource(R.string.settings_install_update), version, modifier = focus(3)) {
                                     actions.onSettings(SettingsEntry.InstallUpdate)

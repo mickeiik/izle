@@ -8,7 +8,7 @@ import { actionButton, card, chip, h, keyedRows, onSubmit, page, setChip, setOff
 import { watchEvents } from "./events.js";
 import {
   APK_MAX_BYTES, androidText, apkVersion, appCheckText, appUpdateChip, checkResultText, commandResultText, errorText,
-  formatBytes, formatRelative, installNowBlocked,
+  formatBytes, formatRelative, installNowBlocked, newApkText,
 } from "./lib.js";
 
 /** @param {import("./router.js").Scope} scope */
@@ -26,19 +26,20 @@ export function appView(scope) {
   const none = h("p", { class: "muted" });
   const facts = h("dl", { class: "facts" });
   const origin = h("p", { class: "muted" });
+  const autoLine = h("p", { class: "muted" });
   const checkLine = h("p", { class: "muted" });
   const checkHint = h("p", { class: "hint", id: "app-check-hint" });
   const check = actionButton("Check now", { "aria-describedby": "app-check-hint" }, async () => {
     const r = await attempt(() => api("POST", "/app/check"));
     if (r.ok) {
-      const t = checkResultText(r.value);
+      const t = checkResultText(r.value, Boolean(app?.auto));
       toast(t.text, t.kind);
     }
     await job.now();
   });
   const remove = actionButton("Remove", { class: "danger", "aria-label": "Remove the stored TV app" }, async () => {
     if (!app?.apk) return;
-    const again = app.source === "github" && app.auto ? " The next automatic check fetches the latest release again." : "";
+    const again = app.source === "github" ? " The next check fetches the latest release again." : "";
     if (!confirm(`Remove the stored TV app ${app.apk.versionName}? The TVs keep the version they have; nothing is offered to them until another APK is stored.${again}`)) return;
     const r = await attempt(() => api("DELETE", "/app/apk"), "The stored TV app was removed.");
     if (r.ok) await job.now();
@@ -66,9 +67,13 @@ export function appView(scope) {
       ];
       facts.replaceChildren(...rows.flatMap(([k, v]) => [h("dt", null, k), h("dd", null, v)]));
     }
+    const every = Number.isInteger(app.checkIntervalHours) ? `every ${app.checkIntervalHours} h` : "on a schedule";
     origin.textContent = app.source === "github"
-      ? `New versions come from the GitHub releases of ${app.repo}${app.auto ? ", checked automatically" : ", checked only with Check now"}.`
+      ? `New versions come from the GitHub releases of ${app.repo}, checked ${every} and with Check now.`
       : "New versions come only from uploads (the server's app source is manual).";
+    autoLine.textContent = app.auto
+      ? "Automatic installs are on: TVs that can install by themselves do so when idle."
+      : "Automatic installs are off: every TV needs Install now.";
     checkLine.textContent = appCheckText(app.check, app.source);
     checkLine.hidden = checkLine.textContent === "";
     const running = Boolean(app.check?.running);
@@ -77,7 +82,7 @@ export function appView(scope) {
       ? "Checks are off: this server is set to uploaded APKs only."
       : running ? "A check is running." : "Looks for a newer release on GitHub now.";
     setOff(remove, !apk);
-    storedSlot.show(none, facts, origin, checkLine, storedActions, checkHint);
+    storedSlot.show(none, facts, origin, autoLine, checkLine, storedActions, checkHint);
   };
 
   // Upload ------------------------------------------------------------------------------------------------------
@@ -118,7 +123,7 @@ export function appView(scope) {
       if (!r.ok) return setStatus(errorText(r.error), true);
       setStatus("");
       file.value = "";
-      toast(`Uploaded ${r.value.apk.versionName}. TVs that install by themselves update when idle; the others need Install now.`);
+      toast(`Uploaded ${r.value.apk.versionName}. ${newApkText(Boolean(app?.auto))}`);
       await job.now();
     };
   });
@@ -200,7 +205,7 @@ export function appView(scope) {
     if (e.type !== "command.result" || e.data?.type === "update") void job.now();
   });
 
-  const intro = "The APK the server offers to the TVs. TVs on Android 12 or newer install it by themselves while nobody is watching; older ones need Install now below.";
+  const intro = "The APK the server offers to the TVs. With automatic installs on, TVs on Android 12 or newer install it by themselves while nobody is watching; the others need Install now below.";
   return page(
     { title: "TV app" },
     scope.note,
