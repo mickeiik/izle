@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ADMIN_TOKEN, startTestServer, type Json, type TestServer } from "./helpers.ts";
+import { ADMIN_TOKEN, openEvents, startTestServer, type Json, type TestServer } from "./helpers.ts";
 
 const logged = (s: TestServer, msg: string): Json[] => s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === msg);
 
@@ -134,4 +134,47 @@ test("a revoked (or wrong) access token counts as a failed sign-in and locks the
   assert.equal(logged(s, "admin auth failed").length, 10);
   assert.deepEqual(new Set(logged(s, "admin auth failed").map((l) => l.reason)), new Set(["wrong token"]));
   assert.ok(!s.logs.some((l) => l.includes(secret) || l.includes("izat_")), "the revoked secret is never logged");
+});
+
+test("revoking an access token ends the event stream and long-poll it has open, before any later event", async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  const tv = await s.pair("Salon");
+  const reader = await createToken(s, "monitor", "read");
+  const other = await createToken(s, "other", "read");
+  const es = await openEvents(s.base, reader.secret, "/api/v1/admin/events/stream");
+  t.after(() => es.close());
+  const kept = await openEvents(s.base, other.secret, "/api/v1/admin/events/stream");
+  t.after(() => kept.close());
+  const owner = await openEvents(s.base, ADMIN_TOKEN, "/api/v1/admin/events/stream");
+  t.after(() => owner.close());
+  for (const stream of [es, kept, owner]) {
+    assert.equal(stream.status, 200);
+    assert.equal((await stream.next()).retry, "5000");
+  }
+  const last = (await s.admin("GET", "/events")).json.last;
+  const poll = s.call("GET", `/api/v1/admin/events?after=${last}&wait=20`, { token: reader.secret });
+  await new Promise((r) => setTimeout(r, 50));
+
+  assert.equal((await s.admin("DELETE", `/tokens/${reader.id}`)).status, 204);
+  assert.equal((await s.admin("PATCH", `/devices/${tv.deviceId}`, { name: "Living room" })).status, 200);
+
+  await assert.rejects(es.next(), /stream ended/, "the revoked token's stream ended without the new event");
+  const polled = await poll;
+  assert.equal(polled.status, 401, "and its long-poll answers 401 instead of the event");
+  assert.equal(JSON.parse((await kept.next()).data!).type, "device.updated", "another token's stream goes on");
+  assert.equal(JSON.parse((await owner.next()).data!).type, "device.updated", "and so does the owner's");
+});
+
+test("an admin event stream whose access token is gone ends at the next ping", async (t) => {
+  const s = await startTestServer({ pingMs: 30 });
+  t.after(() => s.close());
+  const reader = await createToken(s, "monitor", "read");
+  const es = await openEvents(s.base, reader.secret, "/api/v1/admin/events/stream");
+  t.after(() => es.close());
+  assert.equal((await es.next()).retry, "5000");
+  assert.equal((await es.next((m) => m.comment === "ping")).comment, "ping");
+  // Gone without going through revoke (no close hook ran): the ping's check still ends the stream.
+  s.srv.ctx.store.deleteAccessToken(reader.id);
+  await assert.rejects(es.next((m) => m.comment === "ping" || m.comment === undefined, 1000), /stream ended/);
 });

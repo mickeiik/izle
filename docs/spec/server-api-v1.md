@@ -571,7 +571,7 @@ needs, or `owner`); it does not count as a failed sign-in.
 |---|---|---|
 | `GET /api/v1/admin/tokens` | | `{"tokens": [AccessToken]}`, oldest first |
 | `POST /api/v1/admin/tokens` | `{"name", "scope"}` (`name`: 1–60 characters, trimmed, unique) | `201 {"token": AccessToken, "secret": "izat_…"}`; the secret is shown only here |
-| `DELETE /api/v1/admin/tokens/:id` | | `204`; requests with that token answer `401` from now on |
+| `DELETE /api/v1/admin/tokens/:id` | | `204`; requests with that token answer `401` from now on, and an [event stream](#events) it has open ends at once (a long-poll answers `401`) |
 
 `AccessToken` = `{"id", "name", "scope", "createdAt", "lastUsedAt"}` (`id`: 12 alphanumeric characters, like a device
 id; `lastUsedAt` is written at most once a minute). The secret is `izat_` and 32 random bytes base64url (the prefix

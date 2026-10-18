@@ -26,6 +26,8 @@ export class TokenService {
   private readonly store: Store;
   private readonly log: Logger;
   private readonly now: () => number;
+  /** What to close when a token is revoked (its open event streams), by token id. */
+  private readonly closers = new Map<string, Set<() => void>>();
 
   constructor(store: Store, log: Logger, now: () => number) {
     this.store = store;
@@ -51,10 +53,32 @@ export class TokenService {
     return this.store.listAccessTokens();
   }
 
-  /** Revokes a token: requests with it answer 401 from now on. 404 `unknown_token` when there is none with the id. */
+  /**
+   * Revokes a token: requests with it answer 401 from now on, and what it has open (event streams) is closed at once.
+   * 404 `unknown_token` when there is none with the id.
+   */
   revoke(id: string): void {
     if (!this.store.deleteAccessToken(id)) throw new HttpError(404, "unknown_token");
+    const closers = this.closers.get(id);
+    this.closers.delete(id);
+    for (const close of closers ?? []) close();
     this.log.info("access token revoked", { actorId: id });
+  }
+
+  /** Calls `close` when the token is revoked (for a connection opened with it); returns the unregistration. */
+  onRevoke(id: string, close: () => void): () => void {
+    let closers = this.closers.get(id);
+    if (!closers) this.closers.set(id, (closers = new Set()));
+    closers.add(close);
+    return () => {
+      closers.delete(close);
+      if (closers.size === 0 && this.closers.get(id) === closers) this.closers.delete(id);
+    };
+  }
+
+  /** Whether the token with the id still exists (not revoked). */
+  exists(id: string): boolean {
+    return this.store.getAccessToken(id) !== null;
   }
 
   /** The token a presented secret belongs to, or null; records its use at most once a minute. */

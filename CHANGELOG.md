@@ -175,6 +175,9 @@ contract share one version number. How to update (back up, update the server, th
 - **Requests without a token no longer count toward the admin sign-in lockout:** they still answer 401, but another
   site's page open in the owner's browser can no longer lock the owner out of the admin API for 10 minutes by sending
   tokenless requests to it. Wrong and revoked tokens are counted as before.
+- **Revoking an access token ends the admin event stream it has open:** a stream opened with the token closed
+  only when the client disconnected, so it went on receiving events after the revocation; it now ends at once (and
+  at the next ping, should the token be gone some other way), and a long-poll waiting with it answers 401.
 
 ### Compatibility
 
