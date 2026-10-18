@@ -178,6 +178,10 @@ contract share one version number. How to update (back up, update the server, th
 - **Revoking an access token ends the admin event stream it has open:** a stream opened with the token closed
   only when the client disconnected, so it went on receiving events after the revocation; it now ends at once (and
   at the next ping, should the token be gone some other way), and a long-poll waiting with it answers 401.
+- **The admin event stream's work is bounded:** opening it replays at most the newest 500 stored events (after a
+  `gap`, so the admin page re-reads what it shows) instead of the whole retained log in one go, a client that stops
+  reading is disconnected instead of queuing events for it without end, and each access token (or, for the owner
+  token, each client address) may have at most 10 streams open (`429 too_many_streams`).
 
 ### Compatibility
 

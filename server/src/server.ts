@@ -123,7 +123,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   registerAdmin(app, ctx);
   registerAdminTokens(app, ctx);
   registerAdminApp(app, ctx);
-  registerAdminEvents(app, ctx);
+  registerAdminEvents(app, ctx, clientKey);
   registerAdminStatus(app, ctx);
   registerAdminHistory(app, ctx);
   registerAdminHome(app, ctx);

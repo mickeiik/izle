@@ -31,6 +31,8 @@ export interface EventPage {
 export const MAX_EVENT_WAIT_MS = 25_000;
 export const EVENT_LIST_DEFAULT = 100;
 export const EVENT_LIST_MAX = 500;
+/** Most stored events a stream replays when it opens; it starts with a gap when there were more. */
+export const EVENT_REPLAY_MAX = EVENT_LIST_MAX;
 /** Event types are lower-case words joined by dots and underscores (`playback.started`). */
 export const EVENT_TYPE = /^[a-z][a-z_]*(\.[a-z_]*)*$/;
 
@@ -91,10 +93,25 @@ export class EventLog {
    * one are gone: the kept events then start from the oldest.
    */
   list(f: EventFilter): EventPage {
-    const oldest = this.store.oldestEventId();
-    const gap = oldest === null ? f.after < this.store.lastEventId() : f.after < oldest - 1;
     const events = this.store.listEvents(f).map(eventJson);
-    return { events, last: events.at(-1)?.id ?? f.after, gap };
+    return { events, last: events.at(-1)?.id ?? f.after, gap: this.lost(f.after) };
+  }
+
+  /**
+   * What a stream replays: the newest `f.limit` events after `f.after`, oldest first. `gap` when some were lost
+   * (as for `list`) or skipped for the limit; `oldest`: the id the replay starts from, else the oldest kept one.
+   */
+  replay(f: EventFilter): { events: Event[]; gap: boolean; oldest: number | null } {
+    const rows = this.store.listEvents({ ...f, limit: f.limit + 1, newest: true });
+    const skipped = rows.length > f.limit;
+    const events = (skipped ? rows.slice(1) : rows).map(eventJson);
+    return { events, gap: skipped || this.lost(f.after), oldest: skipped ? events[0]!.id : this.store.oldestEventId() };
+  }
+
+  /** Whether events after `after` were purged: `after` is older than the oldest kept event. */
+  private lost(after: number): boolean {
+    const oldest = this.store.oldestEventId();
+    return oldest === null ? after < this.store.lastEventId() : after < oldest - 1;
   }
 
   /** `list`, waiting up to `waitMs` for the first matching event when there is none yet. */

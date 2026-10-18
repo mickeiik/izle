@@ -616,7 +616,11 @@ Events carry no URLs, headers, refs, tokens, message texts or problem details.
   [`/tv/events`](#get-apiv1tvevents): each event as `id: <id>`, `event: <type>`, `data: <Event>`, starting after
   `after`, else after `Last-Event-ID` (without either: new events only); `retry: 5000`, a `: ping` comment every
   20 s. The token goes in the `Authorization` header as on every admin route, never in the query string (a browser's
-  `EventSource` cannot set it; the admin page reads the stream with `fetch`).
+  `EventSource` cannot set it; the admin page reads the stream with `fetch`). A replay sends at most the newest 500
+  events; when more were stored after `after`, it starts with `event: gap` (`oldest`: the first id it sends). A
+  client that stops reading while events keep coming is disconnected (it reconnects with `Last-Event-ID`). At most
+  10 streams are open at once per access token, and per client address for the owner token; one more answers
+  `429 too_many_streams` (`Retry-After`).
 - **Long-poll:** `GET /api/v1/admin/events?after=&wait=&limit=&devices=&types=` → `{"events": [Event], "last",
   "gap"}`, oldest first (`limit` ≤ 500, default 100); with no event after `after` it waits up to `wait` seconds (0–25,
   default 0). For clients that cannot keep a stream open: MCP tools, scripts. `last` is the id of the last event
