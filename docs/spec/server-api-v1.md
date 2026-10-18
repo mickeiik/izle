@@ -27,7 +27,7 @@ ignore unknown response fields.
 
 | Secret | Where it comes from | Stored as |
 |---|---|---|
-| Admin token | `IZLE_ADMIN_TOKEN`, else `admin.tokenFile` (created with 32 random bytes, mode 0600, on first start). Shorter than 24 characters → the server refuses to start. `izle-server admin-token [--rotate]` prints / replaces it; `--link` prints a sign-in link for the admin page (`<base>/admin/#token=<token>`, the token in the URL fragment, which browsers never send) and its QR code. | the file (owner's responsibility) |
+| Admin token | `IZLE_ADMIN_TOKEN`, else `admin.tokenFile` (created with 32 random bytes, mode 0600, on first start). Shorter than 24 characters → the server refuses to start. `izle-server admin-token [--rotate]` prints / replaces it (`--rotate` is refused while `IZLE_ADMIN_TOKEN` is set, and the server warns at startup when the variable shadows a token file); `--link` prints a sign-in link for the admin page (`<base>/admin/#token=<token>`, the token in the URL fragment, which browsers never send) and its QR code. | the file (owner's responsibility) |
 | Pair token | `POST /pair/start`, 32 random bytes base64url | sha256 |
 | Device token | handed out once by `GET /pair/wait` after approval, 32 random bytes base64url | sha256 |
 

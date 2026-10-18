@@ -190,6 +190,10 @@ contract share one version number. How to update (back up, update the server, th
   upstream playlist of many short lines behind a long URL could grow a hundredfold and stall the server while it
   was rewritten. A playlist with more than 250,000 lines, more than 16 MiB once rewritten, or a URI longer than 4096
   characters now answers 502 `playlist_too_large` and is reported, like one over 4 MiB.
+- **`admin-token --rotate` no longer leaves the old token valid when `IZLE_ADMIN_TOKEN` is set:** it wrote a new
+  token file that the server ignored in favour of the variable. It now refuses with a message to change or remove
+  the variable, and the server warns at startup ("IZLE_ADMIN_TOKEN overrides the admin token file") when the
+  variable shadows a token file.
 
 ### Compatibility
 

@@ -180,7 +180,7 @@ async function token(config: ServerConfig, args: string[], serverUrl: string | u
  */
 function adminToken(config: ServerConfig, opts: { rotate: boolean; link: boolean; base: string | undefined }): number {
   const { token, source } = loadAdminToken(config, stderrLog, { rotate: opts.rotate });
-  if (source === "env" && !opts.rotate) process.stderr.write("note: IZLE_ADMIN_TOKEN is set and overrides the token file\n");
+  if (source === "env") process.stderr.write("note: IZLE_ADMIN_TOKEN is set and overrides the token file\n");
   if (!opts.link) {
     out(token);
     return 0;

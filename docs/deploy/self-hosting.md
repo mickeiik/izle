@@ -239,6 +239,11 @@ sudo -u izle /opt/izle/bin/izle-server admin-token --config /etc/izle/izle.json 
 sudo systemctl restart izle
 ```
 
+`--rotate` replaces the token file. While `IZLE_ADMIN_TOKEN` is set the variable is the token in use and the file is
+ignored, so `--rotate` refuses to run; change or remove the variable instead. (`sudo -u izle` drops the variable
+from the shell, so a rotation can still write a file the server then ignores: at startup the server logs the
+warning "IZLE_ADMIN_TOKEN overrides the admin token file" whenever the variable shadows a token file.)
+
 ### Access tokens for apps and agents
 
 The admin token is the owner's and stays out of scripts. An app, a home-automation hook or an AI agent gets its

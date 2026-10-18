@@ -69,7 +69,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   const now = opts.now ?? Date.now;
   const fetchUpstream = opts.fetch ?? globalThis.fetch;
 
-  const { token: adminToken, source } = loadAdminToken(config, log);
+  const { token: adminToken, source } = loadAdminToken(config, log, { warnShadowed: true });
   // The resolver module comes from a local path in the config; nothing is ever downloaded.
   const resolverModule = config.resolver
     ? await loadResolver({ module: config.resolver.module, config: config.resolver.config, dataDir: config.dataDir, log })
