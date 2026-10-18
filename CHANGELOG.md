@@ -7,6 +7,8 @@ contract share one version number. How to update (back up, update the server, th
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-18
+
 ### Added
 
 - **TV app updates, server side:** the server keeps one TV app APK and offers it to every TV (`GET /api/v1/tv/app`,
@@ -16,25 +18,24 @@ contract share one version number. How to update (back up, update the server, th
   (`PUT /api/v1/admin/app/apk`; an upload of the release's own version is kept over the release), remove it (the TVs
   hear of it: `event: app` with `versionCode` 0) or check now (`GET /api/v1/admin/app`, which also shows
   `checkIntervalHours`, `DELETE …/app/apk`, `POST …/app/check`). A new `update` command starts the install on a TV
-  that needs the viewer. Each TV's app
-  version, Android version and update capability (from its User-Agent) show in the device list with whether it is
-  up to date (`app`), and the event log gains `app.uploaded`, `app.fetched`, `app.removed`, `app.check_failed` and
-  `device.app_version`.
+  that needs the viewer. Each TV's app version, Android version and update capability (from its User-Agent) show in
+  the device list with whether it is up to date (`app`), and the event log gains `app.uploaded`, `app.fetched`,
+  `app.removed`, `app.check_failed` and `device.app_version`.
 - **TV app page on the admin page** ("TV app"): the APK the server offers to the TVs (version, where it came from,
   size, how often and when the server last checked GitHub and with what result, whether TVs install by themselves),
-  Check now, Remove, and an upload for a release APK. Every TV with its installed app and Android version, whether it updates by itself or needs Install now, and
-  an Install now button; a TV's page has the same in its new "TV app" section, and the TV list flags TVs with an
-  update waiting. The update's outcome comes back as a toast ("Update: the TV shows the install screen").
+  Check now, Remove, and an upload for a release APK. Every TV with its installed app and Android version, whether
+  it updates by itself or needs Install now, and an Install now button; a TV's page has the same in its new "TV app"
+  section, and the TV list flags TVs with an update waiting. The update's outcome comes back as a toast ("Update:
+  the TV shows the install screen").
 - **The TV app updates itself** from the version stored on the server: on Android 12 and newer (with the one-time
   "install unknown apps" permission) silently, once the TV has sat idle on Home for 3 minutes or at once on the
   owner's `update` command; on older TVs on the command only, behind a large "New version — press OK" screen and
   then the system's Install dialog ("Updating…" waits behind it; Back or 60 s go Home). Never during playback: the
   hidden menu's "Install update" is not offered over the player. An install that fails after the owner's command
-  was answered reaches the owner as a problem report. After an update Android 10+ shows
-  the TV's launcher until izle is opened again (the system blocks the app from coming back by itself); Android 9 and
-  older bring it back. The hidden menu offers "Install update" and About says whether one is available; every API call's `User-Agent` names the app version, Android
-  version and how the TV can update (`izle-tv/0.2.0 (Android 25; 200; guided)`).
-
+  was answered reaches the owner as a problem report. After an update Android 10+ shows the TV's launcher until izle
+  is opened again (the system blocks the app from coming back by itself); Android 9 and older bring it back. The
+  hidden menu offers "Install update" and About says whether one is available; every API call's `User-Agent` names
+  the app version, Android version and how the TV can update (`izle-tv/0.3.0 (Android 25; 300; guided)`).
 - **The admin page follows the TVs live:** it reads the server's event log, so a TV going online, a playback, a
   command's outcome or a change made elsewhere shows up as it happens; the polls stay as a fallback. After a remote
   command, a toast says what the TV made of it ("Play: done", "Pause: ignored (nothing is playing)").
@@ -300,6 +301,7 @@ The first release: everything needed to run izle at home with your own catalog.
 - The TV app needs Android 7.0 (API 24) or newer. It carries Let's Encrypt's root certificates, so a TV on 7.0 can
   reach a server behind Caddy's default certificate.
 
-[Unreleased]: https://github.com/mickeiik/izle/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/mickeiik/izle/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/mickeiik/izle/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mickeiik/izle/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mickeiik/izle/releases/tag/v0.1.0
