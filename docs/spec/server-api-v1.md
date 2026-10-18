@@ -48,7 +48,10 @@ device token.
 
 No body. → `200 {"code": "483920", "pairToken": "<secret>", "expiresAt": "…"}`; codes live 10 minutes. Errors:
 `429 rate_limited` (more than 10 starts per client address in 10 minutes; `Retry-After`; behind a reverse proxy see
-`trustedProxies`), `429 too_many_pending` (5 codes are already open).
+`trustedProxies`), `429 too_many_pending` with `Retry-After` (seconds until the earliest of those codes expires):
+this client address already has 2 codes waiting for approval, or 10 codes are open server-wide. A start never ends
+another code: clients that share an address (behind one NAT, or behind a reverse proxy without `trustedProxies`)
+pair one after the other. Each code remembers a hash of the address that started it.
 
 ### `GET /api/v1/pair/wait?code=<6 digits>[&wait=<0..25>]`
 
@@ -66,11 +69,18 @@ No body. → `200 {"code": "483920", "pairToken": "<secret>", "expiresAt": "…"
 free `TV 2`, `TV 3`, …) → `200 {"deviceId": "…", "name": "…"}`. The device exists from now on (status `pending`)
 and can be configured before the TV collects its token; if the code expires uncollected, it is removed. Errors:
 `404 unknown_code`, `409 already_approved`. `izle-server pair approve <code> [name…]` calls this route on the running
-server, `pair pending` the next one.
+server, `pair pending` and `pair cancel <code>` the next two.
 
 ### `GET /api/v1/admin/pair/pending`
 
 → `{"codes": [{"code", "createdAt", "expiresAt", "approved"}]}`: open (unexpired, undelivered) codes.
+
+### `DELETE /api/v1/admin/pair/pending/:code`
+
+Owner only. Clears an open code that none of the owner's TVs shows → `204`: the code expires now, so its
+`pair/wait` answers `410` (a TV that showed it asks for a new one) and it can no longer be approved. A device
+approved on it that never collected its token is deleted; a TV it was to [replace](#replacing-a-tv) stays as it is.
+Event `pairing.cancelled`. Errors: `404 unknown_code` (no open code with this value).
 
 ## TV API
 
@@ -573,7 +583,7 @@ an app, each with one scope, and revokes them at any time:
 | `control` | `read`, plus [`POST …/commands`](#commands) (`update` included) |
 | `manage` | `control`, plus the home list (`PUT …/home` and the [single changes](#home-list-changes)), `PUT …/cursor`, `PATCH /admin/devices/:id`, [history marks](#viewing-history), `DELETE …/problems`, `POST /admin/catalog/reload` and the [TV app](#tv-app) (`PUT`/`DELETE /admin/app/apk`, `POST /admin/app/check`) |
 
-Every other route needs the owner token: pairing approval, deleting a TV, deleting and adopting history,
+Every other route needs the owner token: pairing approval and clearing a code, deleting a TV, deleting and adopting history,
 [diagnostics](#diagnostics), [Listen along](#listen-along) resolves and links, and the access tokens themselves (every
 method). A request whose token does not cover the route answers `403 insufficient_scope` with `required` (the scope it
 needs, or `owner`); it does not count as a failed sign-in.
@@ -649,6 +659,7 @@ Events carry no URLs, headers, refs, tokens, message texts or problem details.
 | `app.uploaded` / `app.fetched` | `{"versionName", "versionCode", "source": "upload"}` / `{"versionName", "versionCode", "source": "github", "releaseTag"}`: a new [TV app](#tv-app) APK is on offer |
 | `app.removed` / `app.check_failed` | `{"versionName"}` / `{"reason"}` (a GitHub check failed, see [TV app](#tv-app); the server is the actor of a scheduled check) |
 | `pairing.pending` | `{"code", "expiresAt"}`: a TV shows a new pairing code |
+| `pairing.cancelled` | `{"code"}`: the owner cleared a waiting code ([`DELETE …/pair/pending/:code`](#delete-apiv1adminpairpendingcode)) |
 | `playback.started` | `{"viewingId", "itemId", "itemKind", "itemTitle", "episodeId", "episodeTitle", "season", "number", "sourceId", "positionMs", "trigger"}`: a [viewing](#viewing-history) starts (its first resolve; the re-resolves that continue it send nothing); `positionMs` is where it will start |
 | `playback.paused` / `playback.resumed` | `{"viewingId", "positionMs"}`: a `paused` report / a `playing` report after one |
 | `playback.seeked` | `{"viewingId", "fromMs", "toMs"}`: a report's position is more than 10 s from where playback should be (see [`coveredFraction`](#viewing-history)) |
@@ -926,3 +937,7 @@ in `./data` (`izle.db`, `admin.token`). Deployment (systemd, Caddy, Docker): [se
   non-public [destinations](#media-proxy) on every request and redirect (`502 egress_denied`, problem code
   `egress_denied`), follows redirects itself (at most 5) and sends credential-type headers only to the session's own
   origin; config `proxy.privateUpstreams` lists the exceptions. Before, a session could be made to fetch any host.
+- **v1, pairing pool (2026-10-18)** — at most 2 codes waiting for approval per client address (10 open
+  server-wide, was 5), `Retry-After` with `too_many_pending`,
+  [`DELETE /admin/pair/pending/:code`](#delete-apiv1adminpairpendingcode) and the `pairing.cancelled` event. Before,
+  one address could hold every open code.

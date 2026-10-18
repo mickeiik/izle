@@ -3,7 +3,7 @@
 // per TV, so a half-typed name and the keyboard focus survive the refresh.
 
 import { api, attempt } from "./api.js";
-import { card, chip, h, keyedRows, onSubmit, page, setOff, slot, srOnly, statusChip, toast } from "./dom.js";
+import { actionButton, card, chip, h, keyedRows, onSubmit, page, setOff, slot, srOnly, statusChip, toast } from "./dom.js";
 import { watchEvents } from "./events.js";
 import { appUpdateChip, formatCode, formatCountdown, formatRelative, plural, serverAddress } from "./lib.js";
 
@@ -28,7 +28,13 @@ export function devicesView(scope) {
     const replaces = h("select", { "aria-label": `What the TV showing ${code} becomes`, hidden: true });
     const countdown = h("span", { class: "muted" });
     const approve = h("button", { class: "primary", type: "submit", "data-control": "approve", "aria-label": `Approve ${code}` }, "Approve");
-    const element = h("form", { class: "row pair" }, h("div", { class: "code" }, srOnly("Code "), code), h("div", { class: "grow" }, name, replaces, countdown), approve);
+    // A code none of the owner's TVs shows (someone else asked for it): it stops pairing at once.
+    const clear = actionButton("Clear", { "data-control": "clear", "aria-label": `Clear ${code}` }, async () => {
+      if (!confirm(`Clear the code ${code}? Do this only for a code none of your TVs shows; a TV that shows it asks for a new one.`)) return;
+      const r = await attempt(() => api("DELETE", `/pair/pending/${encodeURIComponent(c.code)}`), `The code ${code} was cleared.`);
+      if (r.ok) await job.now();
+    });
+    const element = h("form", { class: "row pair" }, h("div", { class: "code" }, srOnly("Code "), code), h("div", { class: "grow" }, name, replaces, countdown), h("div", { class: "buttons" }, approve, clear));
     const fillReplaces = () => {
       const current = replaces.value;
       replaces.replaceChildren(h("option", { value: "", selected: current === "" }, "A new TV"), ...active.map((d) => h("option", { value: d.id, selected: d.id === current }, `Replaces “${d.name}”`)));
@@ -105,7 +111,7 @@ export function devicesView(scope) {
   return page(
     { title: "TVs" },
     scope.note,
-    card({ title: "Pair a TV", intro: "Approve only the code that your TV shows." }, pendingSlot.element),
+    card({ title: "Pair a TV", intro: "Approve only the code that your TV shows; clear the codes none of your TVs shows." }, pendingSlot.element),
     card("Paired TVs", devicesSlot.element),
   );
 }

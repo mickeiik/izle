@@ -146,3 +146,15 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
   to keep izle first in the launcher's favourites.
 - The archive's own versionCode must equal the one `/tv/app` announced (else `bad_archive`) and be newer than the
   running one (else `ignored not_newer`); `404 no_apk` during the download is `ignored up_to_date`.
+
+## Proxy destinations and the pairing pool (security audit, 2026-10-18)
+
+- The proxy's upstream transport is node:http(s), not `fetch`: Node's bundled undici `Agent` (needed to pin a
+  connection to the vetted address with `connect.lookup`) is not exported, and the npm `undici` would be a new
+  dependency whose dispatcher API must match the Node release's fetch. node:http takes a per-request `lookup`, so
+  the address the policy checked is the one the socket connects to; DNS rebinding between check and connect has no
+  window. Bodies are decoded like fetch (gzip, deflate, br) and the default `Accept`/`User-Agent` match fetch's.
+- `proxy.privateUpstreams` entries may carry a port: the resolver example's stand-in site and its tests' internal
+  servers share 127.0.0.1, and only the port tells the allowed upstream from the others.
+- Approved codes do not count towards a client's 2-code cap (the owner already acted on them; several TVs approved
+  before collecting behind one address must still pair); they still count towards the server-wide 10.

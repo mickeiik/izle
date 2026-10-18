@@ -347,7 +347,9 @@ then shows a 6-digit pairing code and the admin page's address. On the admin pag
 code (a name is optional; the TV is called "TV" otherwise and can be renamed later), then add shows to that TV's
 home screen; the tiles appear on the TV right away. From the server's shell the same approval is
 `sudo -u izle /opt/izle/bin/izle-server pair approve 483920 Living room --config /etc/izle/izle.json`
-(`pair pending` lists the waiting codes; `--server <url>` when the server does not listen where the config says).
+(`pair pending` lists the waiting codes, `pair cancel <code>` clears one that none of your TVs shows; `--server <url>`
+when the server does not listen where the config says). A code you did not expect (someone else asked the server for
+it) can be cleared with **Clear** next to it; never approve a code your TV does not show.
 Put izle first in the TV launcher's favourites so it is the first thing on screen.
 
 ### Updating the TV app

@@ -57,6 +57,8 @@ export interface StoredApk {
 interface PairCode {
   code: string;
   pairTokenHash: string;
+  /** sha256 of the client address that started the code; null for codes from before migration 7. */
+  clientHash: string | null;
   deviceId: string | null;
   createdAt: number;
   expiresAt: number;
@@ -491,7 +493,7 @@ export class Store {
 
   // --- pairing -------------------------------------------------------------------------------------------------
 
-  insertPairCode(p: Pick<PairCode, "code" | "pairTokenHash" | "createdAt" | "expiresAt">): void {
+  insertPairCode(p: Pick<PairCode, "code" | "pairTokenHash" | "clientHash" | "createdAt" | "expiresAt">): void {
     this.insert("pair_codes", p);
   }
 
@@ -510,6 +512,18 @@ export class Store {
 
   markPairCodeDelivered(code: string, now: number): void {
     this.run("UPDATE pair_codes SET delivered_at = ? WHERE code = ?", now, code);
+  }
+
+  /**
+   * Ends an open code now, so `pair/wait` answers 410 until the purge removes it. A new device approved on it is
+   * deleted (it never got its token); an active device it was to replace is unbound and stays.
+   */
+  cancelPairCode(code: string, now: number): void {
+    this.transaction(() => {
+      const deviceId = this.get("SELECT device_id FROM pair_codes WHERE code = ?", code)?.device_id ?? null;
+      this.run("UPDATE pair_codes SET expires_at = ?, device_id = NULL WHERE code = ?", now, code);
+      if (typeof deviceId === "string") this.run("DELETE FROM devices WHERE id = ? AND token_hash IS NULL", deviceId);
+    });
   }
 
   /**

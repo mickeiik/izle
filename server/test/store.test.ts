@@ -255,6 +255,30 @@ test("migration 6: devices from before read no app version; one APK row at most"
   s.close();
 });
 
+test("migration 7: pairing codes from before have no client; cancelling one unbinds and removes its uncollected device", async () => {
+  const file = path.join(await tempDir(), "izle.db");
+  const raw = new DatabaseSync(file);
+  for (const m of MIGRATIONS.slice(0, 6)) raw.exec(m);
+  raw.exec("PRAGMA user_version = 6");
+  raw.exec("INSERT INTO devices (id, name, token_hash, created_at) VALUES ('new', 'TV', NULL, 1), ('old', 'Salon', 'h', 1)");
+  raw.exec(`INSERT INTO pair_codes (code, pair_token_hash, device_id, created_at, expires_at, approved_at) VALUES
+    ('111111', 'p1', 'new', 1, 100, 2), ('222222', 'p2', 'old', 1, 100, 2), ('333333', 'p3', NULL, 1, 100, NULL)`);
+  raw.close();
+
+  const s = new Store(file);
+  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  assert.equal(s.getPairCode("333333")!.clientHash, null);
+  s.insertPairCode({ code: "444444", pairTokenHash: "p4", clientHash: "c".repeat(64), createdAt: 3, expiresAt: 100 });
+  assert.equal(s.getPairCode("444444")!.clientHash, "c".repeat(64));
+  s.cancelPairCode("111111", 50);
+  s.cancelPairCode("222222", 50);
+  assert.deepEqual([s.getPairCode("111111")!.expiresAt, s.getPairCode("111111")!.deviceId], [50, null]);
+  assert.equal(s.getDevice("new"), null, "the device never collected is gone");
+  assert.equal(s.getDevice("old")!.name, "Salon", "the device it was to replace stays");
+  assert.deepEqual(s.listOpenPairCodes(50).map((c) => c.code), ["333333", "444444"]);
+  s.close();
+});
+
 test("catalog history rows: episodes seen after a date, removal and return, builds newest first", async () => {
   const s = new Store(path.join(await tempDir(), "izle.db"));
   s.insertSeen("c", "b1", 0, [{ episodeId: "a.1", itemId: "a" }, { episodeId: "a.2", itemId: "a" }]);

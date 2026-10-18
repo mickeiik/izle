@@ -68,23 +68,87 @@ test("pairing: codes expire after 10 minutes", async (t) => {
   assert.equal((await s.admin("POST", "/pair/approve", { code: start.json.code, name: "TV" })).status, 404);
 });
 
-test("pairing: at most five open codes, and pair/start is rate-limited per client", async (t) => {
-  const s = await startTestServer({ pairing: { startLimit: { max: 7, windowMs: 60_000 } } });
+test("pairing: at most two open codes per client, with Retry-After, and pair/start is rate-limited per client", async (t) => {
+  const s = await startTestServer({ pairing: { startLimit: { max: 4, windowMs: 60_000 } } });
   t.after(() => s.close());
-  for (let i = 0; i < 5; i++) assert.equal((await s.call("POST", "/api/v1/pair/start")).status, 200);
-  const sixth = await s.call("POST", "/api/v1/pair/start");
-  assert.equal(sixth.status, 429);
-  assert.equal(sixth.json.error, "too_many_pending");
+  assert.equal((await s.call("POST", "/api/v1/pair/start")).status, 200);
+  s.clock.advance(30_000);
+  assert.equal((await s.call("POST", "/api/v1/pair/start")).status, 200);
+  const third = await s.call("POST", "/api/v1/pair/start");
+  assert.deepEqual([third.status, third.json.error], [429, "too_many_pending"]);
+  assert.equal(third.headers.get("retry-after"), String(10 * 60 - 30), "seconds until this client's first code expires");
   assert.equal((await s.call("POST", "/api/v1/pair/start")).json.error, "too_many_pending");
   const limited = await s.call("POST", "/api/v1/pair/start");
   assert.equal(limited.status, 429);
   assert.equal(limited.json.error, "rate_limited");
   assert.ok(Number(limited.headers.get("retry-after")) > 0);
   s.clock.advance(60_001);
-  // Window reset, but the five codes are still open.
+  // Window reset, but the two codes are still open.
   assert.equal((await s.call("POST", "/api/v1/pair/start")).json.error, "too_many_pending");
   s.clock.advance(10 * 60_000);
   assert.equal((await s.call("POST", "/api/v1/pair/start")).status, 200, "expired codes no longer count");
+});
+
+test("pairing: one client cannot keep another from getting a code, across expiry cycles; ten open codes at most", async (t) => {
+  const s = await startTestServer({ configFile: { trustedProxies: ["127.0.0.1", "::1"] } });
+  t.after(() => s.close());
+  const start = (client: string) => s.call("POST", "/api/v1/pair/start", { headers: { "X-Forwarded-For": client } });
+  for (let cycle = 0; cycle < 4; cycle++) {
+    // The flooder starts first and keeps asking, inside its own rate limit.
+    const flood = [];
+    for (let i = 0; i < 5; i++) flood.push((await start("203.0.113.66")).status);
+    assert.deepEqual(flood, [200, 200, 429, 429, 429], `cycle ${cycle}`);
+    const tv = await start("198.51.100.10");
+    assert.equal(tv.status, 200, `cycle ${cycle}: the TV gets a code`);
+    const pending = (await s.admin("GET", "/pair/pending")).json.codes.map((c: Json) => c.code);
+    assert.equal(pending.length, 3);
+    assert.ok(pending.includes(tv.json.code));
+    s.clock.advance(10 * 60_000 + 1_000);
+  }
+
+  // The server-wide backstop: ten open codes, then too_many_pending for everybody, with Retry-After.
+  for (let i = 0; i < 5; i++) for (const n of [0, 1]) assert.equal((await start(`192.0.2.${i + 1}`)).status, 200, `client ${i} code ${n}`);
+  s.clock.advance(5_000);
+  const full = await start("198.51.100.10");
+  assert.deepEqual([full.status, full.json.error], [429, "too_many_pending"]);
+  assert.equal(full.headers.get("retry-after"), String(10 * 60 - 5), "seconds until the earliest open code expires");
+});
+
+test("pairing: the owner clears a code nobody should approve; the TV's wait answers 410", async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  const stranger = await s.call("POST", "/api/v1/pair/start");
+  const mine = await s.call("POST", "/api/v1/pair/start");
+  const waiting = s.call("GET", `/api/v1/pair/wait?code=${stranger.json.code}&wait=10`, { token: stranger.json.pairToken });
+  await new Promise((r) => setTimeout(r, 50));
+  const started = Date.now();
+
+  const manage = (await s.admin("POST", "/tokens", { name: "agent", scope: "manage" })).json.secret;
+  const refused = await s.call("DELETE", `/api/v1/admin/pair/pending/${stranger.json.code}`, { token: manage });
+  assert.deepEqual([refused.status, refused.json.error], [403, "insufficient_scope"], "owner only");
+
+  assert.equal((await s.admin("DELETE", `/pair/pending/${stranger.json.code}`)).status, 204);
+  const woken = await waiting;
+  assert.deepEqual([woken.status, woken.json.status], [410, "expired"]);
+  assert.ok(Date.now() - started < 5000, "the long-poll ends at once");
+  assert.deepEqual((await s.admin("GET", "/pair/pending")).json.codes.map((c: Json) => c.code), [mine.json.code]);
+  assert.equal((await s.admin("POST", "/pair/approve", { code: stranger.json.code })).status, 404, "a cleared code cannot be approved");
+  for (const code of [stranger.json.code, "000000", "12ab"]) {
+    const again = await s.admin("DELETE", `/pair/pending/${code}`);
+    assert.deepEqual([again.status, again.json.error], [404, "unknown_code"], code);
+  }
+
+  // An approved code that was never collected: clearing it removes the device created for it.
+  const approved = await s.admin("POST", "/pair/approve", { code: mine.json.code, name: "Wrong" });
+  assert.equal((await s.admin("GET", "/devices")).json.devices.length, 1);
+  assert.equal((await s.admin("DELETE", `/pair/pending/${mine.json.code}`)).status, 204);
+  assert.equal((await s.call("GET", `/api/v1/pair/wait?code=${mine.json.code}&wait=0`, { token: mine.json.pairToken })).status, 410);
+  assert.deepEqual((await s.admin("GET", "/devices")).json.devices, [], `${approved.json.deviceId} is gone`);
+
+  // The freed slots count again for the client.
+  assert.equal((await s.call("POST", "/api/v1/pair/start")).status, 200);
+  const events = (await s.admin("GET", "/events?after=0&types=pairing.cancelled")).json.events;
+  assert.deepEqual(events.map((e: Json) => [e.actor, e.data]), [[{ type: "owner" }, { code: stranger.json.code }], [{ type: "owner" }, { code: mine.json.code }]]);
 });
 
 test("pairing: behind a trusted reverse proxy the rate limit counts each X-Forwarded-For client", async (t) => {

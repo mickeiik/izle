@@ -9,6 +9,7 @@ import type { AppContext } from "../../context.ts";
 import { diagnoseEpisode } from "../../diagnostics.ts";
 import { HttpError } from "../../errors.ts";
 import { requireItem } from "../../lookup.ts";
+import { PAIR_CODE } from "../../pairing.ts";
 import { PROBLEM_LIST_DEFAULT, PROBLEM_LIST_MAX } from "../../problems.ts";
 import { iso } from "../../presenters.ts";
 import type { Device, Store } from "../../store.ts";
@@ -34,6 +35,13 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
   app.get("/api/v1/admin/pair/pending", (c) =>
     c.json({ codes: pairing.listOpen().map((p) => ({ code: p.code, createdAt: iso(p.createdAt), expiresAt: iso(p.expiresAt), approved: p.approved })) }),
   );
+
+  // Clears a code the owner's TV does not show; owner only (not in ROUTE_SCOPES: every non-GET route defaults to owner).
+  app.delete("/api/v1/admin/pair/pending/:code", (c) => {
+    const code = c.req.param("code");
+    if (!PAIR_CODE.test(code) || !pairing.cancel(code, c.get("actor"))) throw new HttpError(404, "unknown_code", "no open pairing code with this value");
+    return c.body(null, 204);
+  });
 
   app.get("/api/v1/admin/devices", (c) => c.json({ devices: devices.list() }));
 
