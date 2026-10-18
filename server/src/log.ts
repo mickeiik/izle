@@ -1,6 +1,10 @@
 // The one place where anything reaches the log. Stream URLs, upstream headers, adapter refs, tokens and playlist
-// text must never be written: keys that can hold them are dropped, and strings are scrubbed of URLs and
-// token-like runs. See AGENTS.md ("Hard invariants").
+// text must never be written: keys that can hold them are dropped, and strings are scrubbed of URLs (with a scheme
+// or protocol-relative), playlist text and token-like runs. See AGENTS.md ("Hard invariants"). It is a heuristic:
+// a value under an innocent key that looks like none of these (a short API key, a header map passed as the fields
+// themselves) is written as given, which is why the code must not hand such values to the log in the first place.
+
+import { errorName } from "./errors.ts";
 
 export type Level = "debug" | "info" | "warn" | "error";
 
@@ -12,7 +16,10 @@ const SECRET_WORDS = new Set([
   "ref", "refs", "config", "playlist", "password", "secret", "body",
 ]);
 
-const URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi;
+/** `scheme://…`, or protocol-relative `//host…` (not preceded by a word character, `:` or `/`, as in a file path). */
+const URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+|(?<![\w:/])\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*(?::\d+)?(?:[/?#][^\s"'<>`]*)?/gi;
+/** Playlist text (HLS), whatever key it is under: the whole string goes. */
+const PLAYLIST_RE = /^\uFEFF?\s*#EXTM3U/;
 const TOKEN_RE = /[A-Za-z0-9_-]{20,}/g;
 const MAX_DEPTH = 6;
 const MAX_STRING = 500;
@@ -25,14 +32,18 @@ function isSecretKey(key: string): boolean {
 
 function urlPlaceholder(match: string): string {
   try {
-    return `<url ${new URL(match).host || "?"}>`;
+    return `<url ${new URL(match, "http://relative.invalid").host || "?"}>`;
   } catch {
     return "<url>";
   }
 }
 
-/** URLs become `<url host>`, token-like runs whatever `token` makes of them, and the result is capped. */
+/**
+ * Playlist text becomes `<playlist>`, URLs `<url host>`, token-like runs whatever `token` makes of them, and the
+ * result is capped.
+ */
 function scrub(value: string, token: (run: string) => string): string {
+  if (PLAYLIST_RE.test(value)) return "<playlist>";
   const out = value.replace(URL_RE, urlPlaceholder).replace(TOKEN_RE, token);
   return out.length > MAX_STRING ? `${out.slice(0, MAX_STRING)}…` : out;
 }
@@ -65,9 +76,10 @@ export function redact(value: unknown, depth = 0, seen = new WeakSet<object>()):
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "function" || typeof value === "symbol") return undefined;
   if (value instanceof Error) {
-    // Messages and stacks routinely contain URLs; only the class name (and a short string code) are kept.
+    // Messages and stacks routinely contain URLs; only the class name (an identifier of at most 60 characters,
+    // scrubbed like any string) and a short string code are kept.
     const code = (value as { code?: unknown }).code;
-    return { name: value.name, ...(typeof code === "string" && code.length <= 40 ? { code: redactString(code) } : {}) };
+    return { name: redactString(errorName(value)), ...(typeof code === "string" && code.length <= 40 ? { code: redactString(code) } : {}) };
   }
   if (value instanceof Date) return value.toISOString();
   if (typeof value !== "object") return undefined;

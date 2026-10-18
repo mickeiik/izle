@@ -834,8 +834,10 @@ as before):
 
 One JSON object per line on stdout: `time`, `level`, `msg` and fields. Every line passes through one redaction step:
 fields whose name contains a word like `url`, `headers`, `authorization`, `cookie`, `token`, `ref`, `config`,
-`playlist`, `password`, `secret` or `body` are dropped; `scheme://…` in strings becomes `<url host>`; runs of 20 or
-more base64url characters become `<token>`; errors are reduced to their class name (and a short `code`). The access
+`playlist`, `password`, `secret` or `body` are dropped; a string starting with `#EXTM3U` becomes `<playlist>`;
+`scheme://…` and protocol-relative `//host…` in strings become `<url host>`; runs of 20 or more base64url
+characters become `<token>`; errors are reduced to their class name (an identifier of at most 60 characters, else
+`Error`) and a short `code`. The access
 log records the **route template** (e.g. `/api/v1/tv/items/:itemId`), status, duration and device id, never the raw
 path or query; health checks and successful proxy requests (a steady stream of segments) at `debug` level only,
 proxy errors at `info`. Commands are logged with their type and ids (never a message's text), problem reports with

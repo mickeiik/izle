@@ -69,6 +69,40 @@ test("hostile fixture: nothing secret survives a log line", () => {
   assert.deepEqual(Object.keys(parsed.nested), ["deep"]);
 });
 
+test("hostile fixture (resolver audit shapes): protocol-relative URLs, playlist text and odd error names", () => {
+  const { lines, log } = capture();
+  const named = Object.assign(new Error("boom"), { code: "E_X" });
+  named.name = `https://cdn.example.test/x?st=${DEVICE_TOKEN}`;
+  const tokenNamed = new Error("boom");
+  tokenNamed.name = `Err${DEVICE_TOKEN}`;
+  const longNamed = new Error("boom");
+  longNamed.name = `E${"x".repeat(80)}`;
+  log.info("D1 protocol-relative", { src: "//cdn.example.test/hls/abc/index.m3u8?st=Xy12Ab&e=1700000000" });
+  log.info("D1b in text", { note: "fetching //cdn.example.test:8443/hls/index.m3u8?st=Xy12Ab now" });
+  log.info("E5 playlist under text", { text: "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\nlow/index.m3u8?sig=q9Zk2" });
+  log.info("E5b with a BOM and leading space", { body2: "\uFEFF  #EXTM3U\n#EXTINF:4,\nseg.ts?sig=q9Zk2" });
+  log.info("F2 error names", { a: named, b: tokenNamed, c: longNamed, d: Object.assign(new TypeError("x"), {}) });
+  const out = lines.map((l) => JSON.parse(l));
+  assert.deepEqual(out[0].src, "<url cdn.example.test>");
+  assert.deepEqual(out[1].note, "fetching <url cdn.example.test:8443> now");
+  assert.deepEqual(out[2].text, "<playlist>");
+  assert.deepEqual(out[3].body2, "<playlist>");
+  assert.deepEqual(out[4].a, { name: "Error", code: "E_X" }, "a name that is not an identifier is not kept");
+  assert.deepEqual(out[4].b, { name: "<token>" }, "an identifier-shaped name is scrubbed like any string");
+  assert.deepEqual(out[4].c, { name: "Error" }, "nor is one longer than 60 characters");
+  assert.deepEqual(out[4].d, { name: "TypeError" });
+  for (const leak of ["cdn.example.test/", "Xy12Ab", "q9Zk2", "#EXT", DEVICE_TOKEN, "xxxxxxxxxx"]) {
+    assert.ok(!lines.some((l) => l.includes(leak)), `leaked ${leak}`);
+  }
+
+  // What is not a URL stays: file paths, comments, ratios.
+  assert.equal(redact("/opt/izle//lib/resolver.js"), "/opt/izle//lib/resolver.js");
+  assert.equal(redact("a // b, 1/2 and 3//4"), "a // b, 1/2 and 3//4");
+  assert.equal(redact("see https://x.example.test/a and //y.example.test/b"), "see <url x.example.test> and <url y.example.test>");
+  assert.equal(redact("not a playlist: #EXTM3U is missing"), "not a playlist: #EXTM3U is missing", "only text that starts as a playlist");
+  assert.equal(redactReportText("#EXTM3U\nseg.ts"), "<playlist>", "TV problem text too");
+});
+
 test("levels filter and child loggers bind fields", () => {
   const lines: string[] = [];
   const log = createLogger({ level: "warn", write: (l) => void lines.push(l) });

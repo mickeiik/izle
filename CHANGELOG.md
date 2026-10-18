@@ -198,6 +198,11 @@ contract share one version number. How to update (back up, update the server, th
   `IZLE_ADMIN_TOKEN` in the systemd unit's environment as an alternative to the token file, but systemd shows a
   unit's `Environment=` to every local user. It now says to keep the token in the token file, or, if the variable
   is needed, in a root-only `EnvironmentFile=`.
+- **Log redaction catches more:** protocol-relative URLs (`//host/…`) are reduced to their host like other URLs,
+  playlist text (a string starting with `#EXTM3U`) is written as `<playlist>` whatever the field is called, and an
+  error's class name is kept only when it is a short identifier, scrubbed like any string. The resolver module spec
+  now describes the redaction as the heuristic it is: modules must not pass header maps, refs, config, playlist
+  text, URLs or tokens to `ctx.log` in any shape.
 
 ### Compatibility
 
