@@ -186,6 +186,10 @@ contract share one version number. How to update (back up, update the server, th
   or admin sign-in budget by changing addresses, and their bookkeeping costs the same per request however many
   addresses are seen: it no longer scans every tracked address on each request once 10,000 are tracked, and holds
   at most 50,000.
+- **A rewritten playlist stays in bounds:** every link the media proxy writes into a playlist embeds its URL, so an
+  upstream playlist of many short lines behind a long URL could grow a hundredfold and stall the server while it
+  was rewritten. A playlist with more than 250,000 lines, more than 16 MiB once rewritten, or a URI longer than 4096
+  characters now answers 502 `playlist_too_large` and is reported, like one over 4 MiB.
 
 ### Compatibility
 

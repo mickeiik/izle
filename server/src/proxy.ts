@@ -5,7 +5,7 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { newToken } from "./auth.ts";
-import { isPlaylistText, rewritePlaylist, tsSyncOffset, TS_ALIGN_LOOKAHEAD, type LinkKind } from "./hls.ts";
+import { isPlaylistText, PlaylistTooLarge, rewritePlaylist, tsSyncOffset, TS_ALIGN_LOOKAHEAD, type LinkKind, type RewriteLimits } from "./hls.ts";
 import { errorName } from "./errors.ts";
 import type { Logger } from "./log.ts";
 
@@ -14,6 +14,11 @@ const MAX_SESSIONS_PER_DEVICE = 2;
 const SESSION_MAX_AGE_MS = 12 * 60 * 60_000;
 /** Largest upstream playlist the proxy reads into memory. */
 export const MAX_PLAYLIST_BYTES = 4 * 1024 * 1024;
+/**
+ * What a rewrite may make of a playlist: every link embeds its URL, so without a bound a long base URL would blow up
+ * a playlist of short lines. A playlist past one answers 502 `playlist_too_large` like one past MAX_PLAYLIST_BYTES.
+ */
+export const REWRITE_LIMITS: RewriteLimits = { maxLines: 250_000, maxLength: 4 * MAX_PLAYLIST_BYTES, maxUrlLength: 4096 };
 /** Time allowed for an upstream to answer with headers; the body then streams for as long as the TV reads. */
 const UPSTREAM_HEADERS_TIMEOUT_MS = 20_000;
 
@@ -212,7 +217,7 @@ export class ProxyService {
     switch (target.type) {
       case "index":
         if (s.main?.kind !== "hls") return json(404, "not_found");
-        if (s.main.playlist !== undefined) return this.playlistResponse(s, s.main.playlist, s.main.baseUrl, "u/");
+        if (s.main.playlist !== undefined) return this.playlistResponse(s, s.main.playlist, s.main.baseUrl, "u/", null, "playlist");
         return this.forward(req, s, s.main.url, s.headers, { kind: "p", prefix: "u/", what: "playlist" });
       case "video":
         if (s.main?.kind !== "mp4") return json(404, "not_found");
@@ -231,8 +236,16 @@ export class ProxyService {
     }
   }
 
-  private playlistResponse(s: Session, text: string, baseUrl: string, prefix: string): Response {
-    const body = rewritePlaylist(text, baseUrl, (url, kind) => prefix + this.sign(s, url, kind));
+  /** The playlist rewritten for the TV; one past REWRITE_LIMITS answers 502 and is reported (`status`: the upstream's). */
+  private playlistResponse(s: Session, text: string, baseUrl: string, prefix: string, status: number | null, what: string): Response {
+    let body: string;
+    try {
+      body = rewritePlaylist(text, baseUrl, (url, kind) => prefix + this.sign(s, url, kind), REWRITE_LIMITS);
+    } catch (err) {
+      if (!(err instanceof PlaylistTooLarge)) throw err;
+      this.problem(s, "playlist_too_large", status, `${what}: ${err.message}`);
+      return json(502, "playlist_too_large");
+    }
     return new Response(body, { status: 200, headers: { "Content-Type": PLAYLIST_TYPE, "Cache-Control": "no-store" } });
   }
 
@@ -321,7 +334,7 @@ export class ProxyService {
       this.problem(s, "not_a_playlist", status, `${what}: ${/^[\w.+-]{1,40}\/[\w.+-]{1,60}$/.test(type) ? type : "unknown content type"}`);
       return json(502, "not_a_playlist");
     }
-    return this.playlistResponse(s, text, upstream.url || url, prefix);
+    return this.playlistResponse(s, text, upstream.url || url, prefix, status, what);
   }
 
   /**
