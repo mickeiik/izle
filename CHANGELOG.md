@@ -182,6 +182,10 @@ contract share one version number. How to update (back up, update the server, th
   `gap`, so the admin page re-reads what it shows) instead of the whole retained log in one go, a client that stops
   reading is disconnected instead of queuing events for it without end, and each access token (or, for the owner
   token, each client address) may have at most 10 streams open (`429 too_many_streams`).
+- **The per-address limits count an IPv6 client by its /64**, so one client cannot get a fresh pair/start allowance
+  or admin sign-in budget by changing addresses, and their bookkeeping costs the same per request however many
+  addresses are seen: it no longer scans every tracked address on each request once 10,000 are tracked, and holds
+  at most 50,000.
 
 ### Compatibility
 

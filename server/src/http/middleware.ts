@@ -12,7 +12,7 @@ import { routePath } from "hono/route";
 import { OWNER, type Actor } from "../actor.ts";
 import { parseTvUserAgent } from "../app-updates.ts";
 import { bearerToken, secretsEqual, sha256 } from "../auth.ts";
-import { clientAddress, compileTrustedProxies } from "../clientip.ts";
+import { clientAddress, compileTrustedProxies, limiterKey } from "../clientip.ts";
 import type { ServerConfig } from "../config.ts";
 import type { AppContext } from "../context.ts";
 import { sameApp } from "../devices.ts";
@@ -136,7 +136,7 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
     await next();
   });
 
-  // Failed admin authentications are counted per client address (as for pair/start). Once an address has used up
+  // Failed admin authentications are counted per client address (an IPv6 one by its /64, as for pair/start). Once an address has used up
   // its failures, every admin request from it answers 429 until the window ends, even with the right token, so the
   // lockout tells a guesser nothing. Successes are never counted, nor are requests without a token or a token that
   // lacks the route's scope.
@@ -152,7 +152,8 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
   };
   const adminAuth = createMiddleware<Env>(async (c, next) => {
     const client = clientKey(c);
-    const locked = adminFailures.check(client);
+    const counted = limiterKey(client);
+    const locked = adminFailures.check(counted);
     if (!locked.ok) throw tooManyRequests("too_many_attempts", "too many wrong admin tokens from this address; try again later", locked.retryAfterSec);
     const token = bearerToken(c.req.header("Authorization"));
     // A request without a token is not a guess: it is answered 401 (which signs the admin page out) but not counted,
@@ -160,10 +161,10 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
     if (!token) throw unauthorized("izle-admin", "missing or invalid admin token");
     const who = authenticate(token);
     if (!who) {
-      adminFailures.hit(client);
+      adminFailures.hit(counted);
       // Where the attempt came from and what it tried to reach; never the presented token.
       log.warn("admin auth failed", { client, route: routePath(c, -1), reason: "wrong token" });
-      const after = adminFailures.check(client);
+      const after = adminFailures.check(counted);
       if (!after.ok) log.warn("admin auth locked out", { client, failures: ADMIN_AUTH_MAX_FAILURES, retryAfterSec: after.retryAfterSec });
       throw unauthorized("izle-admin", "missing or invalid admin token");
     }

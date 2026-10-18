@@ -4,6 +4,7 @@
 import type { Context, Hono } from "hono";
 import type { StreamingApi } from "hono/utils/stream";
 import { streamSSE, type SSEStreamingApi } from "hono/streaming";
+import { limiterKey } from "../../clientip.ts";
 import type { AppContext } from "../../context.ts";
 import { tooManyRequests, unauthorized } from "../../errors.ts";
 import { EVENT_LIST_DEFAULT, EVENT_LIST_MAX, EVENT_REPLAY_MAX, EVENT_TYPE, MAX_EVENT_WAIT_MS, type Event } from "../../eventlog.ts";
@@ -79,7 +80,7 @@ export function registerAdminEvents(app: Hono<Env>, ctx: AppContext, clientKey: 
     const f = filters(c);
     const actor = c.get("actor");
     const tokenId = actor.type === "token" ? actor.tokenId : null;
-    const key = tokenId === null ? `owner ${clientKey(c)}` : `token ${tokenId}`;
+    const key = tokenId === null ? `owner ${limiterKey(clientKey(c))}` : `token ${tokenId}`;
     const count = open.get(key) ?? 0;
     if (count >= MAX_ADMIN_STREAMS) throw tooManyRequests("too_many_streams", "too many event streams are open with this token", 5);
     open.set(key, count + 1);

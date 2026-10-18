@@ -46,3 +46,18 @@ export function clientAddress(remote: string | undefined, forwardedFor: string |
   while (hops.length > 0 && isTrusted(trusted, address)) address = normalizeIp(hops.pop()!);
   return address;
 }
+
+/**
+ * The key a client address is counted under by the rate limits: an IPv6 address by its /64 (the block one
+ * subscriber or host gets, so a single client cannot mint a fresh key per request), anything else as it is.
+ */
+export function limiterKey(address: string): string {
+  if (isIP(address) !== 6) return address;
+  const [head = "", tail] = address.split("%")[0]!.split("::");
+  const groups = (part: string | undefined) => (part ? part.split(":") : []);
+  // An embedded IPv4 address (`::1.2.3.4`) fills the last 32 bits, two groups.
+  const count = (parts: string[]) => parts.reduce((n, p) => n + (p.includes(".") ? 2 : 1), 0);
+  const front = groups(head);
+  const all = tail === undefined ? front : [...front, ...Array<string>(8 - count(front) - count(groups(tail))).fill("0"), ...groups(tail)];
+  return `${all.slice(0, 4).map((g) => parseInt(g, 16).toString(16)).join(":")}::/64`;
+}

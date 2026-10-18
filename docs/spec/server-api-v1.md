@@ -34,7 +34,7 @@ ignore unknown response fields.
 Tokens are compared in constant time and never logged ([Logging](#logging)).
 
 Failed admin authentications (a wrong or revoked token on `/api/v1/admin/*`) are counted per client address
-(`trustedProxies`, [Configuration](#configuration)): after 10 within 10 minutes of the first, every admin request
+(`trustedProxies`, [Configuration](#configuration); an IPv6 address is counted by its /64): after 10 within 10 minutes of the first, every admin request
 from that address, even with the right token, answers `429 too_many_attempts` with `Retry-After` until those 10
 minutes are over. Successes are never counted, nor are requests without a token (they answer `401` with
 `WWW-Authenticate`, but are no guess, so tokenless requests that another site's page sends from the owner's browser
@@ -49,7 +49,7 @@ device token.
 ### `POST /api/v1/pair/start`
 
 No body. → `200 {"code": "483920", "pairToken": "<secret>", "expiresAt": "…"}`; codes live 10 minutes. Errors:
-`429 rate_limited` (more than 10 starts per client address in 10 minutes; `Retry-After`; behind a reverse proxy see
+`429 rate_limited` (more than 10 starts per client address, an IPv6 one by its /64, in 10 minutes; `Retry-After`; behind a reverse proxy see
 `trustedProxies`), `429 too_many_pending` (5 codes are already open).
 
 ### `GET /api/v1/pair/wait?code=<6 digits>[&wait=<0..25>]`
