@@ -150,12 +150,11 @@ test("migration 4: home entries keep the date they were added, cursors carry the
   s.setCursor("d1", { catalogId: "c", itemId: "a", episodeId: "a.1", updatedAt: 7 });
   assert.equal(s.getCursor("d1", "c", "a")?.wrapped, false, "a write without the flag is an ordinary cursor");
 
-  assert.equal(s.lastProgressAt("d1", "c", "a"), null);
   const p = { catalogId: "c", itemId: "a", positionMs: 1, durationMs: 10, status: "watching" as const };
   s.upsertProgress("d1", { ...p, episodeId: "a.1", updatedAt: 9 });
   s.upsertProgress("d1", { ...p, episodeId: "a.2", updatedAt: 4 });
-  assert.equal(s.lastProgressAt("d1", "c", "a"), 9);
-  assert.equal(s.lastProgressAt("d1", "c", "b"), null);
+  assert.deepEqual(s.listProgress("d1", "c").map((r) => [r.itemId, r.episodeId]), [["a", "a.1"], ["a", "a.2"]], "newest first");
+  assert.deepEqual(s.listProgress("d1", "c", "b"), []);
   s.close();
 });
 
@@ -310,10 +309,14 @@ test("catalog history rows: episodes seen after a date, removal and return, buil
   assert.deepEqual(s.episodesSeenAfter("c", "a", 50), ["a.3"]);
   assert.deepEqual(s.episodesSeenAfter("c", "a", 100), []);
   assert.deepEqual(s.episodesSeenAfter("c", "b", 0), []);
+  const seen = s.listSeen("c");
+  assert.deepEqual([...seen.keys()], ["a"], "one catalog only");
+  assert.deepEqual(seen.get("a"), [{ episodeId: "a.1", firstSeenAt: 0 }, { episodeId: "a.2", firstSeenAt: 0 }, { episodeId: "a.3", firstSeenAt: 100 }]);
 
   s.markSeenRemoved("c", ["a.3"], 200);
   s.markSeenRemoved("c", ["a.3"], 300);
   assert.deepEqual(s.episodesSeenAfter("c", "a", 0), [], "removed episodes do not count");
+  assert.deepEqual(s.listSeen("c").get("a")?.map((e) => e.episodeId), ["a.1", "a.2"]);
   assert.equal(s.catalogSeen("c").find((e) => e.episodeId === "a.3")?.removedAt, 200, "the first removal time stays");
   s.clearSeenRemoved("c", ["a.3"]);
   assert.deepEqual(s.episodesSeenAfter("c", "a", 0), ["a.3"]);

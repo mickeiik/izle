@@ -7,11 +7,19 @@ import { autoNextIndex, cursorAfterReport, cursorIndex, isPlayable, type Progres
 import { episodeDetails, episodeSummary, iso, itemCard, itemDetails } from "./presenters.ts";
 import { noPlayableDetail, triedDetail } from "./problems.ts";
 import type { ResolvedStream, ResolveInput, Tried } from "./resolve.ts";
-import type { Device, NowPlaying, Progress } from "./store.ts";
+import type { Cursor, Device, NowPlaying, Progress } from "./store.ts";
 import { Waiters } from "./waiters.ts";
 
 /** A technical safety limit on every device's home list, not a product rule: Home scrolls past one screen. */
 export const HOME_MAX_ITEMS = 200;
+
+/** What the device saved about one item: positions by episode, the play cursor, and the episodes new since a time. */
+export interface ItemFacts {
+  progress: Map<string, Progress>;
+  cursor: Cursor | null;
+  /** The item's present episodes that first appeared after `sinceMs`, oldest first. */
+  seenAfter: (sinceMs: number) => string[];
+}
 
 /** Per-TV home grid: cards per row and rows per screen (the owner's setting; the defaults are migration 8's). */
 export const HOME_COLUMNS = { min: 3, max: 6, default: 4 } as const;
@@ -73,15 +81,44 @@ export class TvService {
     return new Map(this.s.store.listProgress(deviceId, this.s.catalog.catalogId, itemId).map((p) => [p.episodeId, p]));
   }
 
+  /** What continueFor and newEpisodesFor read about one item on one device, a few queries. */
+  private itemFacts(deviceId: string, itemId: string): ItemFacts {
+    const catalogId = this.s.catalog.catalogId;
+    return {
+      progress: this.progressMap(deviceId, itemId),
+      cursor: this.s.store.getCursor(deviceId, catalogId, itemId),
+      seenAfter: (sinceMs) => this.s.store.episodesSeenAfter(catalogId, itemId, sinceMs),
+    };
+  }
+
+  /**
+   * The same facts for every item of a device's home list (up to HOME_MAX_ITEMS), read in three queries rather than
+   * a few per item.
+   */
+  homeFacts(deviceId: string): (itemId: string) => ItemFacts {
+    const catalogId = this.s.catalog.catalogId;
+    const progress = new Map<string, Map<string, Progress>>();
+    for (const p of this.s.store.listProgress(deviceId, catalogId)) {
+      const byEpisode = progress.get(p.itemId) ?? new Map<string, Progress>();
+      progress.set(p.itemId, byEpisode.set(p.episodeId, p));
+    }
+    const cursors = new Map(this.s.store.listCursors(deviceId, catalogId).map((c) => [c.itemId, c]));
+    const seen = this.s.store.listSeen(catalogId);
+    return (itemId) => ({
+      progress: progress.get(itemId) ?? new Map(),
+      cursor: cursors.get(itemId) ?? null,
+      seenAfter: (sinceMs) => (seen.get(itemId) ?? []).filter((e) => e.firstSeenAt > sinceMs).map((e) => e.episodeId),
+    });
+  }
+
   /**
    * The episode OK would play for this item and where it would start. Null when nothing is playable. After the
-   * item was watched to the end (a wrapped cursor), episodes the catalog gained since then come first. `progress`
-   * is the device's saved positions in the item, when the caller already has them.
+   * item was watched to the end (a wrapped cursor), episodes the catalog gained since then come first. `facts` is
+   * what the device saved about the item, when the caller already has it (see homeFacts).
    */
-  continueFor(deviceId: string, item: CatalogItem, progress = this.progressMap(deviceId, item.id)) {
-    const catalogId = this.s.catalog.catalogId;
-    const cursor = this.s.store.getCursor(deviceId, catalogId, item.id);
-    const appended = cursor?.wrapped ? new Set(this.s.store.episodesSeenAfter(catalogId, item.id, cursor.updatedAt)) : undefined;
+  continueFor(deviceId: string, item: CatalogItem, facts = this.itemFacts(deviceId, item.id)) {
+    const { progress, cursor } = facts;
+    const appended = cursor?.wrapped ? new Set(facts.seenAfter(cursor.updatedAt)) : undefined;
     const index = cursorIndex(item, cursor, progress, appended);
     if (index < 0) return null;
     const episode = item.episodes[index]!;
@@ -97,10 +134,9 @@ export class TvService {
    * report on the item and the moment the item went on its home list (`addedAt`). Episodes of the first load of
    * the catalog (the history's baseline) never count.
    */
-  newEpisodesFor(deviceId: string, item: CatalogItem, addedAt: number | null): number {
-    const catalogId = this.s.catalog.catalogId;
-    const since = Math.max(this.s.store.lastProgressAt(deviceId, catalogId, item.id) ?? 0, addedAt ?? 0);
-    const added = this.s.store.episodesSeenAfter(catalogId, item.id, since);
+  newEpisodesFor(deviceId: string, item: CatalogItem, addedAt: number | null, facts = this.itemFacts(deviceId, item.id)): number {
+    const lastProgressAt = Math.max(0, ...[...facts.progress.values()].map((p) => p.updatedAt));
+    const added = facts.seenAfter(Math.max(lastProgressAt, addedAt ?? 0));
     const allowed = new Set(item.episodes.filter((e) => e.playbackAllowed).map((e) => e.id));
     return added.filter((id) => allowed.has(id)).length;
   }
@@ -108,12 +144,15 @@ export class TvService {
   state(device: Device) {
     const { manifest } = this.s.catalog.current;
     const home = [];
+    const factsFor = this.homeFacts(device.id);
     for (const { itemId, addedAt } of this.s.store.getHomeEntries(device.id, manifest.catalogId)) {
       // Items gone after a catalog reload are flagged on the admin page; unplayable ones are left out.
       const item = this.s.catalog.item(itemId);
-      const cont = item && this.continueFor(device.id, item);
-      if (!item || !cont) continue;
-      home.push({ item: itemCard(this.s.catalog, item), continue: cont, newEpisodes: this.newEpisodesFor(device.id, item, addedAt) });
+      if (!item) continue;
+      const facts = factsFor(item.id);
+      const cont = this.continueFor(device.id, item, facts);
+      if (!cont) continue;
+      home.push({ item: itemCard(this.s.catalog, item), continue: cont, newEpisodes: this.newEpisodesFor(device.id, item, addedAt, facts) });
     }
     return {
       version: device.stateVersion, device: { id: device.id, name: device.name, ...this.settings(device) },
@@ -123,8 +162,9 @@ export class TvService {
 
   item(device: Device, itemId: string) {
     const item = requireItem(this.s.catalog, itemId, 404, "unknown_item");
-    const progress = this.progressMap(device.id, item.id);
-    const cont = this.continueFor(device.id, item, progress);
+    const facts = this.itemFacts(device.id, item.id);
+    const { progress } = facts;
+    const cont = this.continueFor(device.id, item, facts);
     return {
       item: itemDetails(this.s.catalog, item),
       cursorEpisodeId: cont?.episodeId ?? null,

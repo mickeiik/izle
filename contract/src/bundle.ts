@@ -49,7 +49,7 @@ export interface CatalogItem {
   poster: string | null;
   /**
    * Optional landscape image (16:9, around 1280×720): "assets/<sha256-of-content>.<jpg|png|webp>" or null. Absent
-   * or null, the TV draws the poster on a blurred copy of itself.
+   * or null, the TV crops the poster to a landscape band.
    */
   backdrop?: string | null;
   /** Item-level default for auto-advancing to the next episode (true when absent). */

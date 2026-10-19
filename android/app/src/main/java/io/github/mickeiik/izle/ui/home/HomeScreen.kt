@@ -213,15 +213,6 @@ private fun TileGrid(
     var lastFocusedIndex by remember { mutableStateOf(0) }
     val ids = home.map { it.item.id }
 
-    // Focus a tile when the screen appears, when the menu closes, and if the focused tile disappeared after a
-    // live update.
-    LaunchedEffect(ids, active) {
-        if (!active || gridHasFocus) return@LaunchedEffect
-        val target = ids.indexOf(initialFocusItemId).takeIf { it >= 0 } ?: lastFocusedIndex.coerceIn(0, ids.lastIndex)
-        gridState.scrollToItem(target)
-        requestFocusWithin({ requesters[ids[target]] }, took = { gridHasFocus })
-    }
-
     val density = LocalDensity.current
     val titleLine = with(density) { MaterialTheme.typography.titleSmall.lineHeight.toDp() }
     val isActive by rememberUpdatedState(active)
@@ -229,6 +220,19 @@ private fun TileGrid(
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         val grid = remember(columns, rows, maxWidth, maxHeight, titleLine) {
             HomeGrid.compute(columns, rows, maxWidth.value, maxHeight.value, titleLine.value)
+        }
+        val currentGrid by rememberUpdatedState(grid)
+
+        // Focus a tile when the screen appears, when the menu closes, and if the focused tile disappeared after a
+        // live update. Its row is brought into view the way moving there would: the grid stays put when the row is
+        // already on screen (back from the player, the screen looks as the viewer left it).
+        LaunchedEffect(ids, active) {
+            if (!active || gridHasFocus) return@LaunchedEffect
+            val target = ids.indexOf(initialFocusItemId).takeIf { it >= 0 } ?: lastFocusedIndex.coerceIn(0, ids.lastIndex)
+            val g = currentGrid
+            val firstRow = g.firstRowShowing(targetRow = target / g.columns, currentFirstRow = gridState.firstVisibleItemIndex / g.columns)
+            gridState.scrollToItem(firstRow * g.columns)
+            requestFocusWithin({ requesters[ids[target]] }, took = { gridHasFocus })
         }
         val rowInView = remember(density, grid) {
             with(density) { RowInView(grid.padding.dp.toPx(), grid.cellHeight.dp.roundToPx().toFloat()) { isActive } }

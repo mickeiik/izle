@@ -80,7 +80,7 @@ export interface Progress {
   updatedAt: number;
 }
 
-interface Cursor {
+export interface Cursor {
   catalogId: string;
   itemId: string;
   episodeId: string;
@@ -587,12 +587,6 @@ export class Store {
     this.run("DELETE FROM progress WHERE device_id = ? AND catalog_id = ? AND episode_id = ?", deviceId, catalogId, episodeId);
   }
 
-  /** When the device last reported progress on any episode of the item (epoch ms), or null. */
-  lastProgressAt(deviceId: string, catalogId: string, itemId: string): number | null {
-    const sql = "SELECT MAX(updated_at) AS at FROM progress WHERE device_id = ? AND catalog_id = ? AND item_id = ?";
-    return this.one<{ at: number | null }>(sql, [deviceId, catalogId, itemId])!.at;
-  }
-
   getCursor(deviceId: string, catalogId: string, itemId: string): Cursor | null {
     return this.one("SELECT * FROM item_cursor WHERE device_id = ? AND catalog_id = ? AND item_id = ?", [deviceId, catalogId, itemId], "device_id");
   }
@@ -957,6 +951,16 @@ export class Store {
     const sql = `SELECT episode_id FROM catalog_seen WHERE catalog_id = ? AND item_id = ? AND removed_at IS NULL AND first_seen_at > ?
        ORDER BY first_seen_at, episode_id`;
     return this.many<{ episodeId: string }>(sql, [catalogId, itemId, sinceMs]).map((e) => e.episodeId);
+  }
+
+  /** Every item's present episodes with when they first appeared, oldest first (as episodesSeenAfter orders them). */
+  listSeen(catalogId: string): Map<string, Array<{ episodeId: string; firstSeenAt: number }>> {
+    const sql = "SELECT item_id, episode_id, first_seen_at FROM catalog_seen WHERE catalog_id = ? AND removed_at IS NULL ORDER BY first_seen_at, episode_id";
+    const byItem = new Map<string, Array<{ episodeId: string; firstSeenAt: number }>>();
+    for (const { itemId, episodeId, firstSeenAt } of this.many<{ itemId: string; episodeId: string; firstSeenAt: number }>(sql, [catalogId])) {
+      byItem.set(itemId, [...(byItem.get(itemId) ?? []), { episodeId, firstSeenAt }]);
+    }
+    return byItem;
   }
 
   /** When each present episode of the catalog first appeared, by episode id (`itemId` narrows to one item). */

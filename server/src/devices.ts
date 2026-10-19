@@ -77,14 +77,16 @@ export class DeviceService {
   /** The device's home list with what OK would play; items gone from the catalog stay and are flagged `missing`. */
   home(d: Device) {
     const { store, catalog, tv } = this.s;
+    const factsFor = tv.homeFacts(d.id);
     return store.getHomeEntries(d.id, catalog.catalogId).map(({ itemId, addedAt }) => {
       const item = catalog.item(itemId);
       if (!item) return { itemId, title: null, kind: null, posterUrl: null, backdropUrl: null, missing: true, continue: null, newEpisodes: 0 };
       const { title, kind } = item;
-      const continueFrom = tv.continueFor(d.id, item);
+      const facts = factsFor(item.id);
+      const continueFrom = tv.continueFor(d.id, item, facts);
       return {
         itemId, title, kind, posterUrl: catalog.posterUrl(item), backdropUrl: catalog.backdropUrl(item), missing: false, continue: continueFrom,
-        newEpisodes: tv.newEpisodesFor(d.id, item, addedAt),
+        newEpisodes: tv.newEpisodesFor(d.id, item, addedAt, facts),
       };
     });
   }

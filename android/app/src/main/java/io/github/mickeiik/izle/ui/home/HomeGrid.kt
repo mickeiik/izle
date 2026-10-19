@@ -16,8 +16,6 @@ data class HomeGrid(
     val cardWidth: Float,
     val cardHeight: Float,
     val titleLines: Int,
-    /** The gap between card and title, and the title's lines. */
-    val titleHeight: Float,
     /** Card and title: one row of the grid, without the gap to the next. */
     val cellHeight: Float,
     val viewportWidth: Float,
@@ -25,8 +23,6 @@ data class HomeGrid(
     val gap: Float,
     val padding: Float,
     val titleGap: Float,
-    /** The cards' size is set by the area's height (else by its width). */
-    val heightBound: Boolean,
     /** How many lines of [titleLine] fit inside a card with [CARD_TEXT_PADDING] around them, at least one. */
     val titleLinesInCard: Int,
 ) {
@@ -35,6 +31,13 @@ data class HomeGrid(
 
     /** How many rows [count] cards take. */
     fun rowCount(count: Int): Int = (count + columns - 1) / columns
+
+    /**
+     * The row to have at the top so that [targetRow] is in view, moving as little as possible from [currentFirstRow]:
+     * the grid stays put when the row is already on screen, else the row comes in at the top or the bottom edge.
+     */
+    fun firstRowShowing(targetRow: Int, currentFirstRow: Int): Int =
+        currentFirstRow.coerceIn((targetRow - rows + 1).coerceAtLeast(0), targetRow)
 
     companion object {
         const val MIN_COLUMNS = 3
@@ -84,14 +87,12 @@ data class HomeGrid(
                 cardWidth = cardWidth,
                 cardHeight = cardHeight,
                 titleLines = lines,
-                titleHeight = titleHeight(lines),
                 cellHeight = cellHeight,
                 viewportWidth = cols * cardWidth + (cols - 1) * gap + 2 * padding,
                 viewportHeight = rowsShown * cellHeight + (rowsShown - 1) * gap + 2 * padding,
                 gap = gap,
                 padding = padding,
                 titleGap = titleGap,
-                heightBound = heightBound(lines) < widthBound,
                 titleLinesInCard = floor((cardHeight - 2 * CARD_TEXT_PADDING) / titleLine).toInt().coerceAtLeast(1),
             )
         }
