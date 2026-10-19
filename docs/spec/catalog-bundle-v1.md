@@ -42,7 +42,7 @@ reference into a playable stream at play time (signed URLs, cookies, scraping) b
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
 | `id` | Id | yes | Unique within the bundle; durable across builds. |
-| `kind` | `"movie"` \| `"series"` | yes | A movie has exactly one episode. |
+| `kind` | `"movie"` \| `"series"` | yes | What the title is, not how many episodes it has ([Rules](#rules) 5). A movie has exactly one episode; a series has one or more. |
 | `title` | string | yes | Display title. |
 | `originalTitle` | string \| null | no | |
 | `year` | integer \| null | no | First release year. |
@@ -114,7 +114,10 @@ server treats as matching every preferred language).
    its extension matches its content type. Posters SHOULD be 2:3, around 400×600, and well under 1 MiB.
    Backdrops SHOULD be 16:9, around 1280×720, well under 1 MiB; without one the TV crops the poster
    to a landscape band.
-5. **Movies have exactly one episode.**
+5. **Movies have exactly one episode.** `kind` says what the title is, never how many episodes it has: a series
+   with only its first episode released is a `series` with one episode, and stays one as episodes are added.
+   Exporters MUST NOT derive `kind` from the episode count (izle shows a `movie` as a film, and rejects one that
+   gains a second episode).
 6. **Episode ids are unique across the bundle** (the TV API addresses episodes by id alone).
 7. **No secrets.** Bundles SHOULD NOT contain credentials or signed, expiring URLs; resolve those at play time
    with an adapter.
