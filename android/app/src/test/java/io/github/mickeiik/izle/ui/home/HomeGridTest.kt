@@ -1,0 +1,79 @@
+package io.github.mickeiik.izle.ui.home
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/** Home's grid in the safe area of the 960×540 dp canvas (864×486 dp), titles at 32 dp a line. */
+class HomeGridTest {
+    private fun grid(columns: Int, rows: Int) = HomeGrid.compute(columns, rows, width = 864f, height = 486f, titleLine = 32f)
+
+    @Test
+    fun fourByTwoFillsTheWidthWithTwoTitleLines() {
+        val g = grid(4, 2)
+        assertEquals(194f, g.cardWidth, 0f)
+        assertEquals(109.125f, g.cardHeight, 0.001f)
+        assertEquals(2, g.titleLines)
+        assertEquals(74f, g.titleHeight, 0f)
+        assertEquals(183.125f, g.cellHeight, 0.001f)
+        assertFalse(g.heightBound)
+        // The whole safe width, and exactly two rows tall.
+        assertEquals(864f, g.viewportWidth, 0.001f)
+        assertEquals(2 * 183.125f + 20f + 2 * 14f, g.viewportHeight, 0.001f)
+        assertEquals(203.125f, g.rowPitch, 0.001f)
+        assertEquals(2, g.titleLinesInCard)
+    }
+
+    @Test
+    fun fourByThreeTakesOneTitleLineToKeepTheCardsLarger() {
+        val g = grid(4, 3)
+        // Two lines would leave 116 dp wide cards.
+        assertEquals(173f, g.cardWidth, 0f)
+        assertEquals(1, g.titleLines)
+        assertTrue(g.heightBound)
+        assertTrue("three rows fit the height: ${g.viewportHeight}", g.viewportHeight <= 486f)
+        assertEquals(3 * g.cellHeight + 2 * 20f + 2 * 14f, g.viewportHeight, 0.001f)
+    }
+
+    @Test
+    fun sixByFourIsTheSmallest() {
+        val g = grid(6, 4)
+        assertEquals(102f, g.cardWidth, 0f)
+        assertEquals(57.375f, g.cardHeight, 0.001f)
+        assertEquals(1, g.titleLines)
+        assertTrue(g.heightBound)
+        assertTrue(g.viewportHeight <= 486f)
+        assertTrue(g.viewportWidth < 864f)
+        assertEquals(1, g.titleLinesInCard)
+    }
+
+    @Test
+    fun threeByOneHasLargeCards() {
+        val g = grid(3, 1)
+        assertEquals(265f, g.cardWidth, 0f)
+        assertEquals(2, g.titleLines)
+        assertFalse(g.heightBound)
+        assertEquals(g.cellHeight + 2 * 14f, g.viewportHeight, 0.001f)
+        // The focused card's growth stays inside the padding.
+        assertTrue(g.cardWidth * 0.05f <= g.padding)
+    }
+
+    @Test
+    fun outOfRangeSettingsAreClamped() {
+        assertEquals(grid(6, 1), grid(9, 0))
+        assertEquals(grid(3, 4), grid(1, 7))
+        assertEquals(grid(3, 1), grid(-2, -5))
+        assertEquals(6, grid(9, 0).columns)
+        assertEquals(1, grid(9, 0).rows)
+    }
+
+    @Test
+    fun countsRows() {
+        val g = grid(4, 2)
+        assertEquals(0, g.rowCount(0))
+        assertEquals(1, g.rowCount(4))
+        assertEquals(2, g.rowCount(5))
+        assertEquals(50, g.rowCount(200))
+    }
+}

@@ -166,3 +166,16 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
 - The columns are plain `INTEGER NOT NULL DEFAULT` without a `CHECK`: like the other device settings, the admin API's
   schema is the only writer and holds the ranges (`HOME_COLUMNS`/`HOME_ROWS` in tv.ts, mirrored in the admin page's
   lib.js and checked against each other by a test).
+
+## Home grid, TV app (2026-10-19)
+
+- A card's picture falls back on its own: a backdrop that fails to load gives way to the poster, a poster that fails
+  to the title drawn in the card. The picture's content description is the show's title, since the name under the
+  card is outside the clickable card.
+- Poster on blur: the blurred copy is a second Coil request decoded at 24×36 px under its own memory-cache key (the
+  full poster must not stand in for it), scaled up with smooth filtering; `Modifier.blur` (Android 12+ only) and a
+  45 % black shade on top.
+- The "2 new" chip shows only when it fits the card's width and clears the bottom chip and bar: it gives way on
+  short cards (6 columns, 4 rows, and 5 columns when a progress bar is shown).
+- The scroll spec is exact, with no tolerance: Compose asks it again on every frame of the scroll, so a tolerance
+  stops the scroll short by up to that much.

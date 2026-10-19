@@ -36,6 +36,37 @@ class ModelsTest {
     }
 
     @Test
+    fun decodesTheHomeGridAndBackdrops() {
+        // An older server: no grid size, no backdrop.
+        val old = ApiJson.decodeFromString(TvState.serializer(), STATE)
+        assertEquals(4, old.device.homeColumns)
+        assertEquals(2, old.device.homeRows)
+        assertNull(old.home.single().item.backdropUrl)
+
+        val grid = STATE.replace("\"newField\": 1", "\"homeColumns\": 6, \"homeRows\": 1")
+            .replace("\"posterUrl\": \"/assets/f3f9.jpg\"", "\"posterUrl\": \"/assets/f3f9.jpg\", \"backdropUrl\": \"/assets/b4c1.jpg\"")
+        val state = ApiJson.decodeFromString(TvState.serializer(), grid)
+        assertEquals(6, state.device.homeColumns)
+        assertEquals(1, state.device.homeRows)
+        assertEquals("/assets/b4c1.jpg", state.home.single().item.backdropUrl)
+        assertEquals("/assets/f3f9.jpg", state.home.single().item.posterUrl)
+
+        // Nulls fall back to the defaults.
+        val nulls = STATE.replace("\"newField\": 1", "\"homeColumns\": null, \"homeRows\": null")
+            .replace("\"posterUrl\": \"/assets/f3f9.jpg\"", "\"posterUrl\": \"/assets/f3f9.jpg\", \"backdropUrl\": null")
+        val defaults = ApiJson.decodeFromString(TvState.serializer(), nulls)
+        assertEquals(4, defaults.device.homeColumns)
+        assertEquals(2, defaults.device.homeRows)
+        assertNull(defaults.home.single().item.backdropUrl)
+
+        // In item details and resolve answers too.
+        val details = ApiJson.decodeFromString(ItemDetailsResponse.serializer(), ITEM.replace("\"posterUrl\": null", "\"posterUrl\": null, \"backdropUrl\": \"/assets/b.jpg\""))
+        assertEquals("/assets/b.jpg", details.item.backdropUrl)
+        val resolve = ApiJson.decodeFromString(ResolveResponse.serializer(), RESOLVE.replace("\"posterUrl\": null", "\"posterUrl\": null, \"backdropUrl\": \"/assets/b.jpg\""))
+        assertEquals("/assets/b.jpg", resolve.item.backdropUrl)
+    }
+
+    @Test
     fun decodesAResolveAnswer() {
         val r = ApiJson.decodeFromString(ResolveResponse.serializer(), RESOLVE)
         assertEquals("hls", r.media.kind)
