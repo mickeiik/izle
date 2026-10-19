@@ -2,8 +2,11 @@
 // Pure helpers of the admin UI (no DOM): formatting, the texts views show, small list operations and the Listen
 // along maths. Unit-tested from node (server/test/admin-ui.test.ts).
 
-/** The server's home list cap (it enforces it). */
-export const HOME_MAX = 12;
+/** The server's home list cap (it enforces it): a safety limit, Home scrolls past one screen. */
+export const HOME_MAX = 200;
+/** The home grid a TV can be set to: cards per row and rows per screen (the server's HOME_COLUMNS, HOME_ROWS). */
+export const HOME_COLUMNS = [3, 4, 5, 6];
+export const HOME_ROWS = [1, 2, 3, 4];
 /** The TV resumes a saved position only from 30 s on (PlaybackPlan); earlier positions start over. */
 const RESUME_MIN_MS = 30_000;
 /** The most results the catalog search returns (the server's cap). */
@@ -291,6 +294,15 @@ export function errorText(err) {
 
 /** `1 variant`, `2 variants`. @param {number} n @param {string} word */
 export const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/**
+ * What a home grid shows: "8 shows per screen", and how many rows of the TV's home list lie below the first screen.
+ * @param {number} columns @param {number} rows @param {number} homeCount
+ */
+export function gridSummary(columns, rows, homeCount) {
+  const below = Math.ceil(homeCount / columns) - rows;
+  return `${plural(columns * rows, "show")} per screen${below > 0 ? ` · ${plural(below, "more row")} below` : ""}`;
+}
 
 /** What a failed source attempt means, for the diagnostics view. */
 const TRIED = /** @type {Record<string, string>} */ ({

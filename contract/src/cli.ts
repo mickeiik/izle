@@ -56,7 +56,7 @@ export async function main(argv: string[]): Promise<number> {
     out(
       `✔ ${dir}: valid izle-bundle v1 "${manifest.name}" (catalog ${manifest.catalogId}, build ${manifest.buildId})\n` +
         `  ${s.items} items (${s.movies} movies, ${s.series} series), ${s.episodes} episodes (${s.playableEpisodes} playable), ` +
-        `${s.sources} sources, ${s.posters} posters` +
+        `${s.sources} sources, ${s.posters} posters, ${s.backdrops} backdrops` +
         (warnings.length ? `, ${warnings.length} warning(s)` : ""),
     );
   } else {

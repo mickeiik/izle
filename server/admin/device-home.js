@@ -175,14 +175,14 @@ export function homeCard(ctx) {
   /** @param {any[]} home */
   const update = (home) => {
     entries = home;
-    counter.textContent = `${entries.length} / ${HOME_MAX}`;
+    counter.textContent = plural(entries.length, "show");
     empty.hidden = entries.length > 0;
     rows.set(entries);
     if (results) resultRows.set(results);
   };
 
   const element = card(
-    { title: "Home screen", aside: counter, intro: "What the TV shows, in this order. The first four fit on the screen without scrolling." },
+    { title: "Home screen", aside: counter, intro: "What the TV shows, in this order: left to right, row by row. How many fit on one screen is set under Settings; the rest scroll." },
     empty, list, h("h3", null, h("label", { for: searchId }, "Add shows")), search, hint, summary, resultsArea,
   );
   return { element, update };

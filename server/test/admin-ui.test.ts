@@ -2,16 +2,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import {
-  APK_MAX_BYTES, androidText, apkVersion, appCheckReasonText, appCheckText, appUpdateChip, capabilityText, checkResultText,
+  APK_MAX_BYTES, HOME_COLUMNS, HOME_MAX, HOME_ROWS, androidText, apkVersion, appCheckReasonText, appCheckText, appUpdateChip, capabilityText, checkResultText,
   formatBytes, installNowBlocked, newApkText,
   actorLabel, buildSummary, candidateOptions, catalogSearchPath, clockOffset, commandResultText, companionTarget,
   continueText, episodeHistoryLine, episodeName, episodeStateLabel, episodeStates, errorText, formatClock, formatCode,
-  formatCountdown, formatDrift, formatDuration, formatPosition, formatRelative, groupEpisodeChanges, isActive, issueLine,
+  formatCountdown, formatDrift, formatDuration, formatPosition, formatRelative, gridSummary, groupEpisodeChanges, isActive, issueLine,
   languageLabel, moveItem, parseCandidate, parseSse, percent, playbackState, plural, problemContext, resumes,
   sameLanguage, scopeLabel, searchSummary, serverAddress, shortId, showMeta, sourceReport, syncDecision, titleLine,
   titleStatusLabel, tokenFromHash, triggerLabel, tvPositionAt, viewingEnd,
 } from "../admin/lib.js";
 import { ADMIN_FILES, ADMIN_VENDOR_FILES } from "../src/admin-files.ts";
+import { HOME_COLUMNS as SERVER_COLUMNS, HOME_MAX_ITEMS, HOME_ROWS as SERVER_ROWS } from "../src/tv.ts";
 import { startTestServer } from "./helpers.ts";
 
 const ADMIN_DIR = new URL("../admin/", import.meta.url);
@@ -172,7 +173,7 @@ test("admin helpers: show lines, searches, ids, issues, error texts and language
     [shortId("20261014-6b05c8e71a2b3c4d5e6f"), "20261014-6b05c8e71a2…"],
     [issueLine({ file: "items.json", path: "/items/3/poster", message: "file not found" }), "items.json /items/3/poster: file not found"],
     [issueLine({ file: "bundle.json", path: null, message: "unknown format" }), "bundle.json: unknown format"],
-    [errorText({ code: "too_many_items" }), "A home screen holds at most 12 shows."],
+    [errorText({ code: "too_many_items" }), "A home screen holds at most 200 shows."],
     [errorText({ code: "network" }), "The server cannot be reached.", "an ApiError's code"],
     [errorText({ code: "hls_unsupported" }), "This browser cannot play HLS.", "the companion player's"],
     [errorText({ code: "weird" }), "The server answered: weird."],
@@ -180,11 +181,19 @@ test("admin helpers: show lines, searches, ids, issues, error texts and language
     [errorText({ code: 20, name: "AbortError" }), "Something went wrong.", "a DOMException's numeric code is not one of ours"],
     [errorText(null), "Something went wrong."],
     [plural(1, "variant"), "1 variant"], [plural(3, "segment"), "3 segments"],
+    [gridSummary(4, 2, 0), "8 shows per screen"], [gridSummary(4, 2, 8), "8 shows per screen", "exactly one screen"],
+    [gridSummary(4, 2, 9), "8 shows per screen · 1 more row below"], [gridSummary(3, 1, 10), "3 shows per screen · 3 more rows below"],
+    [gridSummary(6, 4, 200), "24 shows per screen · 30 more rows below"], [gridSummary(1, 1, 1), "1 show per screen"],
     [languageLabel("tr"), "Türkçe (tr)"], [languageLabel("pt-BR"), "Português (pt-BR)"], [languageLabel("xx"), "xx"],
     [languageLabel(null, "Off"), "Off"],
     [sameLanguage("en", "en-GB"), true], [sameLanguage("TR", "tr"), true], [sameLanguage("en", "tr"), false],
     [sameLanguage(null, "en"), false], [sameLanguage("en", undefined), false],
   ]);
+});
+
+test("admin helpers: the home limit and grid choices are the server's", () => {
+  const range = (r: { min: number; max: number }) => Array.from({ length: r.max - r.min + 1 }, (_, i) => r.min + i);
+  cases([[HOME_MAX, HOME_MAX_ITEMS], [HOME_COLUMNS, range(SERVER_COLUMNS)], [HOME_ROWS, range(SERVER_ROWS)]]);
 });
 
 test("admin helpers: a diagnostics source, line by line", () => {

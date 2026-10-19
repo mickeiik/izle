@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ADMIN_TOKEN, fixtureItems, fixtureManifest, startTestServer, writeBundle, type Json, type TestServer } from "./helpers.ts";
+import { ADMIN_TOKEN, BACKDROP_NAME, fixtureItems, fixtureManifest, startTestServer, writeBundle, type Json, type TestServer } from "./helpers.ts";
 
 async function setup(t: { after(fn: () => unknown): void }) {
   const s = await startTestServer();
@@ -53,6 +53,7 @@ test("state: home list in owner order with continue info; settings fall back to 
   assert.deepEqual(state.json.home, []);
   assert.deepEqual(state.json.device, {
     id: tv.deviceId, name: "Salon", uiLanguage: "tr", preferredAudioLanguage: "tr", subtitlesLanguage: null, autoplayOnStart: false,
+    homeColumns: 4, homeRows: 2,
   });
   assert.deepEqual(state.json.catalog, { id: "fixture", buildId: "fixture-1", name: "Fixture catalog" });
 
@@ -65,6 +66,25 @@ test("state: home list in owner order with continue info; settings fall back to 
     episodeId: "show.e1", season: 1, number: 1, title: "Pilot", label: null, index: 0, count: 5, positionMs: 0, durationMs: 1_200_000, status: "new",
   });
   assert.equal(state.json.home[2].item.posterUrl, null);
+  assert.equal(state.json.home[0].item.backdropUrl, `/assets/${BACKDROP_NAME}`);
+  assert.equal(show.item.backdropUrl, null, "no backdrop in the catalog");
+});
+
+test("backdrops: the card's backdropUrl in item details, resolve and search, served like posters", async (t) => {
+  const { s, tv, as } = await setup(t);
+  const film = await as("GET", "/items/film");
+  assert.equal(film.json.item.backdropUrl, `/assets/${BACKDROP_NAME}`);
+  assert.equal((await as("GET", "/items/show")).json.item.backdropUrl, null);
+  const resolved = await as("POST", "/resolve", { episodeId: "film.main" });
+  assert.equal(resolved.status, 200);
+  assert.equal(resolved.json.item.backdropUrl, `/assets/${BACKDROP_NAME}`);
+  const found = (await s.admin("GET", "/catalog/search?q=film")).json.items.find((i: { id: string }) => i.id === "film");
+  assert.equal(found.backdropUrl, `/assets/${BACKDROP_NAME}`);
+  await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["film", "show"] });
+  const rows = (await s.admin("GET", `/devices/${tv.deviceId}`)).json.home;
+  assert.deepEqual(rows.map((r: Json) => r.backdropUrl), [`/assets/${BACKDROP_NAME}`, null], "the admin home rows too");
+  const file = await s.call("GET", film.json.item.backdropUrl);
+  assert.deepEqual([file.status, file.headers.get("content-type")], [200, "image/jpeg"]);
 });
 
 test("progress → finished → cursor advances, skipping disallowed episodes and wrapping at the end", async (t) => {

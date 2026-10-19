@@ -10,8 +10,12 @@ import type { ResolvedStream, ResolveInput, Tried } from "./resolve.ts";
 import type { Device, NowPlaying, Progress } from "./store.ts";
 import { Waiters } from "./waiters.ts";
 
-/** The server caps every device's home list (the TV shows a 4-column grid; ≤ 8 fits without scrolling). */
-export const HOME_MAX_ITEMS = 12;
+/** A technical safety limit on every device's home list, not a product rule: Home scrolls past one screen. */
+export const HOME_MAX_ITEMS = 200;
+
+/** Per-TV home grid: cards per row and rows per screen (the owner's setting; the defaults are migration 8's). */
+export const HOME_COLUMNS = { min: 3, max: 6, default: 4 } as const;
+export const HOME_ROWS = { min: 1, max: 4, default: 2 } as const;
 
 /** Longest an admin "now" long-poll waits for the next playback report. */
 export const MAX_NOW_WAIT_MS = 25_000;
@@ -60,6 +64,8 @@ export class TvService {
       preferredAudioLanguage: device.preferredAudioLanguage ?? this.s.config.defaults.preferredAudioLanguage ?? hints.preferredAudioLanguage ?? null,
       subtitlesLanguage: device.subtitlesLanguage,
       autoplayOnStart: device.autoplayOnStart,
+      homeColumns: device.homeColumns,
+      homeRows: device.homeRows,
     };
   }
 
