@@ -158,3 +158,11 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
   servers share 127.0.0.1, and only the port tells the allowed upstream from the others.
 - Approved codes do not count towards a client's 2-code cap (the owner already acted on them; several TVs approved
   before collecting behind one address must still pair); they still count towards the server-wide 10.
+
+## Home grid and backdrops, server side (2026-10-19)
+
+- `homeColumns`/`homeRows` have no server-wide (`defaults`) or catalog default: the right grid depends on each TV's
+  screen size and viewing distance, so it is only ever a per-TV owner choice; `effective` repeats the stored value.
+- The columns are plain `INTEGER NOT NULL DEFAULT` without a `CHECK`: like the other device settings, the admin API's
+  schema is the only writer and holds the ranges (`HOME_COLUMNS`/`HOME_ROWS` in tv.ts, mirrored in the admin page's
+  lib.js and checked against each other by a test).

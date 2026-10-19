@@ -77,7 +77,7 @@ async function buildPosters(items) {
     rmSync(tmp, { recursive: true, force: true });
   }
 
-  const referenced = new Set(items.map((i) => i.poster).filter(Boolean));
+  const referenced = new Set(items.flatMap((i) => [i.poster, i.backdrop]).filter(Boolean));
   for (const f of readdirSync(ASSETS)) {
     if (!f.startsWith(".") && !referenced.has(`assets/${f}`)) {
       unlinkSync(path.join(ASSETS, f));

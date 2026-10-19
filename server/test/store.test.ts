@@ -279,6 +279,28 @@ test("migration 7: pairing codes from before have no client; cancelling one unbi
   s.close();
 });
 
+test("migration 8: devices from before get the 4 × 2 home grid; a patch sets either alone and bumps the version", async () => {
+  const file = path.join(await tempDir(), "izle.db");
+  const raw = new DatabaseSync(file);
+  for (const m of MIGRATIONS.slice(0, 7)) raw.exec(m);
+  raw.exec("PRAGMA user_version = 7");
+  raw.exec("INSERT INTO devices (id, name, token_hash, created_at, autoplay_on_start) VALUES ('d1', 'Salon', 'h', 1, 1)");
+  raw.close();
+
+  const s = new Store(file);
+  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  const d = s.getDevice("d1")!;
+  assert.deepEqual([d.homeColumns, d.homeRows, d.autoplayOnStart], [4, 2, true]);
+  const wide = s.updateDevice("d1", { homeColumns: 6 })!;
+  assert.deepEqual([wide.homeColumns, wide.homeRows, wide.stateVersion], [6, 2, d.stateVersion + 1]);
+  const tall = s.updateDevice("d1", { homeRows: 4, name: "Oturma odası" })!;
+  assert.deepEqual([tall.homeColumns, tall.homeRows, tall.name], [6, 4, "Oturma odası"]);
+  assert.equal(s.updateDevice("d1", { autoplayOnStart: false })!.homeColumns, 6, "other patches leave it alone");
+  s.createDevice({ id: "d2", name: "TV2", tokenHash: "h2", now: 1 });
+  assert.deepEqual([s.getDevice("d2")!.homeColumns, s.getDevice("d2")!.homeRows], [4, 2]);
+  s.close();
+});
+
 test("catalog history rows: episodes seen after a date, removal and return, builds newest first", async () => {
   const s = new Store(path.join(await tempDir(), "izle.db"));
   s.insertSeen("c", "b1", 0, [{ episodeId: "a.1", itemId: "a" }, { episodeId: "a.2", itemId: "a" }]);

@@ -101,11 +101,12 @@ Everything the home screen needs:
 ```json
 {
   "version": 7,
-  "device": { "id": "aZ3…", "name": "Living room", "uiLanguage": "tr", "preferredAudioLanguage": "tr", "subtitlesLanguage": null, "autoplayOnStart": false },
+  "device": { "id": "aZ3…", "name": "Living room", "uiLanguage": "tr", "preferredAudioLanguage": "tr", "subtitlesLanguage": null, "autoplayOnStart": false,
+              "homeColumns": 4, "homeRows": 2 },
   "catalog": { "id": "izle-sample", "buildId": "20261010-247b34f7", "name": "izle sample catalog" },
   "home": [
     {
-      "item": { "id": "caminandes", "kind": "series", "title": "Caminandes", "year": 2013, "posterUrl": "/assets/f3f9….jpg" },
+      "item": { "id": "caminandes", "kind": "series", "title": "Caminandes", "year": 2013, "posterUrl": "/assets/f3f9….jpg", "backdropUrl": null },
       "continue": {
         "episodeId": "caminandes.s01e02", "season": 1, "number": 2, "title": "Gran Dillama", "label": null,
         "index": 1, "count": 3, "positionMs": 0, "durationMs": 146050, "status": "new"
@@ -124,8 +125,12 @@ Everything the home screen needs:
   means subtitles off.
 - `device.autoplayOnStart` (owner setting, default false): when the app opens, the show watched last (else the
   first tile; the TV decides what "last" is) starts after a 10-second countdown that any key stops.
-- `home`: the owner's list in the owner's order (≤ 12), without items that left the catalog or have no
-  `playbackAllowed` episode. `posterUrl` is relative to the server's base URL (null without a poster).
+- `device.homeColumns` (3–6, default 4) and `device.homeRows` (1–4, default 2), owner settings: Home is a grid of
+  16:9 cards, `homeColumns` per row and `homeRows` rows per screen; the rest of the list scrolls.
+- `home`: the owner's list in the owner's order (≤ 200, a safety limit), without items that left the catalog or have
+  no `playbackAllowed` episode. `posterUrl` and `backdropUrl` (the catalog's optional landscape image) are relative
+  to the server's base URL, each null without its image; without a backdrop the TV draws the poster on a blurred
+  copy of itself.
 - `continue`: what OK plays, the item's cursor episode ([Play order](#play-order-and-the-cursor)). `status`: `new`
   (never started), `watching` (`positionMs` is the saved position), `finished` (`positionMs` 0: it starts over).
   `index`/`count`: the position in the item's play order.
@@ -204,7 +209,7 @@ The hidden menu's episode list, for any catalog item (`404 unknown_item`).
 
 ```json
 {
-  "item": { "id", "kind", "title", "year", "posterUrl", "originalTitle", "synopsis", "genres" },
+  "item": { "id", "kind", "title", "year", "posterUrl", "backdropUrl", "originalTitle", "synopsis", "genres" },
   "cursorEpisodeId": "show.e2",
   "episodes": [
     { "id": "show.e1", "index": 0, "season": 1, "number": 1, "title": "Pilot", "label": null, "durationMs": 1200000,
@@ -230,7 +235,7 @@ play. `trigger` and `commandId` tell the [viewing history](#viewing-history) wha
   "languages": { "audio": ["tr"], "subtitles": [] },
   "alternatives": ["multi", "unknown"],
   "next": { "episodeId": "show.e2", "season": 1, "number": 2, "title": "Season finale", "label": null },
-  "item": { "id", "kind", "title", "year", "posterUrl" },
+  "item": { "id", "kind", "title", "year", "posterUrl", "backdropUrl" },
   "episode": { "id": "show.e1", "index": 0, "count": 5, "season": 1, "number": 1, "title": "Pilot", "label": null, "durationMs": 1200000 },
   "resume": { "positionMs": 90000, "durationMs": 1200000 },
   "expiresAt": null
@@ -384,10 +389,10 @@ last allowed episode) marks the item as watched to the end. When a later catalog
 | Route | Body | Response |
 |---|---|---|
 | `GET /api/v1/admin/devices` | | `{"devices": [Device & {"homeCount"}]}` |
-| `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "missing", "continue", "newEpisodes"}], "homeMax": 12}`; `continue` and `newEpisodes` as in [`GET /tv/state`](#get-apiv1tvstate) (`null` and 0 for a missing item) |
-| `PATCH /api/v1/admin/devices/:id` | any of `name`, `uiLanguage` (`"tr"`/`"en"`/null), `preferredAudioLanguage` (tag/null), `subtitlesLanguage` (tag/null = off), `autoplayOnStart` (boolean) | `{"device": Device}` |
+| `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "backdropUrl", "missing", "continue", "newEpisodes"}], "homeMax": 200}`; `continue` and `newEpisodes` as in [`GET /tv/state`](#get-apiv1tvstate) (`null` and 0 for a missing item) |
+| `PATCH /api/v1/admin/devices/:id` | any of `name`, `uiLanguage` (`"tr"`/`"en"`/null), `preferredAudioLanguage` (tag/null), `subtitlesLanguage` (tag/null = off), `autoplayOnStart` (boolean), `homeColumns` (integer 3–6), `homeRows` (integer 1–4) | `{"device": Device}` |
 | `DELETE /api/v1/admin/devices/:id` | | `204`; the TV must pair again |
-| `PUT /api/v1/admin/devices/:id/home` | `{"itemIds": [...]}` (≤ 12, in display order) | `{"version", "home"}` |
+| `PUT /api/v1/admin/devices/:id/home` | `{"itemIds": [...]}` (≤ 200, in display order) | `{"version", "home"}` |
 | `PUT /api/v1/admin/devices/:id/cursor` | `{"itemId", "episodeId"}` | `{"version"}` |
 | `GET /api/v1/admin/devices/:id/progress` | | `{"cursors": [...], "progress": [...]}` with `itemTitle`, `kind`, `season`, `number`, `episodeTitle` (or `missing: true`) |
 | `GET /api/v1/admin/devices/:id/now?seq=&wait=` | | `{"online", "serverNowMs", "seq", "nowPlaying": {itemId, episodeId, sourceId, itemTitle, episodeTitle, positionMs, durationMs, state, updatedAt, playing, viewingId} \| null, "anchor": {positionMs, atMs, playing, rate} \| null}`; with `seq` equal to the current `seq` and `wait` (0–25 s, default 0) the answer waits for the next resolve or progress report (long-poll), see [Listen along](#listen-along) |
@@ -397,9 +402,9 @@ last allowed episode) marks the item as watched to the end. When a later catalog
 
 `Device` = `{"id", "name", "status": "pending"|"active", "online", "createdAt", "lastSeenAt", "stateVersion",
 "settings": {stored values, null = default}, "effective": {resolved values}, "problems": {"recent", "lastAt"}}`.
-`settings`/`effective` hold `uiLanguage`, `preferredAudioLanguage`, `subtitlesLanguage` and `autoplayOnStart`
-(boolean, false by default; with no server default, both show the stored value). `problems.recent`: problems in the
-last 24 hours; `lastAt`: when the latest stored one happened (ISO, or null). `app` = `{"version", "versionCode",
+`settings`/`effective` hold `uiLanguage`, `preferredAudioLanguage`, `subtitlesLanguage`, `autoplayOnStart`
+(boolean, false by default) and `homeColumns`/`homeRows` (4 and 2 by default); with no server default, both show
+the stored value. `problems.recent`: problems in the last 24 hours; `lastAt`: when the latest stored one happened (ISO, or null). `app` = `{"version", "versionCode",
 "androidSdk", "capability": "silent"|"guided", "reportedAt", "update"}` as the TV's [User-Agent](#tv-api) last
 reported it (each null until it does; `reportedAt`: when it first reported that version), with `update`: `unknown`
 (never reported, or no APK stored), `up_to_date` (its versionCode ≥ the stored APK's), `pending` (an older app on a
@@ -446,7 +451,7 @@ deleted.
 |---|---|
 | `GET /api/v1/admin/catalog` | `{"id", "buildId", "builtAt", "name", "loadedAt", "stats", "adapters", "warnings", "resolver", "server", "builds", "changes"}`: `resolver` is `{"sha256", "adapters"}` of the loaded module, or null; `server` is `{"version"}` of the running server; `builds` is the loaded catalog's [history](#catalog-history), `[Build]` newest first, at most 50; `changes` is the `Changes` of the newest build that is not the baseline, or null |
 | `GET /api/v1/admin/catalog/builds/:buildId` | `{"build": Build, "changes": Changes}` for any build in the loaded catalog's history (also one beyond the 50 listed); `404 unknown_build` |
-| `GET /api/v1/admin/catalog/search?q=&limit=` | `{"items": [{"id", "kind", "title", "year", "posterUrl", "episodeCount", "playableCount"}]}`: case-, accent- and dotless-ı-insensitive match on title, original title and id; empty `q` lists everything (by title, `limit` ≤ 200, default 50) |
+| `GET /api/v1/admin/catalog/search?q=&limit=` | `{"items": [{"id", "kind", "title", "year", "posterUrl", "backdropUrl", "episodeCount", "playableCount"}]}`: case-, accent- and dotless-ı-insensitive match on title, original title and id; empty `q` lists everything (by title, `limit` ≤ 200, default 50) |
 | `GET /api/v1/admin/catalog/items/:id` | the item with all episodes; sources as `{id, type, label, languages, kind, needsProxy}` or `{…, adapter}`; upstream URLs, headers and refs are not exposed |
 | `POST /api/v1/admin/catalog/reload` | re-reads the bundle from `catalog.dir` (a symlink there is followed anew on each reload): `200 {"catalog"}` (the object `GET /admin/catalog` returns), or `422 {"error": "invalid_catalog", "issues"}` and the previous catalog stays active (also when the bundle needs an adapter the resolver module does not provide). The whole bundle is validated, including a hash of every poster, so a large catalog takes a while. `SIGHUP` does the same. After a successful reload all devices get a new state version. The resolver module is not re-read: a new module needs a restart. |
 
@@ -949,3 +954,8 @@ in `./data` (`izle.db`, `admin.token`). Deployment (systemd, Caddy, Docker): [se
   server-wide, was 5), `Retry-After` with `too_many_pending`,
   [`DELETE /admin/pair/pending/:code`](#delete-apiv1adminpairpendingcode) and the `pairing.cancelled` event. Before,
   one address could hold every open code.
+- **v1, home grid and backdrops (2026-10-19)** — additive: the per-TV settings `homeColumns` (3–6, default 4) and
+  `homeRows` (1–4, default 2) in `PATCH /admin/devices/:id`, `Device.settings`/`effective` and the TV state's
+  `device`; `backdropUrl` (null without one) wherever an item shows `posterUrl`, from the bundle's optional
+  [`backdrop`](catalog-bundle-v1.md#changelog). A relaxation: a home list holds up to 200 items (`homeMax: 200`,
+  was 12); `too_many_items` is otherwise unchanged.

@@ -9,8 +9,9 @@ import { homeCard } from "./device-home.js";
 import { actionButton, card, chip, h, keepFocus, onSubmit, page, progressBar, setChip, setOff, setProgress, setTitle, slot, statusChip, toast } from "./dom.js";
 import { watchEvents } from "./events.js";
 import {
-  LANGUAGES, androidText, appUpdateChip, capabilityText, commandResultText, episodeName, errorText, formatClock, formatDuration,
-  formatRelative, installNowBlocked, languageLabel, percent, playbackState, problemContext, triggerLabel, viewingEnd,
+  HOME_COLUMNS, HOME_ROWS, LANGUAGES, androidText, appUpdateChip, capabilityText, commandResultText, episodeName, errorText,
+  formatClock, formatDuration, formatRelative, gridSummary, installNowBlocked, languageLabel, percent, playbackState,
+  problemContext, triggerLabel, viewingEnd,
 } from "./lib.js";
 
 /**
@@ -80,6 +81,7 @@ export function deviceView(scope, id) {
     now.setDevice(device);
     tvApp.setDevice(device);
     home.update(d.home);
+    settings.setHomeCount(d.home.length);
   };
 
   // The TV first; once it is there, the sections and their polls.
@@ -248,8 +250,9 @@ function nowPlayingCard(ctx) {
 }
 
 /**
- * Name, languages and subtitles (saved together with "Save settings") and autoplay (saved on its own, at once).
- * The form is filled when the page loads and after a save, never by the poll, so edits in progress stay.
+ * Name, languages, subtitles and the home grid (saved together with "Save settings") and autoplay (saved on its own,
+ * at once). The form is filled when the page loads and after a save, never by the poll, so edits in progress stay;
+ * the poll only brings the home list's length for the grid's hint.
  * @param {DeviceContext} ctx
  */
 function settingsCard(ctx) {
@@ -259,6 +262,13 @@ function settingsCard(ctx) {
   const ui = h("select", { id: "s-ui" });
   const audio = h("select", { id: "s-audio", "aria-describedby": "s-audio-hint" });
   const subs = h("select", { id: "s-subs" });
+  const columns = h("select", { id: "s-columns", "aria-describedby": "s-grid-hint" });
+  const rows = h("select", { id: "s-rows", "aria-describedby": "s-grid-hint" });
+  const gridHint = h("p", { class: "hint", id: "s-grid-hint" });
+  let homeCount = 0;
+  const showGrid = () => (gridHint.textContent = gridSummary(Number(columns.value), Number(rows.value), homeCount));
+  columns.addEventListener("change", showGrid);
+  rows.addEventListener("change", showGrid);
   const save = h("button", { class: "primary", type: "submit" }, "Save settings");
   const autoplay = h("input", { type: "checkbox", id: "s-autoplay", "aria-describedby": "s-autoplay-hint" });
 
@@ -279,6 +289,11 @@ function settingsCard(ctx) {
     fillSelect(audio, [["", `Server default${s.preferredAudioLanguage ? "" : ` — ${languageLabel(eff.preferredAudioLanguage, "none")}`}`], ...langs], s.preferredAudioLanguage);
     fillSelect(subs, [["", "Off"], ...langs], s.subtitlesLanguage);
     autoplay.checked = Boolean(s.autoplayOnStart);
+    /** @param {number[]} values */
+    const numbers = (values) => /** @type {Array<[string, string]>} */ (values.map((n) => [String(n), String(n)]));
+    fillSelect(columns, numbers(HOME_COLUMNS), String(s.homeColumns));
+    fillSelect(rows, numbers(HOME_ROWS), String(s.homeRows));
+    showGrid();
   };
 
   // Autoplay is saved at once. A second click while the first is saving is undone: one request at a time.
@@ -299,16 +314,21 @@ function settingsCard(ctx) {
 
   const field = (/** @type {HTMLElement} */ control, /** @type {string} */ text) => [h("label", { for: control.id }, text), control];
   const audioHint = h("p", { class: "hint", id: "s-audio-hint" }, "Sources with this audio language are tried first, and the player picks it when a stream has several.");
-  const form = h("form", { class: "form" }, field(name, "Name"), field(ui, "Menu language"), field(audio, "Preferred audio language"), audioHint, field(subs, "Subtitles"), h("div", { class: "actions" }, save));
+  const form = h("form", { class: "form" }, field(name, "Name"), field(ui, "Menu language"), field(audio, "Preferred audio language"), audioHint, field(subs, "Subtitles"),
+    h("h3", null, "Home grid"), field(columns, "Columns"), field(rows, "Rows"), gridHint, h("div", { class: "actions" }, save));
   // "Save settings": what differs from the TV's settings is saved in one request.
   onSubmit(form, save, () => {
     if (!device) return;
-    /** @type {Record<string, string | null>} */
+    /** @type {Record<string, string | number | null>} */
     const patch = {};
     const typed = name.value.trim();
     if (typed && typed !== device.name) patch.name = typed;
     for (const [key, select] of /** @type {const} */ ([["uiLanguage", ui], ["preferredAudioLanguage", audio], ["subtitlesLanguage", subs]])) {
       const value = select.value || null;
+      if (value !== device.settings[key]) patch[key] = value;
+    }
+    for (const [key, select] of /** @type {const} */ ([["homeColumns", columns], ["homeRows", rows]])) {
+      const value = Number(select.value);
       if (value !== device.settings[key]) patch[key] = value;
     }
     if (Object.keys(patch).length === 0) return toast("Nothing changed.", "info");
@@ -321,7 +341,12 @@ function settingsCard(ctx) {
   });
   const autoplayHint = h("p", { class: "hint", id: "s-autoplay-hint" }, "When the app opens, the show the viewer watched last (else the first tile) starts after a 10-second countdown. Any key stops the countdown.");
   const toggle = h("div", { class: "toggle" }, h("label", { class: "check", for: "s-autoplay" }, autoplay, "Autoplay when the TV starts"), autoplayHint);
-  return { element: card("Settings", form, toggle), update };
+  /** @param {number} n */
+  const setHomeCount = (n) => {
+    homeCount = n;
+    if (columns.value) showGrid();
+  };
+  return { element: card("Settings", form, toggle), update, setHomeCount };
 }
 
 /**

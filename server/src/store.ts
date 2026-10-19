@@ -22,6 +22,10 @@ export interface Device {
   stateVersion: number;
   /** When the app opens, the show watched last (else the first tile) starts after a countdown. */
   autoplayOnStart: boolean;
+  /** Cards per row on Home (HOME_COLUMNS in tv.ts). */
+  homeColumns: number;
+  /** Rows of cards one screen of Home shows; more scroll (HOME_ROWS in tv.ts). */
+  homeRows: number;
   /** The TV app's version as its User-Agent reported it; null until a TV that sends one connected. */
   appVersion: string | null;
   appVersionCode: number | null;
@@ -314,11 +318,11 @@ export interface CompanionLink {
   updatedAt: number;
 }
 
-export type DevicePatch = Partial<Pick<Device, "name" | "uiLanguage" | "preferredAudioLanguage" | "subtitlesLanguage" | "autoplayOnStart">>;
+export type DevicePatch = Partial<Pick<Device, "name" | "uiLanguage" | "preferredAudioLanguage" | "subtitlesLanguage" | "autoplayOnStart" | "homeColumns" | "homeRows">>;
 
 type Row = Record<string, SQLOutputValue>;
 
-const PATCHABLE = ["name", "uiLanguage", "preferredAudioLanguage", "subtitlesLanguage", "autoplayOnStart"] as const;
+const PATCHABLE = ["name", "uiLanguage", "preferredAudioLanguage", "subtitlesLanguage", "autoplayOnStart", "homeColumns", "homeRows"] as const;
 /** 0/1 columns, read as booleans. */
 const FLAGS = new Set(["autoplay_on_start", "wrapped", "playing", "baseline", "seen", "imported", "last_playing"]);
 const column = (key: string) => key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);

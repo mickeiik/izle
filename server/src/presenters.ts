@@ -14,7 +14,7 @@ export function episodeSummary(episode: Episode) {
 
 /** An item as a tile. */
 export function itemCard(catalog: CatalogService, item: CatalogItem) {
-  return { id: item.id, kind: item.kind, title: item.title, year: item.year ?? null, posterUrl: catalog.posterUrl(item) };
+  return { id: item.id, kind: item.kind, title: item.title, year: item.year ?? null, posterUrl: catalog.posterUrl(item), backdropUrl: catalog.backdropUrl(item) };
 }
 
 export function itemDetails(catalog: CatalogService, item: CatalogItem) {

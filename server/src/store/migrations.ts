@@ -234,6 +234,11 @@ export const MIGRATIONS: string[] = [
   `
   ALTER TABLE pair_codes ADD COLUMN client_hash TEXT;       -- sha256 of the client address that started it; NULL before
   `,
+  // 8 — the per-TV home grid: how many columns and rows of cards one screen of Home shows (more scroll).
+  `
+  ALTER TABLE devices ADD COLUMN home_columns INTEGER NOT NULL DEFAULT 4;
+  ALTER TABLE devices ADD COLUMN home_rows INTEGER NOT NULL DEFAULT 2;
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

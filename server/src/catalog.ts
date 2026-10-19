@@ -25,7 +25,7 @@ export type ReloadResult = { ok: true; catalog: LoadedCatalog } | { ok: false; i
 /** Called after every successful load with the catalog now active and the one it replaced (null at start). */
 type CatalogLoadedHook = (next: LoadedCatalog, previous: LoadedCatalog | null) => void;
 
-const POSTER_FILE = /^[0-9a-f]{64}\.(jpg|png|webp)$/;
+const ASSET_FILE = /^[0-9a-f]{64}\.(jpg|png|webp)$/;
 
 /** How titles are ordered: the catalog search and the viewing history sort alike. */
 export const byTitle = (a: string, b: string): number => a.localeCompare(b);
@@ -139,9 +139,14 @@ export class CatalogService {
     return item.poster ? `/assets/${path.posix.basename(item.poster)}` : null;
   }
 
-  /** Absolute path of a poster file, or null when the name is not a content-addressed asset of this catalog. */
+  /** Relative URL of an item's backdrop (its landscape image), served by GET /assets/:file. */
+  backdropUrl(item: CatalogItem): string | null {
+    return item.backdrop ? `/assets/${path.posix.basename(item.backdrop)}` : null;
+  }
+
+  /** Absolute path of a poster or backdrop file, or null when the name is not a content-addressed asset of this catalog. */
   assetPath(file: string): string | null {
-    if (!POSTER_FILE.test(file)) return null;
+    if (!ASSET_FILE.test(file)) return null;
     return path.join(this.current.dir, this.current.manifest.assetsDir, file);
   }
 
