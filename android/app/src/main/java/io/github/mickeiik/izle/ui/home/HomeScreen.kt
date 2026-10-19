@@ -1,6 +1,5 @@
 package io.github.mickeiik.izle.ui.home
 
-import android.os.Build
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -40,16 +39,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.pluralStringResource
@@ -72,9 +70,6 @@ import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
-import coil3.compose.LocalPlatformContext
-import coil3.request.ImageRequest
-import coil3.size.Precision
 import io.github.mickeiik.izle.R
 import io.github.mickeiik.izle.data.api.HomeEntry
 import io.github.mickeiik.izle.data.api.TvState
@@ -99,9 +94,8 @@ import kotlin.math.roundToInt
 private val ScrollIndicatorWidth = 6.dp
 private val ScrollIndicatorEndGap = 22.dp
 
-/** The size the poster is decoded at for the blurred copy filling its card: scaled up, it is blurry by itself. */
-private const val BLUR_DECODE_WIDTH = 24
-private const val BLUR_DECODE_HEIGHT = 36
+/** Where a portrait poster is cut to fill a landscape card: a band 28 % of the way down, above the poster's centre. */
+private val PosterCrop = BiasAlignment(horizontalBias = 0f, verticalBias = -0.44f)
 
 /**
  * The only screen the viewer navigates: a grid of 16:9 cards filling the screen, the owner's columns × rows of them
@@ -346,8 +340,9 @@ private fun Tile(
 }
 
 /**
- * The backdrop, cropped to the card; else the whole poster over a blurred, dimmed copy of itself; else (or when the
- * picture cannot be loaded) the show's title in the card. A picture is described by the show's title.
+ * The backdrop, cropped to the card; else the poster, cropped to the card around its upper part (where posters keep
+ * faces and titles); else (or when the picture cannot be loaded) the show's title in the card. A picture is
+ * described by the show's title.
  */
 @Composable
 private fun BoxScope.CardPicture(backdropUrl: String?, posterUrl: String?, title: String, titleLines: Int) {
@@ -362,7 +357,15 @@ private fun BoxScope.CardPicture(backdropUrl: String?, posterUrl: String?, title
                 onError = { backdropFailed = true },
                 modifier = Modifier.fillMaxSize(),
             )
-        posterUrl != null && !posterFailed -> PosterOnBlur(posterUrl, title, onError = { posterFailed = true })
+        posterUrl != null && !posterFailed ->
+            AsyncImage(
+                model = posterUrl,
+                contentDescription = title,
+                contentScale = ContentScale.Crop,
+                alignment = PosterCrop,
+                onError = { posterFailed = true },
+                modifier = Modifier.fillMaxSize(),
+            )
         else -> Text(
             title,
             style = MaterialTheme.typography.titleSmall.copy(hyphens = Hyphens.Auto, lineBreak = LineBreak.Heading),
@@ -373,40 +376,6 @@ private fun BoxScope.CardPicture(backdropUrl: String?, posterUrl: String?, title
             modifier = Modifier.align(Alignment.Center).padding(HomeGrid.CARD_TEXT_PADDING.dp),
         )
     }
-}
-
-/**
- * The portrait poster whole in the landscape card, the rest filled with a blurred copy of it. The copy is decoded
- * tiny and scaled up smoothly, which blurs it on any Android version; from Android 12 a real blur smooths it further.
- */
-@Composable
-private fun PosterOnBlur(posterUrl: String, title: String, onError: () -> Unit) {
-    val context = LocalPlatformContext.current
-    val tiny = remember(posterUrl, context) {
-        ImageRequest.Builder(context)
-            .data(posterUrl)
-            .size(BLUR_DECODE_WIDTH, BLUR_DECODE_HEIGHT)
-            .precision(Precision.EXACT)
-            // Its own memory cache entry: the full-size poster must not stand in for the tiny one.
-            .memoryCacheKey("$posterUrl#blur")
-            .build()
-    }
-    val blur = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) Modifier.blur(12.dp) else Modifier
-    AsyncImage(
-        model = tiny,
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        filterQuality = FilterQuality.High,
-        modifier = Modifier.fillMaxSize().then(blur),
-    )
-    Box(Modifier.fillMaxSize().background(IzleColors.PosterBlurShade))
-    AsyncImage(
-        model = posterUrl,
-        contentDescription = title,
-        contentScale = ContentScale.Fit,
-        onError = { onError() },
-        modifier = Modifier.fillMaxSize(),
-    )
 }
 
 /**

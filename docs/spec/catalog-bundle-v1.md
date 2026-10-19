@@ -112,8 +112,8 @@ server treats as matching every preferred language).
    `playbackAllowed` is required on every episode. izle never infers either from season/number fields.
 4. **Content-addressed images.** A poster or backdrop file's name is the lowercase hex SHA-256 of its bytes and
    its extension matches its content type. Posters SHOULD be 2:3, around 400×600, and well under 1 MiB.
-   Backdrops SHOULD be 16:9, around 1280×720, well under 1 MiB; the TV draws the poster on a blurred copy of
-   itself when there is none.
+   Backdrops SHOULD be 16:9, around 1280×720, well under 1 MiB; without one the TV crops the poster
+   to a landscape band.
 5. **Movies have exactly one episode.**
 6. **Episode ids are unique across the bundle** (the TV API addresses episodes by id alone).
 7. **No secrets.** Bundles SHOULD NOT contain credentials or signed, expiring URLs; resolve those at play time

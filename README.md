@@ -8,11 +8,11 @@ A senior-first Android TV player with a small self-hosted server. Project page: 
 
 | The TV: one screen, OK plays | The owner's admin page |
 |---|---|
-| ![The TV's home screen: four large posters, the focused one says "Continue · Episode 1"](docs/images/tv-home.jpg) | ![The admin page of a TV: what is playing, playback buttons, a message box and the home screen's shows](docs/images/admin-tv-page.jpg) |
+| ![The TV's home screen: a grid of wide cards with each show's name under it, the focused one says "Episode 1"](docs/images/tv-home.jpg) | ![The admin page of a TV: what is playing, playback buttons, a message box and the home screen's shows](docs/images/admin-tv-page.jpg) |
 | ![The player, paused: show, episode and a progress bar in large type](docs/images/tv-player.jpg) | ![A message from the owner, "Dinner is ready!", in large letters over the picture](docs/images/tv-message.jpg) |
 
 izle is built for a viewer who only knows classic TV: switch on, pick a "channel", it plays. The TV shows one
-screen of big poster tiles. OK plays the next unwatched episode (or resumes the half-watched one), episodes
+grid of big show cards. OK plays the next unwatched episode (or resumes the half-watched one), episodes
 advance on their own, and Back always returns to that single home screen. There is no browsing, no seasons
 list, no settings in the viewer's path.
 

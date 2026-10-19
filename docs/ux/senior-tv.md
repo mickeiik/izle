@@ -6,42 +6,47 @@ remotely from the admin page (`/admin/` on the server) or, on the TV itself, beh
 
 ## Principles
 
-1. **Home → OK → plays.** One screen of poster tiles. OK on a tile plays the right episode at the right place:
+1. **Home → OK → plays.** One grid of show cards. OK on a card plays the right episode at the right place:
    the next unwatched episode, or the half-watched one where it was left.
 2. **Back always goes home**, and Back on Home does nothing: the viewer cannot fall out of the app. (The remote's
    HOME button belongs to the system; when it is pressed the app saves the position and comes back on Home.)
 3. **Every error ends on Home by itself**, after a short, large message. Nothing waits for an answer.
-4. **Nothing small.** No text below 24 sp on the 960×540 dp TV canvas; high contrast; one focused element with a
-   thick white border, everything else dimmed; nothing that matters outside the 5 % safe margins (48 dp left and
-   right, 27 dp top and bottom), where many TVs crop the picture.
-5. **Owner-controlled.** Which shows appear, their order, "continue from episode X", UI language, audio and
-   subtitle languages, autoplay on start, play/stop/pause/resume/seek/next/previous and short messages all come
-   from the server and apply live. When something goes wrong the TV tells the owner (problem reports), not the
-   viewer.
+4. **Nothing small.** No text below 24 sp on the 960×540 dp TV canvas, except the chips on Home cards (20 sp,
+   short words in solid colours); high contrast; one focused element with a thick white border, everything else
+   dimmed; nothing that matters outside the 5 % safe margins (48 dp left and right, 27 dp top and bottom), where
+   many TVs crop the picture.
+5. **Owner-controlled.** Which shows appear, their order, how many fit on one screen, "continue from episode X", UI
+   language, audio and subtitle languages, autoplay on start, play/stop/pause/resume/seek/next/previous and short
+   messages all come from the server and apply live. When something goes wrong the TV tells the owner (problem
+   reports), not the viewer.
 
 ## Screens
 
 ### Home
 
-- Up to 12 poster tiles (190×285 dp, 2:3) in a 4-column grid inside the safe margins; one row (≤ 4 shows) fits
-  without scrolling. With more, the next row peeks in under the first and fades out at the bottom edge; moving down
-  brings the focused row up to the top, poster and title fully in view, and the row above leaves the screen.
-- The focused tile scales to 110 % with a 4 dp white border, its title clear of the grown poster; the others are
-  dimmed.
-- Under the poster: the title (24 sp bold, up to 2 lines). On the poster, at the bottom, a solid chip says what OK
-  will do, readable on dark and bright posters alike: mint for "New", the warm accent when OK resumes ("Continue",
-  "Continue · Episode 2", with a progress bar under it), light grey otherwise ("Episode 5", "Watch again"). A
-  missing poster shows the show's title in its place.
+- A grid of wide 16:9 cards fills the safe area, with nothing above or below it (no clock, no hint). The owner sets
+  how many columns (3–6) and rows (1–4) one screen shows, per TV, from the admin page (default 4 × 2); the cards are
+  sized to fill the screen and the change applies live. Exactly that many rows show: when there are more shows,
+  moving down from the last visible row scrolls the grid by one row (up from the first scrolls back), and a thin
+  scroll bar in the right margin shows where the screen is in the list. Left and right stop at a row's ends.
+- The focused card scales to 110 % with a 4 dp white border, its name clear of the grown card; the others are dimmed.
+- Under the card: the show's name (24 sp bold), on two lines when that leaves the card as large as one line would,
+  else on one, cut with "…" only when it is longer than that.
+- The card's picture is the catalog's landscape image (`backdrop`); a show without one shows its poster, cropped to
+  the card around its upper part, and a show without any picture shows its name in the card.
+- On the card, at the bottom, a solid chip says what OK will do, readable on dark and bright pictures alike: mint
+  for "New", the warm accent when OK resumes ("Continue", "Continue · Episode 2", with a progress bar under it),
+  light grey otherwise ("Episode 5", "Watch again"). The chip only shows when it fits on one line; on smaller cards
+  the progress bar and the short "New" chip stay.
 - When episodes were added to a show since the viewer last watched it (or since it was put on Home), a small dark
-  chip at the poster's top right counts them ("2 new", read out as "2 new episodes"; the server's `newEpisodes`).
+  chip at the card's top right counts them ("2 new", read out as "2 new episodes"; the server's `newEpisodes`).
   Quieter than the bottom chip, it only informs: it takes no focus, never changes what OK plays, and goes away once
   an episode of the show has been played.
-- Top right: a clock (24-hour or 12-hour following the TV's setting, or the TV's own language when that is unset).
-  Bottom: the hint "OK: Play" (Back does nothing on Home, so it is not offered).
 - The tile played last gets the focus back; after a live reorder the focus stays on the same show.
 - No shows: "Nothing here yet" in large type.
 - Server unreachable: the last home screen stays (cached), a solid red "No connection" chip with dark text appears
-  top left, the TV retries every 10 s, and OK shows "No connection · Trying again…" for 5 s instead of playing.
+  over the grid at the top left, the TV retries every 10 s, and OK shows "No connection · Trying again…" for 5 s
+  instead of playing.
 - **Autoplay on start** (per TV, owner setting, off by default): when the app comes to the front on Home (the TV is
   switched on, the app starts, or the viewer comes back from the launcher) and the first home state fetched from the
   server in that moment says so, the show played last on this TV if it is on Home (else the first tile) is offered
@@ -53,10 +58,8 @@ remotely from the admin page (`/admin/` on the server) or, on the TV itself, beh
   key was pressed; the hidden menu and the tiles wait while it shows.
 - **Messages from the owner** appear as a banner (30 sp bold, stepping down to 24 sp only for the longest ones, dark
   on yellow, up to 3 lines, no focus, no buttons) for the time the owner chose, on Home and over the playing video
-  (playback goes on); other screens ignore them. On Home the banner sits in the top band, left of the clock, and
-  covers nothing: the band grows to fit it, the tiles move down and the hint makes room; a message that does not fit
-  beside the clock in three lines takes the band's full width under the clock. Over the video, the hidden menu or
-  the autoplay countdown it is drawn across the top.
+  (playback goes on); other screens ignore them. On Home, as over the video, the hidden menu or the autoplay
+  countdown, it is drawn across the top; the cards under it do not move.
 
 ### Player
 
@@ -174,7 +177,6 @@ izle.
 
 | Key | English | Türkçe |
 |---|---|---|
-| Home hint | OK: Play | OK: Oynat |
 | Empty home | Nothing here yet | Henüz içerik yok |
 | Chip: new / continue / watch again | New / Continue / Watch again | Yeni / Devam et / Tekrar izle |
 | Chip: episode | Episode 5 · Season 2, Episode 5 · Continue · Episode 5 | Bölüm 5 · Sezon 2, Bölüm 5 · Devam et · Bölüm 5 |

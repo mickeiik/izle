@@ -65,9 +65,6 @@ object IzleColors {
     /** The bottom of a card, behind its chip. */
     val PosterShade = Color(0xE6000000)
 
-    /** Over the blurred copy of a poster that fills a Home card around the poster itself. */
-    val PosterBlurShade = Color(0x73000000)
-
     /** Home's scroll indicator: neutral, it only informs. */
     val ScrollTrack = Color(0x24FFFFFF)
     val ScrollThumb = Color(0x99FFFFFF)

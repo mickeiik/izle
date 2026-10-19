@@ -129,8 +129,8 @@ Everything the home screen needs:
   16:9 cards, `homeColumns` per row and `homeRows` rows per screen; the rest of the list scrolls.
 - `home`: the owner's list in the owner's order (≤ 200, a safety limit), without items that left the catalog or have
   no `playbackAllowed` episode. `posterUrl` and `backdropUrl` (the catalog's optional landscape image) are relative
-  to the server's base URL, each null without its image; without a backdrop the TV draws the poster on a blurred
-  copy of itself.
+  to the server's base URL, each null without its image; without a backdrop the TV crops the poster to a landscape
+  band.
 - `continue`: what OK plays, the item's cursor episode ([Play order](#play-order-and-the-cursor)). `status`: `new`
   (never started), `watching` (`positionMs` is the saved position), `finished` (`positionMs` 0: it starts over).
   `index`/`count`: the position in the item's play order.

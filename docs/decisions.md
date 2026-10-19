@@ -172,9 +172,9 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
 - A card's picture falls back on its own: a backdrop that fails to load gives way to the poster, a poster that fails
   to the title drawn in the card. The picture's content description is the show's title, since the name under the
   card is outside the clickable card.
-- Poster on blur: the blurred copy is a second Coil request decoded at 24×36 px under its own memory-cache key (the
-  full poster must not stand in for it), scaled up with smooth filtering; `Modifier.blur` (Android 12+ only) and a
-  45 % black shade on top.
+- Without a backdrop the poster is cropped to the card at a band 28 % of the way down (vertical bias −0.44), not at
+  its centre: posters keep faces and titles in their upper part. The owner preferred this crop to the whole poster
+  on a blurred copy of itself, which the prototype also showed.
 - The "2 new" chip shows only when it fits the card's width and clears the bottom chip and bar: it gives way on
   short cards (6 columns, 4 rows, and 5 columns when a progress bar is shown).
 - The scroll spec is exact, with no tolerance: Compose asks it again on every frame of the scroll, so a tolerance
