@@ -1,14 +1,15 @@
 package io.github.mickeiik.izle
 
-import android.content.Context
 import android.content.Intent
-import android.content.res.Configuration
 import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -18,6 +19,7 @@ import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isFocusable
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.isFocused
 import androidx.compose.ui.test.junit4.v2.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
@@ -25,6 +27,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.printToString
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.toSize
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
@@ -43,7 +46,6 @@ import mockwebserver3.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
@@ -58,7 +60,6 @@ import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowLooper
 import java.io.File
 import java.security.MessageDigest
-import java.util.Locale
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 
@@ -85,6 +86,10 @@ class SeniorInvariantsTest {
     /** Home entries that are not the default unstarted film ("Show X" playing `x.film`), by show id: the whole object. */
     @Volatile private var entries = emptyMap<String, String>()
 
+    /** The owner's grid for this TV (`homeColumns` × `homeRows`); null: not sent, as by an older server. */
+    @Volatile private var columns: Int? = null
+    @Volatile private var rows: Int? = null
+
     /** An owner's message (shown for 5 s) that the event stream hands out once, on the TV's next connection. */
     @Volatile private var message: String? = null
 
@@ -97,6 +102,10 @@ class SeniorInvariantsTest {
         server.dispatcher = object : Dispatcher() {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 requests += request
+                // Every picture is the same tiny PNG.
+                if (request.url.encodedPath.startsWith("/assets/")) {
+                    return MockResponse.Builder().addHeader("Content-Type", "image/png").body(Buffer().write(PNG)).build()
+                }
                 return when (request.url.encodedPath) {
                     "/api/v1/tv/state" -> json(200, stateJson())
                     // No live events: the TV retries the stream after a backoff (which Robolectric's paused clock
@@ -235,16 +244,11 @@ class SeniorInvariantsTest {
     }
 
     @Test
-    fun theHomeHintSaysWhatOkDoesAndDoesNotOfferBack() = onTv { tv ->
+    fun nothingIsAboveTheGrid() = onTv { tv ->
         awaitTiles("Show A", "Show B", "Show C")
-        compose.onNodeWithText(string(R.string.home_hint)).assertIsDisplayed()
-        // Back does nothing on Home, so the hint must not offer it, in either language.
-        val back = mapOf("en" to "Back", "tr" to "Geri")
-        for ((language, word) in back) {
-            val hint = localized(language).getString(R.string.home_hint)
-            assertTrue("the $language hint names OK: $hint", hint.startsWith("OK"))
-            assertFalse("the $language hint offers Back: $hint", hint.contains(word, ignoreCase = true))
-        }
+        // No clock, no hint: every text on Home belongs to a tile.
+        assertEquals(emptyList<String>(), allTexts().filter { CLOCK.matches(it) })
+        assertEquals(emptySet<String>(), allTexts().toSet() - setOf("Show A", "Show B", "Show C", string(R.string.badge_new)))
         tv.assertOnHome()
     }
 
@@ -252,7 +256,7 @@ class SeniorInvariantsTest {
     // Real text measurement (the default "legacy" graphics measure a character as about a pixel), so the banner has
     // its real size.
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
-    fun theOwnersMessageOnHomeCoversNeitherTheClockNorATileAndLeavesTheFocusAlone() = onTv { tv ->
+    fun theOwnersMessageOnHomeIsDrawnOverTheTopAndMovesNoTile() = onTv { tv ->
         awaitTiles("Show A", "Show B", "Show C")
         val tileBefore = focusedTileBounds()
         // The longest message the server allows. The event stream hands it out on the TV's next connection, which
@@ -265,29 +269,110 @@ class SeniorInvariantsTest {
         waitUntil("the owner's message") { exists(text) }
 
         val banner = compose.onNodeWithText(text).fetchSemanticsNode().boundsInRoot
-        val clock = nodes { node -> node.texts().any { CLOCK.matches(it) } }.single().boundsInRoot
-        // Several lines of large type: it has its real size.
+        // Several lines of large type (it has its real size), across the top, over the grid.
         assertTrue("a banner of several lines: $banner", banner.height > 60f && banner.width > 500f)
-        assertFalse("the message covers the clock: $banner, $clock", banner.overlaps(clock))
-        // Every tile stays clear of it, also grown by 10 % as when it has the focus (semantics bounds are unscaled).
-        compose.onAllNodes(hasClickAction()).fetchSemanticsNodes().forEach {
-            val grown = it.boundsInRoot.inflate(it.boundsInRoot.height * 0.05f)
-            assertFalse("the message covers ${it.texts()}: $banner, $grown", banner.overlaps(grown))
-        }
-        // It takes no focus, and the remote moves from tile to tile as before; the hint makes room meanwhile.
+        assertTrue("the banner at the top: $banner, the first row at $tileBefore", banner.top < tileBefore.top)
+        // The tiles stay where they were.
+        assertSameBounds(tileBefore, focusedTileBounds())
+        // It takes no focus, and the remote moves from tile to tile as before.
         compose.onAllNodes(isFocusable() and hasText(text)).assertCountEquals(0)
         assertFocusedTile("Show A")
-        assertFalse(exists(string(R.string.home_hint)))
         tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
         assertFocusedTile("Show B")
+        tv.press(KeyEvent.KEYCODE_DPAD_LEFT)
+        assertFocusedTile("Show A")
 
-        // It goes away by itself after the owner's 5 s; the tiles move back up where they were, still focused.
+        // It goes away by itself after the owner's 5 s; nothing moves.
         advanceClock(5_500)
         waitUntil("the message gone") { !exists(text) }
-        assertFocusedTile("Show B")
-        assertEquals(tileBefore.top, focusedTileBounds().top, 0.5f)
-        compose.onNodeWithText(string(R.string.home_hint)).assertIsDisplayed()
+        assertFocusedTile("Show A")
+        assertSameBounds(tileBefore, focusedTileBounds())
         tv.assertOnHome()
+    }
+
+    @Test
+    fun theTilesFollowTheOwnersColumns() {
+        columns = 3
+        home = listOf("a", "b", "c", "d")
+        onTv { tv ->
+            awaitTiles("Show A", "Show B", "Show C", "Show D")
+            // Three to a row: D starts the second row, under A.
+            val a = tileBounds("Show A")
+            val d = tileBounds("Show D")
+            assertEquals(a.left, d.left, 0.5f)
+            assertTrue("D under A: $a, $d", d.top > a.bottom)
+            tv.press(KeyEvent.KEYCODE_DPAD_DOWN)
+            assertFocusedTile("Show D")
+        }
+    }
+
+    @Test
+    fun withOneRowTheNextRowScrollsInOnDown() {
+        columns = 4
+        rows = 1
+        home = listOf("a", "b", "c", "d", "e", "f", "g", "h")
+        onTv { tv ->
+            val first = listOf("Show A", "Show B", "Show C", "Show D")
+            val second = listOf("Show E", "Show F", "Show G", "Show H")
+            waitUntil("the first row") { first.all(::shown) }
+            assertFalse("the second row is out of view", second.any(::shown))
+            assertFocusedTile("Show A")
+            val slot = laidOut(compose.onNode(hasClickAction() and hasText("Show A")).fetchSemanticsNode())
+
+            // Down scrolls exactly one row: the second row in full, the first one gone.
+            tv.press(KeyEvent.KEYCODE_DPAD_DOWN)
+            assertFocusedTile("Show E")
+            assertTrue(second.all(::shown))
+            assertFalse(first.any(::shown))
+            val grid = compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange)).fetchSemanticsNode().boundsInRoot
+            // The card and the name under it, in full.
+            val e = compose.onAllNodesWithText("Show E").fetchSemanticsNodes()
+            assertEquals(2, e.size)
+            e.forEach {
+                val b = laidOut(it)
+                assertTrue("Show E inside the grid: $b, $grid", b.top >= grid.top && b.bottom <= grid.bottom && b.left >= grid.left && b.right <= grid.right)
+            }
+
+            // Exactly one row: E's card is where A's was.
+            assertSameBounds(slot, laidOut(compose.onNode(hasClickAction() and hasText("Show E")).fetchSemanticsNode()))
+
+            // Up brings the first row back, exactly where it was.
+            tv.press(KeyEvent.KEYCODE_DPAD_UP)
+            assertFocusedTile("Show A")
+            assertSameBounds(slot, laidOut(compose.onNode(hasClickAction() and hasText("Show A")).fetchSemanticsNode()))
+            assertTrue(first.all(::shown))
+            assertFalse(second.any(::shown))
+        }
+    }
+
+    @Test
+    fun aBackdropAndAPosterBothFillTheirCards() {
+        entries = mapOf(
+            "b" to """{"item":{"id":"b","kind":"movie","title":"Show B","posterUrl":"/assets/b-poster.png",""" +
+                """"backdropUrl":"/assets/b-backdrop.png"},"continue":{"episodeId":"b.film","status":"new"}}""",
+            "c" to """{"item":{"id":"c","kind":"movie","title":"Show C","posterUrl":"/assets/c-poster.png"},""" +
+                """"continue":{"episodeId":"c.film","status":"new"}}""",
+        )
+        onTv { tv ->
+            // The picture takes the title's place in the card and describes it; A, without one, keeps its title there.
+            waitUntil("the cards") {
+                exists(hasClickAction() and hasContentDescription("Show B")) && exists(hasClickAction() and hasContentDescription("Show C")) &&
+                    exists(hasClickAction() and hasText("Show A"))
+            }
+            compose.onNode(hasClickAction() and hasContentDescription("Show B")).assertIsDisplayed().assert(hasText(string(R.string.badge_new)))
+            compose.onNode(hasClickAction() and hasContentDescription("Show C")).assertIsDisplayed()
+            assertFalse(exists(hasClickAction() and hasText("Show B")))
+            // The names are under the cards.
+            compose.onNode(hasText("Show B") and !hasClickAction()).assertIsDisplayed()
+            compose.onNode(hasText("Show C") and !hasClickAction()).assertIsDisplayed()
+            // B's backdrop is loaded (not its poster), C's poster.
+            waitUntil("the pictures") { "/assets/b-backdrop.png" in assetRequests() && "/assets/c-poster.png" in assetRequests() }
+            assertFalse("B's poster: ${assetRequests()}", "/assets/b-poster.png" in assetRequests())
+
+            assertFocusedTile("Show A")
+            tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
+            compose.onNode(isFocused() and hasClickAction()).assert(hasContentDescription("Show B"))
+        }
     }
 
     @Test
@@ -331,19 +416,6 @@ class SeniorInvariantsTest {
             tv.press(KeyEvent.KEYCODE_BACK)
             tv.assertOnHome()
         }
-    }
-
-    @Test
-    @Config(qualifiers = "fr-rFR-w960dp-h540dp-land-television")
-    fun theClockFollowsTheTvsLocaleNotTheMenuLanguage() = onTv { tv ->
-        awaitTiles("Show A", "Show B", "Show C")
-        // The owner chose an English menu (the state says `uiLanguage: en`) on a French TV that has no 12/24-hour
-        // setting: the clock is the TV's 24-hour one ("14:54"), not the menu language's "2:54 PM".
-        val clock = allTexts().firstOrNull { CLOCK.matches(it) }
-        assertNotNull("a clock on Home", clock)
-        assertTrue("a 24-hour clock, got $clock", Regex("""^\d{2}:\d{2}$""").matches(clock!!))
-        assertTrue("the menu language stays English", exists(string(R.string.home_hint)))
-        tv.assertOnHome()
     }
 
     @Test
@@ -452,8 +524,24 @@ class SeniorInvariantsTest {
         compose.onNode(isFocused() and hasClickAction()).assert(hasText(title))
     }
 
-    /** Where the focused tile is drawn, grown by its focus scale. */
+    /** Where the focused tile is drawn. */
     private fun focusedTileBounds() = compose.onNode(isFocused() and hasClickAction()).fetchSemanticsNode().boundsInRoot
+
+    private fun tileBounds(title: String) = compose.onNode(hasClickAction() and hasText(title)).fetchSemanticsNode().boundsInRoot
+
+    private fun assertSameBounds(expected: Rect, actual: Rect) {
+        listOf(expected.left to actual.left, expected.top to actual.top, expected.right to actual.right, expected.bottom to actual.bottom)
+            .forEach { (e, a) -> assertEquals("$expected vs $actual", e, a, 0.5f) }
+    }
+
+    /** Where a node is laid out, unclipped (semantics bounds are clipped by the grid). */
+    private fun laidOut(node: SemanticsNode): Rect = node.layoutInfo.coordinates.let { Rect(it.positionInRoot(), it.size.toSize()) }
+
+    /** The tile with this title (in the card: one without a picture) is on screen, not clipped away by the grid. */
+    private fun shown(title: String): Boolean {
+        val all = compose.onAllNodes(hasClickAction() and hasText(title))
+        return (0 until all.fetchSemanticsNodes().size).any { all[it].isDisplayed() }
+    }
 
     /** Every node of the (merged) tree for which [predicate] holds. */
     private fun nodes(predicate: (SemanticsNode) -> Boolean): List<SemanticsNode> {
@@ -467,11 +555,6 @@ class SeniorInvariantsTest {
         compose.waitForIdle()
     }
 
-    private fun localized(language: String): Context {
-        val config = Configuration(app.resources.configuration).apply { setLocale(Locale.forLanguageTag(language)) }
-        return app.createConfigurationContext(config)
-    }
-
     /** The first text of the focused element, if any. */
     private fun focusedTitle(): String? =
         compose.onAllNodes(isFocused()).fetchSemanticsNodes().singleOrNull()?.texts()?.firstOrNull()
@@ -482,6 +565,10 @@ class SeniorInvariantsTest {
     private fun SemanticsNode.texts(): List<String> = config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text }
 
     private fun exists(text: String) = compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
+
+    private fun exists(matcher: SemanticsMatcher) = compose.onAllNodes(matcher).fetchSemanticsNodes().isNotEmpty()
+
+    private fun assetRequests(): List<String> = requests.map { it.url.encodedPath }.filter { it.startsWith("/assets/") }
 
     private fun resolveRequests(): List<String> =
         requests.filter { it.url.encodedPath == "/api/v1/tv/resolve" }.map { it.body?.utf8().orEmpty() }
@@ -509,7 +596,8 @@ class SeniorInvariantsTest {
         val list = home.joinToString(",") { id ->
             entries[id] ?: """{"item":{"id":"$id","kind":"movie","title":"Show ${id.uppercase()}"},"continue":{"episodeId":"$id.film","status":"new"}}"""
         }
-        return """{"version":$version,"device":{"id":"tv-1","name":"Living room","uiLanguage":"en"},""" +
+        val grid = listOfNotNull(columns?.let { ""","homeColumns":$it""" }, rows?.let { ""","homeRows":$it""" }).joinToString("")
+        return """{"version":$version,"device":{"id":"tv-1","name":"Living room","uiLanguage":"en"$grid},""" +
             """"catalog":{"id":"sample","buildId":"b1","name":"Sample"},"home":[$list]}"""
     }
 
@@ -518,7 +606,11 @@ class SeniorInvariantsTest {
     private fun quantity(id: Int, count: Int): String = app.resources.getQuantityString(id, count, count)
 
     private companion object {
-        /** The Home clock: "14:54" or "2:54 PM". */
+        /** A clock: "14:54" or "2:54 PM". */
         val CLOCK = Regex("""^\d{1,2}:\d{2}( [AP]M)?$""")
+
+        /** A 1x1 PNG. */
+        val PNG: ByteArray = java.util.Base64.getDecoder()
+            .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
     }
 }

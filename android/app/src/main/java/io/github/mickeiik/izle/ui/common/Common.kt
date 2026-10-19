@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.res.Configuration
 import android.content.res.Resources
-import android.text.format.DateFormat
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -26,11 +25,8 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,9 +59,6 @@ import io.github.mickeiik.izle.ui.theme.IzleBorders
 import io.github.mickeiik.izle.ui.theme.IzleColors
 import io.github.mickeiik.izle.ui.theme.IzleShapes
 import io.github.mickeiik.izle.ui.theme.IzleSpacing
-import kotlinx.coroutines.delay
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 /**
@@ -132,25 +125,6 @@ fun languageName(tag: String?, uiLocale: Locale): String? {
 
 @Composable
 fun languageLabel(tag: String): String = stringResource(if (tag == "tr") R.string.language_tr else R.string.language_en)
-
-@Composable
-fun Clock() {
-    val context = LocalContext.current
-    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            now = System.currentTimeMillis()
-            delay(60_000 - now % 60_000)
-        }
-    }
-    // 12- or 24-hour follows the TV's setting and, when that is unset, the TV's own locale: the application
-    // context keeps the system configuration, while LocalContext carries the app's (owner-chosen) language.
-    val pattern = if (DateFormat.is24HourFormat(context.applicationContext)) "HH:mm" else "h:mm a"
-    // The locale is a key too: the owner may switch the menu language while Home shows ("PM" becomes "ÖS").
-    val locale = context.currentLocale()
-    val text = remember(now, pattern, locale) { SimpleDateFormat(pattern, locale).format(Date(now)) }
-    Text(text, style = MaterialTheme.typography.headlineMedium, color = IzleColors.OnSurface)
-}
 
 @Composable
 fun Spinner(modifier: Modifier = Modifier, size: Dp = 72.dp) {
@@ -268,14 +242,12 @@ fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, e
 /**
  * The owner's message: 30 sp bold, stepping down to 24 sp only when a long one would not fit otherwise, at most three
  * lines, dark on the warm accent so it stands out on any picture. Not focusable, no buttons: it goes away by itself.
- * [onCutShort]: even 24 sp does not fit three lines.
  */
 @Composable
 fun MessageBanner(
     text: String,
     modifier: Modifier = Modifier,
     textAlign: TextAlign = TextAlign.Start,
-    onCutShort: () -> Unit = {},
 ) {
     BasicText(
         text,
@@ -283,7 +255,6 @@ fun MessageBanner(
         maxLines = 3,
         overflow = TextOverflow.Ellipsis,
         autoSize = TextAutoSize.StepBased(minFontSize = 24.sp, maxFontSize = 30.sp, stepSize = 2.sp),
-        onTextLayout = { if (it.hasVisualOverflow) onCutShort() },
         modifier = modifier
             .border(IzleBorders.OutlineWidth, IzleColors.BannerEdge, IzleShapes.Large)
             .background(IzleColors.Accent, IzleShapes.Large)
@@ -291,7 +262,7 @@ fun MessageBanner(
     )
 }
 
-/** The banner across the top of the screen, inside the safe margins (864 dp wide): over the video, menu and overlays. */
+/** The banner across the top of the screen, inside the safe margins (864 dp wide): over Home, the video, menu and overlays. */
 @Composable
 fun MessageBannerOverlay(text: String, modifier: Modifier) {
     Box(modifier.fillMaxWidth().padding(IzleSpacing.Safe), contentAlignment = Alignment.TopCenter) {

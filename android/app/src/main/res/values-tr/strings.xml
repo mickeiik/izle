@@ -24,7 +24,6 @@
     <!-- Home -->
     <string name="home_empty">Henüz içerik yok</string>
     <string name="home_empty_detail">Diziler ve filmler izle yönetim sayfasından eklenir.</string>
-    <string name="home_hint">OK: Oynat</string>
     <string name="badge_new">Yeni</string>
     <string name="badge_continue">Devam et</string>
     <string name="badge_watch_again">Tekrar izle</string>

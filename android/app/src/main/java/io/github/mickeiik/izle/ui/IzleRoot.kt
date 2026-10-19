@@ -35,11 +35,11 @@ fun IzleRoot(vm: AppViewModel) {
             val state by vm.state.collectAsStateWithLifecycle()
             val autoplay by vm.autoplay.collectAsStateWithLifecycle()
             val banner by vm.banner.collectAsStateWithLifecycle()
-            // The owner's message: on Home in the top band, where it covers nothing; over the video, the hidden menu
-            // and the (opaque) autoplay countdown as an overlay at the top. Other screens (the update screen included)
-            // ignore messages.
+            // The owner's message: an overlay across the top, over Home's grid (whose cards stay where they are), the
+            // video, the hidden menu and the autoplay countdown. Other screens (the update screen included) ignore
+            // messages.
             val homeCovered = menu != null || autoplay != null
-            val bannerOverlay = banner.takeIf { screen == Screen.Player || (screen == Screen.Home && homeCovered) }
+            val bannerOverlay = banner.takeIf { screen == Screen.Player || screen == Screen.Home }
             Box(Modifier.fillMaxSize().background(IzleColors.Background)) {
                 when (screen) {
                     Screen.Starting -> Unit
@@ -58,10 +58,9 @@ fun IzleRoot(vm: AppViewModel) {
                             state = state,
                             online = online,
                             message = message,
-                            banner = banner.takeUnless { homeCovered },
                             initialFocusItemId = vm.homeFocusItemId,
                             active = !homeCovered,
-                            posterUrl = vm::absoluteUrl,
+                            imageUrl = vm::absoluteUrl,
                             onFocused = vm::onTileFocused,
                             onPlay = vm::onTileClicked,
                         )

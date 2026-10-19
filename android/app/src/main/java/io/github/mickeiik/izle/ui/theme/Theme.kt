@@ -62,8 +62,15 @@ object IzleColors {
     /** Behind the hidden menu, the "No connection" message over Home and the player's pause symbol. */
     val Scrim = Color(0xCC000000)
 
-    /** The bottom of a poster, behind its chip. */
+    /** The bottom of a card, behind its chip. */
     val PosterShade = Color(0xE6000000)
+
+    /** Over the blurred copy of a poster that fills a Home card around the poster itself. */
+    val PosterBlurShade = Color(0x73000000)
+
+    /** Home's scroll indicator: neutral, it only informs. */
+    val ScrollTrack = Color(0x24FFFFFF)
+    val ScrollThumb = Color(0x99FFFFFF)
 
     /** The player's information panel over the video. */
     val InfoShade = Color(0xE6000000)
@@ -121,7 +128,7 @@ object IzleBorders {
 }
 
 // What tv-material reads from the scheme here (every other colour of its components is set explicitly): `primary` for
-// the address field's text selection, `surface`/`onSurface`/`surfaceTint` for the poster tiles' cards.
+// the address field's text selection, `surface`/`onSurface`/`surfaceTint` for the home cards.
 private val ColorScheme = darkColorScheme(
     primary = IzleColors.Focus,
     surface = IzleColors.Surface,
@@ -132,7 +139,11 @@ private val ColorScheme = darkColorScheme(
 private fun style(size: Int, weight: FontWeight = FontWeight.Normal, lineHeight: Int = size + 8) =
     TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = weight, fontSize = size.sp, lineHeight = lineHeight.sp)
 
-/** Nothing on screen is smaller than 24 sp: the viewer sits far away and may not see well. Only the roles in use. */
+/**
+ * Nothing on screen is smaller than 24 sp: the viewer sits far away and may not see well. The one exception are the
+ * chips on Home's cards (`labelMedium`, `labelSmall`, used nowhere else) at 20 sp: the show's name under the card stays
+ * at 24 sp. Only the roles in use.
+ */
 private val IzleTypography = Typography(
     displayLarge = style(96, FontWeight.Bold, 104),
     displaySmall = style(44, FontWeight.Bold),
@@ -143,8 +154,8 @@ private val IzleTypography = Typography(
     titleSmall = style(24, FontWeight.Bold),
     bodyLarge = style(28),
     bodySmall = style(24),
-    labelMedium = style(24, FontWeight.Bold),
-    labelSmall = style(24),
+    labelMedium = style(20, FontWeight.Bold, 24),
+    labelSmall = style(20, lineHeight = 26),
 )
 
 @Composable

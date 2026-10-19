@@ -21,7 +21,11 @@ data class TvState(
     val home: List<HomeEntry> = emptyList(),
 )
 
-/** `autoplayOnStart`: when the TV comes on and shows Home, start the last show after a countdown (owner setting). */
+/**
+ * `autoplayOnStart`: when the TV comes on and shows Home, start the last show after a countdown (owner setting).
+ * `homeColumns` × `homeRows`: how many cards one screen of Home shows (owner setting, 3–6 × 1–4; older servers omit
+ * them). The UI clamps them, see [io.github.mickeiik.izle.ui.home.HomeGrid].
+ */
 @Serializable
 data class DeviceInfo(
     val id: String,
@@ -30,6 +34,8 @@ data class DeviceInfo(
     val preferredAudioLanguage: String? = null,
     val subtitlesLanguage: String? = null,
     val autoplayOnStart: Boolean = false,
+    val homeColumns: Int = 4,
+    val homeRows: Int = 2,
 )
 
 @Serializable
@@ -42,8 +48,9 @@ data class CatalogInfo(val id: String, val buildId: String, val name: String)
 @Serializable
 data class HomeEntry(val item: ItemCard, @SerialName("continue") val playNext: ContinueInfo, val newEpisodes: Int = 0)
 
+/** `posterUrl` (2:3) and `backdropUrl` (16:9, optional) are relative to the server (`/assets/<file>`). */
 @Serializable
-data class ItemCard(val id: String, val kind: String, val title: String, val posterUrl: String? = null)
+data class ItemCard(val id: String, val kind: String, val title: String, val posterUrl: String? = null, val backdropUrl: String? = null)
 
 /** What OK on a home tile plays. `status`: `new`, `watching` or `finished` (starts over). */
 @Serializable
