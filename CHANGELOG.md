@@ -18,6 +18,8 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Changed
 
+- **The Docker image uses Node 26** instead of Node 24. CI builds the image and checks startup, the admin page and
+  restart with a persistent data volume, with outbound networking disabled.
 - **The TV's Home is a grid of wide cards** that fills the screen, with each show's name in full under its card (on
   two lines when there is room). Shows that do not fit on one screen are reached by moving down, one row at a time,
   with a thin scroll bar at the right. A show without a landscape picture shows a landscape crop of its poster.
