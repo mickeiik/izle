@@ -42,6 +42,9 @@
         "poster": {
           "anyOf": [{ "type": "string", "pattern": "^assets/[0-9a-f]{64}\\.(jpg|png|webp)$" }, { "type": "null" }]
         },
+        "backdrop": {
+          "anyOf": [{ "type": "string", "pattern": "^assets/[0-9a-f]{64}\\.(jpg|png|webp)$" }, { "type": "null" }]
+        },
         "autoAdvance": { "type": "boolean" },
         "episodes": { "type": "array", "items": { "$ref": "#/$defs/Episode" }, "minItems": 1, "maxItems": 10000 }
       },

@@ -23,6 +23,7 @@ export interface BundleStats {
   playableEpisodes: number;
   sources: number;
   posters: number;
+  backdrops: number;
 }
 
 export interface ValidationResult {
@@ -44,7 +45,7 @@ export class BundleValidationError extends Error {
 }
 
 const MAX_JSON_BYTES = 64 * 1024 * 1024;
-const POSTER_WARN_BYTES = 1024 * 1024;
+const IMAGE_WARN_BYTES = 1024 * 1024;
 
 const MAGIC: Record<string, (b: Buffer) => boolean> = {
   jpg: (b) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
@@ -115,32 +116,41 @@ export async function validateBundle(dir: string): Promise<ValidationResult> {
     if (walk.adapters.has(a)) continue;
     issues.push(issue("warning", BUNDLE_MANIFEST_FILE, "/adapters", `adapter "${a}" is not used by any source`));
   }
-  walk.stats.posters = await checkPosters(absDir, walk.posters, issues);
+  const found = await checkImages(absDir, walk.images, issues);
+  const counted = (field: ImageField) => found.filter((rel) => walk.images.get(rel)!.some(([f]) => f === field)).length;
+  walk.stats.posters = counted("poster");
+  walk.stats.backdrops = counted("backdrop");
   // Unreferenced assets are harmless but usually a sign of a stale build.
   for (const f of await readdir(path.join(absDir, BUNDLE_ASSETS_DIR)).catch(() => [])) {
     const rel = `${BUNDLE_ASSETS_DIR}/${f}`;
-    if (walk.posters.has(rel) || f.startsWith(".")) continue;
+    if (walk.images.has(rel) || f.startsWith(".")) continue;
     issues.push(issue("warning", rel, "", "asset is not referenced by any item"));
   }
   const ok = !issues.some((i) => i.severity === "error");
   return ok ? { ok, issues, stats: walk.stats, bundle: { dir: absDir, manifest, items } } : { ok, issues, stats: walk.stats };
 }
 
+/** The item fields that name an image asset. */
+const IMAGE_FIELDS = ["poster", "backdrop"] as const;
+type ImageField = (typeof IMAGE_FIELDS)[number];
+/** Each image path with the fields (and their JSON pointers) that name it. */
+type ImageRefs = Map<string, Array<[ImageField, string]>>;
+
 /**
- * The semantic rules for items, episodes and sources (no I/O). Returns every count but `posters`, each poster path
- * with the JSON pointers that reference it, and the adapter ids the sources use.
+ * The semantic rules for items, episodes and sources (no I/O). Returns every count but `posters` and `backdrops`,
+ * the image paths with the JSON pointers that reference them, and the adapter ids the sources use.
  */
 function checkItems(manifest: BundleManifest, items: CatalogItem[], issues: ValidationIssue[]) {
   const error = (pointer: string, message: string) => void issues.push(issue("error", BUNDLE_ITEMS_FILE, pointer, message));
   const checkUrl = (url: string, pointer: string) => {
     if (!["http:", "https:"].includes(URL.parse(url)?.protocol ?? "")) error(pointer, "not a valid http(s) URL");
   };
-  const stats: BundleStats = { items: items.length, movies: 0, series: 0, episodes: 0, playableEpisodes: 0, sources: 0, posters: 0 };
+  const stats: BundleStats = { items: items.length, movies: 0, series: 0, episodes: 0, playableEpisodes: 0, sources: 0, posters: 0, backdrops: 0 };
   const itemIds = new Map<string, number>();
   const episodeOwners = new Map<string, string>();
   const declaredAdapters = new Set(manifest.adapters);
   const adapters = new Set<string>();
-  const posters = new Map<string, string[]>();
+  const images: ImageRefs = new Map();
 
   items.forEach((item, i) => {
     const ip = `/items/${i}`;
@@ -153,7 +163,10 @@ function checkItems(manifest: BundleManifest, items: CatalogItem[], issues: Vali
     if (item.kind === "movie" && item.episodes.length !== 1) {
       error(`${ip}/episodes`, `a movie must have exactly one episode (found ${item.episodes.length})`);
     }
-    if (item.poster) posters.set(item.poster, [...(posters.get(item.poster) ?? []), `${ip}/poster`]);
+    for (const field of IMAGE_FIELDS) {
+      const rel = item[field];
+      if (rel) images.set(rel, [...(images.get(rel) ?? []), [field, `${ip}/${field}`]]);
+    }
 
     let playable = 0;
     item.episodes.forEach((ep, e) => {
@@ -184,24 +197,27 @@ function checkItems(manifest: BundleManifest, items: CatalogItem[], issues: Vali
     if (playable === 0) issues.push(issue("warning", BUNDLE_ITEMS_FILE, ip, `item "${item.id}" has no episode with playbackAllowed: true`));
   });
 
-  return { stats, posters, adapters };
+  return { stats, images, adapters };
 }
 
-/** Posters: present, content-addressed (sha256 of the bytes), and of the type their extension says. Returns how many exist. */
-async function checkPosters(dir: string, posters: ReadonlyMap<string, string[]>, issues: ValidationIssue[]): Promise<number> {
-  let found = 0;
-  for (const [rel, refs] of posters) {
+/**
+ * Posters and backdrops: present, content-addressed (sha256 of the bytes), and of the type their extension says. A
+ * file named by both fields is checked once. Returns the paths that exist.
+ */
+async function checkImages(dir: string, images: ImageRefs, issues: ValidationIssue[]): Promise<string[]> {
+  const found: string[] = [];
+  for (const [rel, uses] of images) {
     const bytes = await readFile(path.join(dir, rel)).catch(() => null);
     if (!bytes) {
-      for (const r of refs) issues.push(issue("error", BUNDLE_ITEMS_FILE, r, `poster file ${rel} is missing`));
+      for (const [field, r] of uses) issues.push(issue("error", BUNDLE_ITEMS_FILE, r, `${field} file ${rel} is missing`));
       continue;
     }
-    found++;
+    found.push(rel);
     const [, name = "", ext = ""] = /^assets\/([0-9a-f]{64})\.(\w+)$/.exec(rel) ?? [];
     const digest = createHash("sha256").update(bytes).digest("hex");
     if (digest !== name) issues.push(issue("error", rel, "", `sha256 of the content is ${digest}, not the file name`));
     if (!MAGIC[ext]?.(bytes)) issues.push(issue("error", rel, "", `content is not a ${ext} image`));
-    if (bytes.length > POSTER_WARN_BYTES) issues.push(issue("warning", rel, "", `poster is larger than ${POSTER_WARN_BYTES} bytes`));
+    if (bytes.length > IMAGE_WARN_BYTES) issues.push(issue("warning", rel, "", `${uses[0]![0]} is larger than ${IMAGE_WARN_BYTES} bytes`));
   }
   return found;
 }

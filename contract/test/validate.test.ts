@@ -1,8 +1,9 @@
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { loadBundle, validateBundle, BundleValidationError, type ValidationIssue } from "../src/index.ts";
-import { makeBundle, TINY_PNG, TINY_PNG_NAME, type FixtureOptions, type Json } from "./helpers.ts";
+import { makeBundle, TINY_JPG, TINY_JPG_NAME, TINY_PNG, TINY_PNG_NAME, type FixtureOptions, type Json } from "./helpers.ts";
 
 const SAMPLE = fileURLToPath(new URL("../../sample-catalog", import.meta.url));
 const JPG_NAME = TINY_PNG_NAME.replace(".png", ".jpg");
@@ -30,7 +31,7 @@ test("the shipped sample catalog and the fixture bundle are valid and warning-fr
 
   const fixture = await validateBundle(await makeBundle());
   assert.deepEqual(fixture.issues, []);
-  const stats = { items: 2, movies: 1, series: 1, episodes: 3, playableEpisodes: 2, sources: 2, posters: 1 };
+  const stats = { items: 2, movies: 1, series: 1, episodes: 3, playableEpisodes: 2, sources: 2, posters: 1, backdrops: 0 };
   assert.deepEqual(fixture.stats, stats);
 });
 
@@ -55,6 +56,16 @@ test("semantic, schema and file errors are reported where they are", async () =>
       { message: /content is not a jpg image/ },
     ],
     [{ items: (i) => (i.items[0].poster = "../secret.png") }, { path: "/items/0/poster", message: /pattern/ }],
+    [{ items: (i) => (i.items[1].backdrop = `assets/${TINY_JPG_NAME}`) }, { path: "/items/1/backdrop", message: /backdrop file .* is missing/ }],
+    [
+      { items: (i) => (i.items[1].backdrop = `assets/${TINY_JPG_NAME}`), files: { [`assets/${TINY_JPG_NAME}`]: Buffer.concat([TINY_JPG, Buffer.from([0])]) } },
+      { file: `assets/${TINY_JPG_NAME}`, message: /sha256 of the content/ },
+    ],
+    [
+      { items: (i) => (i.items[1].backdrop = `assets/${JPG_NAME}`), files: { [`assets/${JPG_NAME}`]: TINY_PNG } },
+      { file: `assets/${JPG_NAME}`, message: /content is not a jpg image/ },
+    ],
+    [{ items: (i) => (i.items[1].backdrop = "assets/backdrop.gif") }, { path: "/items/1/backdrop", message: /pattern/ }],
     [
       { manifest: (m) => (m.adapters = []) },
       { path: "/items/1/episodes/0/sources/0/adapter", message: /not listed in bundle.json/ },
@@ -91,6 +102,27 @@ test("semantic, schema and file errors are reported where they are", async () =>
     assertError(result.issues, match);
   }
   assertError((await validateBundle("/nonexistent/izle/bundle")).issues, { message: /does not exist/ });
+});
+
+test("backdrops: optional, checked like posters, counted, and not reported as unreferenced", async () => {
+  const withBackdrop = await validateBundle(
+    await makeBundle({ items: (i) => (i.items[1].backdrop = `assets/${TINY_JPG_NAME}`), files: { [`assets/${TINY_JPG_NAME}`]: TINY_JPG } }),
+  );
+  assert.deepEqual(withBackdrop.issues, []);
+  assert.equal(withBackdrop.bundle?.items[1]?.backdrop, `assets/${TINY_JPG_NAME}`);
+  assert.deepEqual([withBackdrop.stats?.posters, withBackdrop.stats?.backdrops], [1, 1]);
+
+  // The poster's file as the backdrop too, and an explicit null: one file, each check once.
+  const shared = await validateBundle(
+    await makeBundle({ items: (i) => ((i.items[0].backdrop = `assets/${TINY_PNG_NAME}`), (i.items[1].backdrop = null)) }),
+  );
+  assert.deepEqual(shared.issues, []);
+  assert.deepEqual([shared.stats?.posters, shared.stats?.backdrops], [1, 1]);
+  const big = Buffer.concat([TINY_JPG, Buffer.alloc(1024 * 1024)]);
+  const bigName = `${createHash("sha256").update(big).digest("hex")}.jpg`;
+  const large = await validateBundle(await makeBundle({ items: (i) => (i.items[0].backdrop = `assets/${bigName}`), files: { [`assets/${bigName}`]: big } }));
+  assert.equal(large.ok, true);
+  assert.deepEqual(warnings(large.issues).map((w) => [w.file, w.message]), [[`assets/${bigName}`, "backdrop is larger than 1048576 bytes"]]);
 });
 
 test("ids, languages, URLs and headers are checked", async () => {

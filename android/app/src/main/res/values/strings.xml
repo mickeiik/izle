@@ -26,7 +26,6 @@
     <!-- Home -->
     <string name="home_empty">Nothing here yet</string>
     <string name="home_empty_detail">The owner adds shows from the izle admin page.</string>
-    <string name="home_hint">OK: Play</string>
     <string name="badge_new">New</string>
     <string name="badge_continue">Continue</string>
     <string name="badge_watch_again">Watch again</string>

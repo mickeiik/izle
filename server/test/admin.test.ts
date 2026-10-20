@@ -2,11 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { OWNER } from "../src/actor.ts";
 import { reloadOnSignal } from "../src/catalog-admin.ts";
-import { HOME_MAX_ITEMS } from "../src/tv.ts";
-import { openEvents, publishBuild, startTestServer, type Json } from "./helpers.ts";
+import { HOME_COLUMNS, HOME_MAX_ITEMS, HOME_ROWS } from "../src/tv.ts";
+import { fixtureItems, fixtureManifest, openEvents, publishBuild, startTestServer, tempDir, writeBundle, type Json } from "./helpers.ts";
 
-async function setup(t: { after(fn: () => unknown): void }) {
-  const s = await startTestServer();
+/** A server with a paired TV; `fillers` playable movies beyond the fixture's usual ones (for the home limit). */
+async function setup(t: { after(fn: () => unknown): void }, fillers?: number) {
+  const bundleDir = fillers === undefined ? undefined : await writeBundle(await tempDir(), fixtureManifest(), fixtureItems(fillers));
+  const s = await startTestServer({ bundleDir });
   t.after(() => s.close());
   const tv = await s.pair("Salon");
   return { s, tv };
@@ -21,14 +23,15 @@ test("devices: list, detail, patch settings, delete", async (t) => {
   const d = list.json.devices[0];
   assert.equal(d.id, tv.deviceId);
   assert.equal(d.online, false);
-  assert.deepEqual(d.settings, { uiLanguage: null, preferredAudioLanguage: null, subtitlesLanguage: null, autoplayOnStart: false });
-  assert.deepEqual(d.effective, { uiLanguage: "tr", preferredAudioLanguage: "tr", subtitlesLanguage: null, autoplayOnStart: false });
+  const grid = { homeColumns: 4, homeRows: 2 };
+  assert.deepEqual(d.settings, { uiLanguage: null, preferredAudioLanguage: null, subtitlesLanguage: null, autoplayOnStart: false, ...grid });
+  assert.deepEqual(d.effective, { uiLanguage: "tr", preferredAudioLanguage: "tr", subtitlesLanguage: null, autoplayOnStart: false, ...grid });
   assert.deepEqual(d.problems, { recent: 0, lastAt: null });
 
   const patched = await s.admin("PATCH", `/devices/${tv.deviceId}`, { name: "Yatak odası", uiLanguage: "en", subtitlesLanguage: "tr" });
   assert.equal(patched.status, 200);
   assert.equal(patched.json.device.name, "Yatak odası");
-  assert.deepEqual(patched.json.device.effective, { uiLanguage: "en", preferredAudioLanguage: "tr", subtitlesLanguage: "tr", autoplayOnStart: false });
+  assert.deepEqual(patched.json.device.effective, { uiLanguage: "en", preferredAudioLanguage: "tr", subtitlesLanguage: "tr", autoplayOnStart: false, ...grid });
   assert.equal(patched.json.device.stateVersion, d.stateVersion + 1);
   const reset = await s.admin("PATCH", `/devices/${tv.deviceId}`, { uiLanguage: null });
   assert.equal(reset.json.device.effective.uiLanguage, "tr");
@@ -38,20 +41,22 @@ test("devices: list, detail, patch settings, delete", async (t) => {
 
   const detail = await s.admin("GET", `/devices/${tv.deviceId}`);
   assert.equal(detail.json.homeMax, HOME_MAX_ITEMS);
+  assert.equal(HOME_MAX_ITEMS, 200);
   assert.equal((await s.admin("DELETE", `/devices/${tv.deviceId}`)).status, 204);
   assert.equal((await s.admin("GET", `/devices/${tv.deviceId}`)).status, 404);
 });
 
 test("home list: order kept, capped, validated", async (t) => {
-  const { s, tv } = await setup(t);
-  const fillers = Array.from({ length: 12 }, (_, i) => `filler-${String(i + 1).padStart(2, "0")}`);
+  const { s, tv } = await setup(t, HOME_MAX_ITEMS);
+  const fillers = Array.from({ length: HOME_MAX_ITEMS }, (_, i) => `filler-${String(i + 1).padStart(2, "0")}`);
   const ok = await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: fillers });
   assert.equal(ok.status, 200);
-  assert.equal(ok.json.home.length, 12);
+  assert.equal(ok.json.home.length, 200);
+  assert.equal((await s.call("GET", "/api/v1/tv/state", { token: tv.token })).json.home.length, 200, "the TV gets every show");
   const tooMany = await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: [...fillers, "show"] });
   assert.equal(tooMany.status, 400);
   assert.equal(tooMany.json.error, "too_many_items");
-  assert.equal(tooMany.json.max, 12);
+  assert.equal(tooMany.json.max, 200);
   assert.equal((await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["show", "show"] })).json.error, "duplicate_item");
   assert.equal((await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["ghost"] })).json.error, "unknown_item");
   assert.equal((await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["locked"] })).json.error, "not_playable");
@@ -61,7 +66,7 @@ test("home list: order kept, capped, validated", async (t) => {
 });
 
 test("home list: single changes go through the same checks, bump the version and say what came and went; expected guards a PUT", async (t) => {
-  const { s, tv } = await setup(t);
+  const { s, tv } = await setup(t, HOME_MAX_ITEMS);
   const home = (method: string, route: string, body?: unknown) => s.admin(method, `/devices/${tv.deviceId}/home${route}`, body);
   const ids = (r: Json) => r.json.home.map((h: { itemId: string }) => h.itemId);
   const v0 = (await s.admin("GET", `/devices/${tv.deviceId}`)).json.device.stateVersion;
@@ -243,6 +248,41 @@ test("autoplay on start: off by default, PATCH round-trip, in the TV's state, bu
   assert.equal(off.json.device.name, "Salon 2");
   assert.equal((await state()).json.device.autoplayOnStart, false);
   assert.equal((await state()).json.version, before.json.version + 2);
+});
+
+test("home grid: 4 × 2 by default, PATCH round-trip, in the TV's state, bumps the version, integers in range only", async (t) => {
+  const { s, tv } = await setup(t);
+  const state = () => s.call("GET", "/api/v1/tv/state", { token: tv.token });
+  const before = await state();
+  assert.deepEqual([before.json.device.homeColumns, before.json.device.homeRows], [HOME_COLUMNS.default, HOME_ROWS.default]);
+  assert.deepEqual([HOME_COLUMNS.default, HOME_ROWS.default], [4, 2]);
+
+  const grid = await s.admin("PATCH", `/devices/${tv.deviceId}`, { homeColumns: 6, homeRows: 1 });
+  assert.equal(grid.status, 200);
+  assert.deepEqual([grid.json.device.settings.homeColumns, grid.json.device.settings.homeRows], [6, 1]);
+  assert.deepEqual([grid.json.device.effective.homeColumns, grid.json.device.effective.homeRows], [6, 1]);
+  assert.equal(grid.json.device.stateVersion, before.json.version + 1);
+  assert.deepEqual([grid.json.device.settings.uiLanguage, grid.json.device.settings.autoplayOnStart], [null, false], "other settings are untouched");
+  const after = await state();
+  assert.equal(after.json.version, before.json.version + 1, "the TV re-reads its state");
+  assert.deepEqual([after.json.device.homeColumns, after.json.device.homeRows], [6, 1]);
+  assert.equal((await s.admin("GET", `/devices/${tv.deviceId}`)).json.device.settings.homeRows, 1);
+  assert.equal((await s.admin("GET", "/devices")).json.devices[0].effective.homeColumns, 6);
+
+  // Either alone; the other keeps its value.
+  assert.deepEqual((await s.admin("PATCH", `/devices/${tv.deviceId}`, { homeRows: 4 })).json.device.settings.homeColumns, 6);
+  assert.deepEqual((await s.admin("PATCH", `/devices/${tv.deviceId}`, { homeColumns: 3 })).json.device.settings.homeRows, 4);
+
+  const bad: Array<[string, unknown]> = [
+    ...[2, 7, "4", null, 4.5].map((v): [string, unknown] => ["homeColumns", v]),
+    ...[0, 5, "2", null].map((v): [string, unknown] => ["homeRows", v]),
+  ];
+  for (const [field, value] of bad) {
+    const r = await s.admin("PATCH", `/devices/${tv.deviceId}`, { [field]: value });
+    assert.deepEqual([r.status, r.json.error], [400, "invalid_request"], `${field}: ${JSON.stringify(value)}`);
+  }
+  const last = await state();
+  assert.deepEqual([last.json.device.homeColumns, last.json.device.homeRows, last.json.version], [3, 4, before.json.version + 3], "refused patches change nothing");
 });
 
 test("catalog: info, accent-insensitive search, item detail without upstream URLs", async (t) => {

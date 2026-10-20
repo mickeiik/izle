@@ -10,6 +10,10 @@ export const TINY_PNG = Buffer.from(
 );
 export const TINY_PNG_NAME = `${createHash("sha256").update(TINY_PNG).digest("hex")}.png`;
 
+/** Bytes that pass the JPEG magic check (not a decodable image; the validator only looks at the signature). */
+export const TINY_JPG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0xff, 0xd9]);
+export const TINY_JPG_NAME = `${createHash("sha256").update(TINY_JPG).digest("hex")}.jpg`;
+
 // Loosely typed on purpose: fixtures are mutated into invalid shapes.
 export type Json = any;
 

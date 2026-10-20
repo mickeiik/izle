@@ -19,6 +19,9 @@ export const TEST_RESOLVER = fileURLToPath(new URL("./fixtures/test-resolver.js"
 
 const TINY_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
 const TINY_PNG_NAME = `${createHash("sha256").update(TINY_PNG).digest("hex")}.png`;
+/** Passes the bundle validator's JPEG signature check; stands in for a backdrop. */
+const TINY_JPG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0xff, 0xd9]);
+export const BACKDROP_NAME = `${createHash("sha256").update(TINY_JPG).digest("hex")}.jpg`;
 
 const lang = (audio: string[] | null, subtitles: string[] | null = []) => ({ audio, subtitles });
 const direct = (id: string, audio: string[] | null, extra: Record<string, unknown> = {}) => ({
@@ -32,8 +35,11 @@ const direct = (id: string, audio: string[] | null, extra: Record<string, unknow
 // Loosely typed on purpose: tests mutate fixtures into other shapes.
 export type Json = any;
 
-/** A synthetic bundle exercising play order, approval, auto-advance boundaries and language ranking. */
-export function fixtureItems(): Json {
+/**
+ * A synthetic bundle exercising play order, approval, auto-advance boundaries and language ranking. `fillers` plain
+ * playable movies (filler-01 …) follow; a home-limit test asks for more.
+ */
+export function fixtureItems(fillers = 12): Json {
   return {
     items: [
       {
@@ -57,7 +63,7 @@ export function fixtureItems(): Json {
         ],
       },
       {
-        id: "film", kind: "movie", title: "Film", year: 1999, poster: `assets/${TINY_PNG_NAME}`,
+        id: "film", kind: "movie", title: "Film", year: 1999, poster: `assets/${TINY_PNG_NAME}`, backdrop: `assets/${BACKDROP_NAME}`,
         episodes: [
           {
             id: "film.main", durationMs: 5_400_000, playbackAllowed: true,
@@ -67,7 +73,7 @@ export function fixtureItems(): Json {
       },
       { id: "locked", kind: "movie", title: "Locked", poster: null, episodes: [{ id: "locked.main", playbackAllowed: false, sources: [] }] },
       { id: "silent", kind: "movie", title: "Silent", poster: null, episodes: [{ id: "silent.main", playbackAllowed: true, sources: [direct("only", [])] }] },
-      ...Array.from({ length: 12 }, (_, i) => {
+      ...Array.from({ length: fillers }, (_, i) => {
         const id = `filler-${String(i + 1).padStart(2, "0")}`;
         return { id, kind: "movie", title: `Filler ${i + 1}`, poster: null, episodes: [{ id: `${id}.main`, playbackAllowed: true, sources: [direct("only", ["en"])] }] };
       }),
@@ -87,6 +93,7 @@ export async function writeBundle(dir: string, manifest: Json = fixtureManifest(
   await writeFile(path.join(dir, "bundle.json"), JSON.stringify(manifest, null, 2));
   await writeFile(path.join(dir, "items.json"), JSON.stringify(items, null, 2));
   await writeFile(path.join(dir, "assets", TINY_PNG_NAME), TINY_PNG);
+  await writeFile(path.join(dir, "assets", BACKDROP_NAME), TINY_JPG);
   return dir;
 }
 

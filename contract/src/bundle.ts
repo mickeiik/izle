@@ -47,6 +47,11 @@ export interface CatalogItem {
   rating?: number | null;
   /** "assets/<sha256-of-content>.<jpg|png|webp>" or null. */
   poster: string | null;
+  /**
+   * Optional landscape image (16:9, around 1280×720): "assets/<sha256-of-content>.<jpg|png|webp>" or null. Absent
+   * or null, the TV crops the poster to a landscape band.
+   */
+  backdrop?: string | null;
   /** Item-level default for auto-advancing to the next episode (true when absent). */
   autoAdvance?: boolean;
   /** Array order is the approved play order. A movie has exactly one episode. */

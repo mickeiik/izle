@@ -22,6 +22,10 @@ export interface Device {
   stateVersion: number;
   /** When the app opens, the show watched last (else the first tile) starts after a countdown. */
   autoplayOnStart: boolean;
+  /** Cards per row on Home (HOME_COLUMNS in tv.ts). */
+  homeColumns: number;
+  /** Rows of cards one screen of Home shows; more scroll (HOME_ROWS in tv.ts). */
+  homeRows: number;
   /** The TV app's version as its User-Agent reported it; null until a TV that sends one connected. */
   appVersion: string | null;
   appVersionCode: number | null;
@@ -76,7 +80,7 @@ export interface Progress {
   updatedAt: number;
 }
 
-interface Cursor {
+export interface Cursor {
   catalogId: string;
   itemId: string;
   episodeId: string;
@@ -314,11 +318,11 @@ export interface CompanionLink {
   updatedAt: number;
 }
 
-export type DevicePatch = Partial<Pick<Device, "name" | "uiLanguage" | "preferredAudioLanguage" | "subtitlesLanguage" | "autoplayOnStart">>;
+export type DevicePatch = Partial<Pick<Device, "name" | "uiLanguage" | "preferredAudioLanguage" | "subtitlesLanguage" | "autoplayOnStart" | "homeColumns" | "homeRows">>;
 
 type Row = Record<string, SQLOutputValue>;
 
-const PATCHABLE = ["name", "uiLanguage", "preferredAudioLanguage", "subtitlesLanguage", "autoplayOnStart"] as const;
+const PATCHABLE = ["name", "uiLanguage", "preferredAudioLanguage", "subtitlesLanguage", "autoplayOnStart", "homeColumns", "homeRows"] as const;
 /** 0/1 columns, read as booleans. */
 const FLAGS = new Set(["autoplay_on_start", "wrapped", "playing", "baseline", "seen", "imported", "last_playing"]);
 const column = (key: string) => key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
@@ -581,12 +585,6 @@ export class Store {
 
   deleteProgress(deviceId: string, catalogId: string, episodeId: string): void {
     this.run("DELETE FROM progress WHERE device_id = ? AND catalog_id = ? AND episode_id = ?", deviceId, catalogId, episodeId);
-  }
-
-  /** When the device last reported progress on any episode of the item (epoch ms), or null. */
-  lastProgressAt(deviceId: string, catalogId: string, itemId: string): number | null {
-    const sql = "SELECT MAX(updated_at) AS at FROM progress WHERE device_id = ? AND catalog_id = ? AND item_id = ?";
-    return this.one<{ at: number | null }>(sql, [deviceId, catalogId, itemId])!.at;
   }
 
   getCursor(deviceId: string, catalogId: string, itemId: string): Cursor | null {
@@ -953,6 +951,16 @@ export class Store {
     const sql = `SELECT episode_id FROM catalog_seen WHERE catalog_id = ? AND item_id = ? AND removed_at IS NULL AND first_seen_at > ?
        ORDER BY first_seen_at, episode_id`;
     return this.many<{ episodeId: string }>(sql, [catalogId, itemId, sinceMs]).map((e) => e.episodeId);
+  }
+
+  /** Every item's present episodes with when they first appeared, oldest first (as episodesSeenAfter orders them). */
+  listSeen(catalogId: string): Map<string, Array<{ episodeId: string; firstSeenAt: number }>> {
+    const sql = "SELECT item_id, episode_id, first_seen_at FROM catalog_seen WHERE catalog_id = ? AND removed_at IS NULL ORDER BY first_seen_at, episode_id";
+    const byItem = new Map<string, Array<{ episodeId: string; firstSeenAt: number }>>();
+    for (const { itemId, episodeId, firstSeenAt } of this.many<{ itemId: string; episodeId: string; firstSeenAt: number }>(sql, [catalogId])) {
+      byItem.set(itemId, [...(byItem.get(itemId) ?? []), { episodeId, firstSeenAt }]);
+    }
+    return byItem;
   }
 
   /** When each present episode of the catalog first appeared, by episode id (`itemId` narrows to one item). */

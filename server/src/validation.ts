@@ -12,7 +12,7 @@ import { TV_PROBLEM_KINDS, type ProblemReportBody } from "./problems.ts";
 import type { ResolveInput } from "./resolve.ts";
 import type { DevicePatch } from "./store.ts";
 import { SCOPES, type Scope } from "./tokens.ts";
-import type { ProgressInput } from "./tv.ts";
+import { HOME_COLUMNS, HOME_ROWS, type ProgressInput } from "./tv.ts";
 import { VIEWING_TRIGGERS } from "./viewings.ts";
 
 const ajv = new Ajv2020({ strict: true, allErrors: true });
@@ -34,6 +34,8 @@ export const devicePatchBody = ajv.compile<DevicePatch>({
   ...object({
     name: NAME, uiLanguage: { anyOf: [{ enum: ["tr", "en"] }, NULL] }, preferredAudioLanguage: LANGUAGE_TAG_OR_NULL,
     subtitlesLanguage: LANGUAGE_TAG_OR_NULL, autoplayOnStart: BOOLEAN,
+    homeColumns: { type: "integer", minimum: HOME_COLUMNS.min, maximum: HOME_COLUMNS.max },
+    homeRows: { type: "integer", minimum: HOME_ROWS.min, maximum: HOME_ROWS.max },
   }),
   minProperties: 1,
 });

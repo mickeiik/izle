@@ -7,6 +7,25 @@ contract share one version number. How to update (back up, update the server, th
 
 ## [Unreleased]
 
+### Added
+
+- **Home grid size per TV:** the owner sets how many columns (3–6) and rows (1–4) one screen of the TV's Home shows,
+  in the TV's settings on the admin page (default 4 × 2); the TV applies it live. The admin API takes `homeColumns`
+  and `homeRows` in `PATCH /api/v1/admin/devices/:id`, and the TV reads them from `GET /api/v1/tv/state`.
+- **Landscape pictures in catalogs:** a catalog item may carry an optional 16:9 `backdrop` image next to its poster
+  (an additive change to the v1 bundle contract, checked by `izle-validate` like posters). The server sends it as
+  `backdropUrl`; the TV shows it on the show's card.
+
+### Changed
+
+- **The TV's Home is a grid of wide cards** that fills the screen, with each show's name in full under its card (on
+  two lines when there is room). Shows that do not fit on one screen are reached by moving down, one row at a time,
+  with a thin scroll bar at the right. A show without a landscape picture shows a landscape crop of its poster.
+  The chips on the cards ("New", "Episode 5", "2 new") are smaller (20 sp), and the long "Continue ·
+  Episode 2" chip only shows on cards wide enough for it. The clock and the "OK: Play" hint are gone; the owner's
+  message and "No connection" are drawn over the top of the grid.
+- **Home holds up to 200 shows** instead of 12 (`homeMax` in the admin API).
+
 ## [0.3.0] - 2026-10-18
 
 ### Added

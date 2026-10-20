@@ -158,3 +158,24 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
   servers share 127.0.0.1, and only the port tells the allowed upstream from the others.
 - Approved codes do not count towards a client's 2-code cap (the owner already acted on them; several TVs approved
   before collecting behind one address must still pair); they still count towards the server-wide 10.
+
+## Home grid and backdrops, server side (2026-10-19)
+
+- `homeColumns`/`homeRows` have no server-wide (`defaults`) or catalog default: the right grid depends on each TV's
+  screen size and viewing distance, so it is only ever a per-TV owner choice; `effective` repeats the stored value.
+- The columns are plain `INTEGER NOT NULL DEFAULT` without a `CHECK`: like the other device settings, the admin API's
+  schema is the only writer and holds the ranges (`HOME_COLUMNS`/`HOME_ROWS` in tv.ts, mirrored in the admin page's
+  lib.js and checked against each other by a test).
+
+## Home grid, TV app (2026-10-19)
+
+- A card's picture falls back on its own: a backdrop that fails to load gives way to the poster, a poster that fails
+  to the title drawn in the card. The picture's content description is the show's title, since the name under the
+  card is outside the clickable card.
+- Without a backdrop the poster is cropped to the card at a band 28 % of the way down (vertical bias −0.44), not at
+  its centre: posters keep faces and titles in their upper part. The owner preferred this crop to the whole poster
+  on a blurred copy of itself, which the prototype also showed.
+- The "2 new" chip shows only when it fits the card's width and clears the bottom chip and bar: it gives way on
+  short cards (6 columns, 4 rows, and 5 columns when a progress bar is shown).
+- The scroll spec is exact, with no tolerance: Compose asks it again on every frame of the scroll, so a tolerance
+  stops the scroll short by up to that much.

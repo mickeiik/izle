@@ -14,7 +14,7 @@ reference into a playable stream at play time (signed URLs, cookies, scraping) b
 <bundle>/
 ├── bundle.json        manifest
 ├── items.json         all items
-└── assets/            posters, content-addressed: <sha256-of-content>.<jpg|png|webp>
+└── assets/            posters and backdrops, content-addressed: <sha256-of-content>.<jpg|png|webp>
 ```
 
 ## bundle.json
@@ -50,6 +50,7 @@ reference into a playable stream at play time (signed URLs, cookies, scraping) b
 | `genres` | string[] | no | Free-form, unique. |
 | `rating` | number 0–10 \| null | no | |
 | `poster` | string \| null | yes | `assets/<sha256>.<jpg\|png\|webp>`, or null. |
+| `backdrop` | string \| null | no | Landscape image for the TV's home cards: `assets/<sha256>.<jpg\|png\|webp>`, or null (the default when absent). |
 | `autoAdvance` | boolean | no | Item default for auto-starting the next episode (default `true`). |
 | `episodes` | Episode[] (≥ 1) | yes | **Array order is the approved play order.** |
 
@@ -109,8 +110,10 @@ server treats as matching every preferred language).
    original key) and SHOULD keep an identity registry so renames in the source do not change ids.
 3. **Explicit play order and approval.** The episode array order is the order izle plays in, and
    `playbackAllowed` is required on every episode. izle never infers either from season/number fields.
-4. **Content-addressed posters.** A poster file's name is the lowercase hex SHA-256 of its bytes and its
-   extension matches its content type. Posters SHOULD be 2:3, around 400×600, and well under 1 MiB.
+4. **Content-addressed images.** A poster or backdrop file's name is the lowercase hex SHA-256 of its bytes and
+   its extension matches its content type. Posters SHOULD be 2:3, around 400×600, and well under 1 MiB.
+   Backdrops SHOULD be 16:9, around 1280×720, well under 1 MiB; without one the TV crops the poster
+   to a landscape band.
 5. **Movies have exactly one episode.**
 6. **Episode ids are unique across the bundle** (the TV API addresses episodes by id alone).
 7. **No secrets.** Bundles SHOULD NOT contain credentials or signed, expiring URLs; resolve those at play time
@@ -120,13 +123,14 @@ server treats as matching every preferred language).
 
 `npx izle-validate <bundleDir>` (package `@izle/contract`) checks the JSON Schema and the semantic rules:
 unique item and episode ids (bundle-wide) and source ids (per episode), one episode per movie, `playbackAllowed:
-false` when `sources` is empty, adapter ids declared in the manifest, poster files present with matching SHA-256
-and image type, valid calendar date in `builtAt`, parseable http(s) URLs. Warnings (non-fatal): unused declared
-adapters, items without any playable episode, unreferenced or oversized assets. `--probe` additionally
+false` when `sources` is empty, adapter ids declared in the manifest, poster and backdrop files present with
+matching SHA-256 and image type, valid calendar date in `builtAt`, parseable http(s) URLs. Warnings (non-fatal):
+unused declared adapters, items without any playable episode, unreferenced or oversized assets. `--probe` additionally
 range-GETs every direct media and subtitle URL (`Range: bytes=0-0`, redirects followed) and reports anything
 other than 200/206; `--json` prints a machine-readable report. Exit status 0 = valid, 1 = invalid or
 unreachable, 2 = usage error. Programmatic use: `validateBundle(dir)` returns `{ok, issues, bundle?, stats?}`;
-`loadBundle(dir)` returns `{bundle, warnings, stats}` or throws `BundleValidationError`.
+`loadBundle(dir)` returns `{bundle, warnings, stats}` or throws `BundleValidationError`; `stats` counts items,
+movies, series, episodes, playable episodes, sources, posters and backdrops.
 
 ## Versioning
 
@@ -139,3 +143,6 @@ side supports them). Anything else (a new required property, a changed meaning, 
 ## Changelog
 
 - **v1 (2026-10-10)** — initial version.
+- **v1, backdrop (2026-10-19)** — additive: `CatalogItem.backdrop` (optional, default null), a 16:9 landscape image
+  under `assets/`, content-addressed and validated like `poster`; `BundleStats.backdrops`. Servers before this
+  change reject a bundle that has the property.
