@@ -73,11 +73,12 @@ export const serverAddress = (origin, pathname) => `${origin}${pathname.replace(
 
 /**
  * The catalog label, else "S2 · E5", else "Episode 5", plus the title. Movies have no number: their (optional) title
- * only, else "Film".
+ * only, else "Film". A channel has no episode: "Live".
  * @param {EpisodeLike} e
- * @param {"movie" | "series" | string | null} [kind]
+ * @param {"movie" | "series" | "live" | string | null} [kind]
  */
 export function episodeName(e, kind) {
+  if (kind === "live") return "Live";
   let head = e.label ?? null;
   if (!head && e.number !== null && e.number !== undefined) {
     head = e.season !== null && e.season !== undefined ? `S${e.season} · E${e.number}` : `Episode ${e.number}`;
@@ -94,8 +95,12 @@ export function episodeName(e, kind) {
 /** Whether OK on the TV continues where it was, not from the start. @param {ContinueInfo | null | undefined} c */
 export const resumes = (c) => c?.status === "watching" && c.positionMs >= RESUME_MIN_MS;
 
-/** What OK does on the TV for a home entry. @param {ContinueInfo | null | undefined} c @param {string | null} kind */
+/**
+ * What OK does on the TV for a home entry; a channel (no `continue`) plays live.
+ * @param {ContinueInfo | null | undefined} c @param {string | null} kind
+ */
 export function continueText(c, kind) {
+  if (kind === "live") return "Live";
   if (!c) return "Nothing playable";
   const which = kind === "series" ? `${episodeName(c, kind)} · ` : "";
   if (resumes(c)) {
@@ -128,14 +133,16 @@ export function moveItem(list, index, delta) {
 
 /**
  * The muted line under a show's title: Film or Series (with its episode count), the year, and with `playable` how
- * many of its episodes may be played when that is not all of them.
- * @param {{ kind: string, year?: number | null, episodeCount?: number, playableCount?: number }} item
+ * many of its episodes may be played when that is not all of them. A channel is "Channel", with `playable` marked
+ * when the catalog does not allow it (its `playable` is false).
+ * @param {{ kind: string, year?: number | null, episodeCount?: number | null, playableCount?: number | null, playable?: boolean }} item
  * @param {{ playable?: boolean }} [o]
  */
 export function showMeta(item, o = {}) {
-  const parts = [item.kind === "series" ? (item.episodeCount !== undefined ? `Series · ${plural(item.episodeCount, "episode")}` : "Series") : "Film"];
+  if (item.kind === "live") return o.playable && item.playable === false ? "Channel · not playable" : "Channel";
+  const parts = [item.kind === "series" ? (item.episodeCount !== undefined && item.episodeCount !== null ? `Series · ${plural(item.episodeCount, "episode")}` : "Series") : "Film"];
   if (item.year) parts.push(String(item.year));
-  if (o.playable && item.playableCount !== undefined && item.episodeCount !== undefined && item.playableCount < item.episodeCount) {
+  if (o.playable && typeof item.playableCount === "number" && typeof item.episodeCount === "number" && item.playableCount < item.episodeCount) {
     parts.push(item.playableCount === 0 ? "not playable" : `${item.playableCount} of ${item.episodeCount} playable`);
   }
   return parts.join(" · ");
@@ -156,6 +163,20 @@ export function searchSummary(count, query) {
 
 /** @param {string} query */
 export const catalogSearchPath = (query) => `/catalog/search?limit=${SEARCH_MAX}&q=${encodeURIComponent(query.trim())}`;
+
+/**
+ * What a catalog holds, for the bundle's facts: `9 shows (7 films, 1 series, 1 channel) · 11 episodes, 11 playable ·
+ * 13 sources`. "Show" is the page's word for any catalog item, a channel included.
+ * @param {{ items: number, movies: number, series: number, live?: number, episodes: number, playableEpisodes: number,
+ *   sources: number }} s the catalog's `stats`
+ */
+export function catalogContents(s) {
+  const kinds = `${plural(s.movies, "film")}, ${s.series} series, ${plural(s.live ?? 0, "channel")}`;
+  return `${plural(s.items, "show")} (${kinds}) · ${plural(s.episodes, "episode")}, ${s.playableEpisodes} playable · ${plural(s.sources, "source")}`;
+}
+
+/** The media kinds as the owner reads them: `HLS`, `DASH`, `MP4`, `MPEG-TS` (`ts`). @param {string} kind */
+export const mediaKindLabel = (kind) => (kind === "ts" ? "MPEG-TS" : kind.toUpperCase());
 
 /** @typedef {{ state: string, updatedAt: string }} NowPlaying what is read here of a now-playing record */
 
@@ -181,8 +202,24 @@ export function playbackState(n, online, now = Date.now()) {
   return { label: "Playing", tone: "ok", active: true };
 }
 
+/** `14:05`: a time of day, in the browser's time zone. @param {string} iso */
+export const clockTime = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
 /**
- * Where and when a problem happened: show · episode · source · position · HTTP status · app.
+ * The line under what a TV plays: `1:02 / 10:00 · source tr-dub`. A channel has no position or duration: when its
+ * viewing started (`startedAt`, when known) and the source, `since 14:05 · source main`.
+ * @param {{ itemKind?: string | null, positionMs: number | null, durationMs: number | null, sourceId: string | null }} n
+ * @param {string | null} [startedAt] @param {(iso: string) => string} [formatTime]
+ */
+export function nowPlayingLine(n, startedAt = null, formatTime = clockTime) {
+  const source = n.sourceId ? `source ${n.sourceId}` : null;
+  if (n.itemKind === "live") return [startedAt ? `since ${formatTime(startedAt)}` : null, source].filter(Boolean).join(" · ");
+  return [`${formatClock(n.positionMs)} / ${formatClock(n.durationMs)}`, source].filter(Boolean).join(" · ");
+}
+
+/**
+ * Where and when a problem happened: show · episode · source · position · HTTP status · app. A channel has no
+ * episode or position.
  * @param {{ itemId: string | null, itemTitle: string | null, itemKind?: string | null, episodeId: string | null,
  *   episodeTitle: string | null, season: number | null, number: number | null, sourceId: string | null,
  *   positionMs: number | null, httpStatus: number | null, appVersion: string | null, missing: boolean }} p
@@ -192,7 +229,7 @@ export function problemContext(p) {
   if (p.missing) parts.push(`${p.itemId ?? p.episodeId} (no longer in the catalog)`);
   else if (p.itemTitle) {
     parts.push(p.itemTitle);
-    if (p.itemKind !== "movie") parts.push(episodeName({ season: p.season, number: p.number, title: p.episodeTitle }, p.itemKind));
+    if (p.itemKind !== "movie" && p.itemKind !== "live") parts.push(episodeName({ season: p.season, number: p.number, title: p.episodeTitle }, p.itemKind));
   }
   if (p.sourceId) parts.push(`source ${p.sourceId}`);
   if (p.positionMs !== null && p.positionMs !== undefined) parts.push(`at ${formatClock(p.positionMs)}`);
@@ -253,7 +290,8 @@ const ERRORS = /** @type {Record<string, string>} */ ({
   too_many_items: `A home screen holds at most ${HOME_MAX} shows.`,
   duplicate_item: "That show is already on the home screen.",
   unknown_item: "That show is not in the catalog (any more).",
-  not_playable: "That show has no episode that may be played.",
+  not_playable: "That show has no episode that may be played, or that channel may not be played.",
+  has_episodes: "That show is played through its episodes; only a channel is played by itself.",
   not_allowed: "Playback of that episode is not allowed by the catalog.",
   unknown_episode: "That episode is not in the catalog (any more).",
   unknown_device: "That TV does not exist any more.",
@@ -264,7 +302,7 @@ const ERRORS = /** @type {Record<string, string>} */ ({
   network: "The server cannot be reached.",
   internal: "The server ran into an error. Its log has details.",
   unknown_source: "That source is not in the catalog (any more).",
-  unsupported_media: "That source is DASH, which a phone cannot play through the server.",
+  unsupported_media: "That source is DASH or MPEG-TS, which a phone cannot play through the server.",
   no_playable_source: "The source could not be resolved right now.",
   no_link: "Save the timing for this episode first.",
   insufficient_scope: "This token may not do that; the admin page needs the owner token.",
@@ -330,7 +368,7 @@ export function sourceReport(s, formatTime = (iso) => new Date(iso).toLocaleStri
   else if (!s.ok) lines.push(`${TRIED[s.code] ?? s.code}${s.name && s.code !== "timeout" ? ` (${s.name})` : ""}`);
   if (st) {
     const delivery = st.delivery === "proxy" ? "through the proxy" : st.delivery === "direct" ? "direct to the TV" : "cannot be served";
-    lines.push(`${st.kind.toUpperCase()}${st.inline ? " (inline playlist)" : ""} from ${st.host ?? "?"} · ${delivery}`);
+    lines.push(`${mediaKindLabel(st.kind)}${st.inline ? " (inline playlist)" : ""} from ${st.host ?? "?"} · ${delivery}`);
     if (st.headerNames?.length) lines.push(`upstream headers: ${st.headerNames.join(", ")}`);
     if (st.languages) lines.push(`audio ${st.languages.audio?.join(", ") || "unknown"} · subtitles ${st.languages.subtitles?.join(", ") || "unknown"}`);
     if (st.expiresAt) lines.push(`expires ${formatTime(st.expiresAt)}`);
@@ -376,15 +414,16 @@ export const sameLanguage = (wanted, actual) =>
   Boolean(wanted && actual && primarySubtag(wanted) === primarySubtag(actual));
 
 /**
- * The episode list with what the device did with each: watched, current (where OK continues), progress.
+ * The episode list with what the device did with each: watched, current (where OK continues), progress. A channel
+ * has no episodes (`episodes` absent): an empty list.
  * @template {{ id: string }} E
- * @param {E[]} episodes
+ * @param {E[] | null | undefined} episodes
  * @param {string | null} cursorEpisodeId
  * @param {Array<{ episodeId: string, status: string, positionMs: number, durationMs: number | null }>} progress
  */
 export function episodeStates(episodes, cursorEpisodeId, progress) {
   const byId = new Map(progress.map((p) => [p.episodeId, p]));
-  return episodes.map((e) => {
+  return (episodes ?? []).map((e) => {
     const p = byId.get(e.id);
     const watched = p?.status === "finished";
     const pct = p && !watched ? percent(p.positionMs, p.durationMs) : null;
@@ -457,28 +496,50 @@ export function actorLabel(actor) {
 }
 
 /**
- * Who started a viewing: the viewer with the remote, autoplay, auto-next, or whoever sent the command.
- * @param {{ trigger: string, actor?: { type: string, name?: string } | null }} v
+ * Who started a viewing: the viewer with the remote, autoplay, auto-next (a channel: CH+/CH− from the one before), or
+ * whoever sent the command.
+ * @param {{ trigger: string, itemKind?: string | null, actor?: { type: string, name?: string } | null }} v
  */
 export function triggerLabel(v) {
   if (v.trigger === "viewer") return "the viewer";
   if (v.trigger === "autoplay") return "autoplay";
-  if (v.trigger === "next") return "auto-next";
+  if (v.trigger === "next") return v.itemKind === "live" ? "CH+/CH−" : "auto-next";
   if (v.trigger === "command") return actorLabel(v.actor) || "a command";
   return "";
 }
 
 /**
  * How a viewing ended (or that it runs): `watched to the end`, `stopped at 12:34`, `switched away at 1:02`,
- * `lost at 0:40` (a power cut, a dead app); `· seen` when it counts as seen without a finished report.
+ * `lost at 0:40` (a power cut, a dead app); `· seen` when it counts as seen without a finished report. Without a
+ * position (a channel's viewing, an imported one): `stopped`, `switched away`, `lost`.
  * @param {{ endedAt: string | null, endReason: string | null, endPositionMs: number | null, seen: boolean, imported?: boolean }} v
  */
 export function viewingEnd(v) {
   if (v.endedAt === null) return "playing now";
   if (v.endReason === "finished") return "watched to the end";
-  const at = v.imported ? "" : ` at ${formatClock(v.endPositionMs)}`;
+  const at = v.imported || v.endPositionMs === null || v.endPositionMs === undefined ? "" : ` at ${formatClock(v.endPositionMs)}`;
   const how = v.endReason === "stopped" ? "stopped" : v.endReason === "replaced" ? "switched away" : v.endReason === "lost" ? "lost" : (v.endReason ?? "ended");
   return `${how}${at}${v.seen ? " · seen" : ""}`;
+}
+
+/**
+ * When a viewing ran, in times of day: `14:05–14:52`, `since 14:05` while it runs. What tells a channel's viewings
+ * apart (they have no position).
+ * @param {{ startedAt: string, endedAt: string | null }} v @param {(iso: string) => string} [formatTime]
+ */
+export function viewingSpan(v, formatTime = clockTime) {
+  return v.endedAt === null ? `since ${formatTime(v.startedAt)}` : `${formatTime(v.startedAt)}–${formatTime(v.endedAt)}`;
+}
+
+/**
+ * A channel's viewing in one line, when and how long: `14:05–14:52 · 45 min · stopped`, `since 14:05 · 12 min ·
+ * playing now` (the time is how long the picture actually ran, `watchedMs`).
+ * @param {{ startedAt: string, endedAt: string | null, endReason: string | null, endPositionMs: number | null, seen: boolean,
+ *   watchedMs: number | null }} v
+ * @param {(iso: string) => string} [formatTime]
+ */
+export function liveViewingLine(v, formatTime = clockTime) {
+  return [viewingSpan(v, formatTime), formatDuration(v.watchedMs), viewingEnd(v)].join(" · ");
 }
 
 /** The chip of a title's history status. @param {string} status @returns {{ label: string, tone: "ok" | "info" | "warn" | "" }} */
@@ -492,12 +553,18 @@ export function titleStatusLabel(status) {
 
 /**
  * The muted line of a title in the history: `Series · 5 of 12 episodes seen · last watched 2 days ago · 3 h 20 min`.
- * @param {{ kind: string | null, inCatalog: boolean, episodes: { total: number, seen: number }, lastWatchedAt: string | null,
- *   watchedMs: number }} t
+ * A channel has no episodes to see: `Channel · 3 viewings · last watched …`.
+ * @param {{ kind: string | null, inCatalog: boolean, episodes: { total: number, seen: number } | null, viewings?: number,
+ *   lastWatchedAt: string | null, watchedMs: number }} t
  * @param {number} [now]
  */
 export function titleLine(t, now = Date.now()) {
-  const parts = [t.kind === "movie" ? (t.episodes.seen > 0 ? "Film · seen" : "Film") : `Series · ${t.episodes.seen} of ${plural(t.episodes.total, "episode")} seen`];
+  const e = t.episodes ?? { total: 0, seen: 0 };
+  const parts = [
+    t.kind === "live" ? (t.viewings ? `Channel · ${plural(t.viewings, "viewing")}` : "Channel")
+    : t.kind === "movie" ? (e.seen > 0 ? "Film · seen" : "Film")
+    : `Series · ${e.seen} of ${plural(e.total, "episode")} seen`,
+  ];
   if (!t.inCatalog) parts.push("no longer in the catalog");
   if (t.lastWatchedAt) parts.push(`last watched ${formatRelative(t.lastWatchedAt, now)}`);
   if (t.watchedMs > 0) parts.push(formatDuration(t.watchedMs));
@@ -522,11 +589,13 @@ export function episodeHistoryLine(e) {
   return parts.join(" · ");
 }
 
-/** The words of a command result reason. */
+/** The words of a command result reason, by `type:reason` or by `reason`. */
 const REASONS = /** @type {Record<string, string>} */ ({
   not_in_player: "nothing is playing", not_ready: "the TV is not set up", no_episode: "no episode that way", unknown_type: "the TV does not know this command",
   no_playable_source: "no source could be played", playback_error: "the player failed", superseded: "something else started first",
   stopped: "the player was left first", busy: "the TV was busy", episodes_unavailable: "the episode list could not be fetched",
+  live: "a channel cannot be paused or seeked", no_channel: "no channel that way on Home",
+  "next:no_channel": "no channel after this one on Home", "previous:no_channel": "no channel before this one on Home",
 });
 
 /** What became of an `update` command, by `result:reason` (or by `reason` for any result). */
@@ -565,7 +634,7 @@ function updateResultText(d) {
 export function commandResultText(d) {
   if (d.type === "update") return updateResultText(d);
   const name = d.type.charAt(0).toUpperCase() + d.type.slice(1);
-  const why = d.reason ? ` (${REASONS[d.reason] ?? d.reason.replace(/_/g, " ")})` : "";
+  const why = d.reason ? ` (${REASONS[`${d.type}:${d.reason}`] ?? REASONS[d.reason] ?? d.reason.replace(/_/g, " ")})` : "";
   return `${name}: ${d.result}${why}`;
 }
 
@@ -834,7 +903,7 @@ export function candidateOptions(candidates) {
       else if (langs && langs.length === 1) parts.push(languageLabel(langs[0]));
       else if (langs && langs.length === 0) parts.push("no dialogue");
       if (c.current) parts.push("the TV's source");
-      if (!c.supported) parts.push(c.reason === "dash" ? "DASH, cannot play on a phone" : "cannot play");
+      if (!c.supported) parts.push(c.reason === "dash" || c.reason === "ts" ? `${mediaKindLabel(c.reason)}, cannot play on a phone` : "cannot play");
       out.push({ value: `${c.sourceId}\u0000${lang ?? ""}`, label: parts.join(" · "), sourceId: c.sourceId, language: lang, disabled: !c.supported });
     }
   }

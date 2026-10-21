@@ -1,14 +1,17 @@
 // @ts-check
 // The viewing history of the family: what was watched in the last days, the titles with their status, and one
-// title's episodes with the owner's marks (seen, not seen), which win over what the TVs reported.
+// title's episodes with the owner's marks (seen, not seen), which win over what the TVs reported. A channel has no
+// episodes and is never seen: its page lists its viewings, when and how long each ran.
 
 import { api, attempt } from "./api.js";
 import { actionButton, card, chip, h, keepFocus, page, setChip, setTitle, slot } from "./dom.js";
-import { episodeHistoryLine, episodeName, formatDuration, formatRelative, plural, titleLine, titleStatusLabel } from "./lib.js";
+import { episodeHistoryLine, episodeName, formatDuration, formatRelative, liveViewingLine, plural, titleLine, titleStatusLabel, triggerLabel } from "./lib.js";
 import { watchEvents } from "./events.js";
 
 const DAYS_SHOWN = 7;
 const TITLES_LIMIT = 100;
+/** A channel's page lists this many of its latest viewings. */
+const CHANNEL_VIEWINGS = 50;
 
 /** A remembered filter choice, for the time of the page (localStorage may be off). */
 const remembered = /** @type {Record<string, string>} */ ({});
@@ -99,12 +102,34 @@ export function historyItemView(scope, itemId) {
     return h("li", null, h("div", { class: "row" }, seenChip, h("div", { class: "grow" }, h("strong", null, name), h("div", { class: "muted" }, episodeHistoryLine(e))), buttons));
   };
 
+  /** A channel: its latest viewings, one line each (no marks: a channel is never seen). @param {any} t */
+  const loadChannel = async (t) => {
+    const { viewings } = await scope.read(`/history/viewings?item=${encodeURIComponent(itemId)}&limit=${CHANNEL_VIEWINGS}`);
+    const facts = [titleLine(t), t.firstWatchedAt ? `first watched ${formatRelative(t.firstWatchedAt)}` : null].filter(Boolean).join(" · ");
+    const catalogLink = t.inCatalog ? h("a", { href: `#/catalog/items/${encodeURIComponent(itemId)}` }, "Channel in the catalog") : null;
+    head.replaceChildren(h("div", null, h("p", { class: "muted" }, facts), catalogLink ? h("p", null, catalogLink) : null));
+    const day = (/** @type {string} */ iso) => new Date(iso).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+    const row = (/** @type {any} */ v) => {
+      const by = triggerLabel(v);
+      const more = [v.deviceName, by ? `started by ${by}` : null].filter(Boolean).join(" · ");
+      return h("li", null, h("div", { class: "row" }, h("div", { class: "grow" }, h("strong", null, `${day(v.startedAt)} · ${liveViewingLine(v)}`), more ? h("div", { class: "muted" }, more) : null)));
+    };
+    const list = viewings.length === 0
+      ? h("p", { class: "muted" }, "No viewing is kept for this channel.")
+      : h("ol", { class: "list episodes-history" }, viewings.map(row));
+    const intro = viewings.length >= CHANNEL_VIEWINGS
+      ? `The last ${CHANNEL_VIEWINGS} viewings, the latest first: when the channel was on and how long the picture ran.`
+      : "Its viewings, the latest first: when the channel was on and how long the picture ran.";
+    body.show(h("section", { class: "card" }, h("div", { class: "row top-align" }, head)), card({ title: "Viewings", intro }, list));
+  };
+
   const load = async () => {
     detail = await scope.read(`/history/titles/${encodeURIComponent(itemId)}`);
     const t = detail.title;
     setTitle(title, t.title);
     const s = titleStatusLabel(t.status);
     setChip(statusChip, s.label, s.tone);
+    if (t.kind === "live") return loadChannel(t);
     const facts = [titleLine(t), t.firstWatchedAt ? `first watched ${formatRelative(t.firstWatchedAt)}` : null, t.rewatches > 0 ? plural(t.rewatches, "rewatch") : null,
       t.shortViewings > 0 ? `${plural(t.shortViewings, "short viewing")} (gave up early)` : null].filter(Boolean).join(" · ");
     const ids = detail.episodes.map((/** @type {any} */ e) => e.episodeId);
