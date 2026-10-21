@@ -211,3 +211,7 @@ The specs and the contract were written first; the server, admin page and TV app
 - From the spec writing: opening the hidden menu over a channel does not pause it (there is no pause on live); the
   "Live" chip stays on the smallest cards like "New"; a channel's sources SHOULD be HLS without `#EXT-X-ENDLIST`,
   dynamic DASH (`type="dynamic"`, since DASH has no end-list tag) or `ts`.
+- From the server API spec: a `positionMs` sent with `play` of a channel is left out of the payload, not refused;
+  `companion/resolve` on a `ts` source answers `400 unsupported_media` like DASH; `no_channel` means no channel
+  after or before the playing one on the TV's Home list, which also covers a channel started remotely that is not
+  on Home. The proxy problem `detail` word for `stream.ts` requests is left to the server step.
