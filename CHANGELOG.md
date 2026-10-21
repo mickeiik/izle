@@ -29,7 +29,6 @@ contract share one version number. How to update (back up, update the server, th
   and `series` carry `episodes`; `live` carries `sources`); a resolver's `ResolveRequest.episodeId` is null for a
   channel; inline playlists from adapters are for VOD only. Nothing is deployed, so no version is bumped (see
   the spec changelogs).
-
 - **The Docker image uses Node 26** instead of Node 24. CI builds the image and checks startup, the admin page and
   restart with a persistent data volume, with outbound networking disabled.
 - **The TV's Home is a grid of wide cards** that fills the screen, with each show's name in full under its card (on
