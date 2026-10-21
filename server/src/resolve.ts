@@ -101,9 +101,13 @@ interface ResolveServiceOptions {
 export const hasHeaders = (h: Record<string, string> | undefined): h is Record<string, string> =>
   h !== undefined && Object.keys(h).length > 0;
 
-/** DASH manifests are not rewritten by the proxy (v1), so DASH that needs upstream headers cannot be served. */
+/**
+ * DASH manifests are not rewritten by the proxy (v1), so DASH that needs upstream headers cannot be served.
+ * Temporary: `ts` (MPEG-TS over HTTP) is specified but not served yet; the proxy route and the TV's player follow in
+ * the server and TV steps of the live-channels work, which remove this.
+ */
 const servable = (media: ResolvedMedia, headers: Record<string, string> | undefined): boolean =>
-  !(media.kind === "dash" && hasHeaders(headers));
+  media.kind !== "ts" && !(media.kind === "dash" && hasHeaders(headers));
 
 /**
  * How a stream reaches the client, shared by resolve and the admin diagnostics so both always agree. The main

@@ -18,6 +18,7 @@ test("delivery plan: headers, inline playlists and proxy.always go through the p
   assert.deepEqual(plan({ media: { kind: "hls", playlist: "#EXTM3U\n", baseUrl: "https://media.example.test/" } }), proxied);
   assert.deepEqual(plan({ media: dash }, true), direct, "proxy.always leaves DASH direct");
   assert.equal(plan({ media: dash, headers: referer }).servable, false, "DASH that needs headers cannot be served");
+  assert.equal(plan({ media: { kind: "ts", url: "https://media.example.test/live.ts" } }).servable, false, "ts is specified, not served yet");
   const subtitleTracks = [{ headers: referer }, {}, { headers: {} }];
   assert.deepEqual(plan({ media: hls, subtitleTracks }).proxySubtitles, [true, false, false]);
   assert.deepEqual(plan({ media: hls, subtitleTracks }, true).proxySubtitles, [true, true, true]);

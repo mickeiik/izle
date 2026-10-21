@@ -207,4 +207,7 @@ The specs and the contract were written first; the server, admin page and TV app
 - The "Live" chip is red with white text, television's own convention, rather than a fourth hue of the chip palette.
 - Until the server step lands, the server narrows its catalog type to `EpisodicItem` and refuses a bundle with a
   channel (a reload keeps the previous catalog) so that a channel is never silently dropped and every root command
-  stays green.
+  stays green; a `ts` stream counts as `unsupported` in resolve (the proxy would otherwise serve it as a playlist).
+- From the spec writing: opening the hidden menu over a channel does not pause it (there is no pause on live); the
+  "Live" chip stays on the smallest cards like "New"; a channel's sources SHOULD be HLS without `#EXT-X-ENDLIST`,
+  dynamic DASH (`type="dynamic"`, since DASH has no end-list tag) or `ts`.

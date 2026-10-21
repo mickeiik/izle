@@ -21,7 +21,8 @@ contract share one version number. How to update (back up, update the server, th
   between Home's channels), is reported (heartbeats without a position) and is kept in the history (when and for
   how long, never "seen"). The server, the admin page and the TV app follow in later steps; a server of this
   version refuses a bundle with a channel.
-- **Media kind `ts`:** a source may be a progressive MPEG-TS stream over HTTP (IPTV-style), meant for channels.
+- **Media kind `ts`:** a source may be a progressive MPEG-TS stream over HTTP (IPTV-style), meant for channels. A
+  server of this version does not serve it yet (such a source counts as `unsupported`, like DASH with headers).
 
 ### Changed
 
