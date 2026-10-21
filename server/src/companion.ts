@@ -69,23 +69,16 @@ export class CompanionService {
    */
   candidates(device: Device) {
     const n = this.s.store.getNowPlaying(device.id);
-    if (n?.episodeId === null) {
-      const item = this.s.catalog.item(n.itemId);
-      if (!item) return { nowPlaying: null, candidates: [] };
-      return {
-        nowPlaying: { itemId: item.id, itemKind: item.kind, episodeId: null, sourceId: n.sourceId, itemTitle: item.title, episodeTitle: null, state: n.state },
-        candidates: [],
-      };
-    }
-    const ref = n ? this.s.catalog.episode(n.episodeId) : undefined;
-    if (!n || !ref) return { nowPlaying: null, candidates: [] };
-    const links = new Map(this.s.store.listCompanionLinks(this.s.catalog.catalogId, ref.episode.id).map((l) => [l.sourceId, l]));
-    const { item, episode } = ref;
+    const about = n && this.s.catalog.describe(n);
+    if (!n || !about || about.missing) return { nowPlaying: null, candidates: [] };
+    const { itemId, itemKind, episodeId, itemTitle, episodeTitle } = about;
+    const nowPlaying = { itemId, itemKind, episodeId, sourceId: n.sourceId, itemTitle, episodeTitle, state: n.state };
+    const ref = this.s.catalog.playing(n);
+    if (ref?.kind !== "episode") return { nowPlaying, candidates: [] };
+    const { episode } = ref;
+    const links = new Map(this.s.store.listCompanionLinks(this.s.catalog.catalogId, episode.id).map((l) => [l.sourceId, l]));
     return {
-      nowPlaying: {
-        itemId: item.id, itemKind: item.kind, episodeId: episode.id, sourceId: n.sourceId, itemTitle: item.title, episodeTitle: episode.title ?? null,
-        state: n.state,
-      },
+      nowPlaying,
       // Upstream URLs, headers and refs are deliberately not exposed (the admin item view has the same rule).
       candidates: episode.sources.map((s) => {
         const kind = s.type === "direct" ? s.media.kind : null;

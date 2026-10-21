@@ -6,7 +6,7 @@
 
 import { isLiveItem } from "@izle/contract";
 import { SERVER, tvActor, type Actor } from "./actor.ts";
-import type { CatalogService, PlayableRef } from "./catalog.ts";
+import { playingKey, samePlaying, type CatalogService, type PlayableRef } from "./catalog.ts";
 import type { EventLog } from "./eventlog.ts";
 import type { EventHub } from "./events.ts";
 import { HttpError } from "./errors.ts";
@@ -59,11 +59,6 @@ export interface LiveViewingReport {
   anchorAt: number;
 }
 
-/** Whether the viewing is of what the ref plays: the episode, or (no episode) the channel. */
-function plays(v: Viewing, ref: PlayableRef): boolean {
-  return ref.kind === "episode" ? v.episodeId === ref.episode.id : v.episodeId === null && v.itemId === ref.item.id;
-}
-
 /** Where a viewing was last (its last report, else where it started); null for a channel, which has no position. */
 function lastPosition(v: Viewing): number | null {
   return v.episodeId === null ? null : (v.lastPositionMs ?? v.startPositionMs ?? 0);
@@ -110,25 +105,25 @@ export class ViewingService {
     const { store, eventLog } = this.s;
     const running = store.runningViewing(device.id);
     const t = this.s.now();
-    if (running && plays(running, ref)) {
+    const playing = playingKey(ref);
+    if (running && samePlaying(running, playing)) {
       if (running.sourceId !== sourceId) store.updateViewing(running.id, { sourceId });
       return;
     }
     const { trigger, actor, commandId } = this.origin(device.id, input);
     if (running) this.end(running, "replaced", t, lastPosition(running), actor);
-    const { item } = ref;
-    const episode = ref.kind === "episode" ? ref.episode : null;
+    const { itemKind, itemTitle, episodeTitle, season, number } = this.s.catalog.describe(playing);
     const v = store.insertViewing({
-      deviceId: device.id, deviceName: device.name, catalogId: this.s.catalog.catalogId, itemId: item.id, itemKind: item.kind, itemTitle: item.title,
-      episodeId: episode?.id ?? null, episodeTitle: episode?.title ?? null, season: episode?.season ?? null, number: episode?.number ?? null, sourceId,
+      deviceId: device.id, deviceName: device.name, catalogId: this.s.catalog.catalogId, ...playing, itemKind, itemTitle, episodeTitle, season, number, sourceId,
       startedAt: t, endedAt: null, startPositionMs: positionMs, endPositionMs: null, durationMs, watchedMs: 0, endReason: null, seen: false,
       trigger, actor, commandId, imported: false, lastReportAt: null, lastPositionMs: null, lastPlaying: false, lastAnchorAt: null, lastState: null,
     });
-    const { id: viewingId, itemKind, itemTitle, episodeId, episodeTitle, season, number } = v;
+    const viewingId = v.id;
+    const { itemId, episodeId } = playing;
     eventLog.append("playback.started", device.id, actor, {
-      viewingId, itemId: item.id, itemKind, itemTitle, episodeId, episodeTitle, season, number, sourceId, positionMs, trigger,
+      viewingId, itemId, itemKind, itemTitle, episodeId, episodeTitle, season, number, sourceId, positionMs, trigger,
     });
-    this.s.log.debug("viewing started", { deviceId: device.id, viewingId, itemId: item.id, episodeId, trigger });
+    this.s.log.debug("viewing started", { deviceId: device.id, viewingId, itemId, episodeId, trigger });
   }
 
   /** The trigger, actor and command behind a resolve: a command's actor when the TV names one of its play/next/previous commands. */
@@ -186,7 +181,7 @@ export class ViewingService {
   onLiveReport(device: Device, r: LiveViewingReport): void {
     const { store } = this.s;
     const v = store.runningViewing(device.id);
-    if (!v || v.episodeId !== null || v.itemId !== r.itemId) return;
+    if (!v || !samePlaying(v, { itemId: r.itemId, episodeId: null })) return;
     const t = this.s.now();
     const actor = tvActor(device.id);
     const patch: Partial<Omit<Viewing, "id" | "actor">> = { lastReportAt: t, lastPlaying: r.playing, lastAnchorAt: r.anchorAt, lastState: r.status, watchedMs: v.watchedMs ?? 0 };

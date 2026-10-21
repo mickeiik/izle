@@ -1,12 +1,13 @@
 import { isLiveItem, type EpisodicItem } from "@izle/contract";
 import type { Actor } from "./actor.ts";
+import { playingKey } from "./catalog.ts";
 import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
 import { requireEpisode, requireEpisodicItem, requireItem, requirePlayable, requirePlayableRef } from "./lookup.ts";
 import { autoNextIndex, cursorAfterReport, cursorIndex, isPlayable, type LiveReportStatus, type ProgressReportStatus } from "./playback.ts";
 import { episodeDetails, episodeSummary, iso, itemCard, itemDetails, tvSource } from "./presenters.ts";
 import { noPlayableDetail, triedDetail } from "./problems.ts";
-import { playingKey, type ResolvedStream, type ResolveInput, type Tried } from "./resolve.ts";
+import type { ResolvedStream, ResolveInput, Tried } from "./resolve.ts";
 import type { Cursor, Device, NowPlaying, Progress } from "./store.ts";
 import { Waiters } from "./waiters.ts";
 
@@ -282,9 +283,10 @@ export class TvService {
    * viewing of the channel hears its heartbeat (watched time, stalls, the stop).
    */
   private recordLiveReport(device: Device, input: LiveReportInput): { version: number } {
-    const { item } = requirePlayableRef(this.s.catalog, { itemId: input.itemId }, 404);
+    const ref = requirePlayableRef(this.s.catalog, { itemId: input.itemId }, 404);
+    const { item } = ref;
     const catalogId = this.s.catalog.catalogId;
-    const sourceId = this.s.sessions.owned(input.sessionId, device.id, { itemId: item.id, episodeId: null })?.sourceId ?? null;
+    const sourceId = this.s.sessions.owned(input.sessionId, device.id, playingKey(ref))?.sourceId ?? null;
     const t = this.s.now();
     const playing = input.playing ?? input.status === "playing";
     const anchorAt = t - (input.ageMs ?? 0);

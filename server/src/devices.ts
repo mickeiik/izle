@@ -3,6 +3,7 @@
 
 import { isLiveItem } from "@izle/contract";
 import { tvActor, type Actor } from "./actor.ts";
+import { samePlaying, type PlayingKey } from "./catalog.ts";
 import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
 import { isPlayable } from "./playback.ts";
@@ -98,16 +99,14 @@ export class DeviceService {
   progress(d: Device) {
     const { store, catalog } = this.s;
     const catalogId = catalog.catalogId;
-    const titleOf = (episodeId: string) => {
-      const ref = catalog.episode(episodeId);
-      return ref
-        ? { itemTitle: ref.item.title, kind: ref.item.kind, season: ref.episode.season ?? null, number: ref.episode.number ?? null, episodeTitle: ref.episode.title ?? null }
-        : { missing: true };
+    const titlesOf = (key: PlayingKey) => {
+      const { itemTitle, itemKind, season, number, episodeTitle, missing } = catalog.describe(key);
+      return missing ? { missing } : { itemTitle, kind: itemKind, season, number, episodeTitle };
     };
     return {
-      cursors: store.listCursors(d.id, catalogId).map((cur) => ({ itemId: cur.itemId, episodeId: cur.episodeId, updatedAt: iso(cur.updatedAt), ...titleOf(cur.episodeId) })),
+      cursors: store.listCursors(d.id, catalogId).map((cur) => ({ itemId: cur.itemId, episodeId: cur.episodeId, updatedAt: iso(cur.updatedAt), ...titlesOf(cur) })),
       progress: store.listProgress(d.id, catalogId).map(({ itemId, episodeId, positionMs, durationMs, status, updatedAt }) => {
-        return { itemId, episodeId, positionMs, durationMs, status, updatedAt: iso(updatedAt), ...titleOf(episodeId) };
+        return { itemId, episodeId, positionMs, durationMs, status, updatedAt: iso(updatedAt), ...titlesOf({ itemId, episodeId }) };
       }),
     };
   }
@@ -117,18 +116,17 @@ export class DeviceService {
    * channel (`itemKind: "live"`) has no episode, positions or anchor.
    */
   now(d: Device, n: NowPlaying | null) {
-    const ref = n?.episodeId != null ? this.s.catalog.episode(n.episodeId) : undefined;
-    const item = ref?.item ?? (n ? this.s.catalog.item(n.itemId) : undefined);
+    const about = n && this.s.catalog.describe(n);
     // The running viewing, while it is the one the row reports on; null once it ended.
     const running = n ? this.s.viewings.running(d.id) : null;
     return {
       online: this.s.events.isOnline(d.id),
       serverNowMs: this.s.now(),
       seq: n?.seq ?? 0,
-      nowPlaying: n && {
-        itemId: n.itemId, itemKind: item?.kind ?? null, episodeId: n.episodeId, sourceId: n.sourceId, itemTitle: item?.title ?? null, episodeTitle: ref?.episode.title ?? null,
+      nowPlaying: n && about && {
+        itemId: n.itemId, itemKind: about.itemKind, episodeId: n.episodeId, sourceId: n.sourceId, itemTitle: about.itemTitle, episodeTitle: about.episodeTitle,
         positionMs: n.positionMs, durationMs: n.durationMs, state: n.state, updatedAt: iso(n.updatedAt), playing: n.playing,
-        viewingId: running && running.itemId === n.itemId && running.episodeId === n.episodeId ? running.id : null,
+        viewingId: running && samePlaying(running, n) ? running.id : null,
       },
       // Where the TV is: positionMs as of atMs (server clock), advancing at `rate` while `playing`.
       anchor: n && n.positionMs !== null ? { positionMs: n.positionMs, atMs: n.anchorAt ?? n.updatedAt, playing: n.playing, rate: 1 } : null,

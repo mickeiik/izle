@@ -1,6 +1,6 @@
 import type { Adapter, LanguageFacts, MediaKind, Playable, ResolvedMedia, ResolveResult, Source, SubtitleTrack } from "@izle/contract";
 import { newId } from "./auth.ts";
-import { episodeIdOf, playableOf, type CatalogService, type PlayableRef } from "./catalog.ts";
+import { playableOf, playingKey, samePlaying, type CatalogService, type PlayableRef, type PlayingKey } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
 import type { Logger } from "./log.ts";
 import { requireAllowed, requirePlayableRef, requireSource, type PlayableId } from "./lookup.ts";
@@ -22,18 +22,15 @@ export type ResolveInput = PlayableId & {
   commandId?: number;
 };
 
-/** What a stored row or a session plays: an episode of an item, or (`episodeId` null) a channel. */
-export interface PlayingKey {
-  itemId: string;
-  episodeId: string | null;
-}
-
-/** The key of what a ref plays. */
-export const playingKey = (ref: PlayableRef): PlayingKey => ({ itemId: ref.item.id, episodeId: episodeIdOf(ref) });
-
 /** Proxy-session owner key of a device's companion streams (separate from the TV's own two sessions). */
 export const companionScope = (deviceId: string): string => `companion:${deviceId}`;
 export const isCompanionScope = (owner: string): boolean => owner.startsWith("companion:");
+
+/**
+ * What a report says it played, as far as it says: an episode report gives `{episodeId}`, a channel report
+ * `{itemId, episodeId: null}`, a problem report either id, both or neither.
+ */
+export type PartialPlayingKey = { itemId?: string | undefined; episodeId?: string | null | undefined };
 
 interface PlaybackSession extends PlayingKey {
   id: string;
@@ -165,15 +162,14 @@ export class PlaybackSessions {
   }
 
   /**
-   * The session `id` names, if it belongs to the device and plays what `playing` says (each given field must match:
-   * `{episodeId}` an episode, `{itemId, episodeId: null}` a channel): a report names only its TV's own sessions.
+   * The session `id` names, if it belongs to the device and plays what `playing` says: a report names only its TV's
+   * own sessions. A field the report leaves out is not checked, so a report naming nothing matches any playback.
    */
-  owned(id: string | null | undefined, deviceId: string, playing: { itemId?: string | undefined; episodeId?: string | null | undefined } = {}): PlaybackSession | undefined {
+  owned(id: string | null | undefined, deviceId: string, playing: PartialPlayingKey = {}): PlaybackSession | undefined {
     const s = id ? this.get(id) : undefined;
     if (!s || s.deviceId !== deviceId) return undefined;
-    if (playing.itemId !== undefined && s.itemId !== playing.itemId) return undefined;
-    if (playing.episodeId !== undefined && s.episodeId !== playing.episodeId) return undefined;
-    return s;
+    const said = { itemId: playing.itemId ?? s.itemId, episodeId: playing.episodeId === undefined ? s.episodeId : playing.episodeId };
+    return samePlaying(said, s) ? s : undefined;
   }
 }
 

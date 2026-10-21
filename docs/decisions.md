@@ -283,3 +283,22 @@ The server side of the specification above, in one change (the admin page and th
 - A `400` on a channel's progress report no longer switches the reporter into its old-server mode; that fallback is
   for episode reports only. `ResolveRequest` refuses both or neither of `episodeId` and `itemId`.
 - The "Live" chip is `#C62828` with white text (5.6:1), 20 sp like the other chips, the same red as the admin page.
+
+## Architecture: the playing key (2026-10-21)
+
+- `PlayingKey`, `playingKey`, `samePlaying` and `PlayingDescription` live in `catalog.ts` next to `PlayableRef`,
+  and the lookups on `CatalogService`: the key is a catalog notion (what a ref plays), not a resolve one. Two lookups
+  on purpose: `catalog.playing(key)` is lenient (stored rows outlive catalogs: undefined when gone, the episode by its
+  id alone), `requirePlayableRef` strict (a request body: HTTP errors, `has_episodes`).
+- `describe` keeps the old sites' edges: the item still names an episode that left; a channel key is missing only
+  when its item is gone, so a channel id that became a series is named by the series and not flagged (as
+  `problems.list` and Listen along did). `progress` keeps its own wire form (`kind`, titles only when present).
+- Partial matching stays in `PlaybackSessions.owned` (`PartialPlayingKey`): episode reports name the episode alone
+  and problem reports either id, both or neither; the fields a report leaves out are taken from the session and the
+  rest goes through `samePlaying`. A problem row may know an episode without its item, so `problemKey` fills the item
+  from the catalog and the catalog-id check stays at `problems.list`.
+- A running viewing now continues only for the same item and episode, not the same episode id alone; they differ
+  only when an episode moved to another item between resolves.
+- Left alone: `failureKey` (a map key string, already per catalog, item, episode and source); `commandBody`'s play
+  branches (an item with an optional episode, not the exclusive pair the fragment builds); the episode report's
+  match in `viewings.onReport` (it names the episode alone, like its session lookup).
