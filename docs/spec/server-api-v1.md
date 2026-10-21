@@ -1062,5 +1062,5 @@ in `./data` (`izle.db`, `admin.token`). Deployment (systemd, Caddy, Docker): [se
   [diagnostics](#diagnostics) (`{"itemId"}`), [events](#events) and the [viewing history](#viewing-history)
   (viewings without episode, positions or duration, never seen; title summaries without episodes);
   [Listen along](#listen-along) does not cover channels and marks `ts` sources `supported: false`. The header's
-  pre-release clause. Specified ahead of the implementation: until the server learns channels, it refuses a bundle
-  that has one. See [What changes for the TV](#what-changes-for-the-tv).
+  pre-release clause. Specified ahead of the implementation, which the server step brought the same day (a server
+  from between the two refused a bundle with a channel). See [What changes for the TV](#what-changes-for-the-tv).
