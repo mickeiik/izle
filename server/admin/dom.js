@@ -70,7 +70,10 @@ export function card(opts, ...children) {
 /** @param {string | null} url @param {string} [alt] */
 export const poster = (url, alt = "") => (url ? h("img", { class: "poster", src: url, alt, loading: "lazy" }) : h("div", { class: "poster empty", "aria-hidden": "true" }));
 
-/** A chip's colour: none, a state, or (`server`) a problem the server ran into. @typedef {"ok" | "warn" | "info" | "server" | ""} Tone */
+/**
+ * A chip's colour: none, a state, (`server`) a problem the server ran into, or (`live`) a channel, red as on the TV.
+ * @typedef {"ok" | "warn" | "info" | "server" | "live" | ""} Tone
+ */
 
 /** @param {string} text @param {Tone} [tone] */
 export function chip(text, tone = "") {

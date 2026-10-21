@@ -4,13 +4,14 @@
 
 import { ApiError, api, isUnauthorized } from "./api.js";
 import { actionButton, card, h, keyedRows, liveSearch, loadError, loading, page, showRow, slot, toast } from "./dom.js";
-import { buildSummary, catalogSearchPath, errorText, formatRelative, groupEpisodeChanges, issueLine, plural, searchSummary, shortId, showMeta } from "./lib.js";
+import { buildSummary, catalogContents, catalogSearchPath, errorText, formatRelative, groupEpisodeChanges, issueLine, plural, searchSummary, shortId, showMeta } from "./lib.js";
 
 /** Builds listed before the rest fold away. */
 const BUILDS_SHOWN = 5;
 
 /**
- * What a build changed, for the detail under the build list: new and removed shows and episodes.
+ * What a build changed, for the detail under the build list: new and removed shows and episodes. A channel counts as
+ * a show (it has no episodes).
  * @param {any} b the build (an entry of the catalog's `builds`)
  * @param {any} changes its changes (GET /admin/catalog/builds/<id>)
  */
@@ -31,7 +32,7 @@ function buildDetail(b, changes) {
     [
       "New shows",
       changes.items.added.map((/** @type {any} */ i) =>
-        h("div", null, h("strong", null, i.title), i.kind === "series" && episodeCount.has(i.id) ? ` · ${plural(episodeCount.get(i.id) ?? 0, "episode")}` : null),
+        h("div", null, h("strong", null, i.title), i.kind === "live" ? " · channel" : i.kind === "series" && episodeCount.has(i.id) ? ` · ${plural(episodeCount.get(i.id) ?? 0, "episode")}` : null),
       ),
     ],
     ["Removed shows", changes.items.removed.map((/** @type {any} */ i) => h("div", null, h("strong", null, i.title ?? i.id)))],
@@ -79,7 +80,7 @@ export function catalogView(scope) {
       ["Name", c.name],
       ["Catalog id", h("code", null, c.id)],
       ["Build", [h("code", null, c.buildId), h("span", { class: "muted" }, ` built ${formatRelative(c.builtAt)}, loaded ${formatRelative(c.loadedAt)}`)]],
-      ["Contents", `${plural(s.items, "show")} (${plural(s.movies, "film")}, ${s.series} series) · ${plural(s.episodes, "episode")}, ${s.playableEpisodes} playable · ${plural(s.sources, "source")}`],
+      ["Contents", catalogContents(s)],
       ["Adapters", c.adapters.length ? c.adapters.join(", ") : "none"],
       ["Resolver module", c.resolver ? [`provides ${c.resolver.adapters.join(", ") || "nothing"}`, h("br"), h("code", { class: "hash" }, `sha256 ${c.resolver.sha256}`)] : "none configured"],
       ["Server", `izle-server ${c.server.version}`],

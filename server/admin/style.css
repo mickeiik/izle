@@ -9,6 +9,8 @@
   --accent: #1d4e89; --accent-hover: #163d6c; --accent-text: #ffffff; --accent-soft: #e2eaf5; --focus: var(--accent);
   --ok: #146639; --ok-bg: #e0f3e8; --warn: #7a4f00; --warn-bg: #fdf0d5; --info: #1d4e89; --info-bg: var(--accent-soft);
   --danger: #b3261e; --danger-bg: #fbe4e2; --on-danger: #ffffff;
+  /* A channel's "Live" chip: red with white text in both themes, as on the TV (5.6:1). */
+  --live: #c62828; --on-live: #ffffff;
   --shadow: 0 1px 2px rgb(0 0 0 / 6%), 0 2px 8px rgb(0 0 0 / 4%);
 
   --space-0: 0.125rem; --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem; --space-5: 1.5rem;
@@ -209,11 +211,12 @@ input[type="checkbox"] { width: 1.25rem; height: 1.25rem; min-height: 0; padding
   display: inline-block; font-size: var(--text-xs); line-height: var(--leading-tight); padding: var(--space-0) var(--space-2);
   border-radius: var(--radius-full); background: var(--bg); color: var(--muted); border: 1px solid var(--line); white-space: nowrap; vertical-align: 0.05em;
 }
-.chip:is(.ok, .warn, .info) { border-color: transparent; font-weight: 600; }
+.chip:is(.ok, .warn, .info, .live) { border-color: transparent; font-weight: 600; }
 .chip.ok { background: var(--ok-bg); color: var(--ok); }
 .chip.warn { background: var(--warn-bg); color: var(--warn); }
 .chip.info { background: var(--info-bg); color: var(--info); }
 .chip.server { background: transparent; color: var(--accent); border-color: var(--accent); }
+.chip.live { background: var(--live); color: var(--on-live); }
 
 .bar { height: 6px; border-radius: var(--radius-full); background: var(--line); overflow: hidden; margin-top: var(--space-2); max-width: 22rem; }
 .bar > span { display: block; height: 100%; width: 0; background: var(--accent); }

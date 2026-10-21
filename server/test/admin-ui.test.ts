@@ -4,12 +4,12 @@ import { readFile, readdir } from "node:fs/promises";
 import {
   APK_MAX_BYTES, HOME_COLUMNS, HOME_MAX, HOME_ROWS, androidText, apkVersion, appCheckReasonText, appCheckText, appUpdateChip, capabilityText, checkResultText,
   formatBytes, installNowBlocked, newApkText,
-  actorLabel, buildSummary, candidateOptions, catalogSearchPath, clockOffset, commandResultText, companionTarget,
+  actorLabel, buildSummary, candidateOptions, catalogContents, catalogSearchPath, clockOffset, commandResultText, companionTarget,
   continueText, episodeHistoryLine, episodeName, episodeStateLabel, episodeStates, errorText, formatClock, formatCode,
   formatCountdown, formatDrift, formatDuration, formatPosition, formatRelative, gridSummary, groupEpisodeChanges, isActive, issueLine,
-  languageLabel, moveItem, parseCandidate, parseSse, percent, playbackState, plural, problemContext, resumes,
-  sameLanguage, scopeLabel, searchSummary, serverAddress, shortId, showMeta, sourceReport, syncDecision, titleLine,
-  titleStatusLabel, tokenFromHash, triggerLabel, tvPositionAt, viewingEnd,
+  languageLabel, liveViewingLine, mediaKindLabel, moveItem, nowPlayingLine, parseCandidate, parseSse, percent, playbackState, plural,
+  problemContext, resumes, sameLanguage, scopeLabel, searchSummary, serverAddress, shortId, showMeta, sourceReport, syncDecision,
+  titleLine, titleStatusLabel, tokenFromHash, triggerLabel, tvPositionAt, viewingEnd, viewingSpan,
 } from "../admin/lib.js";
 import { ADMIN_FILES, ADMIN_VENDOR_FILES } from "../src/admin-files.ts";
 import { HOME_COLUMNS as SERVER_COLUMNS, HOME_MAX_ITEMS, HOME_ROWS as SERVER_ROWS } from "../src/tv.ts";
@@ -257,6 +257,74 @@ test("admin helpers: the event stream, durations, viewings, titles, episodes, co
     [scopeLabel("manage"), "Manage"], [scopeLabel("x"), "x"],
     [errorText({ code: "insufficient_scope" }), "This token may not do that; the admin page needs the owner token."],
   ]);
+});
+
+test("admin helpers: a channel (a live item) never reads as a film or a series", () => {
+  const time = (iso: string) => iso.slice(11, 16); // the browser's zone in the page; UTC here
+  const c = { episodeId: "show.s1e2", season: 1, number: 2, title: "Two", label: null, durationMs: 600_000, status: "watching" as const, positionMs: 90_000 };
+  cases([
+    [episodeName({ title: null }, "live"), "Live", "a channel has no episode"],
+    [continueText(null, "live"), "Live", "a channel's home entry has continue: null"],
+    [continueText(c, "live"), "Live"],
+    [continueText(null, "series"), "Nothing playable", "a show without continue keeps its words"],
+    [episodeStates(undefined, null, []), [], "a channel's item has no episodes"],
+    [episodeStates(null, null, []), []],
+    [showMeta({ kind: "live", year: null, episodeCount: null, playableCount: null, playable: true }, { playable: true }), "Channel"],
+    [showMeta({ kind: "live", year: null, episodeCount: null, playableCount: null, playable: false }, { playable: true }), "Channel · not playable"],
+    [showMeta({ kind: "live", playable: false }), "Channel", "without the playable option, as in Add shows"],
+    [showMeta({ kind: "series", episodeCount: null }), "Series", "null counts are no count"],
+    [catalogContents({ items: 9, movies: 7, series: 1, live: 1, episodes: 11, playableEpisodes: 10, sources: 13 }),
+      "9 shows (7 films, 1 series, 1 channel) · 11 episodes, 10 playable · 13 sources"],
+    [catalogContents({ items: 3, movies: 1, series: 0, live: 2, episodes: 1, playableEpisodes: 1, sources: 1 }),
+      "3 shows (1 film, 0 series, 2 channels) · 1 episode, 1 playable · 1 source"],
+    [mediaKindLabel("ts"), "MPEG-TS"], [mediaKindLabel("hls"), "HLS"], [mediaKindLabel("dash"), "DASH"], [mediaKindLabel("mp4"), "MP4"],
+  ]);
+  const now = { itemKind: "live", positionMs: null, durationMs: null, sourceId: "main" };
+  cases([
+    [nowPlayingLine(now, "2026-10-21T14:05:09Z", time), "since 14:05 · source main"],
+    [nowPlayingLine(now, null, time), "source main", "the viewing's start not known (yet)"],
+    [nowPlayingLine({ ...now, sourceId: null }, null, time), ""],
+    [nowPlayingLine({ itemKind: "series", positionMs: 62_000, durationMs: 600_000, sourceId: "tr-dub" }), "1:02 / 10:00 · source tr-dub"],
+    [nowPlayingLine({ itemKind: "movie", positionMs: null, durationMs: null, sourceId: null }), "– / –"],
+  ]);
+  const p = { itemId: "news", itemTitle: "News 24", itemKind: "live", episodeId: null, episodeTitle: null, season: null, number: null,
+    sourceId: "main", positionMs: null, httpStatus: 403, appVersion: "0.4.0 (400)", missing: false };
+  cases([
+    [problemContext(p), "News 24 · source main · HTTP 403 · app 0.4.0 (400)", "no episode, no position"],
+    [problemContext({ ...p, itemTitle: null, itemKind: null, missing: true, sourceId: null, httpStatus: null, appVersion: null }), "news (no longer in the catalog)"],
+  ]);
+  const v = { startedAt: "2026-10-21T14:05:00Z", endedAt: "2026-10-21T14:52:30Z", endReason: "stopped", endPositionMs: null, seen: false, watchedMs: 2_700_000, itemKind: "live" };
+  cases([
+    [viewingEnd(v), "stopped", "a channel has no position to end at"],
+    [viewingEnd({ ...v, endReason: "replaced" }), "switched away"], [viewingEnd({ ...v, endReason: "lost" }), "lost"],
+    [viewingEnd({ ...v, endedAt: null, endReason: null }), "playing now"],
+    [viewingSpan(v, time), "14:05–14:52"], [viewingSpan({ ...v, endedAt: null }, time), "since 14:05"],
+    [liveViewingLine(v, time), "14:05–14:52 · 45 min · stopped"],
+    [liveViewingLine({ ...v, endedAt: null, endReason: null, watchedMs: 5_000 }, time), "since 14:05 · under a minute · playing now"],
+    [viewingEnd({ endedAt: ago(1000), endReason: "stopped", endPositionMs: null, seen: false }), "stopped", "an episode's viewing before its first report"],
+    [triggerLabel({ trigger: "next", itemKind: "live" }), "CH+/CH−", "zapping"],
+    [triggerLabel({ trigger: "next", itemKind: "series" }), "auto-next"],
+    [titleLine({ kind: "live", inCatalog: true, episodes: null, viewings: 3, lastWatchedAt: ago(2 * 86400_000), watchedMs: 12_000_000 }, NOW),
+      "Channel · 3 viewings · last watched 2 days ago · 3 h 20 min"],
+    [titleLine({ kind: "live", inCatalog: false, episodes: null, viewings: 1, lastWatchedAt: null, watchedMs: 0 }, NOW), "Channel · 1 viewing · no longer in the catalog"],
+    [titleLine({ kind: "live", inCatalog: true, episodes: null, lastWatchedAt: null, watchedMs: 0 }, NOW), "Channel"],
+  ]);
+  const result = (type: string, reason: string) => commandResultText({ type, result: "ignored", reason });
+  cases([
+    [result("pause", "live"), "Pause: ignored (a channel cannot be paused or seeked)"],
+    [result("seek", "live"), "Seek: ignored (a channel cannot be paused or seeked)"],
+    [result("next", "no_channel"), "Next: ignored (no channel after this one on Home)"],
+    [result("previous", "no_channel"), "Previous: ignored (no channel before this one on Home)"],
+    [result("play", "no_channel"), "Play: ignored (no channel that way on Home)", "by reason alone"],
+    [result("next", "no_episode"), "Next: ignored (no episode that way)"],
+    [errorText({ code: "not_playable" }), "That show has no episode that may be played, or that channel may not be played."],
+    [errorText({ code: "unsupported_media" }), "That source is DASH or MPEG-TS, which a phone cannot play through the server."],
+  ]);
+  const ts = { sourceId: "raw-ts", label: null, languages: { audio: ["tr"], subtitles: null }, current: false, supported: false, reason: "ts" };
+  assert.deepEqual(candidateOptions([ts]).map((o) => [o.disabled, o.label]), [[true, "raw-ts · Türkçe (tr) · MPEG-TS, cannot play on a phone"]]);
+  const stream = { kind: "ts", inline: false, host: "127.0.0.1:8788", headerNames: ["Referer"], delivery: "proxy", languages: null, expiresAt: null };
+  assert.deepEqual(sourceReport({ sourceId: "raw-ts", type: "adapter", adapterId: "example", ok: true, ms: 3, stream, probe: { ok: true, status: 200, ms: 2 } }, time).lines,
+    ["MPEG-TS from 127.0.0.1:8788 · through the proxy", "upstream headers: Referer", "probe ok (HTTP 200, 2 ms)"]);
 });
 
 test("admin helpers: TV app sizes, APK names, update chips, Android versions and how a TV updates", () => {

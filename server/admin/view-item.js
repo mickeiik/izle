@@ -1,11 +1,11 @@
 // @ts-check
-// A show of the catalog: what it is, its episodes (a film: its sources) and "Test sources", which runs every
-// source of an episode through the server's resolve path and shows what came back (no URLs: hosts and header
-// names only).
+// A show of the catalog: what it is, its episodes (a film, a channel: its sources) and "Test sources", which runs
+// every source of an episode or a channel through the server's resolve path and shows what came back (no URLs: hosts
+// and header names only).
 
 import { ApiError, api, attempt, devicePath } from "./api.js";
 import { actionButton, card, h, page, poster, setTitle, slot, srOnly, toast } from "./dom.js";
-import { episodeName, errorText, formatClock, plural, showMeta, sourceReport } from "./lib.js";
+import { episodeName, errorText, formatClock, mediaKindLabel, plural, showMeta, sourceReport } from "./lib.js";
 
 /** @param {any} report the answer of POST /admin/diagnostics/resolve */
 function reportView(report) {
@@ -21,46 +21,54 @@ function reportView(report) {
 }
 
 /**
- * One episode (or a film's only entry): what it is, its sources, and "Test sources".
+ * One episode (or the only entry of a film or a channel): what it is, its sources, and "Test sources". A channel is
+ * tested by its item id (it has no episode); `e` is then the item itself, which carries `playbackAllowed` and
+ * `sources`.
  * @param {any} e @param {any} item
  */
 function episodeEntry(e, item) {
-  const film = item.kind === "movie";
-  const label = film ? item.title : episodeName(e, item.kind);
+  const single = item.kind === "movie" || item.kind === "live";
+  const label = single ? item.title : episodeName(e, item.kind);
   const out = h("div", { "aria-live": "polite" });
   const test = actionButton("Test sources", { "aria-label": `Test sources of ${label}` }, async () => {
     out.replaceChildren(h("p", { class: "muted" }, "Testing every source… (adapters may take a few seconds)"));
-    const r = await attempt(() => api("POST", "/diagnostics/resolve", { episodeId: e.id }));
+    const body = item.kind === "live" ? { itemId: item.id } : { episodeId: e.id };
+    const r = await attempt(() => api("POST", "/diagnostics/resolve", body));
     out.replaceChildren(r.ok ? reportView(r.value) : h("p", { class: "error" }, "The test could not run."));
   });
   const facts = [
     e.durationMs ? formatClock(e.durationMs) : null,
     e.playbackAllowed ? null : "playback not allowed",
+    e.sources.length === 0 ? "no sources" : null,
     e.autoAdvance === false ? "no auto-advance after this one" : null,
   ].filter(Boolean);
   const source = (/** @type {any} */ s) => {
     const audio = s.languages.audio === null ? "unknown" : s.languages.audio.join(", ") || "none";
-    return h("li", null, h("code", null, s.id), ` ${s.type === "adapter" ? `adapter ${s.adapter}` : s.kind.toUpperCase()}${s.needsProxy ? " · proxied" : ""}${s.label ? ` · ${s.label}` : ""} · audio ${audio}`);
+    return h("li", null, h("code", null, s.id), ` ${s.type === "adapter" ? `adapter ${s.adapter}` : mediaKindLabel(s.kind)}${s.needsProxy ? " · proxied" : ""}${s.label ? ` · ${s.label}` : ""} · audio ${audio}`);
   };
-  const factsLine = facts.length ? h("div", { class: "muted" }, film ? `Duration ${facts.join(" · ")}` : facts.join(" · ")) : null;
-  const what = h("div", { class: "grow" }, film ? null : h("strong", null, label), factsLine, h("ul", { class: "sources" }, e.sources.map(source)));
-  return h(film ? "div" : "li", null, h("div", { class: "row top-align" }, what, e.sources.length ? test : null), out);
+  const factsLine = facts.length ? h("div", { class: "muted" }, item.kind === "movie" && e.durationMs ? `Duration ${facts.join(" · ")}` : facts.join(" · ")) : null;
+  const what = h("div", { class: "grow" }, single ? null : h("strong", null, label), factsLine, h("ul", { class: "sources" }, e.sources.map(source)));
+  return h(single ? "div" : "li", null, h("div", { class: "row top-align" }, what, e.sources.length ? test : null), out);
 }
 
 /**
  * "Play on": one button per paired TV; the TV plays what OK would play for the show (its next episode, or where it
- * left off), on its home screen or not.
- * @param {string} itemId @param {any[]} devices
+ * left off), or the channel live, on its home screen or not. Nothing for a channel the catalog does not allow.
+ * @param {any} item @param {any[]} devices
  */
-function playOnCard(itemId, devices) {
+function playOnCard(item, devices) {
+  const itemId = item.id;
   const active = devices.filter((d) => d.status === "active");
-  if (active.length === 0) return null;
+  if (active.length === 0 || (item.kind === "live" && !item.playbackAllowed)) return null;
   const button = (/** @type {any} */ d) =>
     actionButton(d.name, { "aria-label": `Play on ${d.name}` }, async () => {
       const r = await attempt(() => api("POST", `${devicePath(d.id)}/commands`, { type: "play", itemId }));
       if (r.ok) toast(r.value.online ? `Play sent to ${d.name}.` : `Play queued: ${d.name} is offline and gets it if it connects within 2 minutes.`, r.value.online ? "ok" : "info");
     });
-  return card({ title: "Play on", intro: "The TV plays the episode OK would play for this show, whether it is on its home screen or not." }, h("div", { class: "buttons play-on" }, active.map(button)));
+  const intro = item.kind === "live"
+    ? "The TV plays this channel live, whether it is on its home screen or not."
+    : "The TV plays the episode OK would play for this show, whether it is on its home screen or not.";
+  return card({ title: "Play on", intro }, h("div", { class: "buttons play-on" }, active.map(button)));
 }
 
 /** @param {import("./router.js").Scope} scope @param {string} itemId */
@@ -72,6 +80,7 @@ export function itemView(scope, itemId) {
     async () => {
       const [{ item }, { devices }] = await Promise.all([scope.read(`/catalog/items/${encodeURIComponent(itemId)}`), scope.read("/devices")]);
       setTitle(title, item.title);
+      const live = item.kind === "live";
       const episodeCount = item.kind === "series" ? item.episodes.length : undefined;
       const meta = [
         showMeta({ kind: item.kind, year: item.year, episodeCount }),
@@ -79,13 +88,18 @@ export function itemView(scope, itemId) {
         item.genres.join(", "),
       ];
       const advance = item.kind === "series" ? h("p", { class: "muted" }, item.autoAdvance ? "Episodes advance on their own." : "Episodes do not advance on their own.") : null;
-      const about = h("div", { class: "grow" }, h("p", { class: "muted" }, meta.filter(Boolean).join(" · ")), item.synopsis ? h("p", null, item.synopsis) : null, advance);
+      // A channel has no episodes: it plays live, when the catalog allows it at all.
+      const channel = live
+        ? h("p", { class: "muted" }, item.playbackAllowed ? "Plays live: the TV always joins it where the broadcast is now." : "Playback not allowed by the catalog: the TVs do not show this channel.")
+        : null;
+      const about = h("div", { class: "grow" }, h("p", { class: "muted" }, meta.filter(Boolean).join(" · ")), item.synopsis ? h("p", null, item.synopsis) : null, advance, channel);
       const head = h("section", { class: "card show-head" }, h("div", { class: "row top-align" }, poster(item.posterUrl, item.title), about));
-      const entries =
-        item.kind === "movie" && item.episodes.length === 1
+      const entries = live
+        ? card({ title: "Sources", intro: "Where the channel is played from, in the order the TV tries them." }, episodeEntry(item, item))
+        : item.kind === "movie" && item.episodes.length === 1
           ? card({ title: "Sources", intro: "Where the film is played from, in the order the TV tries them." }, episodeEntry(item.episodes[0], item))
           : card({ title: "Episodes", intro: "In play order, with their sources in the order the TV tries them." }, h("ol", { class: "list" }, item.episodes.map((/** @type {any} */ e) => episodeEntry(e, item))));
-      body.show(head, ...[playOnCard(itemId, devices)].filter((c) => c !== null), entries);
+      body.show(head, ...[playOnCard(item, devices)].filter((c) => c !== null), entries);
     },
     (err, retry) => {
       if (err instanceof ApiError && err.code === "unknown_item") body.show(h("p", { class: "error" }, errorText(err)));
