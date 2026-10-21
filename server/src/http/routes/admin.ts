@@ -6,7 +6,7 @@
 import type { Context, Hono } from "hono";
 import { buildJson, catalogInfo, catalogItemJson, reloadCatalog, searchHitJson } from "../../catalog-admin.ts";
 import type { AppContext } from "../../context.ts";
-import { diagnoseEpisode } from "../../diagnostics.ts";
+import { diagnosePlayable } from "../../diagnostics.ts";
 import { HttpError } from "../../errors.ts";
 import { requireItem } from "../../lookup.ts";
 import { PAIR_CODE } from "../../pairing.ts";
@@ -139,7 +139,7 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
 
   app.post("/api/v1/admin/diagnostics/resolve", async (c) => {
     const body = await parseBody(c, diagnosticsBody);
-    return c.json(await diagnoseEpisode(ctx, body, c.req.raw.signal));
+    return c.json(await diagnosePlayable(ctx, body, c.req.raw.signal));
   });
 
   app.post("/api/v1/admin/catalog/reload", async (c) => {

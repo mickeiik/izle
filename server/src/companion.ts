@@ -63,10 +63,21 @@ export class CompanionService {
     return { updated: episodeIds.length, episodeIds };
   }
 
-  /** The sources of the episode the TV is playing, as companion candidates, with their stored links. */
+  /**
+   * The sources of the episode the TV is playing, as companion candidates, with their stored links. A channel has
+   * no timeline to follow: it is named, with no candidates.
+   */
   candidates(device: Device) {
     const n = this.s.store.getNowPlaying(device.id);
-    const ref = n?.episodeId != null ? this.s.catalog.episode(n.episodeId) : undefined;
+    if (n?.episodeId === null) {
+      const item = this.s.catalog.item(n.itemId);
+      if (!item) return { nowPlaying: null, candidates: [] };
+      return {
+        nowPlaying: { itemId: item.id, itemKind: item.kind, episodeId: null, sourceId: n.sourceId, itemTitle: item.title, episodeTitle: null, state: n.state },
+        candidates: [],
+      };
+    }
+    const ref = n ? this.s.catalog.episode(n.episodeId) : undefined;
     if (!n || !ref) return { nowPlaying: null, candidates: [] };
     const links = new Map(this.s.store.listCompanionLinks(this.s.catalog.catalogId, ref.episode.id).map((l) => [l.sourceId, l]));
     const { item, episode } = ref;
@@ -78,10 +89,11 @@ export class CompanionService {
       // Upstream URLs, headers and refs are deliberately not exposed (the admin item view has the same rule).
       candidates: episode.sources.map((s) => {
         const kind = s.type === "direct" ? s.media.kind : null;
-        const supported = kind !== "dash"; // an adapter that answers DASH is refused at resolve time
+        // A browser plays neither DASH (not proxied) nor MPEG-TS; an adapter that answers either is refused on resolve.
+        const reason = kind === "dash" || kind === "ts" ? kind : null;
         const link = linkJson(links.get(s.id) ?? null);
         const current = s.id === n.sourceId;
-        return { sourceId: s.id, type: s.type, kind, label: s.label ?? null, languages: s.languages, current, supported, reason: supported ? null : "dash", link };
+        return { sourceId: s.id, type: s.type, kind, label: s.label ?? null, languages: s.languages, current, supported: reason === null, reason, link };
       }),
     };
   }
