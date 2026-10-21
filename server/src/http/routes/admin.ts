@@ -1,6 +1,6 @@
 // The admin API: pairing approval, the TVs (list, page, settings, deletion, adopting a deleted TV's history, home
 // list, "continue from", what each has watched and is playing, remote commands and their results, problem reports),
-// the catalog (what is loaded and its builds, search, an item's details, the "test this episode" diagnostics, the
+// the catalog (what is loaded and its builds, search, an item's details, the "test this episode or channel" diagnostics, the
 // reload), and "Listen along" (companion audio on the owner's phone: the candidate sources of what a TV plays,
 // resolving one for the phone, the timing links).
 import type { Context, Hono } from "hono";

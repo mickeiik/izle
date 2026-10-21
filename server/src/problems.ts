@@ -75,7 +75,7 @@ export function triedDetail(t: Tried): string {
 export function noPlayableDetail(tried: readonly Tried[], exclude: readonly string[] = []): string {
   const parts = tried.map((t) => `${t.sourceId}: ${triedDetail(t)}`);
   if (exclude.length > 0) parts.push(`excluded by the TV: ${exclude.join(", ")}`);
-  return cap(parts.length > 0 ? parts.join("; ") : "the episode has no source to try");
+  return cap(parts.length > 0 ? parts.join("; ") : "no source to try");
 }
 
 export class ProblemService {

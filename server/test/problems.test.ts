@@ -248,7 +248,7 @@ test("detail helpers: failed sources in a few words", () => {
   );
   assert.equal(noPlayableDetail([], ["a", "b"]), "excluded by the TV: a, b");
   assert.equal(noPlayableDetail([{ sourceId: "c", code: "adapter_unavailable" }], ["a"]), "c: adapter_unavailable; excluded by the TV: a");
-  assert.equal(noPlayableDetail([]), "the episode has no source to try");
+  assert.equal(noPlayableDetail([]), "no source to try");
   assert.equal(noPlayableDetail(Array.from({ length: 64 }, (_, i) => ({ sourceId: `source-${i}`, code: "empty" as const }))).length, 500);
 });
 
