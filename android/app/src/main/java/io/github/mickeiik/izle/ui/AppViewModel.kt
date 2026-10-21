@@ -1,7 +1,6 @@
 package io.github.mickeiik.izle.ui
 
 import android.content.Intent
-import android.os.Build
 import android.os.SystemClock
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -131,17 +130,13 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val player = PlaybackController(
-        context = graph.context,
+        engine = graph.mediaEngine(),
         scope = viewModelScope,
         reportScope = graph.appScope,
-        mediaHttp = graph.http,
         repository = repository,
         problems = graph.problems,
         commandResults = graph.commandResults,
-        userAgent = graph.userAgent,
         appVersion = BuildConfig.VERSION_NAME,
-        // The emulator decodes H.264 in software; real TVs, debug build or not, get full resolution.
-        capVideoTo720p = BuildConfig.DEBUG && Build.HARDWARE in setOf("ranchu", "goldfish"),
         onExit = ::onPlayerExit,
         // Remembered for "autoplay on start" (outlives the screen: the application scope).
         onPlaybackStarted = { item -> graph.appScope.launch { store.setLastPlayedItem(item.id) } },

@@ -15,6 +15,8 @@ import io.github.mickeiik.izle.data.ProblemReporter
 import io.github.mickeiik.izle.data.ServerRepository
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.EventsClient
+import io.github.mickeiik.izle.player.ExoMediaEngine
+import io.github.mickeiik.izle.player.MediaEngine
 import io.github.mickeiik.izle.settings.DeviceStore
 import io.github.mickeiik.izle.update.ApkDownloader
 import io.github.mickeiik.izle.update.AppInstaller
@@ -56,6 +58,15 @@ class AppGraph(val context: Context) {
 
     /** The system side of self-updates; the tests put a fake here before the view model starts. */
     var installer: AppInstaller = PackageInstallerAppInstaller(context)
+
+    /** One media engine per controller; the tests replace this before the view model starts. */
+    var mediaEngine: () -> MediaEngine = {
+        ExoMediaEngine(
+            context, http, userAgent,
+            // The emulator decodes H.264 in software; real TVs, debug build or not, get full resolution.
+            capVideoTo720p = BuildConfig.DEBUG && Build.HARDWARE in setOf("ranchu", "goldfish"),
+        )
+    }
 
     /** The TV's self-update (docs/ux/senior-tv.md, "Update"). */
     val updater: AppUpdater by lazy {

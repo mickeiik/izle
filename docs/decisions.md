@@ -284,6 +284,22 @@ The server side of the specification above, in one change (the admin page and th
   for episode reports only. `ResolveRequest` refuses both or neither of `episodeId` and `itemId`.
 - The "Live" chip is `#C62828` with white text (5.6:1), 20 sp like the other chips, the same red as the admin page.
 
+## Architecture: the media engine seam (2026-10-21)
+
+- `MediaEngine` follows the controller's needs (load, transport, tracks and ordered main-thread events), rather than
+  exposing Media3's state machine. `MediaSpec` carries absolute addresses and subtitle facts; resolving server-relative
+  addresses stays with the controller, which knows the server. Only the rendering surface uses Media3's `Player` type;
+  a loaded engine and a non-null surface are separate, so a fake without a picture still exercises every playback rule.
+- `ExoMediaEngine` owns the lazy decoder, data sources, MPEG-TS channel no-retry policy, 720p cap, preferences, track
+  overrides, MIME mappings and error translation (the small mappings stay in `MediaTypes.kt`). `MediaError` retains
+  the original exception, so problem reports keep the same class chain without adding a wrapper or reading messages.
+  Preferences may be set before loading without creating the decoder, and the engine can load again after release.
+- The controller and its progress queue share the injected monotonic clock. Tests drive the fake's events and position
+  separately from coroutine time, against the real API client and repository with an in-process server and in-memory
+  settings. Their loops live in `runTest`'s background scope so finishing a test cannot drain an endless heartbeat.
+  Robolectric is needed only at Android boundaries: the adapter's real decoder lifecycle and the view-model/graph test;
+  the nine controller scenarios are plain JUnit. Existing Media3 mapping tests stay in place.
+
 ## Architecture: the playing key (2026-10-21)
 
 - `PlayingKey`, `playingKey`, `samePlaying` and `PlayingDescription` live in `catalog.ts` next to `PlayableRef`,

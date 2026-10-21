@@ -15,6 +15,7 @@ import io.github.mickeiik.izle.data.api.EpisodeDetails
 import io.github.mickeiik.izle.data.api.HomeEntry
 import io.github.mickeiik.izle.data.api.ItemCard
 import io.github.mickeiik.izle.domain.AutoplayPlan
+import io.github.mickeiik.izle.player.FakeMediaEngine
 import io.github.mickeiik.izle.player.PlayerPhase
 import io.github.mickeiik.izle.update.AppInstaller
 import io.github.mickeiik.izle.update.UpdateCapability
@@ -56,9 +57,9 @@ import java.util.concurrent.TimeUnit
  * The view model's flows end to end, on the real [AppViewModel] and app graph under Robolectric, against an
  * in-process server: pairing, the owner's commands (over a live event stream), the timed messages, the countdowns
  * and the hidden menu's stack. Time is Robolectric's paused main-looper clock, advanced by the test; server answers
- * arrive on OkHttp's threads and are waited for. Nothing here needs ExoPlayer: nothing on this server is playable,
- * so playing ends on the player's error screen. Home entries named `tv…` are channels, whose resolve takes a while so
- * that the TV is still loading one when a key or a command comes.
+ * arrive on OkHttp's threads and are waited for. Most resolves fail; scripted successful answers use a fake engine.
+ * Home entries named `tv…` are channels, whose resolve takes a while so that the TV is still loading one when a key
+ * or a command comes.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], qualifiers = "w960dp-h540dp-land-television")
@@ -82,6 +83,7 @@ class AppViewModelTest {
     /** Scripted answers to `pair/start` and `pair/wait`; when empty, a fresh code and `pending`. */
     private val pairStarts = ConcurrentLinkedQueue<MockResponse>()
     private val pairWaits = ConcurrentLinkedQueue<MockResponse>()
+    private val resolveAnswers = ConcurrentLinkedQueue<MockResponse>()
 
     /** `pair/start` drops the connection (an unreachable server) while set. */
     @Volatile private var pairStartDown = false
@@ -109,6 +111,8 @@ class AppViewModelTest {
                         Thread.sleep(20) // a long poll, shortened
                         json(200, """{"status":"pending"}""")
                     }
+                    path == "/api/v1/tv/resolve" && resolveAnswers.isNotEmpty() -> resolveAnswers.remove()
+                    path == "/api/v1/tv/progress" -> json(200, """{"ok":true}""")
                     path.endsWith("/ack") || path.endsWith("/result") -> json(200, """{"ok":true}""")
                     path == "/api/v1/tv/app" -> apk?.let { bytes ->
                         json(200, """{"versionName":"99.0.0","versionCode":990000,"sha256":"${sha256(bytes)}","size":${bytes.size},"auto":$apkAuto}""")
@@ -264,6 +268,29 @@ class AppViewModelTest {
         assertEquals("""{"episodeId":"b.e2","trigger":"command","commandId":1}""", resolveBodies().last())
         waitUntil("the error screen again") { vm.player.ui.value.phase is PlayerPhase.Failed }
         settle()
+        assertEquals(1, results(1).size)
+    }
+
+    @Test
+    fun aSuccessfulPlayUsesTheGraphEngineAndRemembersTheShowAtItsFirstFrame() {
+        paired()
+        val engine = FakeMediaEngine()
+        app.graph.mediaEngine = { engine }
+        resolveAnswers += json(200, """{"sessionId":"session-1","sourceId":"first","media":{"kind":"mp4","url":"/media/one"},"item":{"id":"b","kind":"movie","title":"Show B"},"episode":{"id":"b.film","durationMs":1200000}}""")
+        val vm = startTvOnHome()
+        command("play", """{"itemId":"b","episodeId":"b.film"}""")
+        waitUntil("the fake engine's load") { engine.loads.size == 1 }
+        assertEquals(Screen.Player, vm.screen.value)
+        assertEquals(PlayerPhase.Loading, vm.player.ui.value.phase)
+        assertTrue(results(1).isEmpty())
+        engine.ready()
+        assertEquals("""{"result":"done"}""", awaitResult(1))
+        assertEquals(PlayerPhase.Playing, vm.player.ui.value.phase)
+        waitUntil("the remembered show") { runBlocking { app.graph.deviceStore.current().lastPlayedItemId == "b" } }
+        vm.onBack()
+        waitUntil("the stopped report") { requests.any { it.url.encodedPath == "/api/v1/tv/progress" && it.body?.utf8()?.contains("\"stopped\"") == true } }
+        assertEquals(Screen.Home, vm.screen.value)
+        assertEquals(1, engine.calls.count { it == "release" })
         assertEquals(1, results(1).size)
     }
 
