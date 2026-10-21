@@ -4,14 +4,15 @@
 // from the TV is redacted before it is stored, and detail is never logged.
 
 import { SERVER, tvActor } from "./actor.ts";
-import type { Services } from "./context.ts";
+import { playingKey, type CatalogService, type PlayingKey } from "./catalog.ts";
 import { tooManyRequests } from "./errors.ts";
-import { redactReportText } from "./log.ts";
+import type { EventLog } from "./eventlog.ts";
+import { redactReportText, type Logger } from "./log.ts";
 import { iso } from "./presenters.ts";
 import type { ProxyProblem, ProxyProblemCode } from "./proxy.ts";
 import { RateLimiter } from "./ratelimit.ts";
-import { isCompanionScope, type Tried } from "./resolve.ts";
-import type { Device, Problem, ProblemOrigin } from "./store.ts";
+import { isCompanionScope, type PlaybackSessions, type Tried } from "./resolve.ts";
+import type { Device, Problem, ProblemOrigin, Store } from "./store.ts";
 
 /** Problem kinds a TV may report (`proxy` problems are only recorded by the server). */
 export const TV_PROBLEM_KINDS = ["playback", "resolve", "network", "other"] as const;
@@ -59,7 +60,25 @@ interface ServerProblem {
   detail?: string | null;
 }
 
-type ProblemDeps = Pick<Services, "store" | "catalog" | "log" | "now" | "sessions" | "eventLog">;
+interface ProblemDeps {
+  store: Store;
+  catalog: CatalogService;
+  /** The playback sessions a report names. */
+  sessions: PlaybackSessions;
+  eventLog: EventLog;
+  log: Logger;
+  now: () => number;
+}
+
+/**
+ * What a problem names, as a playing key; null when it names nothing, or an episode alone (the TV gave no item and
+ * the episode was unknown when it was recorded) that the catalog does not know either.
+ */
+function problemKey(catalog: CatalogService, p: Pick<Problem, "itemId" | "episodeId">): PlayingKey | null {
+  if (p.itemId !== null) return { itemId: p.itemId, episodeId: p.episodeId };
+  const ref = p.episodeId !== null ? catalog.episode(p.episodeId) : undefined;
+  return ref ? playingKey(ref) : null;
+}
 
 const cap = (text: string) => (text.length > MAX_DETAIL ? `${text.slice(0, MAX_DETAIL - 1)}…` : text);
 
@@ -91,11 +110,12 @@ export class ProblemService {
 
   /** Stores a problem; `catalogId` is set when the episode (or, for a channel, the item) is in the catalog. */
   private insert(deviceId: string, origin: ProblemOrigin, p: Omit<Problem, "id" | "deviceId" | "origin" | "catalogId">): Problem {
-    const ref = p.episodeId ? this.o.catalog.episode(p.episodeId) : undefined;
-    const item = ref?.item ?? (p.itemId ? this.o.catalog.item(p.itemId) : undefined);
-    const catalogId = item ? this.o.catalog.catalogId : null;
+    const key = problemKey(this.o.catalog, p);
+    const about = key && this.o.catalog.describe(key);
+    // The item kind is null exactly when the item is unknown to this catalog.
+    const catalogId = about && about.itemKind !== null ? this.o.catalog.catalogId : null;
     return this.o.store.transaction(() => {
-      const problem = this.o.store.insertProblem({ ...p, deviceId, origin, catalogId, itemId: ref?.item.id ?? p.itemId }, PROBLEMS_KEPT);
+      const problem = this.o.store.insertProblem({ ...p, deviceId, origin, catalogId, itemId: about?.itemId ?? p.itemId }, PROBLEMS_KEPT);
       // Ids, kind and code only: the detail stays in the problem list.
       const data = { problemId: problem.id, origin, kind: problem.kind, code: problem.code, itemId: problem.itemId, episodeId: problem.episodeId };
       this.o.eventLog.append("problem.recorded", deviceId, origin === "tv" ? tvActor(deviceId) : SERVER, data);
@@ -152,15 +172,15 @@ export class ProblemService {
   list(deviceId: string, limit: number) {
     const { catalog } = this.o;
     return this.o.store.listProblems(deviceId, limit).map((p) => {
+      // Ids recorded under another catalog name nothing in this one.
       const sameCatalog = p.catalogId === null || p.catalogId === catalog.catalogId;
-      const ref = p.episodeId && sameCatalog ? catalog.episode(p.episodeId) : undefined;
-      const item = ref?.item ?? (p.itemId && sameCatalog ? catalog.item(p.itemId) : undefined);
-      const { id, origin, kind, code, episodeId, sourceId, positionMs, httpStatus, detail, appVersion } = p;
+      const key = sameCatalog ? problemKey(catalog, p) : null;
+      const { id, origin, kind, code, itemId, episodeId, sourceId, positionMs, httpStatus, detail, appVersion } = p;
       // The item kind names the episode (films have none to show) or says that this is a channel.
-      const about = { itemId: ref?.item.id ?? p.itemId, itemTitle: item?.title ?? null, itemKind: item?.kind ?? null };
-      const episode = { episodeId, episodeTitle: ref?.episode.title ?? null, season: ref?.episode.season ?? null, number: ref?.episode.number ?? null };
-      const missing = episodeId !== null ? !ref : p.itemId !== null && !item;
-      return { id, at: iso(p.at), origin, kind, code, ...about, ...episode, sourceId, positionMs, httpStatus, detail, appVersion, missing };
+      const about = key
+        ? catalog.describe(key)
+        : { itemId, itemTitle: null, itemKind: null, episodeId, episodeTitle: null, season: null, number: null, missing: itemId !== null || episodeId !== null };
+      return { id, at: iso(p.at), origin, kind, code, ...about, sourceId, positionMs, httpStatus, detail, appVersion };
     });
   }
 

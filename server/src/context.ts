@@ -6,8 +6,10 @@ import type { ServerConfig } from "./config.ts";
 import type { DeviceService } from "./devices.ts";
 import type { EventLog } from "./eventlog.ts";
 import type { EventHub, Notifier } from "./events.ts";
+import type { HomeService } from "./home.ts";
 import type { Logger } from "./log.ts";
 import type { PairingService } from "./pairing.ts";
+import type { PlayingService } from "./playing.ts";
 import type { ProblemService } from "./problems.ts";
 import type { ProxyService } from "./proxy.ts";
 import type { PlaybackSessions, ResolveService } from "./resolve.ts";
@@ -17,8 +19,11 @@ import type { TokenService } from "./tokens.ts";
 import type { TvService } from "./tv.ts";
 import type { ViewingService } from "./viewings.ts";
 
-/** The services the TV, companion, device and command services are built on. */
-export interface Services {
+/**
+ * What the HTTP layer works with: every module of the running server, and its settings. The modules name their own
+ * dependencies (each its deps interface); this is the routes' view of them all.
+ */
+export interface AppContext {
   config: ServerConfig;
   store: Store;
   catalog: CatalogService;
@@ -30,23 +35,23 @@ export interface Services {
   /** The playback sessions resolve opens; progress and problem reports name them. */
   sessions: PlaybackSessions;
   problems: ProblemService;
-  /** The viewing history: resolves and progress reports feed it. */
+  /** The viewing history's owner side: marks and deletions (playing.ts writes the viewings). */
   viewings: ViewingService;
   /** The TV app APK the server offers its TVs, and where it comes from. */
   appUpdates: AppUpdateService;
-  log: Logger;
-  now: () => number;
-}
-
-/** Everything the HTTP layer works with: the services, and the settings of the running server. */
-export interface AppContext extends Services {
+  /** Each TV's Home list: its entries as data, and the owner's operations on it. */
+  home: HomeService;
   tv: TvService;
+  /** What each TV is playing: the now-playing row, the running viewing and the long-poll on the row. */
+  playing: PlayingService;
   companion: CompanionService;
   pairing: PairingService;
   proxy: ProxyService;
   devices: DeviceService;
   commands: CommandService;
   tokens: TokenService;
+  log: Logger;
+  now: () => number;
   /** The loaded resolver module, or null when none is configured. */
   resolverModule: LoadedResolver | null;
   adminToken: string;

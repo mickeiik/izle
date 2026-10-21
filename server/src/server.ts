@@ -16,6 +16,7 @@ import { DeviceService } from "./devices.ts";
 import { EventLog } from "./eventlog.ts";
 import { EventHub, Notifier } from "./events.ts";
 import { CatalogHistory } from "./history.ts";
+import { HomeService } from "./home.ts";
 import { clientKeyFor, registerMiddleware, type Env } from "./http/middleware.ts";
 import { registerAdmin } from "./http/routes/admin.ts";
 import { registerAdminApp } from "./http/routes/admin-app.ts";
@@ -28,6 +29,7 @@ import { registerTv } from "./http/routes/tv.ts";
 import { registerStatic } from "./http/static.ts";
 import { createLogger, type Logger } from "./log.ts";
 import { PairingService, type PairingOptions } from "./pairing.ts";
+import { PlayingService, VIEWING_SWEEP_MS } from "./playing.ts";
 import { ProblemService } from "./problems.ts";
 import { ProxyService } from "./proxy.ts";
 import { PlaybackSessions, ResolveService } from "./resolve.ts";
@@ -36,7 +38,7 @@ import { Store } from "./store.ts";
 import { TokenService } from "./tokens.ts";
 import { TvService } from "./tv.ts";
 import { VERSION } from "./version.ts";
-import { ViewingService, VIEWING_SWEEP_MS } from "./viewings.ts";
+import { ViewingService } from "./viewings.ts";
 
 interface StartOptions {
   config: ServerConfig;
@@ -90,18 +92,21 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     throw err;
   }
   const events = new EventHub(opts.offlineGraceMs);
+  const notifier = new Notifier(store, events);
   const eventLog = new EventLog(store, log, now, config.events.retentionDays);
-  const viewings = new ViewingService({ store, catalog, eventLog, events, log, now });
-  events.onOnline = (deviceId, online) => {
-    viewings.onOnline(deviceId, online);
-    eventLog.append(online ? "device.online" : "device.offline", deviceId, tvActor(deviceId), {});
-  };
+  const home = new HomeService({ store, catalog, eventLog, notifier, now });
+  const viewings = new ViewingService({ store, catalog, eventLog, now });
   const appUpdates = new AppUpdateService({
     store, eventLog, events, log, now, config, fetch: fetchUpstream, githubApiBase: opts.githubApiBase,
     maxBytes: opts.appUpdates?.maxBytes, timeouts: opts.appUpdates?.timeouts,
   });
   appUpdates.reconcile();
   const sessions = new PlaybackSessions(now);
+  const playing = new PlayingService({ store, catalog, sessions, eventLog, events, log, now });
+  events.onOnline = (deviceId, online) => {
+    playing.onOnline(deviceId, online);
+    eventLog.append(online ? "device.online" : "device.offline", deviceId, tvActor(deviceId), {});
+  };
   const problems = new ProblemService({ store, catalog, log, now, sessions, eventLog });
   const { sessionTtlSec, alignTsSegments, always: proxyAlways, privateUpstreams } = config.proxy;
   // The proxy's own transport applies the egress policy; a test's fetch replaces it.
@@ -111,11 +116,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     deadlineMs: config.resolver?.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,
     budgetMs: config.resolver?.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
   });
-  const services = { config, store, catalog, events, notifier: new Notifier(store, events), eventLog, resolver, sessions, problems, viewings, appUpdates, log, now };
-  const tv = new TvService(services);
+  const modules = { config, store, catalog, events, notifier, eventLog, resolver, sessions, problems, viewings, appUpdates, home, playing, proxy, log, now };
   const ctx: AppContext = {
-    ...services, tv, companion: new CompanionService(services), pairing: new PairingService({ ...services, proxy }, opts.pairing), proxy,
-    devices: new DeviceService({ ...services, tv, proxy }), commands: new CommandService({ ...services, tv }), tokens: new TokenService(store, log, now),
+    ...modules, tv: new TvService(modules), companion: new CompanionService(modules), pairing: new PairingService(modules, opts.pairing),
+    devices: new DeviceService(modules), commands: new CommandService(modules), tokens: new TokenService(store, log, now),
     resolverModule, adminToken, pingMs: opts.pingMs ?? 20_000, fetch: fetchUpstream, adminUiDir: fileURLToPath(new URL("../admin", import.meta.url)),
   };
 
@@ -158,7 +162,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
   }, 10 * 60_000);
   housekeeping.unref();
   // Viewings whose TV fell silent or offline end as lost.
-  const sweep = setInterval(() => viewings.sweep(), VIEWING_SWEEP_MS);
+  const sweep = setInterval(() => playing.sweep(), VIEWING_SWEEP_MS);
   sweep.unref();
   // With the GitHub source: the TV app's latest release, a minute after the start, then every checkIntervalHours.
   appUpdates.schedule(opts.appUpdates?.firstCheckDelayMs ?? FIRST_CHECK_DELAY_MS);

@@ -6,13 +6,14 @@ import type { CompanionResolveInput, LinkInput } from "./companion.ts";
 import { LANGUAGE_TAG_PATTERN, objectSchema as object } from "./config.ts";
 import type { DiagnosticsInput } from "./diagnostics.ts";
 import { HttpError } from "./errors.ts";
+import { HOME_COLUMNS, HOME_ROWS } from "./home.ts";
 import { PAIR_CODE } from "./pairing.ts";
 import { LIVE_REPORT_STATUSES, PROGRESS_REPORT_STATUSES } from "./playback.ts";
+import type { ProgressInput } from "./playing.ts";
 import { TV_PROBLEM_KINDS, type ProblemReportBody } from "./problems.ts";
 import type { ResolveInput } from "./resolve.ts";
 import type { DevicePatch } from "./store.ts";
 import { SCOPES, type Scope } from "./tokens.ts";
-import { HOME_COLUMNS, HOME_ROWS, type ProgressInput } from "./tv.ts";
 import { VIEWING_TRIGGERS } from "./viewings.ts";
 
 const ajv = new Ajv2020({ strict: true, allErrors: true });
@@ -41,6 +42,20 @@ export const devicePatchBody = ajv.compile<DevicePatch>({
 });
 
 export const tokenBody = ajv.compile<{ name: string; scope: Scope }>(object({ name: NAME, scope: { enum: SCOPES } }, ["name", "scope"]));
+
+/** One branch's own fields, and which of them it requires. */
+type Branch = { properties?: object; required?: string[] };
+
+/**
+ * A body naming an episode by its id or a channel by its item id, with the `shared` fields on both branches and
+ * each branch's own extras. Each branch forbids the other's id, so a body matches one.
+ */
+const episodeOrChannel = (shared: object, episode: Branch = {}, channel: Branch = {}) => ({
+  oneOf: [
+    object({ episodeId: ID, ...shared, ...episode.properties }, ["episodeId", ...(episode.required ?? [])]),
+    object({ itemId: ID, ...shared, ...channel.properties }, ["itemId", ...(channel.required ?? [])]),
+  ],
+});
 
 const ITEM_IDS = { type: "array", items: ID, maxItems: 1000 };
 const POSITION = { type: "integer", minimum: 0 };
@@ -82,10 +97,7 @@ const RESOLVE_FIELDS = {
   trigger: { enum: VIEWING_TRIGGERS }, commandId: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
 };
 
-// An episode by its id, or a channel by its item id: each branch forbids the other's field, so a body matches one.
-export const resolveBody = ajv.compile<ResolveInput>({
-  oneOf: [object({ episodeId: ID, ...RESOLVE_FIELDS }, ["episodeId"]), object({ itemId: ID, ...RESOLVE_FIELDS }, ["itemId"])],
-});
+export const resolveBody = ajv.compile<ResolveInput>(episodeOrChannel(RESOLVE_FIELDS));
 
 export const marksBody = ajv.compile<{ episodeIds: string[]; seen: boolean | null }>(
   object({ episodeIds: { type: "array", items: ID, minItems: 1, maxItems: 500 }, seen: { anyOf: [BOOLEAN, NULL] } }, ["episodeIds", "seen"]),
@@ -93,9 +105,7 @@ export const marksBody = ajv.compile<{ episodeIds: string[]; seen: boolean | nul
 
 const DIAGNOSTICS_FIELDS = { sourceId: ID, preferredAudioLanguage: LANGUAGE_TAG_OR_NULL, probe: BOOLEAN };
 
-export const diagnosticsBody = ajv.compile<DiagnosticsInput>({
-  oneOf: [object({ episodeId: ID, ...DIAGNOSTICS_FIELDS }, ["episodeId"]), object({ itemId: ID, ...DIAGNOSTICS_FIELDS }, ["itemId"])],
-});
+export const diagnosticsBody = ajv.compile<DiagnosticsInput>(episodeOrChannel(DIAGNOSTICS_FIELDS));
 
 const REPORT_FIELDS = {
   sessionId: { anyOf: [{ type: "string", maxLength: 64 }, NULL] },
@@ -104,14 +114,15 @@ const REPORT_FIELDS = {
   ageMs: { type: "integer", minimum: 0, maximum: 60_000 },
 };
 
-// An episode's report carries its position; a channel's names its item and carries none (a channel is never paused
-// and never finishes). Each branch forbids the other's fields, so a body matches one.
-export const progressBody = ajv.compile<ProgressInput>({
-  oneOf: [
-    object({ ...REPORT_FIELDS, episodeId: ID, positionMs: MS, durationMs: { anyOf: [MS, NULL] }, status: { enum: PROGRESS_REPORT_STATUSES } }, ["episodeId", "positionMs", "status"]),
-    object({ ...REPORT_FIELDS, itemId: ID, status: { enum: LIVE_REPORT_STATUSES } }, ["itemId", "status"]),
-  ],
-});
+// An episode's report carries its position; a channel's carries none (a channel is never paused and never
+// finishes), so each branch also forbids the other's fields.
+export const progressBody = ajv.compile<ProgressInput>(
+  episodeOrChannel(
+    REPORT_FIELDS,
+    { properties: { positionMs: MS, durationMs: { anyOf: [MS, NULL] }, status: { enum: PROGRESS_REPORT_STATUSES } }, required: ["positionMs", "status"] },
+    { properties: { status: { enum: LIVE_REPORT_STATUSES } }, required: ["status"] },
+  ),
+);
 
 export const problemBody = ajv.compile<ProblemReportBody>(
   object(

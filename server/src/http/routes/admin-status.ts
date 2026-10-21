@@ -8,7 +8,7 @@ import { VERSION } from "../../version.ts";
 import type { Env } from "../middleware.ts";
 
 export function status(ctx: AppContext) {
-  const { store, catalog, devices, pairing, eventLog, events } = ctx;
+  const { store, catalog, devices, pairing, eventLog, events, playing } = ctx;
   const lastEventId = eventLog.lastId();
   const { manifest } = catalog.current;
   return {
@@ -18,7 +18,7 @@ export function status(ctx: AppContext) {
     pairing: { pending: pairing.listOpen().length },
     devices: store.listDevices().filter((d) => d.tokenHash !== null).map((d) => {
       // The "now" object while its viewing runs; GET …/now itself keeps answering the last report.
-      const n = store.getNowPlaying(d.id);
+      const n = playing.current(d.id);
       const now = n && devices.now(d, n).nowPlaying;
       return { id: d.id, name: d.name, online: events.isOnline(d.id), lastSeenAt: iso(d.lastSeenAt), nowPlaying: now?.viewingId ? now : null };
     }),

@@ -3,7 +3,7 @@
 // caller names its status and code.
 
 import { isLiveItem, type CatalogItem, type EpisodicItem, type Playable, type Source } from "@izle/contract";
-import { liveRef, playableOf, type CatalogService, type EpisodeRef, type PlayableRef } from "./catalog.ts";
+import { liveRef, playableOf, type CatalogService, type EpisodeRef, type LiveRef, type PlayableRef } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
 
 type LookupStatus = 400 | 403 | 404;
@@ -37,6 +37,8 @@ export function requireEpisode(catalog: CatalogService, episodeId: string, statu
  * The episode (`unknown_episode`) or the channel (`unknown_item`) a body names, with `status` for either. An
  * `itemId` naming an item that is played through its episodes answers 400 `has_episodes`: name one of them.
  */
+export function requirePlayableRef(catalog: CatalogService, id: { itemId: string; episodeId?: undefined }, status?: LookupStatus): LiveRef;
+export function requirePlayableRef(catalog: CatalogService, id: PlayableId, status?: LookupStatus): PlayableRef;
 export function requirePlayableRef(catalog: CatalogService, id: PlayableId, status: LookupStatus = 404): PlayableRef {
   if (id.episodeId !== undefined) return requireEpisode(catalog, id.episodeId, status, "unknown_episode");
   const item = requireItem(catalog, id.itemId, status, "unknown_item");

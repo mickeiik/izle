@@ -3,11 +3,15 @@
 
 import { isLiveItem } from "@izle/contract";
 import { tvActor, type Actor } from "./actor.ts";
-import type { Services } from "./context.ts";
+import type { AppUpdateService } from "./app-updates.ts";
+import type { CatalogService } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
+import type { EventLog } from "./eventlog.ts";
+import type { EventHub, Notifier } from "./events.ts";
+import type { HomeService } from "./home.ts";
+import type { Logger } from "./log.ts";
 import { requireEpisode, requireItem, requirePlayable } from "./lookup.ts";
-import type { Command } from "./store.ts";
-import type { TvService } from "./tv.ts";
+import type { Command, Store } from "./store.ts";
 
 /** Commands that carry no payload (the SSE payload is `{}`). */
 export const PLAIN_COMMANDS = ["stop", "pause", "resume", "next", "previous"] as const;
@@ -36,10 +40,24 @@ const COMMAND_REPLAY_MS = 2 * 60_000;
 /** Commands older than this are deleted by the housekeeping timer, acknowledged or not. */
 const COMMAND_RETENTION_MS = 7 * 24 * 60 * 60_000;
 
-export class CommandService {
-  private readonly s: Services & { tv: TvService };
+interface CommandDeps {
+  store: Store;
+  catalog: CatalogService;
+  events: EventHub;
+  notifier: Notifier;
+  eventLog: EventLog;
+  /** The APK an `update` names. */
+  appUpdates: AppUpdateService;
+  /** What OK would play, for a `play` that names an item alone. */
+  home: HomeService;
+  log: Logger;
+  now: () => number;
+}
 
-  constructor(deps: Services & { tv: TvService }) {
+export class CommandService {
+  private readonly s: CommandDeps;
+
+  constructor(deps: CommandDeps) {
     this.s = deps;
   }
 
@@ -64,7 +82,7 @@ export class CommandService {
       if (!target.playbackAllowed) throw new HttpError(400, "not_playable", "playback of this channel is not allowed", { itemId: target.id });
       return { itemId: target.id, episodeId: null };
     }
-    const cont = this.s.tv.continueFor(deviceId, target);
+    const cont = this.s.home.continueFor(deviceId, target);
     if (!cont) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed", { itemId: target.id });
     return { itemId: target.id, episodeId: cont.episodeId, ...position };
   }

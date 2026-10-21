@@ -1,18 +1,52 @@
 // The owner's side of the paired TVs (admin API): how a TV appears in the device list and on its page, what it has
 // watched and is playing, settings changes, and deletion.
 
-import { isLiveItem } from "@izle/contract";
 import { tvActor, type Actor } from "./actor.ts";
-import type { Services } from "./context.ts";
+import type { AppUpdateService } from "./app-updates.ts";
+import type { CatalogService, PlayingKey } from "./catalog.ts";
+import type { ServerConfig } from "./config.ts";
 import { HttpError } from "./errors.ts";
-import { isPlayable } from "./playback.ts";
+import type { EventLog } from "./eventlog.ts";
+import type { EventHub, Notifier } from "./events.ts";
+import type { HomeService } from "./home.ts";
+import type { Logger } from "./log.ts";
+import type { Current } from "./playing.ts";
 import { iso } from "./presenters.ts";
+import type { ProblemService } from "./problems.ts";
 import type { ProxyService } from "./proxy.ts";
 import { companionScope } from "./resolve.ts";
-import type { Device, DevicePatch, NowPlaying, TvAppInfo } from "./store.ts";
-import type { TvService } from "./tv.ts";
+import type { Device, DevicePatch, Store, TvAppInfo } from "./store.ts";
 
-type DeviceDeps = Services & { tv: TvService; proxy: ProxyService };
+interface DeviceDeps {
+  config: ServerConfig;
+  store: Store;
+  catalog: CatalogService;
+  events: EventHub;
+  notifier: Notifier;
+  eventLog: EventLog;
+  problems: ProblemService;
+  appUpdates: AppUpdateService;
+  /** The home list the device page shows. */
+  home: HomeService;
+  /** A deleted device's proxy sessions end with it. */
+  proxy: ProxyService;
+  log: Logger;
+  now: () => number;
+}
+
+/** The device's settings, falling back to the server's defaults, then to the catalog's hints (what the TV gets). */
+export function effectiveSettings(device: Device, config: ServerConfig, catalog: CatalogService) {
+  const hints = catalog.current.manifest.defaults ?? {};
+  const ui = device.uiLanguage ?? config.defaults.uiLanguage ?? hints.uiLanguage ?? "en";
+  return {
+    uiLanguage: ui === "tr" ? ("tr" as const) : ("en" as const),
+    preferredAudioLanguage: device.preferredAudioLanguage ?? config.defaults.preferredAudioLanguage ?? hints.preferredAudioLanguage ?? null,
+    subtitlesLanguage: device.subtitlesLanguage,
+    autoplayOnStart: device.autoplayOnStart,
+    homeColumns: device.homeColumns,
+    homeRows: device.homeRows,
+  };
+}
 
 /** Whether the device row already has what the TV reports. */
 export function sameApp(d: Device, info: TvAppInfo): boolean {
@@ -33,7 +67,7 @@ export class DeviceService {
       lastSeenAt: iso(d.lastSeenAt), stateVersion: d.stateVersion,
       settings: { uiLanguage: d.uiLanguage, preferredAudioLanguage: d.preferredAudioLanguage, subtitlesLanguage: d.subtitlesLanguage, autoplayOnStart: d.autoplayOnStart,
         homeColumns: d.homeColumns, homeRows: d.homeRows },
-      effective: this.s.tv.settings(d), problems: this.s.problems.stats(d.id), app: this.app(d),
+      effective: effectiveSettings(d, this.s.config, this.s.catalog), problems: this.s.problems.stats(d.id), app: this.app(d),
     };
   }
 
@@ -72,8 +106,7 @@ export class DeviceService {
 
   /** Every device, with the length of its home list. */
   list() {
-    const { store, catalog } = this.s;
-    return store.listDevices().map((d) => ({ ...this.view(d), homeCount: store.getHomeEntries(d.id, catalog.catalogId).length }));
+    return this.s.store.listDevices().map((d) => ({ ...this.view(d), homeCount: this.s.home.ids(d.id).length }));
   }
 
   /**
@@ -81,16 +114,12 @@ export class DeviceService {
    * stay and are flagged `missing`. A channel has no `continue` and no new episodes.
    */
   home(d: Device) {
-    const { store, catalog, tv } = this.s;
-    const factsFor = tv.homeFacts(d.id);
-    return store.getHomeEntries(d.id, catalog.catalogId).map(({ itemId, addedAt }) => {
-      const item = catalog.item(itemId);
-      if (!item) return { itemId, title: null, kind: null, posterUrl: null, backdropUrl: null, missing: true, playable: false, continue: null, newEpisodes: 0 };
-      const { title, kind } = item;
-      const card = { itemId, title, kind, posterUrl: catalog.posterUrl(item), backdropUrl: catalog.backdropUrl(item), missing: false, playable: isPlayable(item) };
-      if (isLiveItem(item)) return { ...card, continue: null, newEpisodes: 0 };
-      const facts = factsFor(item.id);
-      return { ...card, continue: tv.continueFor(d.id, item, facts), newEpisodes: tv.newEpisodesFor(d.id, item, addedAt, facts) };
+    const { catalog } = this.s;
+    return this.s.home.list(d.id).map(({ itemId, item, missing, playable, continue: cont, newEpisodes }) => {
+      const card = item
+        ? { title: item.title, kind: item.kind, posterUrl: catalog.posterUrl(item), backdropUrl: catalog.backdropUrl(item) }
+        : { title: null, kind: null, posterUrl: null, backdropUrl: null };
+      return { itemId, ...card, missing, playable, continue: cont, newEpisodes };
     });
   }
 
@@ -98,37 +127,32 @@ export class DeviceService {
   progress(d: Device) {
     const { store, catalog } = this.s;
     const catalogId = catalog.catalogId;
-    const titleOf = (episodeId: string) => {
-      const ref = catalog.episode(episodeId);
-      return ref
-        ? { itemTitle: ref.item.title, kind: ref.item.kind, season: ref.episode.season ?? null, number: ref.episode.number ?? null, episodeTitle: ref.episode.title ?? null }
-        : { missing: true };
+    const titlesOf = (key: PlayingKey) => {
+      const { itemTitle, itemKind, season, number, episodeTitle, missing } = catalog.describe(key);
+      return missing ? { missing } : { itemTitle, kind: itemKind, season, number, episodeTitle };
     };
     return {
-      cursors: store.listCursors(d.id, catalogId).map((cur) => ({ itemId: cur.itemId, episodeId: cur.episodeId, updatedAt: iso(cur.updatedAt), ...titleOf(cur.episodeId) })),
+      cursors: store.listCursors(d.id, catalogId).map((cur) => ({ itemId: cur.itemId, episodeId: cur.episodeId, updatedAt: iso(cur.updatedAt), ...titlesOf(cur) })),
       progress: store.listProgress(d.id, catalogId).map(({ itemId, episodeId, positionMs, durationMs, status, updatedAt }) => {
-        return { itemId, episodeId, positionMs, durationMs, status, updatedAt: iso(updatedAt), ...titleOf(episodeId) };
+        return { itemId, episodeId, positionMs, durationMs, status, updatedAt: iso(updatedAt), ...titlesOf({ itemId, episodeId }) };
       }),
     };
   }
 
   /**
-   * What the device is playing (its now-playing row `n`), with the anchor the phone's "Listen along" follows. A
+   * What the device is playing (`n`, from playing.ts), with the anchor the phone's "Listen along" follows. A
    * channel (`itemKind: "live"`) has no episode, positions or anchor.
    */
-  now(d: Device, n: NowPlaying | null) {
-    const ref = n?.episodeId != null ? this.s.catalog.episode(n.episodeId) : undefined;
-    const item = ref?.item ?? (n ? this.s.catalog.item(n.itemId) : undefined);
-    // The running viewing, while it is the one the row reports on; null once it ended.
-    const running = n ? this.s.viewings.running(d.id) : null;
+  now(d: Device, n: Current | null) {
+    const about = n && this.s.catalog.describe(n);
     return {
       online: this.s.events.isOnline(d.id),
       serverNowMs: this.s.now(),
       seq: n?.seq ?? 0,
-      nowPlaying: n && {
-        itemId: n.itemId, itemKind: item?.kind ?? null, episodeId: n.episodeId, sourceId: n.sourceId, itemTitle: item?.title ?? null, episodeTitle: ref?.episode.title ?? null,
+      nowPlaying: n && about && {
+        itemId: n.itemId, itemKind: about.itemKind, episodeId: n.episodeId, sourceId: n.sourceId, itemTitle: about.itemTitle, episodeTitle: about.episodeTitle,
         positionMs: n.positionMs, durationMs: n.durationMs, state: n.state, updatedAt: iso(n.updatedAt), playing: n.playing,
-        viewingId: running && running.itemId === n.itemId && running.episodeId === n.episodeId ? running.id : null,
+        viewingId: n.viewingId,
       },
       // Where the TV is: positionMs as of atMs (server clock), advancing at `rate` while `playing`.
       anchor: n && n.positionMs !== null ? { positionMs: n.positionMs, atMs: n.anchorAt ?? n.updatedAt, playing: n.playing, rate: 1 } : null,

@@ -299,3 +299,67 @@ The server side of the specification above, in one change (the admin page and th
   settings. Their loops live in `runTest`'s background scope so finishing a test cannot drain an endless heartbeat.
   Robolectric is needed only at Android boundaries: the adapter's real decoder lifecycle and the view-model/graph test;
   the nine controller scenarios are plain JUnit. Existing Media3 mapping tests stay in place.
+
+## Architecture: the playing key (2026-10-21)
+
+- `PlayingKey`, `playingKey`, `samePlaying` and `PlayingDescription` live in `catalog.ts` next to `PlayableRef`,
+  and the lookups on `CatalogService`: the key is a catalog notion (what a ref plays), not a resolve one. Two lookups
+  on purpose: `catalog.playing(key)` is lenient (stored rows outlive catalogs: undefined when gone, the episode by its
+  id alone), `requirePlayableRef` strict (a request body: HTTP errors, `has_episodes`).
+- `describe` keeps the old sites' edges: the item still names an episode that left; a channel key is missing only
+  when its item is gone, so a channel id that became a series is named by the series and not flagged (as
+  `problems.list` and Listen along did). `progress` keeps its own wire form (`kind`, titles only when present).
+- Partial matching stays in `PlaybackSessions.owned` (`PartialPlayingKey`): episode reports name the episode alone
+  and problem reports either id, both or neither; the fields a report leaves out are taken from the session and the
+  rest goes through `samePlaying`. A problem row may know an episode without its item, so `problemKey` fills the item
+  from the catalog and the catalog-id check stays at `problems.list`.
+- A running viewing now continues only for the same item and episode, not the same episode id alone; they differ
+  only when an episode moved to another item between resolves (the row's item columns would be stale otherwise).
+  The one deliberate behaviour change of the step. A viewing's title columns come from the resolved ref itself
+  (`describePlayable`), never from a fresh lookup: the catalog may have been reloaded while the adapter ran.
+- Left alone: `failureKey` (a map key string, already per catalog, item, episode and source); `commandBody`'s play
+  branches (an item with an optional episode, not the exclusive pair the fragment builds); the episode report's
+  match on the running viewing (it names the episode alone, like its session lookup; `matchesSaid` since the next
+  step).
+
+## Architecture: what a TV is playing (2026-10-21)
+
+- The now-playing row and the running viewing are one fact written by the same two things (a resolve, a report), so
+  `PlayingService` (playing.ts) owns both, with the long-poll waiters: a report is turned once into a `Report` whose
+  `position` is null for a channel (the episode-or-channel decision, from `ref.kind`), the row is its projection and
+  `hear` is one function from the viewing and the report to the patch, the events (in the old order: stall, seek,
+  pause), the played range and the end.
+- `started` and `reported` run in their own transaction, nested in the caller's when there is one (an episode report
+  saves the position and the cursor first); the waiters wake through `store.afterCommit`, so a long-poll never
+  answers a row that rolled back and wakes after the outer commit.
+- tv.ts keeps the cursor and the saved position (Home's business: they decide what OK plays and bump the state
+  version) and the HTTP answers, and computes an episode's start (the resume offered, else 0; the duration the TV last
+  reported, else the catalog's), since the resume rule is Home's. `ViewingService` keeps the owner's marks and
+  deletions and `VIEWING_TRIGGERS`: the owner's word on the history, not a playback event.
+- `started` takes `{ref, sourceId}` and the trigger fields rather than a `ResolvedStream`: that is all it reads, and
+  the tests drive it without resolving. `reported` has overloads pairing an episode's ref with an episode's report and
+  a channel's with a channel's; `requirePlayableRef` gained one that types an `itemId` lookup as a `LiveRef`.
+- The session and the running viewing a report names are matched by one rule, `matchesSaid` (resolve.ts, extracted
+  from `PlaybackSessions.owned`): an episode report names the episode alone, a channel report the item. Sessions stay
+  in resolve.ts, which opens them; problem reports keep reading them there.
+- `DeviceService.now` takes the `Current` value (the route passes the waited one), so its constructor needed no
+  `playing`; `playing` is on `AppContext`, not on `Services`. `running()` stays public for the HTTP tests, which now
+  read `ctx.playing.running` and call `ctx.playing.sweep`.
+
+## Architecture: the Home list (2026-10-21)
+
+- A TV's Home list is one value, `HomeService.list` (home.ts): every entry in display order, with the item (null when
+  it left the catalog), `missing`, `playable`, what OK plays (`continue`) and the new-episode count, read in three
+  queries. The TV's state and the admin page are its two projections: `TvService.state` drops the missing and
+  unplayable entries (the TV shows nothing it cannot play), `DeviceService.home` keeps and flags them, so the owner
+  sees what a reload took away. New episodes are counted for an unplayable item too; only the admin page shows them.
+- The owner's operations live with the list: `set` (with its expected-list check), `add`, `move`, `remove` (each
+  rebuilds the whole list and goes through `set`) and the "continue from" override `setCursor`, so the routes call
+  `ctx.home` directly. A progress report's cursor move stays in tv.ts, next to the saved position it writes;
+  `HomeService.itemProgress` gives the hidden menu's item view its positions and cursor in one facts load.
+- The effective settings (server defaults, then the catalog's hints) became `effectiveSettings` in devices.ts: the
+  device page shows them and the TV gets them, and DeviceService was the last module that needed `tv` for them.
+- The `Services` bag is gone: every module declares the deps interface it uses, and `AppContext` is the routes' view
+  of the running server, every module and the settings in one flat interface (`sessions` stays on it although no
+  route reads it, since it is one of the modules). server.ts still spreads one object of the built modules into each
+  constructor; the types, not the call site, say what a module may use. `StartOptions` is left for a later step.

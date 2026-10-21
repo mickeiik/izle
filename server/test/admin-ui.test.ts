@@ -12,7 +12,7 @@ import {
   titleLine, titleStatusLabel, tokenFromHash, triggerLabel, tvPositionAt, viewingEnd, viewingSpan,
 } from "../admin/lib.js";
 import { ADMIN_FILES, ADMIN_VENDOR_FILES } from "../src/admin-files.ts";
-import { HOME_COLUMNS as SERVER_COLUMNS, HOME_MAX_ITEMS, HOME_ROWS as SERVER_ROWS } from "../src/tv.ts";
+import { HOME_COLUMNS as SERVER_COLUMNS, HOME_MAX_ITEMS, HOME_ROWS as SERVER_ROWS } from "../src/home.ts";
 import { startTestServer } from "./helpers.ts";
 
 const ADMIN_DIR = new URL("../admin/", import.meta.url);

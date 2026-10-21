@@ -32,6 +32,47 @@ export const episodeIdOf = (ref: PlayableRef): string | null => (ref.kind === "e
 /** A ref for a channel; `item` must be a live item. */
 export const liveRef = (item: LiveItem): LiveRef => ({ kind: "live", item });
 
+/**
+ * What a stored row, a session or a report plays: an episode of an item, or (`episodeId` null) a channel. Stored
+ * rows outlive catalogs, so `CatalogService.playing` looks a key up leniently (undefined when gone); a request body
+ * names what to play with a `PlayableId` instead, looked up strictly by `requirePlayableRef` (lookup.ts), which
+ * answers the request with an error.
+ */
+export interface PlayingKey {
+  itemId: string;
+  episodeId: string | null;
+}
+
+/** The key of what a ref plays. */
+export const playingKey = (ref: PlayableRef): PlayingKey => ({ itemId: ref.item.id, episodeId: episodeIdOf(ref) });
+
+/** The one equality: both fields, because an episode id may equal an item id (a recorded bug). */
+export const samePlaying = (a: PlayingKey, b: PlayingKey): boolean => a.itemId === b.itemId && a.episodeId === b.episodeId;
+
+/** How the admin API names what plays (problems, now playing, Listen along, saved positions, viewing rows). */
+export interface PlayingDescription {
+  itemId: string;
+  itemKind: string | null;
+  itemTitle: string | null;
+  episodeId: string | null;
+  episodeTitle: string | null;
+  season: number | null;
+  number: number | null;
+  missing: boolean;
+}
+
+/**
+ * The description of a ref itself, with no lookup: a viewing records the titles of what was resolved, not what the
+ * catalog says by the time the adapter answered (a reload may have happened in between).
+ */
+export function describePlayable(ref: PlayableRef): PlayingDescription {
+  const episode = ref.kind === "episode" ? ref.episode : null;
+  return {
+    itemId: ref.item.id, itemKind: ref.item.kind, itemTitle: ref.item.title,
+    episodeId: episode?.id ?? null, episodeTitle: episode?.title ?? null, season: episode?.season ?? null, number: episode?.number ?? null, missing: false,
+  };
+}
+
 export interface LoadedCatalog {
   dir: string;
   manifest: BundleManifest;
@@ -160,6 +201,25 @@ export class CatalogService {
 
   episode(id: string): EpisodeRef | undefined {
     return this.current.episodesById.get(id);
+  }
+
+  /** Lenient lookup: the episode (by its id) or the channel (by its item id) a key names, undefined when gone. */
+  playing(key: PlayingKey): PlayableRef | undefined {
+    if (key.episodeId !== null) return this.episode(key.episodeId);
+    const item = this.item(key.itemId);
+    return item && isLiveItem(item) ? liveRef(item) : undefined;
+  }
+
+  /**
+   * How the admin API names what plays: titles from the current catalog, `missing` when it is gone. An episode's
+   * item still gives its title after the episode left; a channel is missing only when its item is gone (an item
+   * that became a series is still named by it).
+   */
+  describe(key: PlayingKey): PlayingDescription {
+    const ref = this.playing(key);
+    if (ref) return describePlayable(ref);
+    const item = this.item(key.itemId);
+    return { itemId: item?.id ?? key.itemId, itemKind: item?.kind ?? null, itemTitle: item?.title ?? null, episodeId: key.episodeId, episodeTitle: null, season: null, number: null, missing: key.episodeId !== null || !item };
   }
 
   /** Relative URL of an item's poster, served by GET /assets/:file. */

@@ -55,4 +55,9 @@ test("playback sessions: a report names only its TV's own session, and what it p
   assert.equal(sessions.owned(live.id, "tv", { itemId: "news", episodeId: null }), live);
   assert.equal(sessions.owned(live.id, "tv", { episodeId: "news" }), undefined);
   assert.equal(sessions.owned(live.id, "tv", { itemId: "other", episodeId: null }), undefined);
+  // A problem report may name either id, both or neither; the ones it names must match.
+  assert.equal(sessions.owned(live.id, "tv", { itemId: "news" }), live, "the item alone");
+  assert.equal(sessions.owned(live.id, "tv", { itemId: undefined, episodeId: undefined }), live, "nothing named");
+  assert.equal(sessions.owned(s.id, "tv", { itemId: "i", episodeId: "e" }), s, "both");
+  assert.equal(sessions.owned(s.id, "tv", { itemId: "other", episodeId: "e" }), undefined, "the episode under another item");
 });
