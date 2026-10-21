@@ -12,9 +12,9 @@ A senior-first Android TV player with a small self-hosted server. Project page: 
 | ![The player, paused: show, episode and a progress bar in large type](docs/images/tv-player.jpg) | ![A message from the owner, "Dinner is ready!", in large letters over the picture](docs/images/tv-message.jpg) |
 
 izle is built for a viewer who only knows classic TV: switch on, pick a "channel", it plays. The TV shows one
-grid of big show cards. OK plays the next unwatched episode (or resumes the half-watched one), episodes
-advance on their own, and Back always returns to that single home screen. There is no browsing, no seasons
-list, no settings in the viewer's path.
+grid of big cards: shows and live channels. OK plays the next unwatched episode (or resumes the half-watched one)
+or a channel at its live edge; episodes advance on their own, CH+/CH− switch between channels, and Back always
+returns to that single home screen. There is no browsing, no seasons list, no settings in the viewer's path.
 
 Everything else is done remotely by the owner from the server's admin page, on a phone or a computer:
 
@@ -85,8 +85,9 @@ To remove everything afterwards: `docker rm -f izle && docker volume rm izle-dat
 ## Your own content
 
 izle ships no content of its own. The server reads a **catalog bundle**: a data-only directory (`bundle.json`,
-`items.json` and the posters) that lists the shows, their episodes in play order and where each episode's video
-is. The [sample catalog](sample-catalog/) is one. Videos are HLS, DASH or progressive files (MP4) at http(s) URLs.
+`items.json` and the posters) that lists the shows (their episodes in play order) and the live channels, and where
+each video or stream is. The [sample catalog](sample-catalog/) is one. Videos are HLS, DASH or progressive files
+(MP4) at http(s) URLs; a channel is a live HLS or DASH playlist or a raw MPEG-TS stream.
 
 - How a bundle is built: [catalog bundle contract](docs/spec/catalog-bundle-v1.md); check one with
   `npx izle-validate <dir>` (`--probe` also checks that every video answers).
