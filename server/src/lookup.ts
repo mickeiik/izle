@@ -3,7 +3,7 @@
 // caller names its status and code.
 
 import { isLiveItem, type CatalogItem, type EpisodicItem, type Playable, type Source } from "@izle/contract";
-import { liveRef, type CatalogService, type EpisodeRef, type PlayableRef } from "./catalog.ts";
+import { liveRef, playableOf, type CatalogService, type EpisodeRef, type PlayableRef } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
 
 type LookupStatus = 400 | 403 | 404;
@@ -63,5 +63,5 @@ export function requirePlayable(playable: Playable, status: LookupStatus, code =
 
 /** `requirePlayable` for a ref, naming an episode or a channel in the message. */
 export function requireAllowed(ref: PlayableRef, status: LookupStatus): void {
-  requirePlayable(ref.kind === "episode" ? ref.episode : ref.item, status, "not_allowed", ref.kind === "episode" ? "episode" : "channel");
+  requirePlayable(playableOf(ref), status, "not_allowed", ref.kind === "episode" ? "episode" : "channel");
 }

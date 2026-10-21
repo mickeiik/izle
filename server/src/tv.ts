@@ -6,7 +6,7 @@ import { requireEpisode, requireEpisodicItem, requireItem, requirePlayable, requ
 import { autoNextIndex, cursorAfterReport, cursorIndex, isPlayable, type LiveReportStatus, type ProgressReportStatus } from "./playback.ts";
 import { episodeDetails, episodeSummary, iso, itemCard, itemDetails, tvSource } from "./presenters.ts";
 import { noPlayableDetail, triedDetail } from "./problems.ts";
-import type { ResolvedStream, ResolveInput, Tried } from "./resolve.ts";
+import { playingKey, type ResolvedStream, type ResolveInput, type Tried } from "./resolve.ts";
 import type { Cursor, Device, NowPlaying, Progress } from "./store.ts";
 import { Waiters } from "./waiters.ts";
 
@@ -218,7 +218,7 @@ export class TvService {
       throw err;
     }
     // Sources the server fell back past. A missing adapter is a configuration warning on the catalog page instead.
-    const playing = r.ref.kind === "episode" ? { episodeId: r.ref.episode.id } : { itemId: r.ref.item.id };
+    const playing = playingKey(r.ref);
     for (const t of r.failed) {
       if (t.code === "adapter_unavailable") continue;
       this.s.problems.record(device.id, { kind: "resolve", code: "source_failed", ...playing, sourceId: t.sourceId, detail: triedDetail(t) });

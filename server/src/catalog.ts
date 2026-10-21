@@ -162,12 +162,6 @@ export class CatalogService {
     return this.current.episodesById.get(id);
   }
 
-  /** The channel with this item id, or undefined (also for an item played through its episodes). */
-  channel(id: string): LiveRef | undefined {
-    const item = this.item(id);
-    return item && isLiveItem(item) ? liveRef(item) : undefined;
-  }
-
   /** Relative URL of an item's poster, served by GET /assets/:file. */
   posterUrl(item: CatalogItem): string | null {
     return assetUrl(item.poster);

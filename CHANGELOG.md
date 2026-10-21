@@ -23,8 +23,7 @@ contract share one version number. How to update (back up, update the server, th
   by their item id (`POST /tv/resolve {"itemId"}`), report without a position (`POST /tv/progress {"itemId"}`,
   which never bumps the state version), get viewings without episode, positions or duration, appear in problem
   reports, the catalog history and the admin catalog (`playable` on search hits and home rows, a channel's sources
-  under `items/:id`), and play by remote command (`play` with a channel's `itemId`). The admin page and the TV app
-  follow in later steps.
+  under `items/:id`), and play by remote command (`play` with a channel's `itemId`).
 - **Media kind `ts`:** a source may be a progressive MPEG-TS stream over HTTP (IPTV-style), meant for channels. The
   server serves it like MP4: a plain URL goes to the TV as it is, one that needs upstream headers streams through
   the proxy at `/p/<token>/stream.ts` (`Range` forwarded, never buffered, never aligned). "Listen along" cannot play

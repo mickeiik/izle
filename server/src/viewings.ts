@@ -156,26 +156,22 @@ export class ViewingService {
     };
     if (r.durationMs !== null) patch.durationMs = r.durationMs;
     if (v.lastReportAt === null) patch.startPositionMs = r.positionMs;
-    const before = playerState(v.lastState, v.lastPlaying);
+    // A final report (stopped, finished) is an end, not a transition.
+    const after = r.status === "playing" || r.status === "paused" ? playerState(r.status, r.playing) : null;
+    const data = { viewingId: v.id, positionMs: r.positionMs };
+    const { before, elapsed, advancing } = this.heartbeat(v, r, after, patch, data, actor, t);
     if (v.lastPositionMs !== null) {
       // Where playback should be: the previous position, advanced by the time since its anchor while it was playing.
-      const elapsed = Math.max(0, r.anchorAt - (v.lastAnchorAt ?? v.lastReportAt ?? t));
-      const advancing = before === "playing";
       const expected = v.lastPositionMs + (advancing ? elapsed : 0);
-      if (advancing) patch.watchedMs! += Math.min(elapsed, MAX_REPORT_GAP_MS);
       if (Math.abs(r.positionMs - expected) > SEEK_TOLERANCE_MS) {
         eventLog.append("playback.seeked", device.id, actor, { viewingId: v.id, fromMs: expected, toMs: r.positionMs });
       } else if (advancing && r.positionMs > v.lastPositionMs) {
         store.addViewingRange(v.id, v.lastPositionMs, r.positionMs);
       }
     }
-    // The pause and stall transitions; a final report (stopped, finished) is an end, not a transition.
-    const after = r.status === "playing" || r.status === "paused" ? playerState(r.status, r.playing) : null;
-    const data = { viewingId: v.id, positionMs: r.positionMs };
+    // The pause transitions (the stall ones are every report's, in heartbeat).
     if (after === "paused" && before !== "paused") eventLog.append("playback.paused", device.id, actor, data);
     if (after === "playing" && before === "paused") eventLog.append("playback.resumed", device.id, actor, data);
-    if (after === "playing" && before === "stalled") eventLog.append("playback.recovered", device.id, actor, data);
-    if (after === "stalled" && before !== "stalled") eventLog.append("playback.stalled", device.id, actor, data);
     store.updateViewing(v.id, patch);
     const updated = { ...v, ...patch };
     if (r.status === "stopped") this.end(updated, "stopped", t, r.positionMs, actor);
@@ -188,23 +184,41 @@ export class ViewingService {
    * stall transitions, and the end on `stopped`.
    */
   onLiveReport(device: Device, r: LiveViewingReport): void {
-    const { store, eventLog } = this.s;
+    const { store } = this.s;
     const v = store.runningViewing(device.id);
     if (!v || v.episodeId !== null || v.itemId !== r.itemId) return;
     const t = this.s.now();
     const actor = tvActor(device.id);
     const patch: Partial<Omit<Viewing, "id" | "actor">> = { lastReportAt: t, lastPlaying: r.playing, lastAnchorAt: r.anchorAt, lastState: r.status, watchedMs: v.watchedMs ?? 0 };
-    const before = playerState(v.lastState, v.lastPlaying);
-    if (v.lastReportAt !== null && before === "playing") {
-      const elapsed = Math.max(0, r.anchorAt - (v.lastAnchorAt ?? v.lastReportAt));
-      patch.watchedMs! += Math.min(elapsed, MAX_REPORT_GAP_MS);
-    }
     const after = r.status === "playing" ? playerState(r.status, r.playing) : null;
-    const data = { viewingId: v.id, positionMs: null };
-    if (after === "playing" && before === "stalled") eventLog.append("playback.recovered", device.id, actor, data);
-    if (after === "stalled" && before !== "stalled") eventLog.append("playback.stalled", device.id, actor, data);
+    this.heartbeat(v, r, after, patch, { viewingId: v.id, positionMs: null }, actor, t);
     store.updateViewing(v.id, patch);
     if (r.status === "stopped") this.end({ ...v, ...patch }, "stopped", t, null, actor);
+  }
+
+  /**
+   * What every report (an episode's or a channel's) does to the running viewing `v`: the time since the report before,
+   * counted as watched (capped at MAX_REPORT_GAP_MS) while the player was advancing, and the stall transitions
+   * (`after`: the player's state the report says, null for a final one). Returns the state before, the time since the
+   * last anchor and whether the player was advancing, for the position-dependent parts an episode's report adds.
+   */
+  private heartbeat(
+    v: Viewing,
+    r: { anchorAt: number },
+    after: PlayerState | null,
+    patch: Partial<Pick<Viewing, "watchedMs">>,
+    data: { viewingId: number; positionMs: number | null },
+    actor: Actor,
+    t: number,
+  ): { before: PlayerState; elapsed: number; advancing: boolean } {
+    const { eventLog } = this.s;
+    const before = playerState(v.lastState, v.lastPlaying);
+    const elapsed = Math.max(0, r.anchorAt - (v.lastAnchorAt ?? v.lastReportAt ?? t));
+    const advancing = before === "playing";
+    if (v.lastReportAt !== null && advancing) patch.watchedMs = (patch.watchedMs ?? 0) + Math.min(elapsed, MAX_REPORT_GAP_MS);
+    if (after === "playing" && before === "stalled") eventLog.append("playback.recovered", v.deviceId, actor, data);
+    if (after === "stalled" && before !== "stalled") eventLog.append("playback.stalled", v.deviceId, actor, data);
+    return { before, elapsed, advancing };
   }
 
   /**

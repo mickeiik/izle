@@ -172,7 +172,8 @@ export function titleSummaries(d: SummaryDeps, opts: { deviceId: string | null; 
 export function titleDetail(d: SummaryDeps, itemId: string, deviceId: string | null) {
   const item = d.catalog.item(itemId);
   const view = new HistoryView(d, deviceId, itemId);
-  if (!item && view.knownEpisodes(itemId).length === 0) throw new HttpError(404, "unknown_item");
+  // Known to the history by an episode's viewing or mark, or (a channel) by a viewing of the item alone.
+  if (!item && view.knownEpisodes(itemId).length === 0 && !view.statsByItem.has(itemId)) throw new HttpError(404, "unknown_item");
   const ranges = d.store.itemRanges(d.catalog.catalogId, deviceId, itemId);
   const catalogEpisodes = item && !isLiveItem(item) ? item.episodes : [];
   const inCatalog = new Set(catalogEpisodes.map((e) => e.id));
