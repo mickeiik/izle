@@ -29,6 +29,11 @@ contract share one version number. How to update (back up, update the server, th
   server serves it like MP4: a plain URL goes to the TV as it is, one that needs upstream headers streams through
   the proxy at `/p/<token>/stream.ts` (`Range` forwarded, never buffered, never aligned). "Listen along" cannot play
   it in a browser and marks such a source unsupported.
+- **Admin page: live channels.** A "Live" chip on a TV's Home list and in Now playing, with the time the channel
+  started; Previous/Next channel, with pause and seek disabled while a channel plays; a channel's catalog page with
+  its sources, Test sources and Play on; channels counted in the catalog contents and its build changes; a
+  channel's history shows when it was on and for how long; Listen along says channels are not covered, and `ts`
+  sources show as MPEG-TS.
 
 ### Changed
 

@@ -246,3 +246,20 @@ The server side of the specification above, in one change (the admin page and th
 - The work ran as three batches: S1 (core, sequential) took the kind branches of history, catalog-admin, devices,
   commands, problems and viewing-summaries along, because they were needed to compile and were the feature; S2
   (diagnostics, companion, tests) and S3 (example, proxy tests) ran in parallel on disjoint files.
+
+## Live channels: admin page (2026-10-21)
+
+- "Show" stays the page's word for any catalog item, channels included ("9 shows (5 films, 1 series, 3 channels)",
+  "Add shows"); the "Live" chip is red with white text in both themes, the page's only red chip, like the TV's.
+- Pause, Resume and ±30 s are disabled rather than hidden while a channel plays, so the keyboard focus stays put; a
+  hint says why. Previous/Next read "Previous channel"/"Next channel", and command reasons are looked up as
+  `type:reason` first, so `no_channel` reads "after this one" for next and "before this one" for previous.
+- The now-playing card reads the running viewing's start time from `GET /history/viewings/:id` once per viewing,
+  because `nowPlaying` carries no `startedAt`; a channel's history page lists its latest 50 viewings from
+  `/history/viewings?item=` (since `titles/:itemId` answers `episodes: []`) and leaves out the "short viewings"
+  note, because short channel viewings are just zapping. A channel viewing with trigger `next` is labelled
+  "CH+/CH−".
+- `ts` shows as "MPEG-TS" everywhere; `viewingEnd` leaves out the position whenever `endPositionMs` is null (also an
+  episode viewing that ended before its first report, which used to read "at –").
+- The TVs list and the TV app page show nothing about what a TV plays, so they needed no channel wording; "Live ·
+  <title>" there would be a new feature (polling `/admin/status`).
