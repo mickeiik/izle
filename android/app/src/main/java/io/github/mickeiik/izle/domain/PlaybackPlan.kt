@@ -33,13 +33,23 @@ object PlaybackPlan {
     /** HTTP 403/410 after this much playback most likely means an expired URL: re-resolve the same source. */
     const val EXPIRED_URL_MIN_PLAYED_MS = 5 * 60_000L
 
+    /**
+     * A channel that played at least this long before its stream ended or failed is resolved again on the same
+     * source even if it was already once: it was working. A shorter run counts as the same failure.
+     */
+    const val LIVE_STABLE_PLAYED_MS = 60_000L
+
     /** Largest sample age a progress report may carry (the server rejects more). */
     const val MAX_REPORT_AGE_MS = 60_000L
 
     fun reportAgeMs(sampledAtMs: Long, nowMs: Long): Long = (nowMs - sampledAtMs).coerceIn(0, MAX_REPORT_AGE_MS)
 
-    /** The status of a live report: what the viewer wants, whatever the player is doing at that instant. */
-    fun liveStatus(playWhenReady: Boolean): ProgressStatus = if (playWhenReady) ProgressStatus.Playing else ProgressStatus.Paused
+    /**
+     * The status of a report sent as it happens: what the viewer wants, whatever the player is doing at that instant.
+     * A channel is never paused: it is always `playing` (its report's `playing` says whether it advances).
+     */
+    fun liveStatus(playWhenReady: Boolean, channel: Boolean = false): ProgressStatus =
+        if (playWhenReady || channel) ProgressStatus.Playing else ProgressStatus.Paused
 
     /** Remaining time at or below which an episode counts as finished. */
     fun endThresholdMs(durationMs: Long): Long {
@@ -68,6 +78,17 @@ object PlaybackPlan {
     fun recovery(httpStatus: Int?, playedMs: Long, retriedSameSource: Boolean, alternativesLeft: Boolean): Recovery = when {
         (httpStatus == 403 || httpStatus == 410) && playedMs > EXPIRED_URL_MIN_PLAYED_MS && !retriedSameSource ->
             Recovery.RetrySameSource
+        alternativesLeft -> Recovery.NextSource
+        else -> Recovery.GiveUp
+    }
+
+    /**
+     * What to do when a channel's stream ends, falls behind the live window or fails, whatever the error: the same
+     * source again at the live edge (a new resolve: an endless stream is restarted, never resumed), once, or again after
+     * it played [LIVE_STABLE_PLAYED_MS]; then the next alternative; then "Can't play right now".
+     */
+    fun liveRecovery(playedMs: Long, retriedSameSource: Boolean, alternativesLeft: Boolean): Recovery = when {
+        !retriedSameSource || playedMs >= LIVE_STABLE_PLAYED_MS -> Recovery.RetrySameSource
         alternativesLeft -> Recovery.NextSource
         else -> Recovery.GiveUp
     }
@@ -134,10 +155,14 @@ class SeekAccumulator(private val stepIntervalMs: Long = 250) {
 /**
  * The sources one playback went through, for the fallback after errors: the ones tried (excluded from the next
  * unpinned resolve), the server's fallback order, and whether the playing source was already re-resolved after an
- * expired URL. A pinned re-resolve returns no alternatives, so the fallback order of the last unpinned resolve is kept.
+ * expired URL (a channel: after any failure). A pinned re-resolve returns no alternatives, so the fallback order of the
+ * last unpinned resolve is kept.
  */
 class SourceAttempts {
     private val tried = linkedSetOf<String>()
+
+    /** A channel's playback ([PlaybackPlan.liveRecovery]). */
+    private var live = false
 
     /** The server's fallback order from the last unpinned resolve. */
     private var alternatives: List<String> = emptyList()
@@ -149,11 +174,12 @@ class SourceAttempts {
     val triedCount: Int get() = tried.size
     val lastTried: String? get() = tried.lastOrNull()
 
-    /** A new episode (or Try again): nothing tried yet. */
-    fun reset() {
+    /** A new episode or channel ([live]), or Try again: nothing tried yet. */
+    fun reset(live: Boolean = false) {
         tried.clear()
         alternatives = emptyList()
         retriedSameSource = false
+        this.live = live
     }
 
     /** What a resolve for [sourceId] (null: unpinned) leaves out: the sources tried, or null; a pinned one nothing. */
@@ -164,9 +190,13 @@ class SourceAttempts {
         if (sourceId == null) this.alternatives = alternatives
     }
 
-    /** The source plays (again): a later expiry may be re-resolved the same way. */
+    /**
+     * The source plays (again): a later expiry may be re-resolved the same way. Not for a channel, whose first frame
+     * after a re-resolve proves little (a stream that keeps breaking off would be resolved again forever): its playing
+     * time decides ([PlaybackPlan.liveRecovery]).
+     */
     fun onPlaying() {
-        retriedSameSource = false
+        if (!live) retriedSameSource = false
     }
 
     fun alternativesLeft(sourceId: String): Boolean = alternatives.any { it != sourceId && it !in tried }
@@ -181,9 +211,16 @@ class SourceAttempts {
         return true
     }
 
-    /** The playing [sourceId] failed: what to do, with the attempt recorded (see [PlaybackPlan.recovery]). */
+    /**
+     * The playing [sourceId] failed (a channel: or its stream ended): what to do, with the attempt recorded (see
+     * [PlaybackPlan.recovery] and [PlaybackPlan.liveRecovery]).
+     */
     fun afterPlaybackError(sourceId: String, httpStatus: Int?, playedMs: Long): PlaybackPlan.Recovery {
-        val recovery = PlaybackPlan.recovery(httpStatus, playedMs, retriedSameSource, alternativesLeft(sourceId))
+        val recovery = if (live) {
+            PlaybackPlan.liveRecovery(playedMs, retriedSameSource, alternativesLeft(sourceId))
+        } else {
+            PlaybackPlan.recovery(httpStatus, playedMs, retriedSameSource, alternativesLeft(sourceId))
+        }
         if (recovery == PlaybackPlan.Recovery.RetrySameSource) retriedSameSource = true else tried += sourceId
         if (recovery == PlaybackPlan.Recovery.NextSource) retriedSameSource = false
         return recovery

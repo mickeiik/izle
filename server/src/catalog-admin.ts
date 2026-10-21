@@ -2,11 +2,12 @@
 // item with its episodes and sources. Upstream URLs, headers and adapter refs are never part of it. Also the reload
 // that the admin route and SIGHUP share.
 
-import type { CatalogItem } from "@izle/contract";
+import { isLiveItem, type CatalogItem, type Source } from "@izle/contract";
 import { SERVER, type Actor } from "./actor.ts";
 import type { CatalogService, ReloadResult } from "./catalog.ts";
 import type { AppContext, Services } from "./context.ts";
 import { errorName } from "./errors.ts";
+import { isPlayable } from "./playback.ts";
 import { episodeDetails, iso, itemCard, itemDetails } from "./presenters.ts";
 import { hasHeaders } from "./resolve.ts";
 import type { CatalogBuild } from "./store.ts";
@@ -73,24 +74,26 @@ export async function reloadOnSignal(deps: ReloadDeps & Pick<Services, "log">, s
   }
 }
 
-/** A search hit: the item's card with its episode counts. */
+/** A search hit: the item's card with its episode counts (null for a channel) and whether OK can play it. */
 export function searchHitJson(catalog: CatalogService, item: CatalogItem) {
-  return { ...itemCard(catalog, item), episodeCount: item.episodes.length, playableCount: item.episodes.filter((e) => e.playbackAllowed).length };
+  const counts = isLiveItem(item) ? { episodeCount: null, playableCount: null } : { episodeCount: item.episodes.length, playableCount: item.episodes.filter((e) => e.playbackAllowed).length };
+  return { ...itemCard(catalog, item), ...counts, playable: isPlayable(item) };
 }
 
-/** An item with every episode and source, as the admin page's item view shows it. */
+/** A source as the owner sees it: what kind it is and whether it is proxied. Upstream URLs, headers and adapter refs are deliberately not exposed. */
+function adminSource(s: Source) {
+  return {
+    id: s.id, type: s.type, label: s.label ?? null, languages: s.languages,
+    ...(s.type === "direct" ? { kind: s.media.kind, needsProxy: hasHeaders(s.media.headers) } : { adapter: s.adapter }),
+  };
+}
+
+/** An item with every episode and source, or a channel with its approval and sources, as the admin page's item view shows it. */
 export function catalogItemJson(catalog: CatalogService, item: CatalogItem) {
+  if (isLiveItem(item)) return { ...itemDetails(catalog, item), playbackAllowed: item.playbackAllowed, sources: item.sources.map(adminSource) };
   return {
     ...itemDetails(catalog, item),
     autoAdvance: item.autoAdvance ?? true,
-    episodes: item.episodes.map((e, index) => ({
-      ...episodeDetails(e, index),
-      autoAdvance: e.autoAdvance ?? null,
-      // Upstream URLs, headers and adapter refs are deliberately not exposed.
-      sources: e.sources.map((s) => ({
-        id: s.id, type: s.type, label: s.label ?? null, languages: s.languages,
-        ...(s.type === "direct" ? { kind: s.media.kind, needsProxy: hasHeaders(s.media.headers) } : { adapter: s.adapter }),
-      })),
-    })),
+    episodes: item.episodes.map((e, index) => ({ ...episodeDetails(e, index), autoAdvance: e.autoAdvance ?? null, sources: e.sources.map(adminSource) })),
   };
 }

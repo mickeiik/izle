@@ -175,6 +175,68 @@ test("problems of an episode that left the catalog are listed as missing", async
   assert.deepEqual([p.itemId, p.itemTitle, p.itemKind, p.episodeId, p.episodeTitle, p.missing], ["film", null, null, "film.main", null, true]);
 });
 
+test("a channel's report names its item: listed with itemKind live and no episode, missing once the channel left the catalog", async (t) => {
+  const { s, tv, report, list } = await setup(t);
+  const fields = { kind: "playback", code: "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED", itemId: "news", sourceId: "ts", httpStatus: 502, appVersion: "0.4.0" };
+  assert.equal((await report(fields)).status, 202);
+  const [p] = (await list()).json.problems;
+  assert.deepEqual(p, {
+    id: p.id, at: new Date(s.clock.now()).toISOString(), origin: "tv", ...fields, itemTitle: "Haber 24", itemKind: "live",
+    episodeId: null, episodeTitle: null, season: null, number: null, positionMs: null, detail: null, missing: false,
+  });
+  const [row] = s.srv.ctx.store.listProblems(tv.deviceId, 10);
+  assert.deepEqual([row!.catalogId, row!.itemId, row!.episodeId], ["fixture", "news", null]);
+  const events = (await s.admin("GET", "/events?after=0&types=problem.recorded")).json.events;
+  assert.deepEqual(events.map((e: Json) => [e.actor, e.data]), [
+    [{ type: "tv", deviceId: tv.deviceId }, { problemId: p.id, origin: "tv", kind: "playback", code: fields.code, itemId: "news", episodeId: null }],
+  ]);
+
+  // A channel's id is not an episode id, an unknown item is stored all the same, and an episode's item wins.
+  await report({ kind: "other", code: "as_episode", episodeId: "news" });
+  await report({ kind: "other", code: "ghost", itemId: "ghost" });
+  await report({ kind: "other", code: "both", itemId: "news", episodeId: "film.main" });
+  const byCode = async () => new Map((await list()).json.problems.map((x: Json) => [x.code, x]));
+  let listed = await byCode();
+  const view = (code: string) => {
+    const x = listed.get(code) as Json;
+    return [x.itemId, x.itemTitle, x.itemKind, x.episodeId, x.missing];
+  };
+  assert.deepEqual(view("as_episode"), [null, null, null, "news", true]);
+  assert.deepEqual(view("ghost"), ["ghost", null, null, null, true]);
+  assert.deepEqual(view("both"), ["film", "Film", "movie", "film.main", false]);
+
+  await publishBuild(s.bundleDir, "fixture-2", (items) => items.filter((i) => i.id !== "news"));
+  assert.equal((await s.admin("POST", "/catalog/reload")).status, 200);
+  listed = await byCode();
+  assert.deepEqual(view(fields.code), ["news", null, null, null, true]);
+  assert.equal((listed.get(fields.code) as Json).sourceId, "ts", "what the report said stays");
+});
+
+test("a report naming a channel's session gets its item and source; an episode's session, named with its item, gives the episode", async (t) => {
+  const { s, tv, as, report } = await setup(t);
+  const live = await as("POST", "/resolve", { itemId: "news" });
+  assert.equal(live.json.sourceId, "hls");
+  const episode = await as("POST", "/resolve", { episodeId: "show.e1" });
+  assert.equal(episode.json.sourceId, "tr-dub");
+
+  await report({ kind: "playback", code: "live_stall", sessionId: live.json.sessionId });
+  await report({ kind: "playback", code: "by_item", sessionId: episode.json.sessionId, itemId: "show" });
+  // A session is used only for what the report says it played.
+  await report({ kind: "playback", code: "other_item", sessionId: live.json.sessionId, itemId: "film" });
+  await report({ kind: "playback", code: "channel_as_episode", sessionId: live.json.sessionId, episodeId: "show.e2" });
+  await report({ kind: "playback", code: "episode_as_channel", sessionId: episode.json.sessionId, itemId: "news" });
+  assert.deepEqual(
+    s.srv.ctx.store.listProblems(tv.deviceId, 10).map((p) => [p.code, p.itemId, p.episodeId, p.sourceId]).reverse(),
+    [
+      ["live_stall", "news", null, "hls"],
+      ["by_item", "show", "show.e1", "tr-dub"],
+      ["other_item", "film", null, null],
+      ["channel_as_episode", "show", "show.e2", null],
+      ["episode_as_channel", "news", null, null],
+    ],
+  );
+});
+
 test("detail helpers: failed sources in a few words", () => {
   assert.equal(triedDetail({ sourceId: "a", code: "timeout", adapterId: "x", name: "TimeoutError" }), "timeout");
   assert.equal(triedDetail({ sourceId: "a", code: "timeout", adapterId: "x", name: "BudgetExhausted" }), "timeout BudgetExhausted");
@@ -186,7 +248,7 @@ test("detail helpers: failed sources in a few words", () => {
   );
   assert.equal(noPlayableDetail([], ["a", "b"]), "excluded by the TV: a, b");
   assert.equal(noPlayableDetail([{ sourceId: "c", code: "adapter_unavailable" }], ["a"]), "c: adapter_unavailable; excluded by the TV: a");
-  assert.equal(noPlayableDetail([]), "the episode has no source to try");
+  assert.equal(noPlayableDetail([]), "no source to try");
   assert.equal(noPlayableDetail(Array.from({ length: 64 }, (_, i) => ({ sourceId: `source-${i}`, code: "empty" as const }))).length, 500);
 });
 
@@ -195,6 +257,7 @@ test("detail helpers: failed sources in a few words", () => {
 const tr = { audio: ["tr"], subtitles: [] };
 const testSource = (id: string, ref: Json) => ({ id, type: "adapter", adapter: "test", ref, languages: tr });
 const movie = (id: string, sources: Json[]) => ({ id, kind: "movie", title: `Movie ${id}`, poster: null, episodes: [{ id: `${id}.main`, playbackAllowed: true, sources }] });
+const channel = (id: string, sources: Json[]) => ({ id, kind: "live", title: `Channel ${id}`, poster: null, playbackAllowed: true, sources });
 const hls = (id: string, url: string) => ({ id, type: "direct", languages: tr, media: { kind: "hls", url, headers: { Referer: REFERER } } });
 
 /** An upstream that needs the Referer and then fails as told: 503, or an HTML page instead of a playlist. */
@@ -228,6 +291,8 @@ async function setupServerOrigin(t: { after(fn: () => unknown): void }) {
     movie("signed", [{ id: "signed", type: "adapter", adapter: "example", ref: { video: "demo" }, languages: tr }]),
     movie("flaky", [hls("flaky-hls", `${flaky.url}/master.m3u8`)]),
     movie("away", [hls("away-hls", `${await closedUrl()}/master.m3u8`)]),
+    channel("dead-air", [testSource("bad", { behavior: "throw" }), testSource("none", { behavior: "empty" })]),
+    channel("relay", [testSource("bad", { behavior: "throw" }), { id: "plain", type: "direct", languages: tr, media: { kind: "hls", url: "https://media.example.test/relay/live.m3u8" } }]),
   );
   const bundleDir = await writeBundle(path.join(await tempDir(), "bundle"), { ...fixtureManifest(), adapters: ["example", "test"] }, items);
   const s = await startTestServer({
@@ -277,6 +342,48 @@ test("server-origin: a TV resolve with nothing playable, and sources the server 
   assert.equal(listed[0].itemTitle, "Movie mixed");
   const logs = s.logs.join("\n");
   for (const leak of ["SuperSecret", "signed.secret.example.test", "behavior"]) assert.ok(!logs.includes(leak) && !JSON.stringify(listed).includes(leak), `leaked ${leak}`);
+});
+
+test("server-origin: a channel's resolve with nothing playable, and a source it fell back past, name the channel", async (t) => {
+  const { s, tv, as, rows, list } = await setupServerOrigin(t);
+  const none = await as("POST", "/resolve", { itemId: "dead-air" });
+  assert.deepEqual([none.status, none.json.error], [502, "no_playable_source"]);
+  assert.deepEqual(
+    rows().map((p) => [p.origin, p.kind, p.code, p.itemId, p.episodeId, p.sourceId, p.detail]),
+    [["server", "resolve", "no_playable_source", "dead-air", null, null, "bad: error LeakyError; none: empty"]],
+  );
+  const ok = await as("POST", "/resolve", { itemId: "relay" });
+  assert.equal(ok.json.sourceId, "plain");
+  assert.deepEqual(rows("source_failed").map((p) => [p.itemId, p.episodeId, p.sourceId, p.detail]), [["relay", null, "bad", "error LeakyError"]]);
+
+  const listed = (await list()).json.problems.find((p: Json) => p.code === "no_playable_source");
+  assert.deepEqual(listed, {
+    id: listed.id, at: new Date(s.clock.now()).toISOString(), origin: "server", kind: "resolve", code: "no_playable_source",
+    itemId: "dead-air", itemTitle: "Channel dead-air", itemKind: "live", episodeId: null, episodeTitle: null, season: null, number: null,
+    sourceId: null, positionMs: null, httpStatus: null, detail: "bad: error LeakyError; none: empty", appVersion: null, missing: false,
+  });
+  const events = (await s.admin("GET", "/events?after=0&types=problem.recorded")).json.events;
+  assert.deepEqual(events.map((e: Json) => [e.actor, e.data.origin, e.data.code, e.data.itemId, e.data.episodeId]), [
+    [{ type: "server" }, "server", "no_playable_source", "dead-air", null],
+    [{ type: "server" }, "server", "source_failed", "relay", null],
+  ]);
+
+  // The log names the channel by its ids only.
+  const lines = s.logs.map((l) => JSON.parse(l));
+  const failed = lines.find((l) => l.msg === "no playable source");
+  assert.deepEqual(failed, { time: failed.time, level: "warn", msg: "no playable source", deviceId: tv.deviceId, itemId: "dead-air", episodeId: null, tried: 2 });
+  const adapterFailed = lines.filter((l) => l.msg === "adapter failed");
+  assert.deepEqual(adapterFailed.map((f) => [f.itemId, f.episodeId, f.sourceId, f.code]), [
+    ["dead-air", null, "bad", "error"],
+    ["dead-air", null, "none", "empty"],
+    ["relay", null, "bad", "error"],
+  ]);
+  for (const f of adapterFailed) {
+    const keys = ["adapterId", "code", "deviceId", "episodeId", "itemId", "level", "ms", "msg", ...("name" in f ? ["name"] : []), "sourceId", "time"];
+    assert.deepEqual(Object.keys(f).sort(), keys.sort());
+  }
+  const all = s.logs.join("\n") + JSON.stringify((await list()).json);
+  for (const leak of ["SuperSecret", "signed.secret.example.test", "upstream 500", "behavior"]) assert.ok(!all.includes(leak), `leaked ${leak}`);
 });
 
 test("server-origin: an upstream 403 that makes a proxy session stale; companion sessions are not recorded", async (t) => {

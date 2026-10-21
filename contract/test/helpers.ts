@@ -24,7 +24,10 @@ export interface FixtureOptions {
   files?: Record<string, string | Buffer>;
 }
 
-/** A valid bundle (a movie with a direct source, a series with an adapter source) in a new temporary directory. */
+/**
+ * A valid bundle in a new temporary directory: a movie with a direct source (items[0]), a series with an adapter
+ * source (items[1]) and a live channel with a direct source (items[2]).
+ */
 export async function makeBundle(opts: FixtureOptions = {}): Promise<string> {
   const manifest: Json = {
     format: "izle-bundle", formatVersion: 1, catalogId: "fixture", buildId: "test-1", builtAt: "2026-10-10T12:00:00Z",
@@ -55,6 +58,15 @@ export async function makeBundle(opts: FixtureOptions = {}): Promise<string> {
             sources: [{ id: "a1", type: "adapter", adapter: "example", ref: { any: ["json", 1] }, languages: { audio: null, subtitles: null } }],
           },
           { id: "series-b.e2", season: 1, number: 2, playbackAllowed: false, sources: [] },
+        ],
+      },
+      {
+        id: "live-c", kind: "live", title: "Channel C", poster: null, playbackAllowed: true,
+        sources: [
+          {
+            id: "hls", type: "direct", languages: { audio: ["tr"], subtitles: [] },
+            media: { kind: "hls", url: "https://media.example.test/c/live.m3u8" },
+          },
         ],
       },
     ],

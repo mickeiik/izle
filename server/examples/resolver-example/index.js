@@ -39,24 +39,33 @@ export function createAdapters(ctx) {
 
   /**
    * Refs (opaque to izle): `{ video }` HLS by signed URL; plus `inline: true` for the master playlist text instead
-   * of a URL, `format: "mp4"` for a progressive MP4, `junkBytes: <n>` for segments prefixed with junk bytes.
+   * of a URL, `format: "mp4"` for a progressive MP4, `junkBytes: <n>` for segments prefixed with junk bytes. For a
+   * channel: `live: true` for the video's live playlist, `format: "ts"` for its raw MPEG-TS stream.
+   *
+   * Every call asks the site anew and the same ref always gets the same stream: izle resolves an episode again for
+   * the owner's phone, and a channel at `expiresAt`, after a 410 and after a player error, each time from its live
+   * edge.
    * @param {ResolveRequest} req
    * @returns {Promise<ResolveResult[]>}
    */
   async function resolve(req) {
-    const { video, format, inline, junkBytes } = req.ref;
+    const { video, format, inline, junkBytes, live } = req.ref;
     if (typeof video !== "string" || !/^[a-z0-9-]{1,64}$/.test(video)) throw new TypeError("ref.video must be a lowercase slug");
-    const mp4 = format === "mp4";
+    // izle serves an inline playlist as it is for the whole session. A live one slides on, so it stays a URL, which
+    // the proxy fetches anew on every request.
+    if (live === true && inline === true) throw new TypeError("ref.inline does not go with ref.live");
+    const kind = format === "mp4" || format === "ts" ? format : "hls";
     const url = new URL(`api/streams/${video}`, base);
-    url.searchParams.set("format", mp4 ? "mp4" : "hls");
+    url.searchParams.set("format", kind);
+    if (live === true) url.searchParams.set("live", "1");
     if (inline === true) url.searchParams.set("delivery", "inline");
     if (typeof junkBytes === "number") url.searchParams.set("junk", String(junkBytes));
 
     // Always pass the signal: it fires when the TV goes away or the deadline (req.deadlineMs) passes.
     const res = await ctx.fetch(url, { headers: { "X-Api-Key": apiKey, Accept: "application/json" }, signal: req.signal });
     if (res.status === 404) {
-      // Nothing to play for this source right now; izle moves on to the episode's next source.
-      ctx.log("warn", "video not found upstream", { video, episodeId: req.episodeId });
+      // Nothing to play for this source right now; izle moves on to the episode's (or the channel's) next source.
+      ctx.log("warn", "video not found upstream", { video, itemId: req.itemId, episodeId: req.episodeId });
       return [];
     }
     if (!res.ok) throw new UpstreamError(`upstream answered ${res.status} for ${url.href}`);
@@ -67,7 +76,7 @@ export function createAdapters(ctx) {
       media:
         answer.playlist !== undefined && answer.baseUrl !== undefined
           ? { kind: "hls", playlist: answer.playlist, baseUrl: answer.baseUrl }
-          : { kind: mp4 ? "mp4" : "hls", url: /** @type {string} */ (answer.url) },
+          : { kind, url: /** @type {string} */ (answer.url) },
       // The Referer the site insists on. izle sees headers and proxies the stream; the TV never sees them.
       headers: { Referer: answer.referer },
       expiresAt: answer.expiresAt,

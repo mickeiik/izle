@@ -51,7 +51,10 @@ import io.github.mickeiik.izle.ui.theme.IzleSpacing
 /** Where the information panel's shade goes from clear to dark, above its text. */
 private val InfoFade = 48.dp
 
-/** Video only; information appears for a few seconds after a key press, or as a large panel at the end. */
+/**
+ * Video only; information appears for a few seconds after a key press, or as a large panel at the end. A channel's
+ * information is its name and "Live": no position, no times, no pause symbol.
+ */
 @Composable
 fun PlayerScreen(ui: PlayerUi, player: Player?, onPlayNext: () -> Unit, onHome: () -> Unit, onRetry: () -> Unit) {
     val view = LocalView.current
@@ -70,7 +73,7 @@ fun PlayerScreen(ui: PlayerUi, player: Player?, onPlayNext: () -> Unit, onHome: 
             PlayerPhase.Loading -> LoadingOverlay(ui)
             PlayerPhase.Playing -> {
                 if (ui.buffering) Spinner(Modifier.align(Alignment.Center))
-                if (!ui.playWhenReady && !ui.showInfo) {
+                if (!ui.playWhenReady && !ui.showInfo && !ui.live) {
                     Box(
                         Modifier.align(Alignment.TopEnd)
                             .padding(IzleSpacing.Safe)
@@ -81,7 +84,7 @@ fun PlayerScreen(ui: PlayerUi, player: Player?, onPlayNext: () -> Unit, onHome: 
                 // Subtitles sit just above the information panel while it shows.
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                     ui.cues?.let { Captions(it, Modifier.padding(bottom = if (ui.showInfo) IzleSpacing.Small else IzleSpacing.SafeVertical + IzleSpacing.Large)) }
-                    if (ui.showInfo) InfoPanel(ui)
+                    if (ui.showInfo) if (ui.live) ChannelInfoPanel(ui) else InfoPanel(ui)
                 }
             }
             is PlayerPhase.UpNext -> {
@@ -104,8 +107,10 @@ fun PlayerScreen(ui: PlayerUi, player: Player?, onPlayNext: () -> Unit, onHome: 
     }
 }
 
+/** What is playing under the title: the episode, or "Live" for a channel. */
 @Composable
 private fun episodeLine(ui: PlayerUi): String? {
+    if (ui.live) return stringResource(R.string.badge_live)
     val item = ui.item ?: return null
     val ep = ui.episode ?: return null
     val name = episodeNameText(EpisodeNames.name(item.kind, ep.season, ep.number, ep.label, ep.index)) ?: return null
@@ -145,19 +150,29 @@ private fun LoadingOverlay(ui: PlayerUi) {
     }
 }
 
+/** The information's shade: clear at the top, dark behind the text, over the bottom of the video. */
+private fun Modifier.infoShade(): Modifier = fillMaxWidth()
+    .drawBehind {
+        val dark = (InfoFade.toPx() / size.height).coerceIn(0f, 1f)
+        drawRect(Brush.verticalGradient(0f to Color.Transparent, dark to IzleColors.InfoShade, 1f to IzleColors.InfoShade))
+    }
+    .padding(start = IzleSpacing.SafeHorizontal, end = IzleSpacing.SafeHorizontal, top = InfoFade + IzleSpacing.Small, bottom = IzleSpacing.SafeVertical)
+
+/** A channel: its name and "Live", on the same shade; nothing about time (no position, times or clock). */
+@Composable
+private fun ChannelInfoPanel(ui: PlayerUi) {
+    Column(Modifier.infoShade()) {
+        Text(ui.item?.title.orEmpty(), style = MaterialTheme.typography.headlineMedium, color = IzleColors.OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(stringResource(R.string.badge_live), style = MaterialTheme.typography.titleLarge, color = IzleColors.Accent, maxLines = 1)
+    }
+}
+
 /** Title, episode, position: over the bottom of the video, its text on the dark part of the shade. */
 @Composable
 private fun InfoPanel(ui: PlayerUi) {
     val duration = ui.durationMs ?: 0
     val position = ui.seekPreviewMs ?: ui.positionMs
-    Column(
-        Modifier.fillMaxWidth()
-            .drawBehind {
-                val dark = (InfoFade.toPx() / size.height).coerceIn(0f, 1f)
-                drawRect(Brush.verticalGradient(0f to Color.Transparent, dark to IzleColors.InfoShade, 1f to IzleColors.InfoShade))
-            }
-            .padding(start = IzleSpacing.SafeHorizontal, end = IzleSpacing.SafeHorizontal, top = InfoFade + IzleSpacing.Small, bottom = IzleSpacing.SafeVertical),
-    ) {
+    Column(Modifier.infoShade()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (ui.playWhenReady) PlayIcon(Modifier.size(44.dp)) else PauseIcon(Modifier.size(44.dp))
             Spacer(Modifier.width(IzleSpacing.XLarge))

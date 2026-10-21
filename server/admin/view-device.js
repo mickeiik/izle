@@ -10,8 +10,8 @@ import { actionButton, card, chip, h, keepFocus, onSubmit, page, progressBar, se
 import { watchEvents } from "./events.js";
 import {
   HOME_COLUMNS, HOME_ROWS, LANGUAGES, androidText, appUpdateChip, capabilityText, commandResultText, episodeName, errorText,
-  formatClock, formatDuration, formatRelative, gridSummary, installNowBlocked, languageLabel, percent, playbackState,
-  problemContext, triggerLabel, viewingEnd,
+  formatClock, formatDuration, formatRelative, gridSummary, installNowBlocked, languageLabel, nowPlayingLine, percent,
+  playbackState, problemContext, triggerLabel, viewingEnd, viewingSpan,
 } from "./lib.js";
 
 /**
@@ -169,21 +169,24 @@ function sectionNav(scope, sections) {
 }
 
 /**
- * The remote control's buttons: the label, the accessible name and the toast's name where they differ from it.
- * @type {Array<{ label: string, name?: string, what?: string, command: any }>}
+ * The remote control's buttons: the label, the accessible name and the toast's name where they differ from it. While
+ * a channel plays, `episodic` ones are unavailable (a channel is never paused or seeked) and `liveLabel` replaces the
+ * label (Previous and Next switch between the channels of the TV's home screen).
+ * @type {Array<{ label: string, name?: string, what?: string, episodic?: boolean, liveLabel?: string, command: any }>}
  */
 const REMOTE = [
-  { label: "Pause", command: { type: "pause" } },
-  { label: "Resume", command: { type: "resume" } },
-  { label: "−30 s", name: "Back 30 seconds", what: "Back 30 s", command: { type: "seek", deltaMs: -30_000 } },
-  { label: "+30 s", name: "Forward 30 seconds", what: "Forward 30 s", command: { type: "seek", deltaMs: 30_000 } },
-  { label: "Previous episode", command: { type: "previous" } },
-  { label: "Next episode", command: { type: "next" } },
+  { label: "Pause", episodic: true, command: { type: "pause" } },
+  { label: "Resume", episodic: true, command: { type: "resume" } },
+  { label: "−30 s", name: "Back 30 seconds", what: "Back 30 s", episodic: true, command: { type: "seek", deltaMs: -30_000 } },
+  { label: "+30 s", name: "Forward 30 seconds", what: "Forward 30 s", episodic: true, command: { type: "seek", deltaMs: 30_000 } },
+  { label: "Previous episode", liveLabel: "Previous channel", command: { type: "previous" } },
+  { label: "Next episode", liveLabel: "Next channel", command: { type: "next" } },
 ];
 
 /**
  * What the TV plays, the remote control and the message box. The poll only fills in text and enables or disables
- * the buttons, so a half-typed message and the focus survive it.
+ * the buttons, so a half-typed message and the focus survive it. A channel shows "Live" and when its viewing
+ * started instead of a position.
  * @param {DeviceContext} ctx
  * @returns {Section & { setDevice(device: any): void }}
  */
@@ -202,10 +205,24 @@ function nowPlayingCard(ctx) {
   const command = async (/** @type {any} */ body, /** @type {string} */ what) => {
     if (await ctx.send(body, what)) ctx.scope.later(() => void refresh().catch(() => {}), 1500);
   };
-  const remote = REMOTE.map((r) => actionButton(r.label, r.name ? { "aria-label": r.name } : null, () => command(r.command, r.what ?? r.label)));
+  /** Whether the last report is a channel's: the remote's labels and buttons follow it. */
+  let live = false;
+  const remote = REMOTE.map((r) => actionButton(r.label, r.name ? { "aria-label": r.name } : null, () => command(r.command, live && r.liveLabel ? r.liveLabel : (r.what ?? r.label))));
   const stop = actionButton("Stop", { class: "danger" }, () => command({ type: "stop" }, "Stop"));
+  const liveHint = h("p", { class: "hint", id: "remote-live-hint", hidden: true }, "A channel plays live: it cannot be paused or seeked. Previous and Next switch to the channel before or after it on the TV's home screen.");
   const controls = h("div", { class: "buttons remote", role: "group", "aria-label": "Remote control", hidden: true }, remote, stop);
   for (const b of [...remote, stop]) setOff(b, true);
+  /** When the running viewing started, read once per viewing (a channel's line shows it); null when unknown. */
+  let started = /** @type {{ viewingId: number, startedAt: string } | null} */ (null);
+  const startOf = async (/** @type {number | null} */ viewingId) => {
+    if (viewingId === null || viewingId === undefined) return null;
+    if (started?.viewingId !== viewingId) {
+      const r = await ctx.scope.read(`/history/viewings/${viewingId}`).catch(() => null);
+      if (!r?.viewing?.startedAt) return null; // read again on the next refresh
+      started = { viewingId, startedAt: r.viewing.startedAt };
+    }
+    return started.startedAt;
+  };
 
   const messageText = h("input", { type: "text", id: "m-text", maxlength: 200, autocomplete: "off", placeholder: "e.g. Dinner is ready!", "aria-describedby": "m-hint" });
   const messageSend = h("button", { type: "submit", class: "primary" }, "Send");
@@ -224,25 +241,43 @@ function nowPlayingCard(ctx) {
     const r = await ctx.scope.read(`${ctx.path}/now`);
     const n = r.nowPlaying;
     controls.hidden = !n;
-    if (!n) return shown.show(nothing);
+    if (!n) {
+      liveHint.hidden = true;
+      return shown.show(nothing);
+    }
+    live = n.itemKind === "live";
+    const startedAt = live ? await startOf(n.viewingId) : null;
     const s = playbackState(n, r.online);
     setChip(state, s.label, s.tone);
     when.textContent = s.active ? "" : formatRelative(n.updatedAt);
     title.textContent = n.itemTitle ?? n.itemId;
     episode.textContent = n.episodeTitle ?? "";
     episode.hidden = !n.episodeTitle;
-    time.textContent = `${formatClock(n.positionMs)} / ${formatClock(n.durationMs)}${n.sourceId ? ` · source ${n.sourceId}` : ""}`;
-    const pct = percent(n.positionMs, n.durationMs);
+    const line = nowPlayingLine(n, startedAt);
+    // "Live since 14:05 · source main", or "Live · source main" once the viewing ended.
+    if (live) time.replaceChildren(chip("Live", "live"), line ? (startedAt ? ` ${line}` : ` · ${line}`) : "");
+    else time.textContent = line;
+    const pct = live ? null : percent(n.positionMs, n.durationMs);
     bar.hidden = pct === null;
     if (pct !== null) setProgress(bar, pct, `${formatClock(n.positionMs)} of ${formatClock(n.durationMs)}`);
-    // The remote control applies while the TV's last report says it is in the player, playing or paused.
-    for (const b of remote) setOff(b, n.state !== "playing" && n.state !== "paused");
+    // The remote control applies while the TV's last report says it is in the player, playing or paused; a channel
+    // is never paused or seeked.
+    const inPlayer = n.state === "playing" || n.state === "paused";
+    REMOTE.forEach((def, i) => {
+      const b = /** @type {HTMLButtonElement} */ (remote[i]);
+      const label = live && def.liveLabel ? def.liveLabel : def.label;
+      if (b.textContent !== label) b.textContent = label;
+      setOff(b, !inPlayer || (live && Boolean(def.episodic)));
+      if (live && inPlayer && def.episodic) b.setAttribute("aria-describedby", liveHint.id);
+      else b.removeAttribute("aria-describedby");
+    });
+    liveHint.hidden = !(live && inPlayer);
     setOff(stop, !s.active);
     shown.show(info);
   };
 
   return {
-    element: card("Now playing", shown.element, controls, messageForm),
+    element: card("Now playing", shown.element, controls, liveHint, messageForm),
     refresh,
     fail: (err, retry) => shown.fail(err, retry, "Could not load what the TV plays."),
     setDevice: (device) => setOff(messageSend, device.status !== "active"),
@@ -412,7 +447,11 @@ function appCard(ctx) {
   };
 }
 
-/** The TV's viewings: what it played, who started it, how much was watched and how each ended. @param {DeviceContext} ctx @returns {Section} */
+/**
+ * The TV's viewings: what it played, who started it, how much was watched and how each ended. A channel's viewing
+ * has no episode or position: it ends with when it ran.
+ * @param {DeviceContext} ctx @returns {Section}
+ */
 function historyCard(ctx) {
   const shown = slot();
   const list = rebuiltOnChange();
@@ -422,8 +461,10 @@ function historyCard(ctx) {
     const content = list.content(viewings, (time) => {
       if (viewings.length === 0) return h("p", { class: "muted" }, "Nothing watched yet.");
       const tr = (/** @type {any} */ v) => {
-        const episode = v.itemKind === "movie" ? "" : episodeName({ season: v.season, number: v.number, title: v.episodeTitle }, v.itemKind);
-        const cells = [v.itemTitle ?? v.itemId, episode, v.imported ? "–" : formatDuration(v.watchedMs), viewingEnd(v), triggerLabel(v)].map((c) => h("td", null, c));
+        const live = v.itemKind === "live";
+        const episode = v.itemKind === "movie" || live ? "" : episodeName({ season: v.season, number: v.number, title: v.episodeTitle }, v.itemKind);
+        const ended = live ? `${viewingSpan(v)} · ${viewingEnd(v)}` : viewingEnd(v);
+        const cells = [v.itemTitle ?? v.itemId, episode, v.imported ? "–" : formatDuration(v.watchedMs), ended, triggerLabel(v)].map((c) => h("td", null, c));
         return h("tr", null, time(h("td", { class: "muted" }), () => formatRelative(v.startedAt)), cells);
       };
       const caption = h("caption", null, "The last 30 viewings on this TV, the latest first; every viewing is kept in the history.");

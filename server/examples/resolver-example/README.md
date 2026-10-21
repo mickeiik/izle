@@ -27,6 +27,23 @@ The server tests use the same module and upstream (with synthetic in-memory medi
 - `/static/<video>/…` serves the same files without a signature, still Referer-bound: for bundle `direct`
   sources that list a `Referer` header.
 
+Each video also has a **channel view**: the video played in a loop as if it were broadcast, for live channels.
+
+- `?live=1` answers a signed URL of `live.m3u8`, a sliding live playlist: the last five 6-second segments, a media
+  sequence that moves on with the clock, no `#EXT-X-ENDLIST`. Segments are numbered from the epoch, so every request
+  agrees on "now" and a player that comes back starts at the live edge.
+- `?format=ts` answers a signed URL of `stream.ts`, the same channel as one endless MPEG-TS response: the playlist's
+  five segments at once (the player's buffer), then one every 6 seconds, until the client goes away. `Range` is
+  ignored (`200`): an endless stream has no byte position to go back to. The signature is checked when the request
+  starts, so a running stream outlives its URL.
+- `?delivery=inline` with `live=1` answers `400 inline_is_vod_only`. A live playlist moves on every 6 seconds and
+  izle serves inline text as it is for the whole session, so a channel's playlist must come as a URL, which izle's
+  proxy fetches anew on every request.
+- The channel view loops the video's 360p rendition, so it is silent and has no subtitles; it answers no
+  `languages`, and the catalog's facts stand. Where the loop starts over, the playlist has an
+  `#EXT-X-DISCONTINUITY` (the video's timestamps go back). `stream.ts` has no such tag, so the upstream moves the
+  timestamps and continuity counters of every round on, as one long broadcast would have them.
+
 Without `--media` it serves small synthetic files (not decodable video — enough for the tests).
 
 ## The module
@@ -45,7 +62,14 @@ Refs it understands (opaque to izle; their shape is the module's own business):
 { "video": "demo", "inline": true }
 { "video": "demo", "format": "mp4" }
 { "video": "demo", "junkBytes": 1000 }
+{ "video": "demo", "live": true }
+{ "video": "demo", "format": "ts" }
 ```
+
+The last two are for a channel (its request has `episodeId: null`): the live playlist and the raw MPEG-TS stream.
+`live: true` never asks for an inline playlist, and a ref with both `live` and `inline` throws a `TypeError`. izle
+resolves a channel again at `expiresAt`, when its proxy session ends and after a player error; each call asks the
+upstream anew and gets the channel as it is now, so the TV goes on at the live edge.
 
 ## Run it
 
@@ -63,6 +87,13 @@ The server listens on port 8787 with the example catalog and keeps its state in 
 — print the token with `npm run -s -w server dev -- admin-token --config server/examples/resolver-example/izle.example.json`
 — and put the example shows on its home screen. `--token-ttl 330` on the upstream makes signed URLs expire mid-way
 through the 10-minute video, to watch the TV recover (the proxy answers 410, the TV resolves again and continues).
+
+The channel "Live demo" plays the live playlist (source `signed-live-hls`) at its live edge: the clock in the
+picture runs on and starts over with the loop every 10 minutes. Its second source, `raw-ts`, is the raw stream,
+which the TV falls back to when the first fails; to watch it, put it first in `catalog/items.json` and reload the
+catalog (admin page, Catalog → Reload from disk). `--token-ttl 330` also makes the channel's playlist URL expire: the
+TV resolves the channel again a minute before (or on the proxy's 410) and goes on at the live edge, in the same
+viewing of the history.
 
 The example configuration turns on `proxy.alignTsSegments`, because one of its shows ("Junk before segments")
 only plays with it. The server default is off. It also lists the stand-in site in `proxy.privateUpstreams`

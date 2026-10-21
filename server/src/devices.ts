@@ -1,9 +1,11 @@
 // The owner's side of the paired TVs (admin API): how a TV appears in the device list and on its page, what it has
 // watched and is playing, settings changes, and deletion.
 
+import { isLiveItem } from "@izle/contract";
 import { tvActor, type Actor } from "./actor.ts";
 import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
+import { isPlayable } from "./playback.ts";
 import { iso } from "./presenters.ts";
 import type { ProxyService } from "./proxy.ts";
 import { companionScope } from "./resolve.ts";
@@ -74,20 +76,21 @@ export class DeviceService {
     return store.listDevices().map((d) => ({ ...this.view(d), homeCount: store.getHomeEntries(d.id, catalog.catalogId).length }));
   }
 
-  /** The device's home list with what OK would play; items gone from the catalog stay and are flagged `missing`. */
+  /**
+   * The device's home list with what OK would play and whether it can (`playable`); items gone from the catalog
+   * stay and are flagged `missing`. A channel has no `continue` and no new episodes.
+   */
   home(d: Device) {
     const { store, catalog, tv } = this.s;
     const factsFor = tv.homeFacts(d.id);
     return store.getHomeEntries(d.id, catalog.catalogId).map(({ itemId, addedAt }) => {
       const item = catalog.item(itemId);
-      if (!item) return { itemId, title: null, kind: null, posterUrl: null, backdropUrl: null, missing: true, continue: null, newEpisodes: 0 };
+      if (!item) return { itemId, title: null, kind: null, posterUrl: null, backdropUrl: null, missing: true, playable: false, continue: null, newEpisodes: 0 };
       const { title, kind } = item;
+      const card = { itemId, title, kind, posterUrl: catalog.posterUrl(item), backdropUrl: catalog.backdropUrl(item), missing: false, playable: isPlayable(item) };
+      if (isLiveItem(item)) return { ...card, continue: null, newEpisodes: 0 };
       const facts = factsFor(item.id);
-      const continueFrom = tv.continueFor(d.id, item, facts);
-      return {
-        itemId, title, kind, posterUrl: catalog.posterUrl(item), backdropUrl: catalog.backdropUrl(item), missing: false, continue: continueFrom,
-        newEpisodes: tv.newEpisodesFor(d.id, item, addedAt, facts),
-      };
+      return { ...card, continue: tv.continueFor(d.id, item, facts), newEpisodes: tv.newEpisodesFor(d.id, item, addedAt, facts) };
     });
   }
 
@@ -109,9 +112,13 @@ export class DeviceService {
     };
   }
 
-  /** What the device is playing (its now-playing row `n`), with the anchor the phone's "Listen along" follows. */
+  /**
+   * What the device is playing (its now-playing row `n`), with the anchor the phone's "Listen along" follows. A
+   * channel (`itemKind: "live"`) has no episode, positions or anchor.
+   */
   now(d: Device, n: NowPlaying | null) {
-    const ref = n ? this.s.catalog.episode(n.episodeId) : undefined;
+    const ref = n?.episodeId != null ? this.s.catalog.episode(n.episodeId) : undefined;
+    const item = ref?.item ?? (n ? this.s.catalog.item(n.itemId) : undefined);
     // The running viewing, while it is the one the row reports on; null once it ended.
     const running = n ? this.s.viewings.running(d.id) : null;
     return {
@@ -119,12 +126,12 @@ export class DeviceService {
       serverNowMs: this.s.now(),
       seq: n?.seq ?? 0,
       nowPlaying: n && {
-        itemId: n.itemId, episodeId: n.episodeId, sourceId: n.sourceId, itemTitle: ref?.item.title ?? null, episodeTitle: ref?.episode.title ?? null,
+        itemId: n.itemId, itemKind: item?.kind ?? null, episodeId: n.episodeId, sourceId: n.sourceId, itemTitle: item?.title ?? null, episodeTitle: ref?.episode.title ?? null,
         positionMs: n.positionMs, durationMs: n.durationMs, state: n.state, updatedAt: iso(n.updatedAt), playing: n.playing,
-        viewingId: running?.episodeId === n.episodeId ? running.id : null,
+        viewingId: running && running.itemId === n.itemId && running.episodeId === n.episodeId ? running.id : null,
       },
       // Where the TV is: positionMs as of atMs (server clock), advancing at `rate` while `playing`.
-      anchor: n ? { positionMs: n.positionMs, atMs: n.anchorAt ?? n.updatedAt, playing: n.playing, rate: 1 } : null,
+      anchor: n && n.positionMs !== null ? { positionMs: n.positionMs, atMs: n.anchorAt ?? n.updatedAt, playing: n.playing, rate: 1 } : null,
     };
   }
 

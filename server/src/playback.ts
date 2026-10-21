@@ -1,18 +1,18 @@
 // Pure play-order rules: which episode OK plays, what auto-next does, and in which order sources are tried.
 // No I/O here so the rules are easy to test.
 
-import type { CatalogItem, LanguageFacts, Source } from "@izle/contract";
+import { isLiveItem, type CatalogItem, type EpisodicItem, type LanguageFacts, type Source } from "@izle/contract";
 import type { Progress } from "./store.ts";
 
-
 /** Index of the first episode after `from` (exclusive) with playbackAllowed, or -1 (`from` -1: the first one). */
-function nextAllowedIndex(item: CatalogItem, from: number): number {
+function nextAllowedIndex(item: EpisodicItem, from: number): number {
   for (let i = from + 1; i < item.episodes.length; i++) if (item.episodes[i]!.playbackAllowed) return i;
   return -1;
 }
 
+/** Whether OK can play the item: an episode with playbackAllowed, or a channel whose playback is allowed. */
 export function isPlayable(item: CatalogItem): boolean {
-  return nextAllowedIndex(item, -1) >= 0;
+  return isLiveItem(item) ? item.playbackAllowed : nextAllowedIndex(item, -1) >= 0;
 }
 
 /** An item's cursor as the play-order rules see it; a bare episode id is an ordinary (not wrapped) cursor. */
@@ -31,7 +31,7 @@ interface CursorLike {
  * - Without a usable cursor: the first allowed episode not yet finished, else the first allowed one (rewatch).
  */
 export function cursorIndex(
-  item: CatalogItem,
+  item: EpisodicItem,
   cursor: string | CursorLike | null,
   progress: ReadonlyMap<string, Pick<Progress, "status">>,
   appended: ReadonlySet<string> = new Set(),
@@ -62,6 +62,11 @@ export const PROGRESS_REPORT_STATUSES = ["playing", "paused", "stopped", "finish
 
 export type ProgressReportStatus = (typeof PROGRESS_REPORT_STATUSES)[number];
 
+/** What a channel's report may say: a channel is never paused and never finishes. */
+export const LIVE_REPORT_STATUSES = ["playing", "stopped"] as const;
+
+export type LiveReportStatus = (typeof LIVE_REPORT_STATUSES)[number];
+
 /**
  * The cursor after a progress report on the episode at `index`. `finished` moves it to the next allowed episode,
  * wrapping to the first after the last (so OK on a fully watched item starts it again; `autoAdvance` does not matter
@@ -71,7 +76,7 @@ export type ProgressReportStatus = (typeof PROGRESS_REPORT_STATUSES)[number];
  * episode).
  */
 export function cursorAfterReport(
-  item: CatalogItem,
+  item: EpisodicItem,
   index: number,
   status: ProgressReportStatus,
   before: CursorLike | null,
@@ -88,7 +93,7 @@ export function cursorAfterReport(
  * The episode auto-next would start after `index`, or -1: the end of the item, or an autoAdvance boundary (the
  * episode's setting, else the item's, else true).
  */
-export function autoNextIndex(item: CatalogItem, index: number): number {
+export function autoNextIndex(item: EpisodicItem, index: number): number {
   const episode = item.episodes[index];
   if (!episode || !(episode.autoAdvance ?? item.autoAdvance ?? true)) return -1;
   return nextAllowedIndex(item, index);

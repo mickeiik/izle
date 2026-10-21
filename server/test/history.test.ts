@@ -32,14 +32,14 @@ const episode = (id: string, number: number): Json => ({ ...fixtureItems().items
 const withShowEpisode = (id: string, number: number) => (items: Json[]) =>
   items.map((i) => (i.id === "show" ? { ...i, episodes: [...i.episodes, episode(id, number)] } : i));
 const without = (...ids: string[]) => (items: Json[]) =>
-  items.filter((i) => !ids.includes(i.id)).map((i) => ({ ...i, episodes: i.episodes.filter((e: Json) => !ids.includes(e.id)) }));
+  items.filter((i) => !ids.includes(i.id)).map((i) => (i.episodes ? { ...i, episodes: i.episodes.filter((e: Json) => !ids.includes(e.id)) } : i));
 
 test("baseline: the first load of a catalog id records every episode as always there", async (t) => {
   const { store, clock, service, builds, seenAt } = await setup(t);
   const catalog = service();
   await catalog.load();
   const fixture = fixtureItems().items as Json[];
-  const episodes = fixture.reduce((n, i) => n + i.episodes.length, 0);
+  const episodes = fixture.reduce((n, i) => n + (i.episodes?.length ?? 0), 0);
 
   assert.deepEqual(builds(), [
     {
@@ -70,7 +70,7 @@ test("append: a later build's episodes and items are seen at its load time", asy
   assert.equal(first?.buildId, "fixture-1");
   assert.deepEqual(
     { ...latest, loadedAt: latest?.loadedAt === clock.now() },
-    { catalogId: CATALOG, buildId: "fixture-2", builtAt: "2026-10-10T12:00:00Z", loadedAt: true, baseline: false, items: 17, episodes: 23, itemsAdded: 1, itemsRemoved: 0, episodesAdded: 3, episodesRemoved: 0 },
+    { catalogId: CATALOG, buildId: "fixture-2", builtAt: "2026-10-10T12:00:00Z", loadedAt: true, baseline: false, items: 19, episodes: 23, itemsAdded: 1, itemsRemoved: 0, episodesAdded: 3, episodesRemoved: 0 },
   );
   const { changes } = store.getCatalogBuild(CATALOG, "fixture-2")!;
   assert.deepEqual(changes.items, { added: [{ id: "newshow", title: "Yeni Dizi", kind: "series" }], removed: [] });
@@ -193,4 +193,47 @@ test("a failing load hook is logged and the catalog still loads and reloads", as
   assert.equal(r.ok, true);
   assert.equal(catalog.current.manifest.buildId, "fixture-2");
   assert.equal(logs.filter((l) => JSON.parse(l).msg === "catalog load hook failed").length, 2);
+});
+
+test("channels: tracked by item id; a new channel is an added item, a returning one keeps its first-seen date, a gone one is removed", async (t) => {
+  const { store, clock, service, publish, builds } = await setup(t);
+  const catalog = service();
+  await catalog.load();
+  assert.deepEqual(store.catalogSeenItems(CATALOG), [
+    { itemId: "news", firstSeenAt: 0, buildId: "fixture-1", removedAt: null },
+    { itemId: "off-air", firstSeenAt: 0, buildId: "fixture-1", removedAt: null },
+  ], "the baseline knows the channels");
+  assert.equal(builds()[0]?.items, fixtureItems().items.length, "channels count as items");
+
+  clock.advance(1_000);
+  const t2 = clock.now();
+  const source = { id: "main", type: "direct", languages: { audio: ["tr"], subtitles: [] }, media: { kind: "hls", url: "https://media.example.test/sport.m3u8" } };
+  const sport = { id: "sport", kind: "live", title: "Spor", poster: null, playbackAllowed: true, sources: [source] };
+  await publish("fixture-2", (items) => [...items.filter((i) => i.id !== "off-air"), sport]);
+  await catalog.reload();
+  const b2 = store.getCatalogBuild(CATALOG, "fixture-2")!;
+  assert.deepEqual([b2.build.itemsAdded, b2.build.itemsRemoved, b2.build.episodesAdded, b2.build.episodesRemoved], [1, 1, 0, 0]);
+  assert.deepEqual(b2.changes.items, { added: [{ id: "sport", title: "Spor", kind: "live" }], removed: [{ id: "off-air", title: "Off air" }] });
+  assert.deepEqual(b2.changes.episodes, { added: [], removed: [] }, "channels never appear in the episode lists");
+  const seenItem = (id: string) => store.catalogSeenItems(CATALOG).find((i) => i.itemId === id);
+  assert.deepEqual(seenItem("sport"), { itemId: "sport", firstSeenAt: t2, buildId: "fixture-2", removedAt: null });
+  assert.equal(seenItem("off-air")?.removedAt, t2);
+
+  clock.advance(1_000);
+  await publish("fixture-3", (items) => [...items, sport]); // off-air is back, sport stays
+  await catalog.reload();
+  const b3 = store.getCatalogBuild(CATALOG, "fixture-3")!;
+  assert.deepEqual([b3.build.itemsAdded, b3.build.itemsRemoved], [1, 0]);
+  assert.deepEqual(b3.changes.items.added, [{ id: "off-air", title: "Off air", kind: "live" }]);
+  assert.deepEqual([seenItem("off-air")?.firstSeenAt, seenItem("off-air")?.removedAt], [0, null], "a returning channel keeps its first-seen date");
+  assert.deepEqual(store.episodesSeenAfter(CATALOG, "sport", 0), [], "a channel has no new episodes");
+
+  // A restart onto the same build records nothing more; a channel removed while the server was down has no title.
+  await service().load();
+  assert.equal(builds().length, 3);
+  clock.advance(1_000);
+  await publish("fixture-4", (items) => items.filter((i) => i.id !== "news"));
+  await service().load();
+  const b4 = store.getCatalogBuild(CATALOG, "fixture-4")!;
+  assert.deepEqual(b4.changes.items.removed, [{ id: "news", title: null }, { id: "sport", title: null }], "the published fixture never had sport");
 });

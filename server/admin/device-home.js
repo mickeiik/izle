@@ -1,6 +1,7 @@
 // @ts-check
 // The "Home screen" card of a TV's page: the shows in order (▲ ▼ Play Episodes… ✕), the "continue from" picker of
-// a series, and "Add shows". Every edit saves the whole list at once (`PUT …/home`).
+// a series, and "Add shows". A channel plays live: it has no "continue", progress or episodes. Every edit saves the
+// whole list at once (`PUT …/home`).
 
 import { api, attempt } from "./api.js";
 import { actionButton, card, chip, h, keepFocus, keyedRows, liveSearch, loadError, loading, poster, progressBar, setOff, showRow, uid } from "./dom.js";
@@ -53,7 +54,11 @@ export function homeCard(ctx) {
     };
     const up = actionButton("▲", { class: "icon", "data-control": "up" }, () => move(-1));
     const down = actionButton("▼", { class: "icon", "data-control": "down" }, () => move(1));
-    const play = actionButton("Play", { "data-control": "play" }, () => (entry.continue ? ctx.send({ type: "play", episodeId: entry.continue.episodeId }, "Play") : Promise.resolve()));
+    // A show plays the episode OK would play; a channel by its id, at its live edge.
+    const play = actionButton("Play", { "data-control": "play" }, () => {
+      if (entry.kind === "live") return entry.playable ? ctx.send({ type: "play", itemId }, "Play") : Promise.resolve();
+      return entry.continue ? ctx.send({ type: "play", episodeId: entry.continue.episodeId }, "Play") : Promise.resolve();
+    });
     // "Continue from here" closes the picker: the focus goes to its toggle.
     const picker = episodePicker(ctx, itemId, async () => {
       openPicker = null;
@@ -72,8 +77,9 @@ export function homeCard(ctx) {
     const element = h("li", null, h("div", { class: "row" }, art, h("div", { class: "grow" }, title, line, barBox), buttons), picker.element);
 
     const syncPicker = () => {
-      toggle.setAttribute("aria-expanded", String(openPicker === itemId));
-      picker.sync(entry, openPicker === itemId);
+      const open = openPicker === itemId && entry.kind === "series";
+      toggle.setAttribute("aria-expanded", String(open));
+      picker.sync(entry, open);
     };
 
     return {
@@ -89,18 +95,25 @@ export function homeCard(ctx) {
           art.replaceChildren(poster(e.posterUrl));
         }
         const c = e.continue;
+        const live = e.kind === "live";
+        // What the TV does with the entry: hides it (gone from the catalog, or nothing the catalog allows to play),
+        // plays a channel live, or continues a show.
         line.replaceChildren(
           ...(e.missing
             ? [chip("Missing from the catalog — hidden on the TV", "warn")]
-            : [continueText(c, e.kind), e.newEpisodes > 0 ? " " : "", e.newEpisodes > 0 ? chip(plural(e.newEpisodes, "new episode"), "info") : ""]),
+            : e.playable === false
+              ? [chip("Not playable — hidden on the TV", "warn")]
+              : live
+                ? [chip("Live", "live")]
+                : [continueText(c, e.kind), e.newEpisodes > 0 ? " " : "", e.newEpisodes > 0 ? chip(plural(e.newEpisodes, "new episode"), "info") : ""]),
         );
-        const bar = resumes(c) ? progressBar(percent(c.positionMs, c.durationMs), `${n}: how far`, `${formatClock(c.positionMs)} of ${formatClock(c.durationMs)}`) : null;
+        const bar = !live && resumes(c) ? progressBar(percent(c.positionMs, c.durationMs), `${n}: how far`, `${formatClock(c.positionMs)} of ${formatClock(c.durationMs)}`) : null;
         barBox.replaceChildren(...(bar ? [bar] : []));
         up.setAttribute("aria-label", `Move ${n} up`);
         down.setAttribute("aria-label", `Move ${n} down`);
         setOff(up, i === 0);
         setOff(down, i === all.length - 1);
-        play.hidden = !c;
+        play.hidden = live ? !e.playable : !c;
         play.setAttribute("aria-label", `Play ${n}`);
         toggle.hidden = e.kind !== "series";
         toggle.setAttribute("aria-label", `Episodes of ${n}`);
@@ -140,7 +153,7 @@ export function homeCard(ctx) {
       /** @param {any} next */
       update(next) {
         const onHome = entries.some((e) => e.itemId === next.id);
-        const why = onHome ? "On Home" : next.playableCount === 0 ? "Not playable" : entries.length >= HOME_MAX ? "Home is full" : null;
+        const why = onHome ? "On Home" : next.playable === false ? "Not playable" : entries.length >= HOME_MAX ? "Home is full" : null;
         add.hidden = why !== null;
         reason.hidden = why === null;
         reason.textContent = why ?? "";

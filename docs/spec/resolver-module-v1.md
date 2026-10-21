@@ -7,9 +7,10 @@ runnable example (module, a local stand-in upstream and a catalog) is in
 [`server/examples/resolver-example/`](../../server/examples/resolver-example/README.md).
 
 A resolver module is a small ES module, written and trusted by the owner, that turns the opaque `ref` of an
-`adapter` source in a [catalog bundle](catalog-bundle-v1.md) into a playable stream at play time, for streams that
-cannot be written into a bundle: signed and expiring URLs, playlists that need a `Referer`, upstreams that return
-playlist text instead of a URL.
+`adapter` source in a [catalog bundle](catalog-bundle-v1.md) (an episode's source, or a
+[live channel](catalog-bundle-v1.md#live-item)'s) into a playable stream at play time, for streams that cannot be
+written into a bundle: signed and expiring URLs, playlists that need a `Referer`, upstreams that return playlist
+text instead of a URL.
 
 ## Loading
 
@@ -55,7 +56,8 @@ export interface Adapter {
   healthcheck?(signal: AbortSignal): Promise<void>;
 }
 export interface ResolveRequest {
-  catalogId: string; itemId: string; episodeId: string; sourceId: string;
+  catalogId: string; itemId: string; sourceId: string;
+  episodeId: string | null;              // null: an item-level source (a live channel)
   ref: Record<string, unknown>;          // the source's ref, as written in the bundle
   preferredAudioLanguage: string | null; // the device's setting
   signal: AbortSignal;                   // aborted on deadline or when the TV goes away
@@ -68,18 +70,24 @@ ignores the rest; to fall back between distinct streams, list them as separate s
 can exclude a failing one. An empty array means "nothing playable right now"; throwing (or rejecting) means
 failure. The server records only the adapter id, a code (`timeout`, `abort`, `error`, or `empty` for an empty
 array) and the error's `name`, **never its message**, which often contains URLs. A source whose adapter failed is
-moved behind the episode's other sources for 10 minutes, like a source the TV reported as failing.
+moved behind the episode's (or the channel's) other sources for 10 minutes, like a source the TV reported as
+failing.
 
 An adapter may be asked for the **same episode a second time while the TV is playing it** (the owner's phone
 resolves another source, or the same one, for "Listen along"), so results must be reproducible and side effects
 idempotent; a site that counts plays or rate-limits per title is the owner's concern.
 
+A **channel** is not offered for "Listen along", but the TV that plays it resolves the same source again whenever
+it renews the stream: shortly before `expiresAt`, when the proxy session ends (a session lives at most 12 h) and
+after a player error. A channel can stay on for hours, so results must be reproducible there too, and each one must
+name the live stream as it is now (the TV restarts at its live edge).
+
 ## ResolveResult
 
 ```ts
 export interface ResolveResult {
-  media: { kind: "hls" | "dash" | "mp4"; url: string }
-       | { kind: "hls"; playlist: string; baseUrl: string };     // inline playlist text, ≤ 2 MiB
+  media: { kind: "hls" | "dash" | "mp4" | "ts"; url: string }
+       | { kind: "hls"; playlist: string; baseUrl: string };     // inline playlist text, ≤ 2 MiB, VOD only
   headers?: Record<string, string>;                               // upstream request headers
   languages?: LanguageFacts;                                      // overrides the bundle's facts for this result
   subtitleTracks?: Array<SubtitleTrack & { headers?: Record<string, string> }>;
@@ -92,14 +100,21 @@ export interface ResolveResult {
 - **`headers` present** — the server creates a proxy session and gives the TV a `/p/<token>/…` URL. Headers
   never leave the server. Playlists are rewritten so every URI (segments, keys, variant and subtitle playlists,
   `URI="…"` attributes) goes through the same session with the same headers. DASH with headers is not supported
-  in v1 (the proxy does not rewrite MPDs): such a result is skipped as `unsupported`; return HLS or MP4 when
+  in v1 (the proxy does not rewrite MPDs): such a result is skipped as `unsupported`; return HLS, MP4 or TS when
   headers are needed.
-- **Inline `playlist`** — served by the proxy as the session's playlist; relative URIs resolve against
-  `baseUrl`. The text must start with `#EXTM3U` and be at most 2 MiB (UTF-8).
+- **`ts` media** — progressive MPEG-TS over HTTP (for a channel, an endless response). With `headers` it is
+  proxied like `mp4` (`/p/<token>/stream.ts`, streamed through, never buffered); without, the URL goes to the TV
+  as-is, like any plain URL.
+- **Inline `playlist`** — **VOD only**: served by the proxy as given, as the session's playlist for the whole
+  session; relative URIs resolve against `baseUrl`. The text must start with `#EXTM3U` and be at most 2 MiB
+  (UTF-8). A channel's playlist slides forward, so it must come as a `url` (with `headers` when needed), which the
+  proxy fetches anew on every request.
 - **`subtitleTracks[].headers`** — that track alone is fetched through the proxy with its own headers.
 - **`languages`, `subtitleTracks`, `label`** — replace the bundle source's values for this playback.
-- **`expiresAt`** — passed to the TV (resolve response `expiresAt`) as a validity hint. Independently, an
-  upstream 401, 403 or 410 during playback marks the proxy session stale; the TV gets 410 and re-resolves.
+- **`expiresAt`** — passed to the TV (resolve response `expiresAt`) as a validity hint; the TV resolves the same
+  source again shortly before it. For a channel, new media from that call restarts playback at the live edge.
+  Independently, an upstream 401, 403 or 410 during playback marks the proxy session stale; the TV gets 410 and
+  re-resolves.
 
 Results are validated against `resolve-result.v1.schema.json`; an invalid result counts as an `error` named
 `InvalidResult` (or `NotAPlaylist` / `PlaylistTooLarge` for inline playlists).
@@ -127,6 +142,9 @@ Additive, optional changes (new optional context members, new optional result fi
 1 and are listed below. Anything else bumps `RESOLVER_API_VERSION`, and the server refuses modules declaring a
 version it does not implement.
 
+Until the first deployment the owner may change v1 in place; such changes are marked **breaking (pre-release)** in
+the changelog.
+
 ## Changelog
 
 - **v1 (2026-10-10)** — initial version.
@@ -138,3 +156,7 @@ version it does not implement.
 - **v1, log redaction (2026-10-18)** — no API change. `ctx.log` is described as the heuristic it is, and modules
   must not pass header maps, refs, config, playlist text, URLs or tokens to it in any shape. The server now also
   treats protocol-relative URLs as URLs and replaces playlist text by `<playlist>`.
+- **v1, live channels (2026-10-21)** — breaking (pre-release): `ResolveRequest.episodeId` is `string | null`
+  (`null` for an item-level source, a live channel); inline playlists are VOD-only (a channel's playlist comes as
+  a `url`); media kind `ts`, proxied like `mp4`. A channel is resolved again at `expiresAt`, when its proxy
+  session ends and after a player error.

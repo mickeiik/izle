@@ -263,3 +263,108 @@ test("request validation", async (t) => {
   const big = await s.call("POST", "/api/v1/tv/resolve", { token: tv.token, raw: JSON.stringify({ episodeId: "x".repeat(70_000) }) });
   assert.equal(big.status, 413);
 });
+
+test("channels: on Home with continue null, their sources under channel, never a cursor; unplayable ones stay off Home", async (t) => {
+  const { s, tv, as } = await setup(t);
+  await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["news", "film"] });
+  const state = await as("GET", "/state");
+  const [news] = state.json.home;
+  assert.match(news.item.posterUrl, /^\/assets\/[0-9a-f]{64}\.png$/);
+  assert.deepEqual(news, { item: { id: "news", kind: "live", title: "Haber 24", year: null, posterUrl: news.item.posterUrl, backdropUrl: null }, continue: null, newEpisodes: 0 });
+  assert.ok(state.json.home[1].continue, "episodes keep their continue");
+  const refused = await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["news", "off-air"] });
+  assert.deepEqual([refused.status, refused.json.error, refused.json.itemId], [400, "not_playable", "off-air"]);
+
+  const item = await as("GET", "/items/news");
+  assert.equal(item.status, 200);
+  assert.deepEqual(Object.keys(item.json).sort(), ["channel", "item"], "no episodes, no cursor");
+  assert.deepEqual(item.json.item, { id: "news", kind: "live", title: "Haber 24", year: null, posterUrl: news.item.posterUrl, backdropUrl: null, originalTitle: null, synopsis: null, genres: [] });
+  assert.deepEqual(item.json.channel, {
+    playbackAllowed: true,
+    sources: [
+      { id: "hls", label: null, languages: { audio: ["tr"], subtitles: [] } },
+      { id: "ts", label: null, languages: { audio: ["tr"], subtitles: [] } },
+      { id: "en", label: null, languages: { audio: ["en"], subtitles: [] } },
+    ],
+  });
+  assert.ok(!JSON.stringify(item.json).includes("example.test"), "no URLs or headers reach the TV");
+  assert.deepEqual((await as("GET", "/items/off-air")).json.channel, { playbackAllowed: false, sources: [] });
+
+  const cursor = await s.admin("PUT", `/devices/${tv.deviceId}/cursor`, { itemId: "news", episodeId: "news" });
+  assert.deepEqual([cursor.status, cursor.json.error], [400, "unknown_episode"], "a channel has no cursor");
+});
+
+test("resolve by item id: a channel plays at its live edge, MPEG-TS with headers comes as stream.ts; the errors", async (t) => {
+  const { s, tv, as } = await setup(t);
+  const r = await as("POST", "/resolve", { itemId: "news" });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.sourceId, "hls", "device preference tr: hls and ts match, en does not");
+  assert.deepEqual(r.json.media, { kind: "hls", url: "https://media.example.test/news/live.m3u8" });
+  assert.deepEqual(r.json.alternatives, ["ts", "en"]);
+  assert.deepEqual([r.json.next, r.json.episode, r.json.resume, r.json.expiresAt], [null, null, null, null]);
+  assert.deepEqual([r.json.item.id, r.json.item.kind, r.json.item.year], ["news", "live", null]);
+  assert.match(r.json.sessionId, /^[A-Za-z0-9_-]{16}$/);
+
+  const ts = await as("POST", "/resolve", { itemId: "news", sourceId: "ts" });
+  assert.equal(ts.json.media.kind, "ts");
+  assert.match(ts.json.media.url, /^\/p\/[A-Za-z0-9_-]{43}\/stream\.ts$/, "header-bound MPEG-TS goes through the proxy");
+  assert.ok(!JSON.stringify(ts.json).includes("site.example.test"), "upstream headers never reach the TV");
+  assert.deepEqual(ts.json.alternatives, []);
+
+  // A failure on the channel is remembered for the channel, like an episode's.
+  const excluded = await as("POST", "/resolve", { itemId: "news", exclude: ["hls"] });
+  assert.equal(excluded.json.sourceId, "ts");
+  assert.deepEqual((await as("POST", "/resolve", { itemId: "news" })).json.alternatives, ["en", "hls"], "hls failed recently and goes last");
+
+  const now = (await s.admin("GET", `/devices/${tv.deviceId}/now`)).json;
+  const { itemId, itemKind, episodeId, sourceId, itemTitle, episodeTitle, positionMs, durationMs, state } = now.nowPlaying;
+  assert.deepEqual({ itemId, itemKind, episodeId, sourceId, itemTitle, episodeTitle, positionMs, durationMs, state }, {
+    itemId: "news", itemKind: "live", episodeId: null, sourceId: "ts", itemTitle: "Haber 24", episodeTitle: null, positionMs: null, durationMs: null, state: "starting",
+  });
+  assert.equal(now.anchor, null, "a channel has no timeline to anchor");
+
+  const errors: Array<[Json, number, string]> = [
+    [{ itemId: "show" }, 400, "has_episodes"], [{ itemId: "nope" }, 404, "unknown_item"], [{ itemId: "off-air" }, 403, "not_allowed"],
+    [{ itemId: "news", sourceId: "nope" }, 404, "unknown_source"], [{ episodeId: "news" }, 404, "unknown_episode"],
+    [{ itemId: "news", episodeId: "show.e1" }, 400, "invalid_request"], [{}, 400, "invalid_request"], [{ itemId: "" }, 400, "invalid_request"],
+  ];
+  for (const [body, status, error] of errors) {
+    const e = await as("POST", "/resolve", body);
+    assert.deepEqual([e.status, e.json.error], [status, error], JSON.stringify(body));
+  }
+});
+
+test("a channel's report: no position, no cursor, no state bump; now playing with null positions", async (t) => {
+  const { s, tv, as } = await setup(t);
+  const r = await as("POST", "/resolve", { itemId: "news" });
+  const v0 = (await as("GET", "/state")).json.version;
+  const t0 = s.clock.now();
+  const hb = await as("POST", "/progress", { sessionId: r.json.sessionId, itemId: "news", status: "playing" });
+  assert.deepEqual([hb.status, hb.json], [200, { ok: true, version: v0 }]);
+  let now = (await s.admin("GET", `/devices/${tv.deviceId}/now`)).json;
+  assert.deepEqual(
+    [now.nowPlaying.state, now.nowPlaying.playing, now.nowPlaying.sourceId, now.nowPlaying.positionMs, now.nowPlaying.durationMs, now.anchor],
+    ["playing", true, "hls", null, null, null],
+  );
+  s.clock.advance(15_000);
+  await as("POST", "/progress", { itemId: "news", status: "playing", playing: false, ageMs: 2_000 });
+  now = (await s.admin("GET", `/devices/${tv.deviceId}/now`)).json;
+  assert.deepEqual([now.nowPlaying.playing, now.nowPlaying.sourceId, now.nowPlaying.updatedAt], [false, null, new Date(t0 + 15_000).toISOString()], "a stall; no session named");
+  const stop = await as("POST", "/progress", { itemId: "news", status: "stopped" });
+  assert.equal(stop.json.version, v0, "a channel's stop never bumps the state version");
+  assert.equal((await as("GET", "/state")).json.version, v0);
+  assert.equal((await s.admin("GET", `/devices/${tv.deviceId}/now`)).json.nowPlaying.state, "stopped");
+  assert.deepEqual((await s.admin("GET", `/devices/${tv.deviceId}/progress`)).json, { cursors: [], progress: [] }, "nothing saved");
+
+  for (const bad of [
+    { itemId: "news", status: "paused" }, { itemId: "news", status: "finished" }, { itemId: "news", status: "playing", positionMs: 0 },
+    { itemId: "news", status: "playing", durationMs: 1 }, { itemId: "news", episodeId: "show.e1", status: "playing", positionMs: 0 }, { itemId: "news" },
+    { status: "playing" }, { itemId: "news", status: "playing", ageMs: 60_001 },
+  ]) {
+    const e = await as("POST", "/progress", bad);
+    assert.deepEqual([e.status, e.json.error], [400, "invalid_request"], JSON.stringify(bad));
+  }
+  assert.deepEqual([(await as("POST", "/progress", { itemId: "nope", status: "playing" })).status], [404]);
+  const show = await as("POST", "/progress", { itemId: "show", status: "playing" });
+  assert.deepEqual([show.status, show.json.error], [400, "has_episodes"]);
+});

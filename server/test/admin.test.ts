@@ -289,7 +289,7 @@ test("catalog: info, accent-insensitive search, item detail without upstream URL
   const { s } = await setup(t);
   const info = await s.admin("GET", "/catalog");
   assert.equal(info.json.id, "fixture");
-  assert.equal(info.json.stats.items, 16);
+  assert.deepEqual([info.json.stats.items, info.json.stats.live], [18, 2]);
   assert.match(info.json.server.version, /^\d+\.\d+\.\d+/);
   const search = await s.admin("GET", "/catalog/search?q=sov");
   assert.deepEqual(search.json.items.map((i: { id: string }) => i.id), ["show"]);
@@ -373,7 +373,7 @@ test("catalog reload on SIGHUP: bumps every TV like the route; a reload that thr
 test("catalog builds: the baseline, then each reload's changes newest first; one build by id; unknown build", async (t) => {
   const { s } = await setup(t);
   const baseline = {
-    buildId: "fixture-1", builtAt: "2026-10-10T12:00:00Z", loadedAt: "2026-10-10T12:00:00.000Z", baseline: true, counts: { items: 16, episodes: 20 },
+    buildId: "fixture-1", builtAt: "2026-10-10T12:00:00Z", loadedAt: "2026-10-10T12:00:00.000Z", baseline: true, counts: { items: 18, episodes: 20 },
     added: { items: 0, episodes: 0 }, removed: { items: 0, episodes: 0 },
   };
   const first = await s.admin("GET", "/catalog");
@@ -389,7 +389,7 @@ test("catalog builds: the baseline, then each reload's changes newest first; one
   assert.deepEqual(reload.json.catalog.builds.map((b: { buildId: string }) => b.buildId), ["fixture-2", "fixture-1"], "the reload answers with the new history");
   const second = await s.admin("GET", "/catalog");
   const build2 = {
-    buildId: "fixture-2", builtAt: "2026-10-10T12:00:00Z", loadedAt: "2026-10-10T13:00:00.000Z", baseline: false, counts: { items: 15, episodes: 19 },
+    buildId: "fixture-2", builtAt: "2026-10-10T12:00:00Z", loadedAt: "2026-10-10T13:00:00.000Z", baseline: false, counts: { items: 17, episodes: 19 },
     added: { items: 0, episodes: 0 }, removed: { items: 1, episodes: 1 },
   };
   assert.deepEqual(second.json.builds, [build2, baseline]);
@@ -435,7 +435,7 @@ test("catalog builds: the baseline, then each reload's changes newest first; one
   const empty = { items: { added: [], removed: [] }, episodes: { added: [], removed: [] } };
   for (let i = 0; i < 50; i++) {
     store.recordCatalogBuild(
-      { catalogId: "fixture", buildId: `old-${i}`, builtAt: "2026-10-01T00:00:00Z", loadedAt: s.clock.now() + 1000 + i, baseline: false, items: 16, episodes: 21, itemsAdded: 0, itemsRemoved: 0, episodesAdded: 0, episodesRemoved: 0 },
+      { catalogId: "fixture", buildId: `old-${i}`, builtAt: "2026-10-01T00:00:00Z", loadedAt: s.clock.now() + 1000 + i, baseline: false, items: 18, episodes: 21, itemsAdded: 0, itemsRemoved: 0, episodesAdded: 0, episodesRemoved: 0 },
       empty,
     );
   }
@@ -445,4 +445,34 @@ test("catalog builds: the baseline, then each reload's changes newest first; one
   assert.ok(!capped.json.builds.some((b: Json) => b.baseline), "the baseline fell off the list");
   assert.deepEqual(capped.json.changes, empty, "the latest build's changes");
   assert.equal((await s.admin("GET", "/catalog/builds/fixture-1")).status, 200);
+});
+
+test("channels on the admin side: search hits and item details, playable on the home rows, no cursor", async (t) => {
+  const { s, tv } = await setup(t);
+  const hit = (await s.admin("GET", "/catalog/search?q=haber")).json.items[0];
+  assert.deepEqual(hit, { id: "news", kind: "live", title: "Haber 24", year: null, posterUrl: hit.posterUrl, backdropUrl: null, episodeCount: null, playableCount: null, playable: true });
+  const playable = async (q: string) => (await s.admin("GET", `/catalog/search?q=${q}`)).json.items[0].playable;
+  assert.deepEqual([await playable("off"), await playable("sov"), await playable("locked")], [false, true, false]);
+
+  const item = (await s.admin("GET", "/catalog/items/news")).json.item;
+  assert.deepEqual(Object.keys(item).sort(), ["backdropUrl", "genres", "id", "kind", "originalTitle", "playbackAllowed", "posterUrl", "sources", "synopsis", "title", "year"]);
+  assert.equal(item.playbackAllowed, true);
+  assert.deepEqual(item.sources, [
+    { id: "hls", type: "direct", label: null, languages: { audio: ["tr"], subtitles: [] }, kind: "hls", needsProxy: false },
+    { id: "ts", type: "direct", label: null, languages: { audio: ["tr"], subtitles: [] }, kind: "ts", needsProxy: true },
+    { id: "en", type: "direct", label: null, languages: { audio: ["en"], subtitles: [] }, kind: "hls", needsProxy: false },
+  ]);
+  assert.ok(!JSON.stringify(item).includes("example.test"), "no upstream URLs or headers");
+  assert.deepEqual((await s.admin("GET", "/catalog/items/off-air")).json.item.sources, []);
+
+  await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["news", "show"] });
+  const rows = (await s.admin("GET", `/devices/${tv.deviceId}`)).json.home;
+  assert.deepEqual(rows.map((r: Json) => [r.itemId, r.kind, r.playable, r.continue, r.newEpisodes]), [["news", "live", true, null, 0], ["show", "series", true, rows[1].continue, 0]]);
+  assert.equal(rows[1].continue.episodeId, "show.e1");
+  const refused = await s.admin("POST", `/devices/${tv.deviceId}/home/items`, { itemId: "off-air" });
+  assert.deepEqual([refused.status, refused.json.error], [400, "not_playable"]);
+  await publishBuild(s.bundleDir, "fixture-2", (items) => items.filter((i) => i.id !== "news"));
+  assert.equal((await s.admin("POST", "/catalog/reload")).status, 200);
+  const gone = (await s.admin("GET", `/devices/${tv.deviceId}`)).json.home[0];
+  assert.deepEqual([gone.itemId, gone.missing, gone.playable, gone.continue], ["news", true, false, null]);
 });

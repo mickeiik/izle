@@ -2,9 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import path from "node:path";
-import { DEFAULT_API_KEY, DEFAULT_REFERER, junkBytes, startUpstream, syntheticMedia, syntheticTsSegment } from "../examples/resolver-example/upstream.js";
+import { DEFAULT_API_KEY, DEFAULT_REFERER, junkBytes, liveWindow, startUpstream, syntheticMedia, syntheticTsSegment } from "../examples/resolver-example/upstream.js";
 import { REWRITE_LIMITS } from "../src/proxy.ts";
-import { fixtureManifest, listen, startTestServer, tempDir, TEST_RESOLVER, writeBundle, type Json } from "./helpers.ts";
+import { eventually, fixtureManifest, listen, startTestServer, tempDir, TEST_RESOLVER, writeBundle, type Json, type TestServer } from "./helpers.ts";
 import { seenSignals } from "./fixtures/test-resolver.js";
 
 const PROXY_URL = /^\/p\/([A-Za-z0-9_-]{43})\/(index\.m3u8|video\.mp4)$/;
@@ -14,6 +14,7 @@ const exampleSource = (id: string, ref: Json) => ({ id, type: "adapter", adapter
 const testSource = (id: string, ref: Json) => ({ id, type: "adapter", adapter: "test", ref, languages: { audio: null, subtitles: null } });
 const direct = (id: string, media: Json) => ({ id, type: "direct", languages: { audio: ["en"], subtitles: [] }, media });
 const movie = (id: string, sources: Json[]) => ({ id, kind: "movie", title: id, poster: null, episodes: [{ id: `${id}.main`, playbackAllowed: true, sources }] });
+const channel = (id: string, sources: Json[]) => ({ id, kind: "live", title: id, poster: null, playbackAllowed: true, sources });
 
 /** A bundle whose sources resolve against the example upstream at `up`. */
 function proxyItems(up: string): Json {
@@ -24,6 +25,7 @@ function proxyItems(up: string): Json {
       movie("mp4", [exampleSource("mp4", { video: "demo", format: "mp4" })]),
       movie("junk", [exampleSource("junk", { video: "demo", junkBytes: 1000 })]),
       movie("static", [direct("direct-referer", { kind: "hls", url: `${up}/static/demo/master.m3u8`, headers: REF })]),
+      channel("live", [exampleSource("signed-live", { video: "demo", live: true }), exampleSource("raw-ts", { video: "demo", format: "ts" })]),
       movie("fallback", [exampleSource("gone", { video: "gone" }), testSource("broken", { behavior: "throw" }), exampleSource("works", { video: "demo" })]),
       movie("hang", [testSource("hang", { behavior: "hang" }), testSource("hang2", { behavior: "hang-signal" })]),
       movie("hostile", [
@@ -77,12 +79,13 @@ async function setupProxy(t: { after(fn: () => unknown): void }, opts: SetupOpti
   t.after(() => s.close());
   const tv = await s.pair();
   const resolve = (episodeId: string, extra: Json = {}) => s.call("POST", "/api/v1/tv/resolve", { token: tv.token, body: { episodeId, ...extra } });
+  const resolveChannel = (itemId: string, extra: Json = {}) => s.call("POST", "/api/v1/tv/resolve", { token: tv.token, body: { itemId, ...extra } });
   const get = (p: string, headers: Record<string, string> = {}) => fetch(`${s.base}${p}`, { headers });
   const text = async (p: string) => {
     const res = await get(p);
     return { status: res.status, type: res.headers.get("content-type"), body: await res.text() };
   };
-  return { s, up, tv, resolve, get, text, advanceUpstream: (ms: number) => void (upNow += ms) };
+  return { s, up, tv, resolve, resolveChannel, get, text, advanceUpstream: (ms: number) => void (upNow += ms), upstreamNow: () => upNow };
 }
 
 /** URIs of a playlist: URI lines and URI="…" attributes. */
@@ -93,6 +96,14 @@ function uris(playlist: string): string[] {
     else if (line.trim()) out.push(line.trim());
   }
   return out;
+}
+
+/** What the TV got and the server's logs name neither the upstream, nor its Referer, nor a signed upstream path. */
+function assertNoLeaks(s: TestServer, upstream: string, answers: Json[], secrets: string[]) {
+  const visible = JSON.stringify(answers);
+  for (const leak of [upstream, "player.example.test", "Referer", "/s/"]) assert.ok(!visible.includes(leak), `resolve leaked ${leak}`);
+  const logs = s.logs.join("\n");
+  for (const leak of [upstream, "player.example.test", "/s/", DEFAULT_API_KEY, ...secrets]) assert.ok(!logs.includes(leak), `log leaked ${leak.slice(0, 20)}`);
 }
 
 test("Referer-bound HLS plays only through the proxy, with every URI rewritten and signed", async (t) => {
@@ -414,7 +425,7 @@ test("adapter failures reach the TV and the log only as {adapterId, code, name};
   const failures = s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === "adapter failed");
   assert.ok(failures.length >= 5);
   for (const f of failures) {
-    const keys = ["adapterId", "code", "deviceId", "episodeId", "ms", ...("name" in f ? ["name"] : []), "sourceId"];
+    const keys = ["adapterId", "code", "deviceId", "episodeId", "itemId", "ms", ...("name" in f ? ["name"] : []), "sourceId"];
     assert.deepEqual(Object.keys(f).filter((k) => !["time", "level", "msg"].includes(k)).sort(), keys.sort());
   }
 });
@@ -466,4 +477,168 @@ test("admin diagnostics: every source tried, hosts and header names only, option
   assert.equal((await s.admin("POST", "/diagnostics/resolve", { episodeId: "nope" })).status, 404);
   assert.equal((await s.call("POST", "/api/v1/admin/diagnostics/resolve", { token: tv.token, body: { episodeId: "hls.main" } })).status, 401);
   assert.deepEqual((await s.admin("GET", "/catalog")).json.resolver.adapters, ["example", "test"]);
+});
+
+test("MPEG-TS through the proxy: stream.ts streams through with Range forwarded and is never aligned; plain ts goes direct", async (t) => {
+  // A stand-in for an IPTV-style channel: a Referer-bound endless-looking stream whose bytes start with junk (which
+  // the segment aligner would cut from an HLS segment, never from stream.ts).
+  const bytes = Buffer.concat([junkBytes(300), syntheticTsSegment(5)]);
+  let refuse = false;
+  const upstream = createServer((req, res) => {
+    if (req.headers.referer !== DEFAULT_REFERER || refuse) return void res.writeHead(403).end("no");
+    const m = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
+    if (m) {
+      const [start, end] = [Number(m[1]), m[2] ? Number(m[2]) : bytes.length - 1];
+      res.writeHead(206, { "Content-Type": "video/mp2t", "Content-Range": `bytes ${start}-${end}/${bytes.length}`, "Content-Length": end - start + 1, "Accept-Ranges": "bytes" });
+      return void res.end(bytes.subarray(start, end + 1));
+    }
+    res.writeHead(200, { "Content-Type": "video/mp2t" });
+    res.end(bytes);
+  });
+  const local = await listen(upstream);
+  t.after(() => local.close());
+  const items = () => ({
+    items: [
+      channel("iptv", [direct("ts", { kind: "ts", url: `${local.url}/live.ts`, headers: REF })]),
+      channel("plain", [direct("ts", { kind: "ts", url: "https://media.example.test/live.ts" })]),
+    ],
+  });
+  const { s, tv, get } = await setupProxy(t, { items, configFile: { proxy: { alignTsSegments: true } } });
+  const resolveItem = (itemId: string) => s.call("POST", "/api/v1/tv/resolve", { token: tv.token, body: { itemId } });
+
+  const r = await resolveItem("iptv");
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.media.kind, "ts");
+  const [, token] = /^\/p\/([A-Za-z0-9_-]{43})\/stream\.ts$/.exec(r.json.media.url) ?? [];
+  assert.ok(token, r.json.media.url);
+  const whole = await get(r.json.media.url);
+  assert.equal(whole.status, 200);
+  assert.equal(whole.headers.get("content-type"), "video/mp2t");
+  assert.deepEqual(Buffer.from(await whole.arrayBuffer()), bytes, "streamed as it is: alignment applies to HLS segments only");
+  const part = await get(r.json.media.url, { Range: "bytes=300-487" });
+  assert.equal(part.status, 206);
+  assert.equal(part.headers.get("content-range"), `bytes 300-487/${bytes.length}`);
+  assert.deepEqual(Buffer.from(await part.arrayBuffer()), bytes.subarray(300, 488));
+  assert.equal((await get(`/p/${token}/video.mp4`)).status, 404, "an MPEG-TS session has no MP4 entry");
+  assert.equal((await get(`/p/${token}/index.m3u8`)).status, 404, "nor a playlist");
+
+  const plain = await resolveItem("plain");
+  assert.deepEqual(plain.json.media, { kind: "ts", url: "https://media.example.test/live.ts" }, "without headers the URL goes to the TV as it is");
+
+  // An upstream refusal marks the session stale and is reported with what was requested: the stream.
+  refuse = true;
+  const stale = await get(r.json.media.url);
+  assert.deepEqual([stale.status, await stale.json()], [410, { error: "stale" }]);
+  const problems = (await s.admin("GET", `/devices/${tv.deviceId}/problems`)).json.problems;
+  assert.deepEqual(problems.map((p: Json) => [p.kind, p.code, p.httpStatus, p.detail, p.itemId]), [["proxy", "upstream_403", 403, "stream", "iptv"]]);
+  assert.ok(!s.logs.join("\n").includes(token!), "the session token is never logged");
+});
+
+test("a channel's live playlist is fetched and rewritten anew on every request, so it slides on", async (t) => {
+  const { s, up, resolveChannel, get, text, advanceUpstream, upstreamNow } = await setupProxy(t);
+  const r = await resolveChannel("live");
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.sourceId, "signed-live");
+  assert.deepEqual([r.json.item.kind, r.json.episode, r.json.next, r.json.resume], ["live", null, null, null]);
+  assert.equal(r.json.media.kind, "hls");
+  const [, token] = PROXY_URL.exec(r.json.media.url) ?? [];
+  assert.ok(token, r.json.media.url);
+  assert.equal(r.json.expiresAt, "2026-10-10T12:10:00.000Z");
+
+  const fetches = () => up.requests.filter((q) => q.path === "/s/<token>/demo/live.m3u8").length;
+  const playlist = async () => {
+    const before = fetches();
+    const pl = await text(r.json.media.url);
+    assert.equal(pl.status, 200);
+    assert.equal(fetches(), before + 1, "every request of the playlist fetches it upstream");
+    assert.doesNotMatch(pl.body, /#EXT-X-ENDLIST|#EXT-X-PLAYLIST-TYPE/, "a live playlist has no end");
+    assert.match(pl.body, /^#EXT-X-TARGETDURATION:6$/m);
+    const segments = uris(pl.body);
+    assert.equal(segments.length, 5);
+    for (const u of segments) assert.match(u, /^u\/r\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{22}\.ts$/, "signed segment links");
+    return { sequence: Number(/^#EXT-X-MEDIA-SEQUENCE:(\d+)$/m.exec(pl.body)![1]), segments };
+  };
+  const segment = async (link: string) => {
+    const res = await get(`/p/${token}/${link}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("content-type"), "video/mp2t");
+    return Buffer.from(await res.arrayBuffer());
+  };
+
+  const one = await playlist();
+  assert.equal(one.sequence, liveWindow(upstreamNow()).first);
+  assert.deepEqual(await segment(one.segments[0]!), syntheticTsSegment(one.sequence));
+  advanceUpstream(12_000); // two segments later
+  const two = await playlist();
+  assert.equal(two.sequence, one.sequence + 2, "the media sequence moved on with the upstream's clock");
+  assert.deepEqual(two.segments.slice(0, 3), one.segments.slice(2), "the window slid by two segments");
+  assert.deepEqual(await segment(two.segments[4]!), syntheticTsSegment(two.sequence + 4), "a new segment plays");
+  for (const q of up.requests.filter((q) => q.path.startsWith("/s/"))) assert.equal(q.referer, DEFAULT_REFERER, q.path);
+
+  assertNoLeaks(s, up.url, [r.json], [token!, one.segments[0]!.split(".")[1]!]);
+});
+
+test("a channel whose playlist URL expired goes stale (410); resolving it again continues its viewing", async (t) => {
+  const { s, tv, up, resolveChannel, get, text, advanceUpstream, upstreamNow } = await setupProxy(t);
+  const r = await resolveChannel("live");
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal((await text(r.json.media.url)).status, 200);
+  const report = await s.call("POST", "/api/v1/tv/progress", { token: tv.token, body: { sessionId: r.json.sessionId, itemId: "live", status: "playing" } });
+  assert.equal(report.status, 200, JSON.stringify(report.json));
+  const viewing = s.srv.ctx.viewings.running(tv.deviceId);
+  assert.deepEqual([viewing?.itemId, viewing?.episodeId, viewing?.sourceId], ["live", null, "signed-live"]);
+
+  advanceUpstream(601_000); // the signed playlist URL expired upstream
+  const stale = await get(r.json.media.url);
+  assert.deepEqual([stale.status, await stale.json()], [410, { error: "stale" }]);
+
+  // The TV resolves the channel again, the same source first (a URL that expired), and plays from the live edge.
+  const again = await resolveChannel("live", { sourceId: r.json.sourceId });
+  assert.equal(again.status, 200, JSON.stringify(again.json));
+  assert.equal(again.json.sourceId, r.json.sourceId);
+  assert.notEqual(again.json.media.url, r.json.media.url);
+  assert.equal(again.json.expiresAt, "2026-10-10T12:20:01.000Z");
+  const pl = await text(again.json.media.url);
+  assert.equal(pl.status, 200);
+  const [, token] = PROXY_URL.exec(again.json.media.url)!;
+  const first = await get(`/p/${token}/${uris(pl.body)[0]}`);
+  assert.deepEqual(Buffer.from(await first.arrayBuffer()), syntheticTsSegment(liveWindow(upstreamNow()).first));
+  assert.equal(s.srv.ctx.viewings.running(tv.deviceId)?.id, viewing!.id, "the same viewing goes on");
+
+  const problems = (await s.admin("GET", `/devices/${tv.deviceId}/problems`)).json.problems;
+  const seen = problems.map((p: Json) => [p.kind, p.code, p.httpStatus, p.detail, p.itemId, p.itemKind, p.episodeId, p.sourceId]);
+  assert.deepEqual(seen, [["proxy", "upstream_403", 403, "playlist", "live", "live", null, "signed-live"]]);
+  assertNoLeaks(s, up.url, [r.json, again.json, problems], [token!]);
+});
+
+test("a channel's raw MPEG-TS stream plays through the proxy from the live window; a TV that leaves ends it upstream", async (t) => {
+  const { s, up, resolveChannel, upstreamNow } = await setupProxy(t);
+  const r = await resolveChannel("live", { sourceId: "raw-ts" });
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.media.kind, "ts");
+  const [, token] = /^\/p\/([A-Za-z0-9_-]{43})\/stream\.ts$/.exec(r.json.media.url) ?? [];
+  assert.ok(token, r.json.media.url);
+
+  const controller = new AbortController();
+  const res = await fetch(`${s.base}${r.json.media.url}`, { signal: controller.signal });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "video/mp2t");
+  assert.equal(res.headers.get("content-length"), null, "an endless stream has no length");
+  const expected = syntheticTsSegment(liveWindow(upstreamNow()).first);
+  const reader = res.body!.getReader();
+  const chunks: Uint8Array[] = [];
+  for (let got = 0; got < expected.length; ) {
+    const { done, value } = await reader.read();
+    assert.ok(!done, "the stream goes on");
+    chunks.push(value);
+    got += value.byteLength;
+  }
+  assert.deepEqual(Buffer.concat(chunks).subarray(0, expected.length), expected);
+
+  // The upstream records a request's status once its connection closes: the stream is still open.
+  const upstream = up.requests.find((q) => q.path === "/s/<token>/demo/stream.ts");
+  assert.deepEqual([upstream?.referer, upstream?.status], [DEFAULT_REFERER, 0]);
+  controller.abort();
+  await eventually(() => upstream!.status === 200);
+  assertNoLeaks(s, up.url, [r.json], [token!]);
 });

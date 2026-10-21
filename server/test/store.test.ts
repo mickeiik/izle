@@ -342,3 +342,71 @@ test("catalog history rows: episodes seen after a date, removal and return, buil
   assert.deepEqual(s.listCatalogBuilds("c", 10).map((b) => b.buildId), ["b2", "b3", "b1"], "a build loaded again moves to its new load time");
   s.close();
 });
+
+test("migration 9: now playing and viewings may name a channel; rows, ranges and the viewing id sequence survive the rebuild", async () => {
+  const file = path.join(await tempDir(), "izle.db");
+  const raw = new DatabaseSync(file);
+  for (const m of MIGRATIONS.slice(0, 8)) raw.exec(m);
+  raw.exec("PRAGMA user_version = 8");
+  raw.exec("INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'Salon', 'h', 1)");
+  raw.exec(`INSERT INTO now_playing (device_id, catalog_id, item_id, episode_id, source_id, position_ms, duration_ms, state, updated_at, playing, anchor_at, seq)
+    VALUES ('d1', 'c', 'i', 'e', 's', 5, 10, 'paused', 2, 1, 1, 3)`);
+  const actor = '{"type":"tv","deviceId":"d1"}';
+  raw.exec(`INSERT INTO viewings (id, device_id, device_name, catalog_id, item_id, item_kind, item_title, episode_id, started_at, ended_at, end_position_ms, duration_ms, watched_ms, end_reason, seen, trigger, actor_json)
+    VALUES (1, 'd1', 'Salon', 'c', 'i', 'series', 'Show', 'e1', 10, 20, 100, 1000, 90, 'stopped', 0, 'viewer', '${actor}'),
+           (2, 'd1', 'Salon', 'c', 'i', 'series', 'Show', 'e2', 30, 40, 1000, 1000, 900, 'finished', 1, 'viewer', '${actor}'),
+           (3, 'd1', 'Salon', 'c', 'i', 'series', 'Show', 'e3', 50, 60, 10, 1000, 5, 'stopped', 0, 'viewer', '${actor}')`);
+  raw.exec("INSERT INTO viewing_ranges (viewing_id, from_ms, to_ms) VALUES (1, 0, 100), (2, 0, 1000)");
+  raw.exec("DELETE FROM viewings WHERE id = 3"); // the sequence stands at 3
+  raw.close();
+
+  const s = new Store(file);
+  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  assert.deepEqual(s.getNowPlaying("d1"), { catalogId: "c", itemId: "i", episodeId: "e", sourceId: "s", positionMs: 5, durationMs: 10, state: "paused", updatedAt: 2, playing: true, anchorAt: 1, seq: 3 });
+  assert.deepEqual(s.listViewings({ catalogId: "c", limit: 10 }).map((v) => [v.id, v.episodeId, v.seen, v.actor]), [[2, "e2", true, { type: "tv", deviceId: "d1" }], [1, "e1", false, { type: "tv", deviceId: "d1" }]]);
+  assert.deepEqual([s.viewingRanges(1), s.viewingRanges(2)], [[[0, 100]], [[0, 1000]]]);
+
+  const base = { deviceId: "d1", deviceName: "Salon", catalogId: "c", itemId: "news", itemKind: "live", itemTitle: "News", episodeTitle: null, season: null, number: null, sourceId: "hls", startedAt: 70, endedAt: null, startPositionMs: null, endPositionMs: null, durationMs: null, watchedMs: 0, endReason: null, seen: false, trigger: "viewer" as const, actor: { type: "tv" as const, deviceId: "d1" }, commandId: null, imported: false, lastReportAt: null, lastPositionMs: null, lastPlaying: false, lastAnchorAt: null, lastState: null };
+  const live = s.insertViewing({ ...base, episodeId: null });
+  assert.deepEqual([live.id, live.episodeId, live.startPositionMs], [4, null, null], "the id sequence continues past the deleted viewing");
+  assert.equal(s.runningViewing("d1")?.id, 4);
+  const stats = s.episodeViewingStats("c", null, "news");
+  assert.deepEqual(stats.map((x) => [x.itemId, x.episodeId, x.viewings]), [["news", null, 1]], "a channel's viewings are summed under a null episode");
+  assert.equal(s.historyEpisodeItem("c", "news"), null, "a channel's item id is no episode id");
+  assert.deepEqual([...s.historyItems("c").entries()], [["i", { kind: "series", title: "Show" }], ["news", { kind: "live", title: "News" }]]);
+
+  const row = { catalogId: "c", itemId: "news", episodeId: null, sourceId: "hls", positionMs: null, durationMs: null, state: "playing" as const, updatedAt: 5, playing: true, anchorAt: 5 };
+  assert.equal(s.setNowPlaying("d1", row), 4, "the sequence number carries on");
+  assert.deepEqual(s.getNowPlaying("d1"), { ...row, seq: 4 });
+
+  s.addViewingRange(2, 1000, 1100);
+  assert.throws(() => s.addViewingRange(999, 0, 1), /FOREIGN KEY/, "ranges still belong to viewings");
+  assert.equal(s.deleteViewing(2), true);
+  assert.deepEqual(s.viewingRanges(2), [], "deleting a viewing still deletes its ranges");
+  const db = new DatabaseSync(file);
+  const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name IN ('viewings', 'viewing_ranges') ORDER BY name").all().map((r) => r.name);
+  assert.deepEqual(indexes, ["viewing_ranges_by_viewing", "viewings_by_device", "viewings_by_end", "viewings_by_episode", "viewings_by_item"]);
+  assert.deepEqual(db.prepare("SELECT name, seq FROM sqlite_sequence WHERE name LIKE 'viewings%'").all().map((r) => [r.name, r.seq]), [["viewings", 4]]);
+  assert.throws(() => db.exec("INSERT INTO now_playing (device_id, catalog_id, item_id, state, updated_at) VALUES ('ghost', 'c', 'i', 'playing', 1)"), /FOREIGN KEY/);
+  db.close();
+  s.close();
+});
+
+test("catalog history rows for channels: seen by item id, removal and return", async () => {
+  const s = new Store(path.join(await tempDir(), "izle.db"));
+  s.insertSeenItems("c", "b1", 0, ["news", "music"]);
+  s.insertSeenItems("c", "b2", 100, ["sport"]);
+  s.insertSeenItems("other", "o1", 100, ["sport"]);
+  s.markSeenItemsRemoved("c", ["sport"], 200);
+  s.markSeenItemsRemoved("c", ["sport"], 300);
+  assert.deepEqual(s.catalogSeenItems("c"), [
+    { itemId: "music", firstSeenAt: 0, buildId: "b1", removedAt: null },
+    { itemId: "news", firstSeenAt: 0, buildId: "b1", removedAt: null },
+    { itemId: "sport", firstSeenAt: 100, buildId: "b2", removedAt: 200 },
+  ], "one catalog only; the first removal time stays");
+  s.clearSeenItemsRemoved("c", ["sport"]);
+  assert.deepEqual(s.catalogSeenItems("c").find((i) => i.itemId === "sport"), { itemId: "sport", firstSeenAt: 100, buildId: "b2", removedAt: null });
+  assert.deepEqual(s.catalogSeenItems("other").map((i) => i.removedAt), [null]);
+  assert.throws(() => s.insertSeenItems("c", "b3", 400, ["news"]), /UNIQUE|PRIMARY KEY/, "one row per channel");
+  s.close();
+});

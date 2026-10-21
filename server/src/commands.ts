@@ -1,6 +1,7 @@
 // Remote control from the admin page: a command is stored, published to the TV's open event streams, and replayed
 // when the TV (re)connects until the TV acknowledges it or it is too old to act on.
 
+import { isLiveItem } from "@izle/contract";
 import { tvActor, type Actor } from "./actor.ts";
 import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
@@ -44,7 +45,8 @@ export class CommandService {
 
   /**
    * The episode a `play` names: the one given (in the item, when both are), or what OK would play for the item on
-   * this TV right now. The TV gets ids only, so it plays what the owner saw when sending.
+   * this TV right now; a channel's item plays the channel at its live edge (`episodeId` null, no position). The TV
+   * gets ids only, so it plays what the owner saw when sending.
    */
   private playPayload(deviceId: string, body: Extract<CommandBody, { type: "play" }>): Record<string, unknown> {
     const item = body.itemId === undefined ? null : requireItem(this.s.catalog, body.itemId, 404, "unknown_item");
@@ -56,9 +58,15 @@ export class CommandService {
       return { itemId: ref.item.id, episodeId: ref.episode.id, ...position };
     }
     // Without an episode the body names an item (validation.ts).
-    const cont = this.s.tv.continueFor(deviceId, item!);
-    if (!cont) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed", { itemId: item!.id });
-    return { itemId: item!.id, episodeId: cont.episodeId, ...position };
+    const target = item!;
+    if (isLiveItem(target)) {
+      // A channel has no position: one sent with it is left out, not refused.
+      if (!target.playbackAllowed) throw new HttpError(400, "not_playable", "playback of this channel is not allowed", { itemId: target.id });
+      return { itemId: target.id, episodeId: null };
+    }
+    const cont = this.s.tv.continueFor(deviceId, target);
+    if (!cont) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed", { itemId: target.id });
+    return { itemId: target.id, episodeId: cont.episodeId, ...position };
   }
 
   /** What the TV gets with a command (the SSE `payload`); a message's display time defaults here. */

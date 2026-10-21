@@ -2,6 +2,8 @@ package io.github.mickeiik.izle.domain
 
 import io.github.mickeiik.izle.data.api.ContinueInfo
 import io.github.mickeiik.izle.data.api.EpisodeDetails
+import io.github.mickeiik.izle.data.api.HomeEntry
+import io.github.mickeiik.izle.data.api.ItemCard
 
 /** How an episode is named on screen; the UI turns it into localized text. */
 sealed interface EpisodeName {
@@ -21,6 +23,9 @@ sealed interface TileBadge {
     data object Continue : TileBadge
     data object WatchAgain : TileBadge
     data class Episode(val name: EpisodeName, val resume: Boolean) : TileBadge
+
+    /** A channel: red, short like "New", so it stays on the smallest cards. */
+    data object Live : TileBadge
 }
 
 object EpisodeNames {
@@ -30,8 +35,13 @@ object EpisodeNames {
         return EpisodeName.Numbered(season?.takeIf { it > 1 }, number ?: (index + 1))
     }
 
-    /** Movies say New / Continue / Watch again; series name the episode OK plays, prefixed by Continue. */
-    fun badge(kind: String, next: ContinueInfo): TileBadge {
+    /**
+     * Channels say Live; movies New / Continue / Watch again; series name the episode OK plays, prefixed by Continue.
+     * [next] is the tile's `continue` (null for a channel; a show without one says New).
+     */
+    fun badge(kind: String, next: ContinueInfo?): TileBadge {
+        if (kind == ItemCard.KIND_LIVE) return TileBadge.Live
+        if (next == null) return TileBadge.New
         val resume = next.status == "watching" && PlaybackPlan.resumePositionMs(next.positionMs, next.durationMs) > 0
         return when {
             kind == "series" -> TileBadge.Episode(name(kind, next.season, next.number, next.label, next.index), resume)
@@ -41,13 +51,17 @@ object EpisodeNames {
         }
     }
 
-    /** Fraction watched for the progress bar under a tile, or null when there is nothing to resume. */
-    fun progressFraction(next: ContinueInfo): Float? {
+    /** Fraction watched for the progress bar under a tile, or null when there is nothing to resume (a channel never). */
+    fun progressFraction(next: ContinueInfo?): Float? {
+        if (next == null) return null
         val duration = next.durationMs ?: return null
         if (next.status != "watching" || duration <= 0) return null
         if (PlaybackPlan.resumePositionMs(next.positionMs, duration) <= 0) return null
         return (next.positionMs.toFloat() / duration).coerceIn(0f, 1f)
     }
+
+    /** The "2 new" count at a card's top right: the server's `newEpisodes`, never on a channel (0: no chip). */
+    fun newEpisodes(entry: HomeEntry): Int = if (entry.item.isLive) 0 else entry.newEpisodes.coerceAtLeast(0)
 }
 
 /** CH+/CH− (and the remote's |◀◀ ▶▶| keys, and the owner's next/previous commands) while an episode is playing. */

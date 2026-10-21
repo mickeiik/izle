@@ -179,3 +179,107 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
   short cards (6 columns, 4 rows, and 5 columns when a progress bar is shown).
 - The scroll spec is exact, with no tolerance: Compose asks it again on every frame of the scroll, so a tolerance
   stops the scroll short by up to that much.
+
+## Live channels: specification (2026-10-21)
+
+The specs and the contract were written first; the server, admin page and TV app follow in later steps.
+- A channel is its own kind, never a one-episode series: it has no duration, resume, play order or "seen", and
+  forcing it through episodes would leak nulls into every episode path. `Playable {playbackAllowed, sources}` is
+  shared by `Episode` and `LiveItem` so movies can move to item-level sources later with no new shape;
+  `EpisodicItem` is a transitional name for the items that still carry episodes.
+- Nothing is deployed, so the v1 contracts change in place, marked "breaking (pre-release)" in their changelogs;
+  AGENTS.md and the Versioning sections carry the clause so a later pass does not undo it.
+- The items schema discriminates on `kind` with an `enum` branch for movie/series (Ajv 8.20 accepts `enum` tags);
+  the common property list is repeated per branch because `additionalProperties: false` rules out `allOf`.
+- `year`, `rating` and `autoAdvance` are forbidden on a channel rather than ignored: a strict schema catches an
+  exporter that still thinks in films. Stats gain `live` only (no `playableLive`); the warning for an unplayable
+  channel mirrors the one for shows.
+- The TV API names episodes by `episodeId` and channels by `itemId`, in different fields, so the two id spaces stay
+  separate. The error for `itemId` naming an item played through its episodes is `has_episodes`, a statement that
+  stays true after movies migrate (a movie then has none).
+- `continue: null` marks a channel's home entry; a channel's progress reports carry no position, never bump the
+  state version and know only `playing` and `stopped` (no pause on live). Zapping is the TV's business over its
+  Home list; the server has no "next channel" notion and `next`/`previous` commands just reach the TV.
+- Inline-playlist adapter results are VOD only (the proxy serves the text as given for the session); a channel's
+  adapter returns a URL, which the proxy fetches anew on every request.
+- Media kind `ts` (raw MPEG-TS over HTTP) for IPTV-style channels: proxied like MP4 at `stream.ts`, never played by
+  the admin page's browser (Listen along marks it unsupported).
+- The "Live" chip is red with white text, television's own convention, rather than a fourth hue of the chip palette.
+- Until the server step lands, the server narrows its catalog type to `EpisodicItem` and refuses a bundle with a
+  channel (a reload keeps the previous catalog) so that a channel is never silently dropped and every root command
+  stays green; a `ts` stream counts as `unsupported` in resolve (the proxy would otherwise serve it as a playlist).
+- From the spec writing: opening the hidden menu over a channel does not pause it (there is no pause on live); the
+  "Live" chip stays on the smallest cards like "New"; a channel's sources SHOULD be HLS without `#EXT-X-ENDLIST`,
+  dynamic DASH (`type="dynamic"`, since DASH has no end-list tag) or `ts`.
+- From the server API spec: a `positionMs` sent with `play` of a channel is left out of the payload, not refused;
+  `companion/resolve` on a `ts` source answers `400 unsupported_media` like DASH; `no_channel` means no channel
+  after or before the playing one on the TV's Home list, which also covers a channel started remotely that is not
+  on Home. The proxy problem `detail` word for `stream.ts` requests is left to the server step.
+
+## Live channels: server (2026-10-21)
+
+The server side of the specification above, in one change (the admin page and the TV app follow).
+- `PlayableRef` (`{kind: "episode", item, episode, index} | {kind: "live", item}`) is the one value resolve, the
+  viewing history, problem reports and the proxy sessions work from; `playableOf(ref)` gives the shared
+  `Playable`. Stored rows and session keys carry `{itemId, episodeId | null}` rather than the episode id alone,
+  because an episode id may equal an item id: the failure penalty and `PlaybackSessions.owned` match on both.
+- Migration 9 rebuilds `now_playing` and `viewings` (SQLite cannot drop a `NOT NULL`), copying the rows, the
+  viewing ranges and the `sqlite_sequence` entry so viewing ids never repeat; `catalog_seen_items` tracks channels
+  by item id next to `catalog_seen` (its primary key is the episode id, which a channel does not have).
+- The proxy problem `detail` word for `stream.ts` requests is `stream` (next to `playlist`, `segment`, `video`,
+  `subtitles`); the spec's table lists it now.
+- A channel's report writes now playing with null positions and `anchor: null` in `GET …/now`, and is the
+  heartbeat of its viewing: watched time between consecutive reports while playing, stall and recovery events with
+  `positionMs: null`, no ranges, no seeks, never seen; the 10 s drop rule and the lost sweep apply unchanged.
+- `GET …/now` and `GET /admin/status` match the running viewing to the now-playing row by item and episode, since
+  two channels have the same (null) episode id.
+- Problem reports take `itemId` and resolve titles from the item when there is no episode; `missing` then says the
+  item left the catalog. The `problem.recorded` event carries `itemId` too.
+- The test fixture gained two channels (`news`, playable, with HLS and a Referer-bound `ts` source, and `off-air`,
+  not playable), so every server test runs with channels in the catalog.
+- The example upstream's channel view numbers live segments from the epoch (every request agrees on "now", and a
+  returning player starts at the live edge), answers `stream.ts` with 200 whatever the `Range` (an endless stream
+  has no byte position to go back to; the TV app should restart a live `ts` stream after an error rather than
+  resume it), refuses `?delivery=inline` for a channel (`400 inline_is_vod_only`), and for real media rewrites the
+  PCR/PTS/DTS and continuity counters where the loop restarts, since a raw stream has no `#EXT-X-DISCONTINUITY`.
+  The looped 360p rendition is silent: the catalog's audio facts for `live-demo` describe the VOD, a known gap.
+- The work ran as three batches: S1 (core, sequential) took the kind branches of history, catalog-admin, devices,
+  commands, problems and viewing-summaries along, because they were needed to compile and were the feature; S2
+  (diagnostics, companion, tests) and S3 (example, proxy tests) ran in parallel on disjoint files.
+
+## Live channels: admin page (2026-10-21)
+
+- "Show" stays the page's word for any catalog item, channels included ("9 shows (5 films, 1 series, 3 channels)",
+  "Add shows"); the "Live" chip is red with white text in both themes, the page's only red chip, like the TV's.
+- Pause, Resume and ±30 s are disabled rather than hidden while a channel plays, so the keyboard focus stays put; a
+  hint says why. Previous/Next read "Previous channel"/"Next channel", and command reasons are looked up as
+  `type:reason` first, so `no_channel` reads "after this one" for next and "before this one" for previous.
+- The now-playing card reads the running viewing's start time from `GET /history/viewings/:id` once per viewing,
+  because `nowPlaying` carries no `startedAt`; a channel's history page lists its latest 50 viewings from
+  `/history/viewings?item=` (since `titles/:itemId` answers `episodes: []`) and leaves out the "short viewings"
+  note, because short channel viewings are just zapping. A channel viewing with trigger `next` is labelled
+  "CH+/CH−".
+- `ts` shows as "MPEG-TS" everywhere; `viewingEnd` leaves out the position whenever `endPositionMs` is null (also an
+  episode viewing that ended before its first report, which used to read "at –").
+- The TVs list and the TV app page show nothing about what a TV plays, so they needed no channel wording; "Live ·
+  <title>" there would be a new feature (polling `/admin/status`).
+
+## Live channels: TV app (2026-10-21)
+
+- Where "live" is decided: `ItemCard.isLive` (`kind == "live"`); a Home tile or a `play` command with
+  `episodeId: null` becomes `PlayableRef.Channel(itemId)`, everything else `PlayableRef.Episode`; in the player the
+  resolve answer's `item.kind` confirms it. `media.kind` only picks the MIME type (`ts` → `video/mp2t`).
+- Zapping is computed from the latest cached home state (`ChannelZap.neighbour`: Home order, shows skipped, no
+  wrap, null when the channel is not on Home) and also works while a channel is still loading, so CH+ CH+ jumps two
+  channels like a real TV; the channel being left is reported `stopped`.
+- Beyond the UX text: on a channel OK, Play and Play/Pause resume playback when the system paused it (lost audio
+  focus, headphones unplugged), else they do nothing; a channel's information shows no play icon, just the name and
+  "Live"; on a channel's error screen commands answer `not_in_player` as for shows.
+- The same source is retried "once" per failure streak, and again only after it had played 60 s
+  (`LIVE_STABLE_PLAYED_MS`): a stream that keeps breaking cannot loop forever. A `ts` stream never retries in
+  place (ExoPlayer would Range-resume an endless response); the error reaches the app, which resolves again at the
+  live edge. A clean end of a channel's stream sends no problem report; `gave_up` goes out only when every source
+  failed.
+- A `400` on a channel's progress report no longer switches the reporter into its old-server mode; that fallback is
+  for episode reports only. `ResolveRequest` refuses both or neither of `episodeId` and `itemId`.
+- The "Live" chip is `#C62828` with white text (5.6:1), 20 sp like the other chips, the same red as the admin page.

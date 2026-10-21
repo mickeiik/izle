@@ -1,12 +1,12 @@
 // The admin API: pairing approval, the TVs (list, page, settings, deletion, adopting a deleted TV's history, home
 // list, "continue from", what each has watched and is playing, remote commands and their results, problem reports),
-// the catalog (what is loaded and its builds, search, an item's details, the "test this episode" diagnostics, the
+// the catalog (what is loaded and its builds, search, an item's details, the "test this episode or channel" diagnostics, the
 // reload), and "Listen along" (companion audio on the owner's phone: the candidate sources of what a TV plays,
 // resolving one for the phone, the timing links).
 import type { Context, Hono } from "hono";
 import { buildJson, catalogInfo, catalogItemJson, reloadCatalog, searchHitJson } from "../../catalog-admin.ts";
 import type { AppContext } from "../../context.ts";
-import { diagnoseEpisode } from "../../diagnostics.ts";
+import { diagnosePlayable } from "../../diagnostics.ts";
 import { HttpError } from "../../errors.ts";
 import { requireItem } from "../../lookup.ts";
 import { PAIR_CODE } from "../../pairing.ts";
@@ -139,7 +139,7 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
 
   app.post("/api/v1/admin/diagnostics/resolve", async (c) => {
     const body = await parseBody(c, diagnosticsBody);
-    return c.json(await diagnoseEpisode(ctx, body, c.req.raw.signal));
+    return c.json(await diagnosePlayable(ctx, body, c.req.raw.signal));
   });
 
   app.post("/api/v1/admin/catalog/reload", async (c) => {

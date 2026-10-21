@@ -16,37 +16,64 @@
     "NullableCount": {
       "anyOf": [{ "type": "integer", "minimum": 0, "maximum": 100000 }, { "type": "null" }]
     },
+    "Title": { "type": "string", "minLength": 1, "maxLength": 300 },
+    "Genres": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1, "maxLength": 100 },
+      "uniqueItems": true,
+      "maxItems": 32
+    },
+    "ImagePath": {
+      "anyOf": [{ "type": "string", "pattern": "^assets/[0-9a-f]{64}\\.(jpg|png|webp)$" }, { "type": "null" }]
+    },
+    "Sources": { "type": "array", "items": { "$ref": "#/$defs/Source" }, "maxItems": 64 },
     "CatalogItem": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["movie", "series", "live"] }
+      },
+      "discriminator": { "propertyName": "kind" },
+      "oneOf": [{ "$ref": "#/$defs/EpisodicItem" }, { "$ref": "#/$defs/LiveItem" }]
+    },
+    "EpisodicItem": {
       "type": "object",
       "required": ["id", "kind", "title", "poster", "episodes"],
       "properties": {
         "id": { "$ref": "urn:izle:schema:common:v1#/$defs/Id" },
         "kind": { "enum": ["movie", "series"] },
-        "title": { "type": "string", "minLength": 1, "maxLength": 300 },
-        "originalTitle": {
-          "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 300 }, { "type": "null" }]
-        },
+        "title": { "$ref": "#/$defs/Title" },
+        "originalTitle": { "anyOf": [{ "$ref": "#/$defs/Title" }, { "type": "null" }] },
         "year": {
           "anyOf": [{ "type": "integer", "minimum": 1870, "maximum": 2200 }, { "type": "null" }]
         },
         "synopsis": { "$ref": "#/$defs/NullableString" },
-        "genres": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1, "maxLength": 100 },
-          "uniqueItems": true,
-          "maxItems": 32
-        },
+        "genres": { "$ref": "#/$defs/Genres" },
         "rating": {
           "anyOf": [{ "type": "number", "minimum": 0, "maximum": 10 }, { "type": "null" }]
         },
-        "poster": {
-          "anyOf": [{ "type": "string", "pattern": "^assets/[0-9a-f]{64}\\.(jpg|png|webp)$" }, { "type": "null" }]
-        },
-        "backdrop": {
-          "anyOf": [{ "type": "string", "pattern": "^assets/[0-9a-f]{64}\\.(jpg|png|webp)$" }, { "type": "null" }]
-        },
+        "poster": { "$ref": "#/$defs/ImagePath" },
+        "backdrop": { "$ref": "#/$defs/ImagePath" },
         "autoAdvance": { "type": "boolean" },
         "episodes": { "type": "array", "items": { "$ref": "#/$defs/Episode" }, "minItems": 1, "maxItems": 10000 }
+      },
+      "patternProperties": { "^x-": true },
+      "additionalProperties": false
+    },
+    "LiveItem": {
+      "type": "object",
+      "required": ["id", "kind", "title", "poster", "playbackAllowed", "sources"],
+      "properties": {
+        "id": { "$ref": "urn:izle:schema:common:v1#/$defs/Id" },
+        "kind": { "const": "live" },
+        "title": { "$ref": "#/$defs/Title" },
+        "originalTitle": { "anyOf": [{ "$ref": "#/$defs/Title" }, { "type": "null" }] },
+        "synopsis": { "$ref": "#/$defs/NullableString" },
+        "genres": { "$ref": "#/$defs/Genres" },
+        "poster": { "$ref": "#/$defs/ImagePath" },
+        "backdrop": { "$ref": "#/$defs/ImagePath" },
+        "playbackAllowed": { "type": "boolean" },
+        "sources": { "$ref": "#/$defs/Sources" }
       },
       "patternProperties": { "^x-": true },
       "additionalProperties": false
@@ -58,9 +85,7 @@
         "id": { "$ref": "urn:izle:schema:common:v1#/$defs/Id" },
         "season": { "$ref": "#/$defs/NullableCount" },
         "number": { "$ref": "#/$defs/NullableCount" },
-        "title": {
-          "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 300 }, { "type": "null" }]
-        },
+        "title": { "anyOf": [{ "$ref": "#/$defs/Title" }, { "type": "null" }] },
         "label": {
           "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 100 }, { "type": "null" }]
         },
@@ -69,7 +94,7 @@
         },
         "playbackAllowed": { "type": "boolean" },
         "autoAdvance": { "type": "boolean" },
-        "sources": { "type": "array", "items": { "$ref": "#/$defs/Source" }, "maxItems": 64 }
+        "sources": { "$ref": "#/$defs/Sources" }
       },
       "patternProperties": { "^x-": true },
       "additionalProperties": false

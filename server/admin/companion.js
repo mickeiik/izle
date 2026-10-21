@@ -1,7 +1,7 @@
 // @ts-check
 // "Listen along": this phone plays another source of the episode the TV is playing, in sync with the picture. The
 // maths live in lib.js and the stream in companion-player.js; this module owns the card, the long-poll that follows
-// the TV and the 250 ms correction loop.
+// the TV and the 250 ms correction loop. A channel has no timeline to follow: the card says so and offers nothing.
 
 import { api, attempt, devicePath, isUnauthorized, readStored, writeStored } from "./api.js";
 import { attach, nativeHlsBroken } from "./companion-player.js";
@@ -84,6 +84,7 @@ export function companionCard({ deviceId, signal }) {
   const error = h("p", { class: "error", role: "alert", hidden: true });
   const body = slot();
   const nothing = h("p", { class: "muted" }, "The TV is not playing anything right now.");
+  const channel = h("p", { class: "muted" });
 
   const nudge = (/** @type {number} */ delta) => {
     nudgeMs += delta;
@@ -125,6 +126,11 @@ export function companionCard({ deviceId, signal }) {
   const renderCandidates = () => {
     const n = candidates?.nowPlaying;
     if (!n) return body.show(nothing);
+    if (n.itemKind === "live") {
+      if (phase !== "idle") end("The TV switched to a channel; listening ended.", "info");
+      channel.textContent = `“${n.itemTitle ?? n.itemId}” is a channel. Listen along is not available for a channel: it has no timeline to follow.`;
+      return body.show(channel);
+    }
     const options = candidateOptions(candidates.candidates);
     const remembered = readStored(choiceKey(n.itemId));
     const current = select.value || remembered || options.find((o) => !o.disabled && o.sourceId !== n.sourceId)?.value || options[0]?.value || "";
@@ -142,10 +148,11 @@ export function companionCard({ deviceId, signal }) {
   const refresh = async (force = false) => {
     if (force) candidatesKey = "";
     const r = await api("GET", `${base}/companion`, undefined, { signal });
-    const key = JSON.stringify([r.nowPlaying?.episodeId, r.nowPlaying?.sourceId, r.candidates.map((/** @type {any} */ c) => [c.sourceId, c.link])]);
+    // By item too: two channels have the same (null) episode id.
+    const key = JSON.stringify([r.nowPlaying?.itemId, r.nowPlaying?.episodeId, r.nowPlaying?.sourceId, r.candidates.map((/** @type {any} */ c) => [c.sourceId, c.link])]);
     if (key === candidatesKey) return;
     candidatesKey = key;
-    const episodeChanged = candidates?.nowPlaying?.episodeId !== r.nowPlaying?.episodeId;
+    const episodeChanged = candidates?.nowPlaying?.itemId !== r.nowPlaying?.itemId || candidates?.nowPlaying?.episodeId !== r.nowPlaying?.episodeId;
     candidates = r;
     if (episodeChanged) select.value = "";
     renderCandidates();
@@ -214,7 +221,8 @@ export function companionCard({ deviceId, signal }) {
     while (!controller.signal.aborted) {
       try {
         const r = await readNow(true, controller.signal);
-        if (playing && r.nowPlaying && r.nowPlaying.episodeId !== playing.episodeId) await follow(r.nowPlaying.episodeId);
+        if (playing && r.nowPlaying?.itemKind === "live") end("The TV switched to a channel; listening ended.", "info");
+        else if (playing && r.nowPlaying?.episodeId && r.nowPlaying.episodeId !== playing.episodeId) await follow(r.nowPlaying.episodeId);
         else if (Date.now() - lastActiveAt > IDLE_STOP_MS) end("The TV stopped; listening ended.", "info");
       } catch (err) {
         if (controller.signal.aborted) return;
@@ -326,10 +334,11 @@ export function companionCard({ deviceId, signal }) {
   };
 
   const restart = async () => {
-    if (!playing) return;
+    const episodeId = candidates?.nowPlaying?.episodeId;
+    if (!playing || !episodeId) return;
     try {
       playing = null;
-      await load(candidates.nowPlaying.episodeId);
+      await load(episodeId);
     } catch (err) {
       showError(errorText(err));
     }
@@ -372,7 +381,7 @@ export function companionCard({ deviceId, signal }) {
 
   const start = async () => {
     const n = candidates?.nowPlaying;
-    if (!n || phase !== "idle") return;
+    if (!n?.episodeId || phase !== "idle") return;
     const { sourceId } = chosen();
     if (!sourceId) return;
     phase = "starting";

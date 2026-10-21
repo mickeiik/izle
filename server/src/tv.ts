@@ -1,12 +1,12 @@
-import type { CatalogItem } from "@izle/contract";
+import { isLiveItem, type EpisodicItem } from "@izle/contract";
 import type { Actor } from "./actor.ts";
 import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
-import { requireEpisode, requireItem, requirePlayable } from "./lookup.ts";
-import { autoNextIndex, cursorAfterReport, cursorIndex, isPlayable, type ProgressReportStatus } from "./playback.ts";
-import { episodeDetails, episodeSummary, iso, itemCard, itemDetails } from "./presenters.ts";
+import { requireEpisode, requireEpisodicItem, requireItem, requirePlayable, requirePlayableRef } from "./lookup.ts";
+import { autoNextIndex, cursorAfterReport, cursorIndex, isPlayable, type LiveReportStatus, type ProgressReportStatus } from "./playback.ts";
+import { episodeDetails, episodeSummary, iso, itemCard, itemDetails, tvSource } from "./presenters.ts";
 import { noPlayableDetail, triedDetail } from "./problems.ts";
-import type { ResolvedStream, ResolveInput, Tried } from "./resolve.ts";
+import { playingKey, type ResolvedStream, type ResolveInput, type Tried } from "./resolve.ts";
 import type { Cursor, Device, NowPlaying, Progress } from "./store.ts";
 import { Waiters } from "./waiters.ts";
 
@@ -28,17 +28,32 @@ export const HOME_ROWS = { min: 1, max: 4, default: 2 } as const;
 /** Longest an admin "now" long-poll waits for the next playback report. */
 export const MAX_NOW_WAIT_MS = 25_000;
 
-export interface ProgressInput {
+interface ReportFields {
   sessionId?: string | null;
-  episodeId: string;
-  positionMs: number;
-  durationMs?: number | null;
-  status: ProgressReportStatus;
   /** Whether the player was actually advancing (false during a rebuffer stall); defaults to `status === "playing"`. */
   playing?: boolean;
   /** How long before sending the position was sampled, so a delayed report still anchors correctly. */
   ageMs?: number;
 }
+
+/** An episode's progress report: where the player is. */
+export interface EpisodeProgressInput extends ReportFields {
+  episodeId: string;
+  itemId?: undefined;
+  positionMs: number;
+  durationMs?: number | null;
+  status: ProgressReportStatus;
+}
+
+/** A channel's report: only that it plays (or stalls) or stopped; a channel has no position. */
+export interface LiveReportInput extends ReportFields {
+  itemId: string;
+  episodeId?: undefined;
+  status: LiveReportStatus;
+}
+
+/** `POST /tv/progress`: an episode's report or a channel's (validation.ts tells them apart). */
+export type ProgressInput = EpisodeProgressInput | LiveReportInput;
 
 /**
  * What the TV sees and reports: home state, item details, resolve and progress. Also the owner's side of the same
@@ -116,7 +131,7 @@ export class TvService {
    * item was watched to the end (a wrapped cursor), episodes the catalog gained since then come first. `facts` is
    * what the device saved about the item, when the caller already has it (see homeFacts).
    */
-  continueFor(deviceId: string, item: CatalogItem, facts = this.itemFacts(deviceId, item.id)) {
+  continueFor(deviceId: string, item: EpisodicItem, facts = this.itemFacts(deviceId, item.id)) {
     const { progress, cursor } = facts;
     const appended = cursor?.wrapped ? new Set(facts.seenAfter(cursor.updatedAt)) : undefined;
     const index = cursorIndex(item, cursor, progress, appended);
@@ -134,7 +149,7 @@ export class TvService {
    * report on the item and the moment the item went on its home list (`addedAt`). Episodes of the first load of
    * the catalog (the history's baseline) never count.
    */
-  newEpisodesFor(deviceId: string, item: CatalogItem, addedAt: number | null, facts = this.itemFacts(deviceId, item.id)): number {
+  newEpisodesFor(deviceId: string, item: EpisodicItem, addedAt: number | null, facts = this.itemFacts(deviceId, item.id)): number {
     const lastProgressAt = Math.max(0, ...[...facts.progress.values()].map((p) => p.updatedAt));
     const added = facts.seenAfter(Math.max(lastProgressAt, addedAt ?? 0));
     const allowed = new Set(item.episodes.filter((e) => e.playbackAllowed).map((e) => e.id));
@@ -149,6 +164,11 @@ export class TvService {
       // Items gone after a catalog reload are flagged on the admin page; unplayable ones are left out.
       const item = this.s.catalog.item(itemId);
       if (!item) continue;
+      if (isLiveItem(item)) {
+        // A channel has no cursor, position or new episodes: OK plays it at its live edge.
+        if (item.playbackAllowed) home.push({ item: itemCard(this.s.catalog, item), continue: null, newEpisodes: 0 });
+        continue;
+      }
       const facts = factsFor(item.id);
       const cont = this.continueFor(device.id, item, facts);
       if (!cont) continue;
@@ -160,8 +180,12 @@ export class TvService {
     };
   }
 
+  /** The hidden menu's view of an item: its episodes with the cursor, or a channel's approval and sources. */
   item(device: Device, itemId: string) {
     const item = requireItem(this.s.catalog, itemId, 404, "unknown_item");
+    if (isLiveItem(item)) {
+      return { item: itemDetails(this.s.catalog, item), channel: { playbackAllowed: item.playbackAllowed, sources: item.sources.map(tvSource) } };
+    }
     const facts = this.itemFacts(device.id, item.id);
     const { progress } = facts;
     const cont = this.continueFor(device.id, item, facts);
@@ -173,7 +197,7 @@ export class TvService {
         return {
           ...episodeDetails(episode, index),
           progress: p ? { positionMs: p.positionMs, durationMs: p.durationMs, status: p.status, updatedAt: iso(p.updatedAt) } : null,
-          sources: episode.sources.map((s) => ({ id: s.id, label: s.label ?? null, languages: s.languages })),
+          sources: episode.sources.map(tvSource),
         };
       }),
     };
@@ -188,53 +212,100 @@ export class TvService {
       // "Can't play right now" on the TV: the owner learns which sources were tried and why each failed.
       if (err instanceof HttpError && err.code === "no_playable_source") {
         const tried = (err.extra.tried ?? []) as Tried[];
-        this.s.problems.record(device.id, { kind: "resolve", code: "no_playable_source", episodeId: input.episodeId, detail: noPlayableDetail(tried, input.exclude) });
+        const playing = input.episodeId !== undefined ? { episodeId: input.episodeId } : { itemId: input.itemId };
+        this.s.problems.record(device.id, { kind: "resolve", code: "no_playable_source", ...playing, detail: noPlayableDetail(tried, input.exclude) });
       }
       throw err;
     }
     // Sources the server fell back past. A missing adapter is a configuration warning on the catalog page instead.
+    const playing = playingKey(r.ref);
     for (const t of r.failed) {
       if (t.code === "adapter_unavailable") continue;
-      this.s.problems.record(device.id, { kind: "resolve", code: "source_failed", episodeId: r.ref.episode.id, sourceId: t.sourceId, detail: triedDetail(t) });
+      this.s.problems.record(device.id, { kind: "resolve", code: "source_failed", ...playing, sourceId: t.sourceId, detail: triedDetail(t) });
     }
     return r;
   }
 
+  /**
+   * The TV's resolve: what to play and how, with the episode's resume position and auto-next, or for a channel
+   * (`episode`, `next` and `resume` null) the stream at its live edge. Writes now playing and the viewing history.
+   */
   async resolve(device: Device, input: ResolveInput, signal?: AbortSignal) {
     const r = await this.resolveRecordingProblems(device, input, signal);
-    const { item, episode, index } = r.ref;
+    const catalogId = this.s.catalog.catalogId;
+    const t = this.s.now();
+    const { ref } = r;
+    const answer = {
+      sessionId: r.session.id, sourceId: r.source.id, media: r.media,
+      subtitleTracks: r.subtitleTracks.map((s) => ({ url: s.url, language: s.language, format: s.format, label: s.label ?? null })),
+      languages: r.languages, alternatives: r.alternatives, item: itemCard(this.s.catalog, ref.item), expiresAt: r.expiresAt,
+    };
+    if (ref.kind === "live") {
+      const row = { catalogId, itemId: ref.item.id, episodeId: null, sourceId: r.source.id, positionMs: null, durationMs: null };
+      this.s.store.transaction(() => {
+        this.s.store.setNowPlaying(device.id, { ...row, state: "starting", updatedAt: t, playing: false, anchorAt: t });
+        this.s.viewings.onResolve(device, ref, r.source.id, null, null, input);
+      });
+      this.nowWaiters.wake(device.id);
+      return { ...answer, next: null, episode: null, resume: null };
+    }
+    const { item, episode, index } = ref;
     const nextIndex = autoNextIndex(item, index);
     const next = nextIndex >= 0 ? item.episodes[nextIndex]! : null;
-    const catalogId = this.s.catalog.catalogId;
     const progress = this.s.store.getProgress(device.id, catalogId, episode.id);
     const resume = progress?.status === "watching" ? { positionMs: progress.positionMs, durationMs: progress.durationMs } : null;
     const durationMs = progress?.durationMs ?? episode.durationMs ?? null;
     const row = { catalogId, itemId: item.id, episodeId: episode.id, sourceId: r.source.id, positionMs: resume?.positionMs ?? 0, durationMs };
     this.s.store.transaction(() => {
-      this.s.store.setNowPlaying(device.id, { ...row, state: "starting", updatedAt: this.s.now(), playing: false, anchorAt: this.s.now() });
+      this.s.store.setNowPlaying(device.id, { ...row, state: "starting", updatedAt: t, playing: false, anchorAt: t });
       // The viewing history starts, continues or replaces this TV's viewing, in the same transaction.
-      this.s.viewings.onResolve(device, r.ref, r.source.id, row.positionMs, durationMs, input);
+      this.s.viewings.onResolve(device, ref, r.source.id, row.positionMs, durationMs, input);
     });
     this.nowWaiters.wake(device.id);
     return {
-      sessionId: r.session.id, sourceId: r.source.id, media: r.media,
-      subtitleTracks: r.subtitleTracks.map((t) => ({ url: t.url, language: t.language, format: t.format, label: t.label ?? null })),
-      languages: r.languages, alternatives: r.alternatives, next: next ? { episodeId: next.id, ...episodeSummary(next) } : null,
-      item: itemCard(this.s.catalog, item),
+      ...answer, next: next ? { episodeId: next.id, ...episodeSummary(next) } : null,
       episode: { id: episode.id, index, count: item.episodes.length, ...episodeSummary(episode), durationMs: episode.durationMs ?? null }, resume,
-      expiresAt: r.expiresAt,
     };
   }
 
   /**
-   * Heartbeat from the player. Saves the position, keeps the item's cursor on the episode being watched, and on
+   * Heartbeat from the player: an episode's report (recordEpisodeProgress) or a channel's (recordLiveReport);
+   * `version` is the device's state version after it.
+   */
+  recordProgress(device: Device, input: ProgressInput): { version: number } {
+    return input.itemId !== undefined ? this.recordLiveReport(device, input) : this.recordEpisodeProgress(device, input);
+  }
+
+  /**
+   * A channel's report. A channel has no position, cursor or end, so nothing the TV shows changes: no progress row
+   * is written and the state version is not bumped. Now playing is written with null positions, and the running
+   * viewing of the channel hears its heartbeat (watched time, stalls, the stop).
+   */
+  private recordLiveReport(device: Device, input: LiveReportInput): { version: number } {
+    const { item } = requirePlayableRef(this.s.catalog, { itemId: input.itemId }, 404);
+    const catalogId = this.s.catalog.catalogId;
+    const sourceId = this.s.sessions.owned(input.sessionId, device.id, { itemId: item.id, episodeId: null })?.sourceId ?? null;
+    const t = this.s.now();
+    const playing = input.playing ?? input.status === "playing";
+    const anchorAt = t - (input.ageMs ?? 0);
+    this.s.store.transaction(() => {
+      const now = { catalogId, itemId: item.id, episodeId: null, sourceId, positionMs: null, durationMs: null, state: input.status, updatedAt: t, playing, anchorAt };
+      this.s.store.setNowPlaying(device.id, now);
+      this.s.viewings.onLiveReport(device, { itemId: item.id, status: input.status, playing, anchorAt });
+    });
+    this.nowWaiters.wake(device.id);
+    return { version: this.s.notifier.version(device) };
+  }
+
+  /**
+   * An episode's report. Saves the position, keeps the item's cursor on the episode being watched, and on
    * `finished` moves the cursor to the next allowed episode (wrapping to the first after the last). Only that wrap
    * stores a wrapped cursor; every other report makes it an ordinary one.
    */
-  recordProgress(device: Device, input: ProgressInput): { version: number } {
+  private recordEpisodeProgress(device: Device, input: EpisodeProgressInput): { version: number } {
     const { item, episode, index } = requireEpisode(this.s.catalog, input.episodeId, 404, "unknown_episode");
     const catalogId = this.s.catalog.catalogId;
-    const sourceId = this.s.sessions.owned(input.sessionId, device.id, episode.id)?.sourceId ?? null;
+    const sourceId = this.s.sessions.owned(input.sessionId, device.id, { episodeId: episode.id })?.sourceId ?? null;
     const t = this.s.now();
     const durationMs = input.durationMs ?? null;
     const finished = input.status === "finished";
@@ -257,10 +328,10 @@ export class TvService {
 
   /**
    * Owner override "continue from episode X": moves the cursor (an ordinary one, so it wins over episodes added
-   * after a wrap) and forgets X's saved position so it starts over.
+   * after a wrap) and forgets X's saved position so it starts over. A channel has no cursor (400 `unknown_episode`).
    */
   setCursor(deviceId: string, itemId: string, episodeId: string, actor: Actor): number {
-    const item = requireItem(this.s.catalog, itemId, 404, "unknown_item");
+    const item = requireEpisodicItem(this.s.catalog, itemId, 404, "unknown_item");
     const episode = item.episodes.find((e) => e.id === episodeId);
     if (!episode) throw new HttpError(400, "unknown_episode", "the episode does not belong to this item");
     requirePlayable(episode, 400, "not_allowed");
@@ -287,7 +358,7 @@ export class TvService {
       seen.add(id);
       const item = this.s.catalog.item(id);
       if (!item) throw new HttpError(400, "unknown_item", "no such item in the catalog", { itemId: id });
-      if (!isPlayable(item)) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed", { itemId: id });
+      if (!isPlayable(item)) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed, or is a channel whose playback is not allowed", { itemId: id });
     }
     this.s.store.transaction(() => {
       const before = this.homeIds(deviceId);

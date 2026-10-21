@@ -1,8 +1,9 @@
-import type { Bundle } from "./bundle.ts";
+import { isLiveItem, type Bundle } from "./bundle.ts";
 
 export interface ProbeTarget {
   itemId: string;
-  episodeId: string;
+  /** null for a live item's own sources. */
+  episodeId: string | null;
   sourceId: string;
   what: "media" | "subtitle";
   url: string;
@@ -20,14 +21,18 @@ export interface ProbeResult {
 
 /**
  * Range-GETs one byte of every direct media and subtitle URL in the bundle (HEAD is not used: some hosts answer it
- * with errors) and reports 200/206 as reachable. Redirects are followed. Adapter sources need a resolver: skipped.
+ * with errors) and reports 200/206 as reachable; a live item's sources are probed like an episode's. Redirects are
+ * followed. Adapter sources need a resolver: skipped.
  */
 export async function probeBundle(bundle: Bundle, { concurrency = 4 } = {}): Promise<ProbeResult[]> {
   const targets: ProbeTarget[] = [];
   for (const item of bundle.items) {
-    for (const ep of item.episodes) {
-      for (const src of ep.sources) {
-        const base = { itemId: item.id, episodeId: ep.id, sourceId: src.id };
+    const playables = isLiveItem(item)
+      ? [{ episodeId: null, sources: item.sources }]
+      : item.episodes.map((ep) => ({ episodeId: ep.id, sources: ep.sources }));
+    for (const { episodeId, sources } of playables) {
+      for (const src of sources) {
+        const base = { itemId: item.id, episodeId, sourceId: src.id };
         if (src.type === "direct") targets.push({ ...base, what: "media", url: src.media.url, headers: src.media.headers });
         for (const t of src.subtitleTracks ?? []) targets.push({ ...base, what: "subtitle", url: t.url });
       }

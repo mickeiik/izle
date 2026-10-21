@@ -21,16 +21,17 @@ class ModelsTest {
         val entry = state.home.single()
         assertEquals("caminandes", entry.item.id)
         assertEquals("/assets/f3f9.jpg", entry.item.posterUrl)
-        assertEquals("caminandes.s01e02", entry.playNext.episodeId)
-        assertEquals(1, entry.playNext.index)
-        assertEquals("new", entry.playNext.status)
+        assertEquals("caminandes.s01e02", entry.playNext?.episodeId)
+        assertEquals(1, entry.playNext?.index)
+        assertEquals("new", entry.playNext?.status)
+        assertFalse(entry.item.isLive)
         assertEquals("a server without new-episode counts means none", 0, entry.newEpisodes)
 
         fun withCount(value: String) =
             ApiJson.decodeFromString(TvState.serializer(), STATE.replace("\"continue\": {", "\"newEpisodes\": $value, \"continue\": {")).home.single()
         val counted = withCount("3")
         assertEquals(3, counted.newEpisodes)
-        assertEquals("caminandes.s01e02", counted.playNext.episodeId)
+        assertEquals("caminandes.s01e02", counted.playNext?.episodeId)
         assertEquals(0, withCount("0").newEpisodes)
         assertEquals(0, withCount("null").newEpisodes)
     }
@@ -74,7 +75,8 @@ class ModelsTest {
         assertEquals("show.e2", r.next?.episodeId)
         assertEquals(90_000L, r.resume?.positionMs)
         assertEquals("tr", r.subtitleTracks.single().language)
-        assertEquals(5, r.episode.count)
+        assertEquals(5, r.episode?.count)
+        assertFalse(r.item.isLive)
         assertNull(r.expiresAt)
         val withExpiry = RESOLVE.replace("\"resume\":", "\"expiresAt\": \"2026-10-14T12:01:40.000Z\", \"resume\":")
         val expiring = ApiJson.decodeFromString(ResolveResponse.serializer(), withExpiry)
@@ -116,8 +118,10 @@ class ModelsTest {
         val reasons = listOf(
             CommandResult.NOT_IN_PLAYER, CommandResult.NOT_READY, CommandResult.NO_EPISODE, CommandResult.UNKNOWN_TYPE,
             CommandResult.NO_PLAYABLE_SOURCE, CommandResult.PLAYBACK_ERROR, CommandResult.SUPERSEDED, CommandResult.STOPPED,
-            CommandResult.BUSY, CommandResult.EPISODES_UNAVAILABLE,
+            CommandResult.BUSY, CommandResult.EPISODES_UNAVAILABLE, CommandResult.LIVE, CommandResult.NO_CHANNEL,
         )
+        assertEquals("""{"result":"ignored","reason":"live"}""", wire(CommandResult.ignored(CommandResult.LIVE)))
+        assertEquals("""{"result":"ignored","reason":"no_channel"}""", wire(CommandResult.ignored(CommandResult.NO_CHANNEL)))
         reasons.forEach { assertTrue(it, Regex("[A-Za-z0-9_.:-]{1,64}").matches(it)) }
     }
 
@@ -125,14 +129,90 @@ class ModelsTest {
     fun progressReportsLeaveOutUnsetFieldsAndKeepTheirStatusNames() {
         // Resolve requests: see ApiClientTest.resolvePostsJson and PlaybackOriginTest.
         fun wire(report: ProgressReport) = ApiJson.encodeToString(ProgressReport.serializer(), report)
-        assertEquals("""{"episodeId":"e","positionMs":1000,"status":"stopped"}""", wire(ProgressReport(null, "e", 1_000, null, ProgressStatus.Stopped)))
+        assertEquals(
+            """{"episodeId":"e","positionMs":1000,"status":"stopped"}""",
+            wire(ProgressReport(null, episodeId = "e", positionMs = 1_000, status = ProgressStatus.Stopped)),
+        )
         assertEquals(
             """{"sessionId":"s","episodeId":"e","positionMs":1000,"durationMs":2000,"status":"playing","playing":false,"ageMs":120}""",
-            wire(ProgressReport("s", "e", 1_000, 2_000, ProgressStatus.Playing, playing = false, ageMs = 120)),
+            wire(ProgressReport.episode("s", "e", ProgressStatus.Playing, 1_000, 2_000, playing = false).copy(ageMs = 120)),
         )
-        val names = ProgressStatus.entries.map { wire(ProgressReport(null, "e", 0, null, it)).substringAfter("\"status\":").substringBefore('}') }
+        assertEquals("never a negative position", 0L, ProgressReport.episode("s", "e", ProgressStatus.Paused, -40, null, playing = false).positionMs)
+        val names = ProgressStatus.entries.map { wire(ProgressReport(null, episodeId = "e", positionMs = 0, status = it)).substringAfter("\"status\":").substringBefore('}') }
         assertEquals(listOf("\"playing\"", "\"paused\"", "\"stopped\"", "\"finished\""), names)
         assertEquals(listOf(ProgressStatus.Stopped, ProgressStatus.Finished), ProgressStatus.entries.filter { it.isFinal })
+    }
+
+    @Test
+    fun aChannelOnHomeHasNoContinue() {
+        val state = ApiJson.decodeFromString(TvState.serializer(), STATE.replace("\"home\": [", "\"home\": [$CHANNEL_ENTRY,"))
+        val (channel, show) = state.home
+        assertTrue(channel.item.isLive)
+        assertEquals("news-24", channel.item.id)
+        assertEquals("News 24", channel.item.title)
+        assertEquals("/assets/7b0e.png", channel.item.posterUrl)
+        assertNull("OK plays it at its live edge", channel.playNext)
+        assertEquals(0, channel.newEpisodes)
+        assertFalse(show.item.isLive)
+        assertEquals("caminandes.s01e02", show.playNext?.episodeId)
+        // A missing `continue` reads the same.
+        val bare = ApiJson.decodeFromString(HomeEntry.serializer(), """{"item":{"id":"n","kind":"live","title":"N"}}""")
+        assertNull(bare.playNext)
+        assertTrue(bare.item.isLive)
+    }
+
+    @Test
+    fun decodesAChannelsResolveAnswer() {
+        val r = ApiJson.decodeFromString(ResolveResponse.serializer(), CHANNEL_RESOLVE)
+        assertTrue(r.item.isLive)
+        assertNull(r.episode)
+        assertNull(r.next)
+        assertNull(r.resume)
+        assertEquals("ts", r.media.kind)
+        assertEquals("/p/Tk9uZQ/stream.ts", r.media.url)
+        assertEquals(listOf("backup"), r.alternatives)
+        assertEquals("2026-10-21T12:00:00.000Z", r.expiresAt)
+    }
+
+    @Test
+    fun aChannelsDetailsCarryItsPlayabilityInsteadOfEpisodes() {
+        val d = ApiJson.decodeFromString(
+            ItemDetailsResponse.serializer(),
+            """{"item":{"id":"news-24","kind":"live","title":"News 24","year":null,"posterUrl":null,"backdropUrl":null,
+               "originalTitle":null,"synopsis":null,"genres":[]},
+               "channel":{"playbackAllowed":true,"sources":[{"id":"main","label":null,"languages":{"audio":["tr"],"subtitles":[]}}]}}""",
+        )
+        assertTrue(d.item.isLive)
+        assertEquals(true, d.channel?.playbackAllowed)
+        assertTrue(d.episodes.isEmpty())
+        assertNull(d.cursorEpisodeId)
+        assertNull("a show has no channel part", ApiJson.decodeFromString(ItemDetailsResponse.serializer(), ITEM).channel)
+    }
+
+    @Test
+    fun aChannelsProgressNamesItsItemWithoutAPosition() {
+        fun wire(report: ProgressReport) = ApiJson.encodeToString(ProgressReport.serializer(), report)
+        assertEquals(
+            """{"sessionId":"s","itemId":"news-24","status":"playing","playing":true,"ageMs":0}""",
+            wire(ProgressReport.channel("s", "news-24", ProgressStatus.Playing, playing = true).copy(ageMs = 0)),
+        )
+        assertEquals(
+            "a stall",
+            """{"itemId":"news-24","status":"playing","playing":false}""",
+            wire(ProgressReport.channel(null, "news-24", ProgressStatus.Playing, playing = false)),
+        )
+        assertEquals("""{"itemId":"news-24","status":"stopped","playing":false}""", wire(ProgressReport.channel(null, "news-24", ProgressStatus.Stopped, playing = false)))
+        // A channel is never paused and never finishes: only `playing` and `stopped` go out.
+        assertEquals(ProgressStatus.Playing, ProgressReport.channel(null, "n", ProgressStatus.Paused, playing = false).status)
+        assertEquals(ProgressStatus.Stopped, ProgressReport.channel(null, "n", ProgressStatus.Finished, playing = false).status)
+    }
+
+    @Test
+    fun aProblemReportMayNameAChannel() {
+        assertEquals(
+            """{"kind":"playback","code":"gave_up","itemId":"news-24","sourceId":"main"}""",
+            ApiJson.encodeToString(ProblemReport.serializer(), ProblemReport(kind = "playback", code = "gave_up", itemId = "news-24", sourceId = "main")),
+        )
     }
 
     @Test
@@ -143,6 +223,11 @@ class ModelsTest {
             ServerEvent.parse("command", """{"id":12,"type":"play","payload":{"itemId":"show","episodeId":"show.e1"}}"""),
         )
         assertEquals(ServerEvent.Command(13, "stop", null, null), ServerEvent.parse("command", """{"id":13,"type":"stop","payload":{}}"""))
+        // A channel: `episodeId` null.
+        assertEquals(
+            ServerEvent.Command(14, "play", "news-24", null),
+            ServerEvent.parse("command", """{"id":14,"type":"play","payload":{"itemId":"news-24","episodeId":null}}"""),
+        )
         assertNull(ServerEvent.parse("hello", "{}"))
         assertNull(ServerEvent.parse("state", "not json"))
         // An envelope without an id cannot be acknowledged: ignored.
@@ -180,6 +265,30 @@ class ModelsTest {
               "item": { "id": "show", "kind": "series", "title": "Show", "year": 2001, "posterUrl": null },
               "episode": { "id": "show.e1", "index": 0, "count": 5, "season": 1, "number": 1, "title": "Pilot", "label": null, "durationMs": 1200000 },
               "resume": { "positionMs": 90000, "durationMs": 1200000 }
+            }
+        """.trimIndent()
+
+        val CHANNEL_ENTRY = """
+            {
+              "item": { "id": "news-24", "kind": "live", "title": "News 24", "year": null, "posterUrl": "/assets/7b0e.png", "backdropUrl": null },
+              "continue": null,
+              "newEpisodes": 0
+            }
+        """.trimIndent()
+
+        val CHANNEL_RESOLVE = """
+            {
+              "sessionId": "Q8mQ8mQ8mQ8mQ8mQ",
+              "sourceId": "main",
+              "media": { "kind": "ts", "url": "/p/Tk9uZQ/stream.ts" },
+              "subtitleTracks": [],
+              "languages": { "audio": ["tr"], "subtitles": [] },
+              "alternatives": ["backup"],
+              "next": null,
+              "item": { "id": "news-24", "kind": "live", "title": "News 24", "year": null, "posterUrl": null, "backdropUrl": null },
+              "episode": null,
+              "resume": null,
+              "expiresAt": "2026-10-21T12:00:00.000Z"
             }
         """.trimIndent()
 

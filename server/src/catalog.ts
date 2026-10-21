@@ -1,13 +1,36 @@
 import path from "node:path";
-import { BundleValidationError, formatIssue, loadBundle, type BundleManifest, type BundleStats, type CatalogItem, type Episode, type ValidationIssue } from "@izle/contract";
+import { BundleValidationError, formatIssue, isLiveItem, loadBundle, type BundleManifest, type BundleStats, type CatalogItem, type Episode, type EpisodicItem, type LiveItem, type Playable, type ValidationIssue } from "@izle/contract";
 import type { Logger } from "./log.ts";
 
+/** An episode of a movie or series, in its item. */
 export interface EpisodeRef {
-  item: CatalogItem;
+  kind: "episode";
+  item: EpisodicItem;
   episode: Episode;
   /** Position in the item's play order. */
   index: number;
 }
+
+/** A live channel: its item carries the approval and the sources itself. */
+export interface LiveRef {
+  kind: "live";
+  item: LiveItem;
+}
+
+/**
+ * What the TV API plays: an episode (named by its episode id) or a channel (named by its item id). The two id
+ * spaces are separate, so a ref always says which kind it is.
+ */
+export type PlayableRef = EpisodeRef | LiveRef;
+
+/** The approval and sources a ref names: the episode's, or the channel's own. */
+export const playableOf = (ref: PlayableRef): Playable => (ref.kind === "episode" ? ref.episode : ref.item);
+
+/** The episode id a ref names, null for a channel (what stored rows and adapter requests carry). */
+export const episodeIdOf = (ref: PlayableRef): string | null => (ref.kind === "episode" ? ref.episode.id : null);
+
+/** A ref for a channel; `item` must be a live item. */
+export const liveRef = (item: LiveItem): LiveRef => ({ kind: "live", item });
 
 export interface LoadedCatalog {
   dir: string;
@@ -70,17 +93,19 @@ export class CatalogService {
     const missing = this.adapters ? bundle.manifest.adapters.filter((a) => !this.adapters!.has(a)) : [];
     const issue = (a: string) => ({ severity: "error" as const, file: "bundle.json", path: "/adapters", message: `adapter "${a}" is not provided by the resolver module` });
     if (missing.length > 0) throw new BundleValidationError(this.dir, missing.map(issue));
+    const { items } = bundle;
     const itemsById = new Map<string, CatalogItem>();
     const episodesById = new Map<string, EpisodeRef>();
-    for (const item of bundle.items) {
+    for (const item of items) {
       itemsById.set(item.id, item);
-      item.episodes.forEach((episode, index) => episodesById.set(episode.id, { item, episode, index }));
+      if (isLiveItem(item)) continue; // a channel has no episodes: it is found by its item id
+      item.episodes.forEach((episode, index) => episodesById.set(episode.id, { kind: "episode", item, episode, index }));
     }
-    return { dir: bundle.dir, manifest: bundle.manifest, items: bundle.items, itemsById, episodesById, warnings, stats, loadedAt: this.now() };
+    return { dir: bundle.dir, manifest: bundle.manifest, items, itemsById, episodesById, warnings, stats, loadedAt: this.now() };
   }
 
   private report(c: LoadedCatalog, msg: string): void {
-    this.log.info(msg, { catalogId: c.manifest.catalogId, buildId: c.manifest.buildId, items: c.stats.items, episodes: c.stats.episodes });
+    this.log.info(msg, { catalogId: c.manifest.catalogId, buildId: c.manifest.buildId, items: c.stats.items, episodes: c.stats.episodes, live: c.stats.live });
     for (const w of c.warnings) this.log.warn("catalog warning", { issue: formatIssue(w) });
     if (this.adapters === null && c.manifest.adapters.length > 0) {
       this.log.warn("catalog references adapters but no resolver module is configured; their sources are unavailable", { adapters: c.manifest.adapters });

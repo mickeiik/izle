@@ -18,6 +18,8 @@ test("delivery plan: headers, inline playlists and proxy.always go through the p
   assert.deepEqual(plan({ media: { kind: "hls", playlist: "#EXTM3U\n", baseUrl: "https://media.example.test/" } }), proxied);
   assert.deepEqual(plan({ media: dash }, true), direct, "proxy.always leaves DASH direct");
   assert.equal(plan({ media: dash, headers: referer }).servable, false, "DASH that needs headers cannot be served");
+  assert.deepEqual(plan({ media: { kind: "ts", url: "https://media.example.test/live.ts" } }), direct, "MPEG-TS goes direct like MP4");
+  assert.deepEqual(plan({ media: { kind: "ts", url: "https://media.example.test/live.ts" }, headers: referer }), proxied, "and is proxied with headers");
   const subtitleTracks = [{ headers: referer }, {}, { headers: {} }];
   assert.deepEqual(plan({ media: hls, subtitleTracks }).proxySubtitles, [true, false, false]);
   assert.deepEqual(plan({ media: hls, subtitleTracks }, true).proxySubtitles, [true, true, true]);
@@ -36,14 +38,21 @@ test("playback sessions: open, look up, expire after their lifetime", () => {
   assert.equal(sessions.get(s.id), undefined);
 });
 
-test("playback sessions: a report names only its TV's own session, and the episode it played when it says which", () => {
+test("playback sessions: a report names only its TV's own session, and what it played when it says which", () => {
   const sessions = new PlaybackSessions(fakeClock().now);
   const s = sessions.open({ deviceId: "tv", catalogId: "c", itemId: "i", episodeId: "e", sourceId: "s" });
-  assert.equal(sessions.owned(s.id, "tv"), s, "no episode given: any episode");
-  assert.equal(sessions.owned(s.id, "tv", "e"), s);
-  assert.equal(sessions.owned(s.id, "tv", "other"), undefined, "another episode");
+  assert.equal(sessions.owned(s.id, "tv"), s, "nothing given: any playback");
+  assert.equal(sessions.owned(s.id, "tv", { episodeId: "e" }), s);
+  assert.equal(sessions.owned(s.id, "tv", { itemId: "i" }), s);
+  assert.equal(sessions.owned(s.id, "tv", { episodeId: "other" }), undefined, "another episode");
+  assert.equal(sessions.owned(s.id, "tv", { itemId: "i", episodeId: null }), undefined, "an episode session is not the item's channel");
   assert.equal(sessions.owned(s.id, "other-tv"), undefined, "another TV's session");
   assert.equal(sessions.owned("nope", "tv"), undefined);
   assert.equal(sessions.owned(null, "tv"), undefined);
   assert.equal(sessions.owned("", "tv"), undefined);
+  // A channel's session has no episode: an episode id (even one equal to the item id) never names it.
+  const live = sessions.open({ deviceId: "tv", catalogId: "c", itemId: "news", episodeId: null, sourceId: "main" });
+  assert.equal(sessions.owned(live.id, "tv", { itemId: "news", episodeId: null }), live);
+  assert.equal(sessions.owned(live.id, "tv", { episodeId: "news" }), undefined);
+  assert.equal(sessions.owned(live.id, "tv", { itemId: "other", episodeId: null }), undefined);
 });

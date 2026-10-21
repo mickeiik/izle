@@ -15,9 +15,38 @@ contract share one version number. How to update (back up, update the server, th
 - **Landscape pictures in catalogs:** a catalog item may carry an optional 16:9 `backdrop` image next to its poster
   (an additive change to the v1 bundle contract, checked by `izle-validate` like posters). The server sends it as
   `backdropUrl`; the TV shows it on the show's card.
+- **Live channels (contract, specs and server):** a catalog item may be a `live` channel, carrying
+  `playbackAllowed` and its `sources` itself, with no episodes; `izle-validate` checks it and counts it (`live` in
+  its summary and stats). The specs say how a channel plays (at its live edge, no pause or seek, CH+/CH− zap
+  between Home's channels), is reported (heartbeats without a position) and is kept in the history (when and for
+  how long, never "seen"). The server now serves channels: they go on a TV's Home (`continue: null`), are resolved
+  by their item id (`POST /tv/resolve {"itemId"}`), report without a position (`POST /tv/progress {"itemId"}`,
+  which never bumps the state version), get viewings without episode, positions or duration, appear in problem
+  reports, the catalog history and the admin catalog (`playable` on search hits and home rows, a channel's sources
+  under `items/:id`), and play by remote command (`play` with a channel's `itemId`).
+- **Media kind `ts`:** a source may be a progressive MPEG-TS stream over HTTP (IPTV-style), meant for channels. The
+  server serves it like MP4: a plain URL goes to the TV as it is, one that needs upstream headers streams through
+  the proxy at `/p/<token>/stream.ts` (`Range` forwarded, never buffered, never aligned). "Listen along" cannot play
+  it in a browser and marks such a source unsupported.
+- **Admin page: live channels.** A "Live" chip on a TV's Home list and in Now playing, with the time the channel
+  started; Previous/Next channel, with pause and seek disabled while a channel plays; a channel's catalog page with
+  its sources, Test sources and Play on; channels counted in the catalog contents and its build changes; a
+  channel's history shows when it was on and for how long; Listen along says channels are not covered, and `ts`
+  sources show as MPEG-TS.
+- **TV app: live channels.** Channels appear on Home with a red "Live" chip ("Canlı"), no progress bar and no
+  "new" count. OK plays a channel at its live edge (autoplay on start offers it as "Live"). CH+/CH− and |◀◀ ▶▶|
+  switch between Home's channels in Home order, without wrapping around. A channel cannot be paused or sought: its
+  information is its name and "Live", and the hidden menu (Audio language and Subtitles only) does not pause it.
+  A channel whose stream ends or breaks restarts at the live edge, then tries its other sources, then shows "Can't
+  play right now". MPEG-TS (`ts`) streams play. Owner commands can play a channel; pause, resume and seek on a
+  channel are answered `live`, next and previous switch channels (`no_channel` at the ends).
 
 ### Changed
 
+- **Breaking (pre-release) contract changes, made in place:** a v1 catalog item is now a union by `kind` (`movie`
+  and `series` carry `episodes`; `live` carries `sources`); a resolver's `ResolveRequest.episodeId` is null for a
+  channel; inline playlists from adapters are for VOD only. Nothing is deployed, so no version is bumped (see
+  the spec changelogs).
 - **The Docker image uses Node 26** instead of Node 24. CI builds the image and checks startup, the admin page and
   restart with a persistent data volume, with outbound networking disabled.
 - **The TV's Home is a grid of wide cards** that fills the screen, with each show's name in full under its card (on

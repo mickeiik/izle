@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { startTestServer, type Json } from "./helpers.ts";
+import { openEvents, startTestServer, type Json } from "./helpers.ts";
 
 test("play: by item it is what OK plays at send time, on the home list or not; both ids must agree; positionMs in the payload", async (t) => {
   const s = await startTestServer();
@@ -40,6 +40,53 @@ test("play: by item it is what OK plays at send time, on the home list or not; b
   }
   assert.equal(s.srv.ctx.store.pendingCommands(tv.deviceId, 0).length, good.length, "nothing was stored for refused bodies");
   assert.deepEqual((await s.admin("GET", `/devices/${tv.deviceId}`)).json.home, [], "playing an item does not put it on the home list");
+});
+
+test("play: a channel's item id plays it at its live edge (episodeId null, a positionMs left out); what is refused", async (t) => {
+  const s = await startTestServer();
+  t.after(() => s.close());
+  const tv = await s.pair("Salon");
+  const send = (body: Json) => s.admin("POST", `/devices/${tv.deviceId}/commands`, { type: "play", ...body });
+  const es = await openEvents(s.base, tv.token);
+  t.after(() => es.close());
+  await es.next((m) => m.event === "state");
+
+  const sent = await send({ itemId: "news" });
+  assert.deepEqual([sent.status, sent.json.online], [202, true]);
+  const event = await es.next((m) => m.event === "command");
+  assert.deepEqual(JSON.parse(event.data!), { id: sent.json.id, type: "play", payload: { itemId: "news", episodeId: null } }, "the TV gets episodeId null, not a missing field");
+  assert.equal((await send({ itemId: "news", positionMs: 754_000 })).status, 202);
+  assert.deepEqual(s.srv.ctx.store.pendingCommands(tv.deviceId, 0).map((c) => c.payload), [
+    { itemId: "news", episodeId: null },
+    { itemId: "news", episodeId: null },
+  ]);
+
+  const bad: Array<[Json, number, string]> = [
+    [{ itemId: "off-air" }, 400, "not_playable"],
+    [{ itemId: "off-air", positionMs: 0 }, 400, "not_playable"],
+    [{ itemId: "news", episodeId: "show.e1" }, 400, "unknown_episode"],
+    [{ itemId: "news", episodeId: "news" }, 400, "unknown_episode"],
+    [{ episodeId: "news" }, 400, "unknown_episode"], // a channel's id names no episode
+  ];
+  for (const [body, status, error] of bad) {
+    const r = await send(body);
+    assert.deepEqual([r.status, r.json.error], [status, error], JSON.stringify(body));
+  }
+  assert.equal((await send({ itemId: "off-air" })).json.itemId, "off-air", "not_playable names the channel");
+  assert.equal(s.srv.ctx.store.pendingCommands(tv.deviceId, 0).length, 2, "nothing was stored for refused bodies");
+
+  // The TV acts on it and says so; the command keeps its payload.
+  s.clock.advance(1000);
+  await s.call("POST", `/api/v1/tv/commands/${sent.json.id}/ack`, { token: tv.token });
+  s.clock.advance(2000);
+  assert.equal((await s.call("POST", `/api/v1/tv/commands/${sent.json.id}/result`, { token: tv.token, body: { result: "done" } })).status, 200);
+  assert.deepEqual((await s.admin("GET", `/devices/${tv.deviceId}/commands/${sent.json.id}`)).json.command, {
+    id: sent.json.id, type: "play", payload: { itemId: "news", episodeId: null }, actor: { type: "owner" }, createdAt: "2026-10-10T12:00:00.000Z",
+    deliveredAt: "2026-10-10T12:00:01.000Z", result: "done", reason: null, resultAt: "2026-10-10T12:00:03.000Z",
+  });
+  const queued = s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === "command queued");
+  assert.equal(queued.length, 2);
+  for (const line of queued) assert.deepEqual(Object.keys(line).sort(), ["commandId", "deviceId", "level", "msg", "time", "type"], "type and ids only");
 });
 
 test("results: reported once per command by its TV, with the command.result event; GET shows every field", async (t) => {

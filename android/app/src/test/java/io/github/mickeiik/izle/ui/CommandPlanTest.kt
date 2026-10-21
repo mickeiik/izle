@@ -2,6 +2,7 @@ package io.github.mickeiik.izle.ui
 
 import io.github.mickeiik.izle.data.api.CommandResult
 import io.github.mickeiik.izle.data.api.NextEpisode
+import io.github.mickeiik.izle.domain.PlayableRef
 import io.github.mickeiik.izle.domain.RemoteCommand
 import io.github.mickeiik.izle.player.PlayerPhase
 import io.github.mickeiik.izle.ui.CommandPlan.Action
@@ -27,8 +28,10 @@ class CommandPlanTest {
         PlayerPhase.Failed(secondsLeft = 30),
     )
 
-    private fun onVideo(command: RemoteCommand, menuOpen: Boolean = false) =
-        CommandPlan.actions(command, Screen.Player, PlayerPhase.Playing, menuOpen)
+    private val noPause = listOf(Action.Report(CommandResult.ignored(CommandResult.LIVE)))
+
+    private fun onVideo(command: RemoteCommand, menuOpen: Boolean = false, live: Boolean = false) =
+        CommandPlan.actions(command, Screen.Player, PlayerPhase.Playing, menuOpen, live)
 
     @Test
     fun onHomeOnlyPlayAndMessagesAct() {
@@ -67,6 +70,39 @@ class CommandPlanTest {
         assertEquals(listOf(Action.Play("show", "show.e2")), onVideo(play, menuOpen = true))
         assertEquals(listOf(Action.ShowMessage(message), done), onVideo(message, menuOpen = true))
         assertEquals("an unknown command does nothing", unknownType, onVideo(RemoteCommand.Ignored("launch"), menuOpen = true))
+    }
+
+    @Test
+    fun aChannelIsNeverPausedOrSoughtAndNextPreviousZap() {
+        // Loading counts: CH+ (and the owner's next) zap on while the next channel loads.
+        for (phase in listOf(PlayerPhase.Playing, PlayerPhase.Loading)) {
+            for (command in listOf(RemoteCommand.Pause, RemoteCommand.Resume, seek)) {
+                assertEquals("$command in $phase", noPause, CommandPlan.actions(command, Screen.Player, phase, menuOpen = false, live = true))
+            }
+            assertEquals(listOf(Action.Zap(1)), CommandPlan.actions(RemoteCommand.Next, Screen.Player, phase, menuOpen = false, live = true))
+            assertEquals(listOf(Action.Zap(-1)), CommandPlan.actions(RemoteCommand.Previous, Screen.Player, phase, menuOpen = false, live = true))
+            assertEquals(listOf(Action.Exit, done), CommandPlan.actions(RemoteCommand.Stop, Screen.Player, phase, menuOpen = false, live = true))
+        }
+        // The menu over a channel did not pause it: pause leaves it alone, next and previous close it.
+        assertEquals(noPause, onVideo(RemoteCommand.Pause, menuOpen = true, live = true))
+        assertEquals(noPause, onVideo(RemoteCommand.Resume, menuOpen = true, live = true))
+        assertEquals(listOf(Action.CloseMenu(resume = true), Action.Zap(1)), onVideo(RemoteCommand.Next, menuOpen = true, live = true))
+        assertEquals(listOf(Action.Play("show", "show.e2")), onVideo(play, live = true))
+        assertEquals(listOf(Action.ShowMessage(message), done), onVideo(message, live = true))
+        // Its error screen takes transport commands no more than a show's; Home has no channel playing.
+        for (command in transport) {
+            assertEquals(notInPlayer, CommandPlan.actions(command, Screen.Player, PlayerPhase.Failed(30), menuOpen = false, live = true))
+            assertEquals(notInPlayer, CommandPlan.actions(command, Screen.Home, PlayerPhase.Idle, menuOpen = false, live = true))
+        }
+    }
+
+    @Test
+    fun playWithoutAnEpisodePlaysTheChannel() {
+        val channel = RemoteCommand.Play("news-24", episodeId = null)
+        assertEquals(listOf(Action.Play("news-24", null)), CommandPlan.actions(channel, Screen.Home, PlayerPhase.Idle, menuOpen = false))
+        assertEquals(listOf(Action.Play("news-24", null)), onVideo(channel, menuOpen = true))
+        assertEquals(PlayableRef.Channel("news-24"), Action.Play("news-24", null).ref)
+        assertEquals(PlayableRef.Episode("show.e2"), Action.Play("show", "show.e2", positionMs = 0).ref)
     }
 
     @Test
@@ -113,10 +149,11 @@ class CommandPlanTest {
         val everything = transport + listOf(play, message, RemoteCommand.Stop, RemoteCommand.Ignored("launch"), RemoteCommand.Update(300))
         val updating = Screen.Update(UpdateUi("0.3.0", UpdatePhase.Prompt(60)))
         val screens = listOf(Screen.Starting, Screen.Setup(canGoBack = true), Screen.Pairing, Screen.Home, Screen.Player, updating)
-        for (screen in screens) for (phase in noVideo + PlayerPhase.Playing) for (menuOpen in listOf(false, true)) for (command in everything) {
-            val actions = CommandPlan.actions(command, screen, phase, menuOpen)
-            val answering = actions.filter { it is Action.Report || it is Action.Play || it is Action.Step || it is Action.Update }
-            assertEquals("$command on $screen in $phase", listOf(actions.last()), answering)
+        val bools = listOf(false, true)
+        for (screen in screens) for (phase in noVideo + PlayerPhase.Playing) for (menuOpen in bools) for (live in bools) for (command in everything) {
+            val actions = CommandPlan.actions(command, screen, phase, menuOpen, live)
+            val answering = actions.filter { it is Action.Report || it is Action.Play || it is Action.Step || it is Action.Zap || it is Action.Update }
+            assertEquals("$command on $screen in $phase (live $live)", listOf(actions.last()), answering)
         }
     }
 }

@@ -12,7 +12,10 @@ const errors = (issues: ValidationIssue[]) => issues.filter((i) => i.severity ==
 const warnings = (issues: ValidationIssue[]) => issues.filter((i) => i.severity === "warning");
 const source0 = (i: Json) => i.items[0].episodes[0].sources[0];
 const SRC = "/items/0/episodes/0/sources/0";
-const unknown = (path: string) => ({ path, message: /unknown property/ });
+const unknown = (path: string, name?: string) => ({ path, message: name ? new RegExp(`unknown property "${name}"`) : /unknown property/ });
+/** The fixture's live channel. */
+const live = (i: Json) => i.items[2];
+const LIVE = "/items/2";
 
 function assertError(issues: ValidationIssue[], match: { path?: string; file?: string; message: RegExp }): void {
   const found = errors(issues).find(
@@ -27,11 +30,12 @@ test("the shipped sample catalog and the fixture bundle are valid and warning-fr
   assert.equal(sample.ok, true);
   assert.equal(sample.bundle?.manifest.catalogId, "izle-sample");
   assert.ok((sample.stats?.items ?? 0) >= 6);
+  assert.equal(sample.stats?.live, 0, "the sample catalog stays video on demand");
   assert.equal(sample.stats?.posters, sample.stats?.items);
 
   const fixture = await validateBundle(await makeBundle());
   assert.deepEqual(fixture.issues, []);
-  const stats = { items: 2, movies: 1, series: 1, episodes: 3, playableEpisodes: 2, sources: 2, posters: 1, backdrops: 0 };
+  const stats = { items: 3, movies: 1, series: 1, live: 1, episodes: 3, playableEpisodes: 2, sources: 3, posters: 1, backdrops: 0 };
   assert.deepEqual(fixture.stats, stats);
 });
 
@@ -95,6 +99,26 @@ test("semantic, schema and file errors are reported where they are", async () =>
     [{ manifest: (m) => (m.builtAt = "2026-02-31T00:00:00Z") }, { path: "/builtAt", message: /date-time/ }],
     [{ items: (i) => delete source0(i).languages.subtitles }, { message: /missing required property "subtitles"/ }],
     [{ files: { "items.json": "" } }, { file: "items.json", message: /invalid JSON/ }],
+    // Live channels: no episodes or episodic fields, a playable of their own, a known kind.
+    [{ items: (i) => (live(i).episodes = []) }, unknown(LIVE, "episodes")],
+    [{ items: (i) => (live(i).year = 2020) }, unknown(LIVE, "year")],
+    [{ items: (i) => (live(i).autoAdvance = true) }, unknown(LIVE, "autoAdvance")],
+    [{ items: (i) => delete live(i).playbackAllowed }, { path: LIVE, message: /missing required property "playbackAllowed"/ }],
+    [{ items: (i) => (live(i).sources = []) }, { path: `${LIVE}/playbackAllowed`, message: /must be false when sources is empty/ }],
+    [
+      { items: (i) => live(i).sources.push({ ...live(i).sources[0] }) },
+      { path: `${LIVE}/sources/1/id`, message: /duplicate source id "hls" within the item/ },
+    ],
+    [{ items: (i) => (live(i).sources[0].media.url = "file:///etc/passwd") }, { path: `${LIVE}/sources/0/media/url`, message: /pattern/ }],
+    [{ items: (i) => (live(i).sources[0].media.url = "https://[bad") }, { path: `${LIVE}/sources/0/media/url`, message: /not a valid http\(s\) URL/ }],
+    [
+      { items: (i) => (live(i).sources[0] = { id: "a", type: "adapter", adapter: "other", ref: {}, languages: { audio: null, subtitles: null } }) },
+      { path: `${LIVE}/sources/0/adapter`, message: /adapter "other" is not listed in bundle.json/ },
+    ],
+    [{ items: (i) => (live(i).id = "movie-a") }, { path: `${LIVE}/id`, message: /duplicate item id "movie-a"/ }],
+    [{ items: (i) => (live(i).kind = "podcast") }, { path: `${LIVE}/kind`, message: /must be one of "movie", "series", "live"/ }],
+    [{ items: (i) => (i.items[0].sources = []) }, unknown("/items/0", "sources")],
+    [{ items: (i) => delete i.items[0].episodes }, { path: "/items/0", message: /missing required property "episodes"/ }],
   ];
   for (const [opts, match] of cases) {
     const result = await validateBundle(await makeBundle(opts));
@@ -152,9 +176,22 @@ test("warnings: unused adapters and unreferenced assets; x- extensions are accep
       i.items[0]["x-origin"] = "registry-42";
       i.items[0].episodes[0]["x-n"] = 1;
       source0(i)["x-cdn"] = "a";
+      live(i)["x-epg"] = "channel-c";
     },
   });
   assert.deepEqual(errors((await validateBundle(extended)).issues), []);
+});
+
+test("live channels: counted, warned when not playable", async () => {
+  const ts = await validateBundle(await makeBundle({ items: (i) => (live(i).sources[0].media = { kind: "ts", url: "http://iptv.example.test/c.ts" }) }));
+  assert.deepEqual(ts.issues, []);
+  assert.equal(ts.bundle?.items[2]?.kind, "live");
+
+  const off = await validateBundle(await makeBundle({ items: (i) => Object.assign(live(i), { playbackAllowed: false, sources: [] }) }));
+  assert.equal(off.ok, true);
+  assert.deepEqual(warnings(off.issues).map((w) => [w.file, w.path]), [["items.json", LIVE]]);
+  assert.match(warnings(off.issues)[0]?.message ?? "", /live item "live-c" has playbackAllowed: false/);
+  assert.deepEqual([off.stats?.items, off.stats?.live, off.stats?.sources, off.stats?.episodes], [3, 1, 2, 3]);
 });
 
 test("invalid JSON is reported without echoing its content", async () => {
@@ -164,6 +201,6 @@ test("invalid JSON is reported without echoing its content", async () => {
 
 test("loadBundle returns the bundle or throws BundleValidationError", async () => {
   const { bundle } = await loadBundle(await makeBundle());
-  assert.equal(bundle.items.length, 2);
+  assert.equal(bundle.items.length, 3);
   await assert.rejects(loadBundle(await makeBundle({ manifest: (m) => (m.adapters = []) })), BundleValidationError);
 });
