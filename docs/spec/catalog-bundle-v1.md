@@ -39,20 +39,37 @@ reference into a playable stream at play time (signed URLs, cookies, scraping) b
 
 ### CatalogItem
 
+`kind` decides the shape: a movie or a series is played through its episodes, a [live item](#live-item) (a TV
+channel) carries its approval and sources itself. Fields that do not belong to an item's kind are errors.
+
+Common fields:
+
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
 | `id` | Id | yes | Unique within the bundle; durable across builds. |
-| `kind` | `"movie"` \| `"series"` | yes | A movie has exactly one episode. |
+| `kind` | `"movie"` \| `"series"` \| `"live"` | yes | Discriminator: what the title is, never how many episodes it has ([Rules](#rules) 5). A movie has exactly one episode, a series one or more, a live channel none ([Rules](#rules) 8). |
 | `title` | string | yes | Display title. |
 | `originalTitle` | string \| null | no | |
-| `year` | integer \| null | no | First release year. |
 | `synopsis` | string \| null | no | |
 | `genres` | string[] | no | Free-form, unique. |
-| `rating` | number 0–10 \| null | no | |
 | `poster` | string \| null | yes | `assets/<sha256>.<jpg\|png\|webp>`, or null. |
 | `backdrop` | string \| null | no | Landscape image for the TV's home cards: `assets/<sha256>.<jpg\|png\|webp>`, or null (the default when absent). |
+
+Movie and series fields (`kind` is `"movie"` or `"series"`):
+
+| Field | Type | Req. | Meaning |
+|---|---|---|---|
+| `year` | integer \| null | no | First release year. |
+| `rating` | number 0–10 \| null | no | |
 | `autoAdvance` | boolean | no | Item default for auto-starting the next episode (default `true`). |
 | `episodes` | Episode[] (≥ 1) | yes | **Array order is the approved play order.** |
+
+Live fields (`kind` is `"live"`; `year`, `rating`, `autoAdvance` and `episodes` MUST NOT be given):
+
+| Field | Type | Req. | Meaning |
+|---|---|---|---|
+| `playbackAllowed` | boolean | yes | Explicit approval. `false` = never on a home screen, never resolved. |
+| `sources` | Source[] | yes | In preference order; ids unique within the channel. MAY be empty only when `playbackAllowed` is `false`. |
 
 ### Episode
 
@@ -67,21 +84,31 @@ reference into a playable stream at play time (signed URLs, cookies, scraping) b
 | `autoAdvance` | boolean | no | `false` = do not auto-start the next episode after this one (season end, approval boundary). Overrides the item default. |
 | `sources` | Source[] | yes | In preference order. MAY be empty only when `playbackAllowed` is `false`. |
 
+### Live item
+
+A live item is a TV channel: a stream with no beginning and no end, addressed by its item id. It has no episodes,
+and so no duration, resume position, progress, play order or auto-advance; izle always plays it at its live edge.
+Its sources SHOULD be live streams: HLS playlists without `#EXT-X-ENDLIST`, dynamic DASH manifests
+(`type="dynamic"`) or `ts` streams. `year` and `rating` MUST NOT be given (a channel has neither). The server's
+history records when and for how long a channel was watched, never that it was "seen".
+
 ### Source
 
 Common fields:
 
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
-| `id` | Id | yes | Unique within the episode; durable. |
+| `id` | Id | yes | Unique within the episode, or within the channel; durable. |
 | `type` | `"direct"` \| `"adapter"` | yes | Discriminator. |
 | `label` | string | no | Shown in the owner's diagnostics and the TV's hidden menu. |
 | `languages` | LanguageFacts | yes | What the stream is known to contain. |
 | `subtitleTracks` | SubtitleTrack[] | no | External subtitle files (in addition to any in-stream tracks). |
 
-`type: "direct"` adds `media: {kind: "hls"|"dash"|"mp4", url, headers?}`: `url` is http(s); `mp4` means any
-progressive file the player can sniff (MP4, QuickTime); `headers` are upstream request headers (e.g. `Referer`), and
-media with headers is only ever played through the server proxy, so they never reach the TV.
+`type: "direct"` adds `media: {kind: "hls"|"dash"|"mp4"|"ts", url, headers?}`: `url` is http(s); `mp4` means any
+progressive file the player can sniff (MP4, QuickTime); `ts` means progressive MPEG-TS over HTTP (for a channel, an
+endless response), allowed on any item and meant for channels; `headers` are upstream request headers (e.g.
+`Referer`), and media with headers is only ever played through the server proxy, so they never reach the TV (`ts`
+is proxied like `mp4`).
 
 `type: "adapter"` adds `adapter` (an id listed in the manifest's `adapters`) and `ref` (an object, opaque JSON
 for the adapter). The server passes `ref` to the adapter at play time and never logs it.
@@ -105,32 +132,40 @@ server treats as matching every preferred language).
    allowed on every object for private annotations and are ignored by izle.
 2. **Durable identities.** `catalogId`, item, episode and source ids MUST NOT change between builds of the same
    catalog and MUST NOT be positional (no array indexes, no build-order counters). The server stores progress,
-   home screens and cursors by id; a changed id loses them. Exporters whose source keys are not valid ids (for
-   example keys containing `|`, `:` or spaces) MUST map them deterministically (e.g. slug + short hash of the
-   original key) and SHOULD keep an identity registry so renames in the source do not change ids.
+   home screens, cursors and viewing history by id; a changed id loses them. Exporters whose source keys are not
+   valid ids (for example keys containing `|`, `:` or spaces) MUST map them deterministically (e.g. slug + short
+   hash of the original key) and SHOULD keep an identity registry so renames in the source do not change ids.
 3. **Explicit play order and approval.** The episode array order is the order izle plays in, and
-   `playbackAllowed` is required on every episode. izle never infers either from season/number fields.
+   `playbackAllowed` is required on every episode and every channel. izle never infers either from season/number
+   fields.
 4. **Content-addressed images.** A poster or backdrop file's name is the lowercase hex SHA-256 of its bytes and
    its extension matches its content type. Posters SHOULD be 2:3, around 400×600, and well under 1 MiB.
    Backdrops SHOULD be 16:9, around 1280×720, well under 1 MiB; without one the TV crops the poster
    to a landscape band.
-5. **Movies have exactly one episode.**
-6. **Episode ids are unique across the bundle** (the TV API addresses episodes by id alone).
+5. **Movies have exactly one episode.** `kind` says what the title is, never how many episodes it has: a series
+   with only its first episode released is a `series` with one episode, and stays one as episodes are added.
+   Exporters MUST NOT derive `kind` from the episode count (izle shows a `movie` as a film, and rejects one that
+   gains a second episode).
+6. **Episode ids are unique across the bundle** (the TV API addresses episodes by id alone). Channels are
+   addressed by their item id; the two id spaces are separate (an episode id MAY equal an item id).
 7. **No secrets.** Bundles SHOULD NOT contain credentials or signed, expiring URLs; resolve those at play time
    with an adapter.
+8. **Channels have no episodes.** A stream with no beginning or end is a `live` item. Exporters MUST NOT model a
+   channel as a one-episode series, nor a film as a channel.
 
 ## Validation
 
 `npx izle-validate <bundleDir>` (package `@izle/contract`) checks the JSON Schema and the semantic rules:
-unique item and episode ids (bundle-wide) and source ids (per episode), one episode per movie, `playbackAllowed:
-false` when `sources` is empty, adapter ids declared in the manifest, poster and backdrop files present with
-matching SHA-256 and image type, valid calendar date in `builtAt`, parseable http(s) URLs. Warnings (non-fatal):
-unused declared adapters, items without any playable episode, unreferenced or oversized assets. `--probe` additionally
-range-GETs every direct media and subtitle URL (`Range: bytes=0-0`, redirects followed) and reports anything
-other than 200/206; `--json` prints a machine-readable report. Exit status 0 = valid, 1 = invalid or
+unique item and episode ids (bundle-wide) and source ids (per episode or channel), one episode per movie,
+`playbackAllowed: false` when `sources` is empty (on episodes and channels), adapter ids declared in the manifest,
+poster and backdrop files present with matching SHA-256 and image type, valid calendar date in `builtAt`, parseable
+http(s) URLs. Warnings (non-fatal): unused declared adapters, movies and series without any playable episode,
+channels with `playbackAllowed: false`, unreferenced or oversized assets. `--probe` additionally range-GETs every
+direct media and subtitle URL, episodes' and channels' alike (`Range: bytes=0-0`, redirects followed), and reports
+anything other than 200/206; `--json` prints a machine-readable report. Exit status 0 = valid, 1 = invalid or
 unreachable, 2 = usage error. Programmatic use: `validateBundle(dir)` returns `{ok, issues, bundle?, stats?}`;
 `loadBundle(dir)` returns `{bundle, warnings, stats}` or throws `BundleValidationError`; `stats` counts items,
-movies, series, episodes, playable episodes, sources, posters and backdrops.
+movies, series, live channels, episodes, playable episodes, sources, posters and backdrops.
 
 ## Versioning
 
@@ -140,9 +175,17 @@ documented default, recorded in the changelog below. Consumers built for an earl
 side supports them). Anything else (a new required property, a changed meaning, a removed value) requires
 `formatVersion: 2`.
 
+Until the first deployment the owner may change v1 in place; such changes are marked **breaking (pre-release)** in
+the changelog.
+
 ## Changelog
 
 - **v1 (2026-10-10)** — initial version.
 - **v1, backdrop (2026-10-19)** — additive: `CatalogItem.backdrop` (optional, default null), a 16:9 landscape image
   under `assets/`, content-addressed and validated like `poster`; `BundleStats.backdrops`. Servers before this
   change reject a bundle that has the property.
+- **v1, live channels (2026-10-21)** — breaking (pre-release): live items (`kind: "live"`), TV channels that carry
+  `playbackAllowed` and `sources` themselves and have no `episodes`, `year`, `rating` or `autoAdvance`; `kind` is
+  the discriminator between the movie and series shape and the live shape; [Rules](#rules) 8 (channels have no
+  episodes) and the item id as a channel's address (rule 6); source ids are unique within the episode or the
+  channel; `BundleStats.live`; media kind `ts` (progressive MPEG-TS over HTTP, proxied like `mp4`).
