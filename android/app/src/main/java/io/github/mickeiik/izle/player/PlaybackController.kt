@@ -136,7 +136,7 @@ class PlaybackController(
     private var expiryJob: Job? = null
     private var stepJob: Job? = null
 
-    /** When this playback last re-resolved its stream ahead of the expiry (elapsedRealtime), for the 60 s spacing. */
+    /** When this playback last re-resolved its stream ahead of the expiry on [clock], for the 60 s spacing. */
     private var lastRefreshAt: Long? = null
 
     /** CH+/CH−: the items' episode lists, fetched on first use and kept for this player visit. */
@@ -423,15 +423,14 @@ class PlaybackController(
                 live = live,
             )
         }
-        val p = engine
-        activeEngine = p
-        p.setListener(listener)
+        activeEngine = engine
+        engine.setListener(listener)
         val device = repository.state.value?.device
-        p.applyPreferences(device?.preferredAudioLanguage, device?.subtitlesLanguage)
-        p.load(media, start)
-        _player.value = p.surface
+        engine.applyPreferences(device?.preferredAudioLanguage, device?.subtitlesLanguage)
+        engine.load(media, start)
+        _player.value = engine.surface
         // Nothing pauses a channel: a re-resolve after its stream broke off plays on.
-        p.playWhenReady = playWhenReady || live
+        engine.playWhenReady = playWhenReady || live
         startHeartbeat()
         watchExpiry(api, resolved, receivedAt)
     }
@@ -475,7 +474,7 @@ class PlaybackController(
         }
     }
 
-    /** When the answer's stream expires, on the elapsedRealtime clock; null without (a readable) `expiresAt`. */
+    /** When the answer's stream expires, on [clock]; null without (a readable) `expiresAt`. */
     private fun expiryDeadline(resolved: ResolveResponse, receivedAt: Long): Long? =
         ExpiryPlan.validForMs(resolved.expiresAt, resolved.serverDateMs, System.currentTimeMillis())?.let { receivedAt + it }
 
@@ -549,7 +548,8 @@ class PlaybackController(
             activeEngine?.let(::syncFlags)
         }
 
-        // A stall, recovery, pause or resume re-anchors the phone's "Listen along" at once.
+        // A rebuffer stall, its end, a pause or a resume: the phone's "Listen along" follows this anchor, so report
+        // at once (a stall is status "playing" with playing=false).
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             activeEngine?.let(::reportLive)
         }

@@ -69,9 +69,10 @@ class FakeMediaEngine : MediaEngine {
     }
 
     fun buffer(value: Boolean) {
+        ready = !value
         buffering = value
         listener?.onBufferingChanged(value)
-        if (value) setPlaying(false)
+        setPlaying(playWhenReady && ready)
     }
 
     fun cues(text: String?) { listener?.onCues(text) }
@@ -90,6 +91,7 @@ class FakeMediaEngine : MediaEngine {
     }
 
     override fun applyPreferences(preferredAudioLanguage: String?, subtitlesLanguage: String?) {
+        calls += "preferences"
         preferences += preferredAudioLanguage to subtitlesLanguage
     }
     override fun audioTracks() = audio

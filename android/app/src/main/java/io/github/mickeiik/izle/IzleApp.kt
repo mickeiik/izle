@@ -63,7 +63,7 @@ class AppGraph(val context: Context) {
     var mediaEngine: () -> MediaEngine = {
         ExoMediaEngine(
             context, http, userAgent,
-            // The emulator decodes H.264 in software; real TVs get full resolution.
+            // The emulator decodes H.264 in software; real TVs, debug build or not, get full resolution.
             capVideoTo720p = BuildConfig.DEBUG && Build.HARDWARE in setOf("ranchu", "goldfish"),
         )
     }

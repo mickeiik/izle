@@ -122,6 +122,7 @@ class ExoMediaEngine(
                 Player.STATE_READY -> listener?.onReady()
                 Player.STATE_ENDED -> listener?.onEnded()
             }
+            // Every state change refreshes the controller's flags, including ENDED and IDLE after an error.
             listener?.onBufferingChanged(buffering)
         }
 
@@ -146,6 +147,7 @@ class ExoMediaEngine(
         DefaultDataSource.Factory(context, OkHttpDataSource.Factory(mediaHttp).setUserAgent(userAgent))
     }
 
+    /** A channel's progressive stream: no retry in place, see [restartsInsteadOfResuming]. */
     private val liveStreamSources by lazy { DefaultMediaSourceFactory(dataSources).setLoadErrorHandlingPolicy(NoRetryInPlace()) }
 
     private fun ensurePlayer(): ExoPlayer = player ?: ExoPlayer.Builder(context)
@@ -163,7 +165,10 @@ class ExoMediaEngine(
         }
         .also { player = it }
 
-    /** Preferences may arrive before the first load, while creating the decoder still has to wait. */
+    /**
+     * Preferred audio from the server (owner-controlled); subtitles off unless the owner chose a language.
+     * Preferences may arrive before the first load, while creating the decoder still has to wait.
+     */
     private fun applyTrackPreferences(p: ExoPlayer) {
         val builder = p.trackSelectionParameters.buildUpon()
             .clearOverrides()

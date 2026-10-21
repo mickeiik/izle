@@ -34,6 +34,7 @@ interface MediaEngine {
         fun onError(error: MediaError)
         fun onIsPlayingChanged(isPlaying: Boolean)
         fun onPlayWhenReadyChanged(playWhenReady: Boolean)
+        /** Called after every state change, whether or not buffering changed; the controller refreshes its flags on it. */
         fun onBufferingChanged(buffering: Boolean)
         fun onCues(text: String?)
     }

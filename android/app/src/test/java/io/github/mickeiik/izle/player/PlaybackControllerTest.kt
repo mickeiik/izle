@@ -179,6 +179,7 @@ class PlaybackControllerTest {
         await("the first load") { engine.loads.size == 1 }
         assertEquals(55_000L, engine.loads.single().startAtMs)
         assertEquals(listOf("pt-BR" to "tr"), engine.preferences)
+        assertEquals(listOf("preferences", "load"), engine.calls.take(2))
         assertEquals(server.url("/media/one").toString(), engine.loads.single().media.url)
         assertEquals(server.url("/captions/one").toString(), engine.loads.single().media.subtitles.single().url)
         assertEquals("show.e1", engine.loads.single().media.mediaId)
@@ -207,7 +208,7 @@ class PlaybackControllerTest {
         assertEquals(false, progress.last().playing)
         advance(PlaybackPlan.HEARTBEAT_INTERVAL_MS)
         assertEquals(3, progress.size)
-        engine.ready()
+        engine.buffer(false)
         await("the recovery anchor") { progress.size == 4 }
         assertFalse(controller.ui.value.buffering)
         assertEquals(1, started.size)
@@ -260,7 +261,8 @@ class PlaybackControllerTest {
         assertNull(resolves.last().exclude)
         assertEquals(400_000L, engine.loads.last().startAtMs)
         engine.ready()
-        advance(59_000)
+        // Another 403 before five minutes of playback falls back instead of retrying the same source.
+        advance(PlaybackPlan.EXPIRED_URL_MIN_PLAYED_MS - 1)
         engine.positionMs = 459_000
         answer(resolved(source = "second"))
         engine.fail("ERROR_CODE_IO_BAD_HTTP_STATUS", 403)
@@ -457,6 +459,7 @@ class PlaybackControllerTest {
         answer(resolved())
         play(command = 6)
         await("a waiting command") { engine.loads.size == 2 }
+        assertEquals(listOf("preferences", "load"), engine.calls.dropWhile { it != "release" }.drop(1).take(2))
         controller.stop()
         engine.ready() // detached callbacks cannot finish the waiting command
         await("ignored stopped") { results.any { it.first == 6L } }
