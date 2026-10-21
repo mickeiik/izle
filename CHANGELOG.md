@@ -15,8 +15,20 @@ contract share one version number. How to update (back up, update the server, th
 - **Landscape pictures in catalogs:** a catalog item may carry an optional 16:9 `backdrop` image next to its poster
   (an additive change to the v1 bundle contract, checked by `izle-validate` like posters). The server sends it as
   `backdropUrl`; the TV shows it on the show's card.
+- **Live channels in catalog bundles (contract and specs):** a catalog item may be a `live` channel, carrying
+  `playbackAllowed` and its `sources` itself, with no episodes; `izle-validate` checks it and counts it (`live` in
+  its summary and stats). The specs say how a channel plays (at its live edge, no pause or seek, CH+/CH− zap
+  between Home's channels), is reported (heartbeats without a position) and is kept in the history (when and for
+  how long, never "seen"). The server, the admin page and the TV app follow in later steps; a server of this
+  version refuses a bundle with a channel.
+- **Media kind `ts`:** a source may be a progressive MPEG-TS stream over HTTP (IPTV-style), meant for channels.
 
 ### Changed
+
+- **Breaking (pre-release) contract changes, made in place:** a v1 catalog item is now a union by `kind` (`movie`
+  and `series` carry `episodes`; `live` carries `sources`); a resolver's `ResolveRequest.episodeId` is null for a
+  channel; inline playlists from adapters are for VOD only. Nothing is deployed, so no version is bumped (see
+  the spec changelogs).
 
 - **The TV's Home is a grid of wide cards** that fills the screen, with each show's name in full under its card (on
   two lines when there is room). Shows that do not fit on one screen are reached by moving down, one row at a time,

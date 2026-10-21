@@ -179,3 +179,32 @@ server 132 → 129, TV 129 → 126, the dropped ones covered by another test thr
   short cards (6 columns, 4 rows, and 5 columns when a progress bar is shown).
 - The scroll spec is exact, with no tolerance: Compose asks it again on every frame of the scroll, so a tolerance
   stops the scroll short by up to that much.
+
+## Live channels: specification (2026-10-21)
+
+The specs and the contract were written first; the server, admin page and TV app follow in later steps.
+- A channel is its own kind, never a one-episode series: it has no duration, resume, play order or "seen", and
+  forcing it through episodes would leak nulls into every episode path. `Playable {playbackAllowed, sources}` is
+  shared by `Episode` and `LiveItem` so movies can move to item-level sources later with no new shape;
+  `EpisodicItem` is a transitional name for the items that still carry episodes.
+- Nothing is deployed, so the v1 contracts change in place, marked "breaking (pre-release)" in their changelogs;
+  AGENTS.md and the Versioning sections carry the clause so a later pass does not undo it.
+- The items schema discriminates on `kind` with an `enum` branch for movie/series (Ajv 8.20 accepts `enum` tags);
+  the common property list is repeated per branch because `additionalProperties: false` rules out `allOf`.
+- `year`, `rating` and `autoAdvance` are forbidden on a channel rather than ignored: a strict schema catches an
+  exporter that still thinks in films. Stats gain `live` only (no `playableLive`); the warning for an unplayable
+  channel mirrors the one for shows.
+- The TV API names episodes by `episodeId` and channels by `itemId`, in different fields, so the two id spaces stay
+  separate. The error for `itemId` naming an item played through its episodes is `has_episodes`, a statement that
+  stays true after movies migrate (a movie then has none).
+- `continue: null` marks a channel's home entry; a channel's progress reports carry no position, never bump the
+  state version and know only `playing` and `stopped` (no pause on live). Zapping is the TV's business over its
+  Home list; the server has no "next channel" notion and `next`/`previous` commands just reach the TV.
+- Inline-playlist adapter results are VOD only (the proxy serves the text as given for the session); a channel's
+  adapter returns a URL, which the proxy fetches anew on every request.
+- Media kind `ts` (raw MPEG-TS over HTTP) for IPTV-style channels: proxied like MP4 at `stream.ts`, never played by
+  the admin page's browser (Listen along marks it unsupported).
+- The "Live" chip is red with white text, television's own convention, rather than a fourth hue of the chip palette.
+- Until the server step lands, the server narrows its catalog type to `EpisodicItem` and refuses a bundle with a
+  channel (a reload keeps the previous catalog) so that a channel is never silently dropped and every root command
+  stays green.

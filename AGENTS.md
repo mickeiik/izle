@@ -23,7 +23,9 @@ UX rules in [docs/ux/senior-tv.md](docs/ux/senior-tv.md) describe what the softw
   the single `redact()` helper; tests assert this with hostile fixtures.
 - Upstream request headers never reach the TV; header-bound media is served through the server proxy.
 - The catalog bundle contract and the resolver module API are **versioned**. Within v1 only additive, optional
-  changes are allowed (documented in the spec changelog); anything else bumps the version.
+  changes are allowed (documented in the spec changelog); anything else bumps the version. Until the first
+  deployment the owner may change v1 in place instead, marked *breaking (pre-release)* in the spec changelog, with
+  no compatibility shims and no version bump.
 - **No source-specific code, fixtures, hostnames or links to private repositories.** izle is
   bring-your-own-catalog: private catalogs and their resolvers live out of tree. Never write secrets, tokens or
   private source names into this repository.
