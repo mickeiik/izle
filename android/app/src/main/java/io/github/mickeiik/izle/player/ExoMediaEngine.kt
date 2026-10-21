@@ -31,7 +31,6 @@ class ExoMediaEngine(
 ) : MediaEngine {
     private var player: ExoPlayer? = null
     private var listener: MediaEngine.Listener? = null
-    private var live = false
     private var preferredAudioLanguage: String? = null
     private var subtitlesLanguage: String? = null
 
@@ -41,13 +40,13 @@ class ExoMediaEngine(
         set(value) { player?.playWhenReady = value }
     override val isPlaying: Boolean get() = player?.isPlaying == true
     override val positionMs: Long get() = player?.currentPosition ?: 0
-    override val durationMs: Long? get() = player?.duration?.takeIf { !live && it != C.TIME_UNSET && it > 0 }
+    override val durationMs: Long? get() = player?.duration?.takeIf { it != C.TIME_UNSET && it > 0 }
     override val buffering: Boolean get() = player?.playbackState == Player.STATE_BUFFERING
 
     override fun setListener(listener: MediaEngine.Listener?) { this.listener = listener }
 
     override fun load(media: MediaSpec, startAtMs: Long?) {
-        live = media.live
+        val live = media.live
         val p = ensurePlayer()
         val subtitles = media.subtitles.map { track ->
             MediaItem.SubtitleConfiguration.Builder(Uri.parse(track.url))
@@ -123,7 +122,7 @@ class ExoMediaEngine(
                 Player.STATE_ENDED -> listener?.onEnded()
             }
             // Every state change refreshes the controller's flags, including ENDED and IDLE after an error.
-            listener?.onBufferingChanged(buffering)
+            listener?.onStateChanged()
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {

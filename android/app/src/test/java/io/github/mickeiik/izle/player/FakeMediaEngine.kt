@@ -39,20 +39,21 @@ class FakeMediaEngine : MediaEngine {
         ready = false
         buffering = true
         setPlaying(false)
-        listener?.onBufferingChanged(true)
+        listener?.onStateChanged()
     }
 
     fun ready() {
         ready = true
         buffering = false
         listener?.onReady()
-        listener?.onBufferingChanged(false)
+        listener?.onStateChanged()
         setPlaying(playWhenReady)
     }
 
     fun ended() {
         ready = false
         listener?.onEnded()
+        listener?.onStateChanged()
         setPlaying(false)
     }
 
@@ -68,10 +69,12 @@ class FakeMediaEngine : MediaEngine {
         listener?.onIsPlayingChanged(value)
     }
 
+    /** A stall and its end; like the real engine, the end is a READY again. */
     fun buffer(value: Boolean) {
         ready = !value
         buffering = value
-        listener?.onBufferingChanged(value)
+        if (ready) listener?.onReady()
+        listener?.onStateChanged()
         setPlaying(playWhenReady && ready)
     }
 

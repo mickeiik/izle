@@ -531,7 +531,7 @@ class PlaybackController(
 
     private val listener = object : MediaEngine.Listener {
         override fun onReady() {
-            val p = activeEngine ?: return
+            if (activeEngine == null) return
             if (readyAt == null) {
                 readyAt = clock()
                 session?.resolved?.item?.let(onPlaybackStarted)
@@ -539,7 +539,6 @@ class PlaybackController(
             }
             attempts.onPlaying()
             if (_ui.value.phase == PlayerPhase.Loading) _ui.update { it.copy(phase = PlayerPhase.Playing) }
-            syncFlags(p)
         }
 
         override fun onEnded() { activeEngine?.let(this@PlaybackController::onEnded) }
@@ -554,7 +553,7 @@ class PlaybackController(
             activeEngine?.let(::reportLive)
         }
 
-        override fun onBufferingChanged(buffering: Boolean) {
+        override fun onStateChanged() {
             activeEngine?.let(::syncFlags)
         }
 

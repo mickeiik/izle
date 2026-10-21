@@ -15,7 +15,7 @@ interface MediaEngine {
     var playWhenReady: Boolean
     val isPlaying: Boolean
     val positionMs: Long
-    /** Null when unknown or when the duration describes a live window. */
+    /** Null when unknown; for a channel, the live window (the controller shows none). */
     val durationMs: Long?
     val buffering: Boolean
     fun applyPreferences(preferredAudioLanguage: String?, subtitlesLanguage: String?)
@@ -34,8 +34,8 @@ interface MediaEngine {
         fun onError(error: MediaError)
         fun onIsPlayingChanged(isPlaying: Boolean)
         fun onPlayWhenReadyChanged(playWhenReady: Boolean)
-        /** Called after every state change, whether or not buffering changed; the controller refreshes its flags on it. */
-        fun onBufferingChanged(buffering: Boolean)
+        /** After every state change (after [onReady] or [onEnded] for those): the controller refreshes its flags. */
+        fun onStateChanged()
         fun onCues(text: String?)
     }
 }
