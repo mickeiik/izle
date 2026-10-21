@@ -22,7 +22,7 @@ function helpers(s: TestServer, tv: { deviceId: string; token: string }) {
     resolve: (episodeId: string, extra: Json = {}) => as("POST", "/resolve", { episodeId, ...extra }),
     report: (episodeId: string, status: string, positionMs: number, extra: Json = {}) => as("POST", "/progress", { episodeId, positionMs, status, ...extra }),
     /** The TV's running viewing (as stored), or null. */
-    running: () => s.srv.ctx.viewings.running(tv.deviceId),
+    running: () => s.srv.ctx.playing.running(tv.deviceId),
   };
 }
 
@@ -97,10 +97,10 @@ test("lifecycle: how a viewing ends, by stop, finish, replace, silence and the o
         await report("show.e1", "playing", MIN);
         const endedAt = at(s);
         s.clock.advance(2 * MIN - 1);
-        s.srv.ctx.viewings.sweep();
+        s.srv.ctx.playing.sweep();
         assert.equal((await viewings(s)).viewings[0].endReason, null, "not yet");
         s.clock.advance(1);
-        s.srv.ctx.viewings.sweep();
+        s.srv.ctx.playing.sweep();
         return { endedAt };
       },
       expect: { endReason: "lost", seen: false, watchedMs: MIN, startPositionMs: 0, endPositionMs: MIN },
@@ -110,7 +110,7 @@ test("lifecycle: how a viewing ends, by stop, finish, replace, silence and the o
       run: async ({ s, resolve }) => {
         await resolve("show.e1");
         s.clock.advance(2 * MIN);
-        s.srv.ctx.viewings.sweep();
+        s.srv.ctx.playing.sweep();
         return {};
       },
       expect: "dropped",
@@ -124,7 +124,7 @@ test("lifecycle: how a viewing ends, by stop, finish, replace, silence and the o
         s.clock.advance(30_000);
         await report("show.e1", "paused", 30_000);
         s.clock.advance(10 * MIN);
-        s.srv.ctx.viewings.sweep();
+        s.srv.ctx.playing.sweep();
         return {};
       },
       expect: "running",
@@ -138,7 +138,7 @@ test("lifecycle: how a viewing ends, by stop, finish, replace, silence and the o
         await report("show.e1", "paused", 30_000);
         const endedAt = at(s);
         s.clock.advance(2 * MIN);
-        s.srv.ctx.viewings.sweep();
+        s.srv.ctx.playing.sweep();
         return { endedAt };
       },
       expect: { endReason: "lost", seen: false, watchedMs: 30_000, startPositionMs: 0, endPositionMs: 30_000 },
@@ -447,7 +447,7 @@ test("events: ended before started on a replace, episode.seen after its ended; t
 
   // Status and now: nowPlaying carries the running viewing's id, and goes once it ended.
   await kitchen.resolve("film.main");
-  const running = s.srv.ctx.viewings.running(kitchen.tv.deviceId)!;
+  const running = s.srv.ctx.playing.running(kitchen.tv.deviceId)!;
   const st = (await s.admin("GET", "/status")).json.devices.find((d: Json) => d.id === kitchen.tv.deviceId);
   assert.deepEqual([st.nowPlaying.episodeId, st.nowPlaying.viewingId], ["film.main", running.id]);
   assert.equal((await s.admin("GET", `/devices/${kitchen.tv.deviceId}/now`)).json.nowPlaying.viewingId, running.id);
@@ -483,7 +483,7 @@ test("deletions: one viewing, a TV's, older than a date, everything; a deleted r
   assert.deepEqual((await s.admin("DELETE", `/history?olderThan=${cut}`)).json, { deleted: 1 });
   assert.equal(await count(), 2);
   assert.deepEqual((await s.admin("DELETE", "/history")).json, { deleted: 2 }, "the running one too");
-  assert.equal(s.srv.ctx.viewings.running(tv.deviceId), null);
+  assert.equal(s.srv.ctx.playing.running(tv.deviceId), null);
   await report("film.main", "playing", 30_000);
   assert.equal(await count(), 0, "reports for a deleted viewing do not bring it back");
   await resolve("film.main");
@@ -579,7 +579,7 @@ test("channels: a viewing without episode or positions, watched time from heartb
   await live("playing");
   const lostAt = at(s);
   s.clock.advance(2 * MIN);
-  s.srv.ctx.viewings.sweep();
+  s.srv.ctx.playing.sweep();
   const lost = (await viewings(s, "?item=news")).viewings[0];
   assert.deepEqual(ended(lost), { endReason: "lost", seen: false, watchedMs: MIN, startPositionMs: null, endPositionMs: null, endedAt: lostAt });
 

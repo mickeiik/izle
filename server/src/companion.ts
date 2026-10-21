@@ -6,6 +6,7 @@
 import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
 import { requireEpisodeSource } from "./lookup.ts";
+import type { PlayingService } from "./playing.ts";
 import { iso } from "./presenters.ts";
 import type { CompanionLink, Device } from "./store.ts";
 
@@ -27,11 +28,16 @@ export interface CompanionResolveInput {
 /** A link as the admin API shows it: the stored values, or the defaults (no offset, same speed). */
 const linkJson = (l: CompanionLink | null) => ({ offsetMs: l?.offsetMs ?? 0, rate: l?.rate ?? 1, language: l?.language ?? null, updatedAt: l ? iso(l.updatedAt) : null });
 
-export class CompanionService {
-  private readonly s: Services;
+type CompanionDeps = Pick<Services, "store" | "catalog" | "resolver" | "now"> & {
+  /** What the TV plays: the candidates are its sources. */
+  playing: PlayingService;
+};
 
-  constructor(services: Services) {
-    this.s = services;
+export class CompanionService {
+  private readonly s: CompanionDeps;
+
+  constructor(deps: CompanionDeps) {
+    this.s = deps;
   }
 
   private link(episodeId: string, sourceId: string) {
@@ -68,7 +74,7 @@ export class CompanionService {
    * no timeline to follow: it is named, with no candidates.
    */
   candidates(device: Device) {
-    const n = this.s.store.getNowPlaying(device.id);
+    const n = this.s.playing.current(device.id);
     const about = n && this.s.catalog.describe(n);
     if (!n || !about || about.missing) return { nowPlaying: null, candidates: [] };
     const { itemId, itemKind, episodeId, itemTitle, episodeTitle } = about;

@@ -4,12 +4,12 @@ import { playingKey } from "./catalog.ts";
 import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
 import { requireEpisode, requireEpisodicItem, requireItem, requirePlayable, requirePlayableRef } from "./lookup.ts";
-import { autoNextIndex, cursorAfterReport, cursorIndex, isPlayable, type LiveReportStatus, type ProgressReportStatus } from "./playback.ts";
+import { autoNextIndex, cursorAfterReport, cursorIndex, isPlayable } from "./playback.ts";
+import type { EpisodeProgressInput, LiveReportInput, PlayingService, ProgressInput } from "./playing.ts";
 import { episodeDetails, episodeSummary, iso, itemCard, itemDetails, tvSource } from "./presenters.ts";
 import { noPlayableDetail, triedDetail } from "./problems.ts";
 import type { ResolvedStream, ResolveInput, Tried } from "./resolve.ts";
-import type { Cursor, Device, NowPlaying, Progress } from "./store.ts";
-import { Waiters } from "./waiters.ts";
+import type { Cursor, Device, Progress } from "./store.ts";
 
 /** A technical safety limit on every device's home list, not a product rule: Home scrolls past one screen. */
 export const HOME_MAX_ITEMS = 200;
@@ -26,57 +26,20 @@ export interface ItemFacts {
 export const HOME_COLUMNS = { min: 3, max: 6, default: 4 } as const;
 export const HOME_ROWS = { min: 1, max: 4, default: 2 } as const;
 
-/** Longest an admin "now" long-poll waits for the next playback report. */
-export const MAX_NOW_WAIT_MS = 25_000;
-
-interface ReportFields {
-  sessionId?: string | null;
-  /** Whether the player was actually advancing (false during a rebuffer stall); defaults to `status === "playing"`. */
-  playing?: boolean;
-  /** How long before sending the position was sampled, so a delayed report still anchors correctly. */
-  ageMs?: number;
-}
-
-/** An episode's progress report: where the player is. */
-export interface EpisodeProgressInput extends ReportFields {
-  episodeId: string;
-  itemId?: undefined;
-  positionMs: number;
-  durationMs?: number | null;
-  status: ProgressReportStatus;
-}
-
-/** A channel's report: only that it plays (or stalls) or stopped; a channel has no position. */
-export interface LiveReportInput extends ReportFields {
-  itemId: string;
-  episodeId?: undefined;
-  status: LiveReportStatus;
-}
-
-/** `POST /tv/progress`: an episode's report or a channel's (validation.ts tells them apart). */
-export type ProgressInput = EpisodeProgressInput | LiveReportInput;
+type TvDeps = Pick<Services, "config" | "store" | "catalog" | "notifier" | "eventLog" | "resolver" | "problems" | "now"> & {
+  /** What each TV is playing: a resolve starts a playback, a report goes on to it. */
+  playing: PlayingService;
+};
 
 /**
  * What the TV sees and reports: home state, item details, resolve and progress. Also the owner's side of the same
- * state (the admin API): the home list, the "continue from" override, and the now-playing long-poll.
+ * state (the admin API): the home list and the "continue from" override. What a TV is playing is playing.ts's.
  */
 export class TvService {
-  private readonly s: Services;
-  private readonly nowWaiters = new Waiters<string>();
+  private readonly s: TvDeps;
 
-  constructor(services: Services) {
-    this.s = services;
-  }
-
-  /**
-   * The device's now-playing row. With `seq` equal to the row's current sequence number, waits up to `waitMs`
-   * for the next write (a resolve or a progress report); any other `seq`, or `null`, answers at once.
-   */
-  async waitNow(deviceId: string, seq: number | null, waitMs: number, signal?: AbortSignal): Promise<NowPlaying | null> {
-    const current = this.s.store.getNowPlaying(deviceId);
-    if (seq === null || waitMs <= 0 || (current?.seq ?? 0) !== seq) return current;
-    await this.nowWaiters.wait(deviceId, Math.min(waitMs, MAX_NOW_WAIT_MS), signal);
-    return this.s.store.getNowPlaying(deviceId);
+  constructor(deps: TvDeps) {
+    this.s = deps;
   }
 
   /** The device's settings, falling back to the server's defaults, then to the catalog's hints. */
@@ -229,40 +192,28 @@ export class TvService {
 
   /**
    * The TV's resolve: what to play and how, with the episode's resume position and auto-next, or for a channel
-   * (`episode`, `next` and `resume` null) the stream at its live edge. Writes now playing and the viewing history.
+   * (`episode`, `next` and `resume` null) the stream at its live edge. The playback starts (or goes on) in playing.ts.
    */
   async resolve(device: Device, input: ResolveInput, signal?: AbortSignal) {
     const r = await this.resolveRecordingProblems(device, input, signal);
-    const catalogId = this.s.catalog.catalogId;
-    const t = this.s.now();
     const { ref } = r;
     const answer = {
       sessionId: r.session.id, sourceId: r.source.id, media: r.media,
       subtitleTracks: r.subtitleTracks.map((s) => ({ url: s.url, language: s.language, format: s.format, label: s.label ?? null })),
       languages: r.languages, alternatives: r.alternatives, item: itemCard(this.s.catalog, ref.item), expiresAt: r.expiresAt,
     };
+    const played = { ref, sourceId: r.source.id };
     if (ref.kind === "live") {
-      const row = { catalogId, itemId: ref.item.id, episodeId: null, sourceId: r.source.id, positionMs: null, durationMs: null };
-      this.s.store.transaction(() => {
-        this.s.store.setNowPlaying(device.id, { ...row, state: "starting", updatedAt: t, playing: false, anchorAt: t });
-        this.s.viewings.onResolve(device, ref, r.source.id, null, null, input);
-      });
-      this.nowWaiters.wake(device.id);
+      this.s.playing.started(device, played, null, input);
       return { ...answer, next: null, episode: null, resume: null };
     }
     const { item, episode, index } = ref;
     const nextIndex = autoNextIndex(item, index);
     const next = nextIndex >= 0 ? item.episodes[nextIndex]! : null;
-    const progress = this.s.store.getProgress(device.id, catalogId, episode.id);
+    const progress = this.s.store.getProgress(device.id, this.s.catalog.catalogId, episode.id);
     const resume = progress?.status === "watching" ? { positionMs: progress.positionMs, durationMs: progress.durationMs } : null;
-    const durationMs = progress?.durationMs ?? episode.durationMs ?? null;
-    const row = { catalogId, itemId: item.id, episodeId: episode.id, sourceId: r.source.id, positionMs: resume?.positionMs ?? 0, durationMs };
-    this.s.store.transaction(() => {
-      this.s.store.setNowPlaying(device.id, { ...row, state: "starting", updatedAt: t, playing: false, anchorAt: t });
-      // The viewing history starts, continues or replaces this TV's viewing, in the same transaction.
-      this.s.viewings.onResolve(device, ref, r.source.id, row.positionMs, durationMs, input);
-    });
-    this.nowWaiters.wake(device.id);
+    // Playback starts where the resume offered says, with the duration the TV last reported, else the catalog's.
+    this.s.playing.started(device, played, { positionMs: resume?.positionMs ?? 0, durationMs: progress?.durationMs ?? episode.durationMs ?? null }, input);
     return {
       ...answer, next: next ? { episodeId: next.id, ...episodeSummary(next) } : null,
       episode: { id: episode.id, index, count: item.episodes.length, ...episodeSummary(episode), durationMs: episode.durationMs ?? null }, resume,
@@ -279,52 +230,34 @@ export class TvService {
 
   /**
    * A channel's report. A channel has no position, cursor or end, so nothing the TV shows changes: no progress row
-   * is written and the state version is not bumped. Now playing is written with null positions, and the running
-   * viewing of the channel hears its heartbeat (watched time, stalls, the stop).
+   * is written and the state version is not bumped; playing.ts hears it.
    */
   private recordLiveReport(device: Device, input: LiveReportInput): { version: number } {
-    const ref = requirePlayableRef(this.s.catalog, { itemId: input.itemId }, 404);
-    const { item } = ref;
-    const catalogId = this.s.catalog.catalogId;
-    const sourceId = this.s.sessions.owned(input.sessionId, device.id, playingKey(ref))?.sourceId ?? null;
-    const t = this.s.now();
-    const playing = input.playing ?? input.status === "playing";
-    const anchorAt = t - (input.ageMs ?? 0);
-    this.s.store.transaction(() => {
-      const now = { catalogId, itemId: item.id, episodeId: null, sourceId, positionMs: null, durationMs: null, state: input.status, updatedAt: t, playing, anchorAt };
-      this.s.store.setNowPlaying(device.id, now);
-      this.s.viewings.onLiveReport(device, { itemId: item.id, status: input.status, playing, anchorAt });
-    });
-    this.nowWaiters.wake(device.id);
+    this.s.playing.reported(device, requirePlayableRef(this.s.catalog, { itemId: input.itemId }, 404), input);
     return { version: this.s.notifier.version(device) };
   }
 
   /**
    * An episode's report. Saves the position, keeps the item's cursor on the episode being watched, and on
    * `finished` moves the cursor to the next allowed episode (wrapping to the first after the last). Only that wrap
-   * stores a wrapped cursor; every other report makes it an ordinary one.
+   * stores a wrapped cursor; every other report makes it an ordinary one. playing.ts hears it in the same
+   * transaction.
    */
   private recordEpisodeProgress(device: Device, input: EpisodeProgressInput): { version: number } {
-    const { item, episode, index } = requireEpisode(this.s.catalog, input.episodeId, 404, "unknown_episode");
+    const ref = requireEpisode(this.s.catalog, input.episodeId, 404, "unknown_episode");
+    const { item, episode, index } = ref;
     const catalogId = this.s.catalog.catalogId;
-    const sourceId = this.s.sessions.owned(input.sessionId, device.id, { episodeId: episode.id })?.sourceId ?? null;
     const t = this.s.now();
     const durationMs = input.durationMs ?? null;
     const finished = input.status === "finished";
-    const ids = { catalogId, itemId: item.id, episodeId: episode.id };
     const changed = this.s.store.transaction(() => {
       const cursor = cursorAfterReport(item, index, input.status, this.s.store.getCursor(device.id, catalogId, item.id));
       const positionMs = finished ? (durationMs ?? input.positionMs) : input.positionMs;
-      this.s.store.upsertProgress(device.id, { ...ids, positionMs, durationMs, status: finished ? "finished" : "watching", updatedAt: t });
+      this.s.store.upsertProgress(device.id, { catalogId, itemId: item.id, episodeId: episode.id, positionMs, durationMs, status: finished ? "finished" : "watching", updatedAt: t });
       this.s.store.setCursor(device.id, { catalogId, itemId: item.id, episodeId: cursor.episodeId, updatedAt: t, wrapped: cursor.wrapped });
-      const playing = input.playing ?? input.status === "playing";
-      const now = { ...ids, sourceId, positionMs: input.positionMs, durationMs, state: input.status, updatedAt: t, playing, anchorAt: t - (input.ageMs ?? 0) };
-      this.s.store.setNowPlaying(device.id, now);
-      // The viewing history applies the report to the running viewing of this episode (ignored otherwise).
-      this.s.viewings.onReport(device, { episodeId: episode.id, positionMs: input.positionMs, durationMs, status: input.status, playing, anchorAt: now.anchorAt });
+      this.s.playing.reported(device, ref, input);
       return cursor.changed;
     });
-    this.nowWaiters.wake(device.id);
     return { version: changed ? this.s.notifier.bump(device.id) : this.s.notifier.version(device) };
   }
 

@@ -585,7 +585,7 @@ test("a channel whose playlist URL expired goes stale (410); resolving it again 
   assert.equal((await text(r.json.media.url)).status, 200);
   const report = await s.call("POST", "/api/v1/tv/progress", { token: tv.token, body: { sessionId: r.json.sessionId, itemId: "live", status: "playing" } });
   assert.equal(report.status, 200, JSON.stringify(report.json));
-  const viewing = s.srv.ctx.viewings.running(tv.deviceId);
+  const viewing = s.srv.ctx.playing.running(tv.deviceId);
   assert.deepEqual([viewing?.itemId, viewing?.episodeId, viewing?.sourceId], ["live", null, "signed-live"]);
 
   advanceUpstream(601_000); // the signed playlist URL expired upstream
@@ -603,7 +603,7 @@ test("a channel whose playlist URL expired goes stale (410); resolving it again 
   const [, token] = PROXY_URL.exec(again.json.media.url)!;
   const first = await get(`/p/${token}/${uris(pl.body)[0]}`);
   assert.deepEqual(Buffer.from(await first.arrayBuffer()), syntheticTsSegment(liveWindow(upstreamNow()).first));
-  assert.equal(s.srv.ctx.viewings.running(tv.deviceId)?.id, viewing!.id, "the same viewing goes on");
+  assert.equal(s.srv.ctx.playing.running(tv.deviceId)?.id, viewing!.id, "the same viewing goes on");
 
   const problems = (await s.admin("GET", `/devices/${tv.deviceId}/problems`)).json.problems;
   const seen = problems.map((p: Json) => [p.kind, p.code, p.httpStatus, p.detail, p.itemId, p.itemKind, p.episodeId, p.sourceId]);

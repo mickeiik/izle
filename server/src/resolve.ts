@@ -32,6 +32,11 @@ export const isCompanionScope = (owner: string): boolean => owner.startsWith("co
  */
 export type PartialPlayingKey = { itemId?: string | undefined; episodeId?: string | null | undefined };
 
+/** Whether `key` plays what a report says: the fields the report leaves out are taken from `key`. */
+export function matchesSaid(said: PartialPlayingKey, key: PlayingKey): boolean {
+  return samePlaying({ itemId: said.itemId ?? key.itemId, episodeId: said.episodeId === undefined ? key.episodeId : said.episodeId }, key);
+}
+
 interface PlaybackSession extends PlayingKey {
   id: string;
   deviceId: string;
@@ -167,9 +172,7 @@ export class PlaybackSessions {
    */
   owned(id: string | null | undefined, deviceId: string, playing: PartialPlayingKey = {}): PlaybackSession | undefined {
     const s = id ? this.get(id) : undefined;
-    if (!s || s.deviceId !== deviceId) return undefined;
-    const said = { itemId: playing.itemId ?? s.itemId, episodeId: playing.episodeId === undefined ? s.episodeId : playing.episodeId };
-    return samePlaying(said, s) ? s : undefined;
+    return s && s.deviceId === deviceId && matchesSaid(playing, s) ? s : undefined;
   }
 }
 

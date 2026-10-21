@@ -304,3 +304,27 @@ The server side of the specification above, in one change (the admin page and th
 - Left alone: `failureKey` (a map key string, already per catalog, item, episode and source); `commandBody`'s play
   branches (an item with an optional episode, not the exclusive pair the fragment builds); the episode report's
   match in `viewings.onReport` (it names the episode alone, like its session lookup).
+
+## Architecture: what a TV is playing (2026-10-21)
+
+- The now-playing row and the running viewing are one fact written by the same two things (a resolve, a report), so
+  `PlayingService` (playing.ts) owns both, with the long-poll waiters: a report is turned once into a `Report` whose
+  `position` is null for a channel (the episode-or-channel decision, from `ref.kind`), the row is its projection and
+  `hear` is one function from the viewing and the report to the patch, the events (in the old order: stall, seek,
+  pause), the played range and the end.
+- `started` and `reported` run in their own transaction, nested in the caller's when there is one (an episode report
+  saves the position and the cursor first); the waiters wake through `store.afterCommit`, so a long-poll never
+  answers a row that rolled back and wakes after the outer commit.
+- tv.ts keeps the cursor and the saved position (Home's business: they decide what OK plays and bump the state
+  version) and the HTTP answers, and computes an episode's start (the resume offered, else 0; the duration the TV last
+  reported, else the catalog's), since the resume rule is Home's. `ViewingService` keeps the owner's marks and
+  deletions and `VIEWING_TRIGGERS`: the owner's word on the history, not a playback event.
+- `started` takes `{ref, sourceId}` and the trigger fields rather than a `ResolvedStream`: that is all it reads, and
+  the tests drive it without resolving. `reported` has overloads pairing an episode's ref with an episode's report and
+  a channel's with a channel's; `requirePlayableRef` gained one that types an `itemId` lookup as a `LiveRef`.
+- The session and the running viewing a report names are matched by one rule, `matchesSaid` (resolve.ts, extracted
+  from `PlaybackSessions.owned`): an episode report names the episode alone, a channel report the item. Sessions stay
+  in resolve.ts, which opens them; problem reports keep reading them there.
+- `DeviceService.now` takes the `Current` value (the route passes the waited one), so its constructor needed no
+  `playing`; `playing` is on `AppContext`, not on `Services`. `running()` stays public for the HTTP tests, which now
+  read `ctx.playing.running` and call `ctx.playing.sweep`.

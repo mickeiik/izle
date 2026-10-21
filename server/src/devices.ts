@@ -3,14 +3,15 @@
 
 import { isLiveItem } from "@izle/contract";
 import { tvActor, type Actor } from "./actor.ts";
-import { samePlaying, type PlayingKey } from "./catalog.ts";
+import type { PlayingKey } from "./catalog.ts";
 import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
 import { isPlayable } from "./playback.ts";
+import type { Current } from "./playing.ts";
 import { iso } from "./presenters.ts";
 import type { ProxyService } from "./proxy.ts";
 import { companionScope } from "./resolve.ts";
-import type { Device, DevicePatch, NowPlaying, TvAppInfo } from "./store.ts";
+import type { Device, DevicePatch, TvAppInfo } from "./store.ts";
 import type { TvService } from "./tv.ts";
 
 type DeviceDeps = Services & { tv: TvService; proxy: ProxyService };
@@ -112,13 +113,11 @@ export class DeviceService {
   }
 
   /**
-   * What the device is playing (its now-playing row `n`), with the anchor the phone's "Listen along" follows. A
+   * What the device is playing (`n`, from playing.ts), with the anchor the phone's "Listen along" follows. A
    * channel (`itemKind: "live"`) has no episode, positions or anchor.
    */
-  now(d: Device, n: NowPlaying | null) {
+  now(d: Device, n: Current | null) {
     const about = n && this.s.catalog.describe(n);
-    // The running viewing, while it is the one the row reports on; null once it ended.
-    const running = n ? this.s.viewings.running(d.id) : null;
     return {
       online: this.s.events.isOnline(d.id),
       serverNowMs: this.s.now(),
@@ -126,7 +125,7 @@ export class DeviceService {
       nowPlaying: n && about && {
         itemId: n.itemId, itemKind: about.itemKind, episodeId: n.episodeId, sourceId: n.sourceId, itemTitle: about.itemTitle, episodeTitle: about.episodeTitle,
         positionMs: n.positionMs, durationMs: n.durationMs, state: n.state, updatedAt: iso(n.updatedAt), playing: n.playing,
-        viewingId: running && samePlaying(running, n) ? running.id : null,
+        viewingId: n.viewingId,
       },
       // Where the TV is: positionMs as of atMs (server clock), advancing at `rate` while `playing`.
       anchor: n && n.positionMs !== null ? { positionMs: n.positionMs, atMs: n.anchorAt ?? n.updatedAt, playing: n.playing, rate: 1 } : null,

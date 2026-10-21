@@ -13,7 +13,8 @@ import { PAIR_CODE } from "../../pairing.ts";
 import { PROBLEM_LIST_DEFAULT, PROBLEM_LIST_MAX } from "../../problems.ts";
 import { iso } from "../../presenters.ts";
 import type { Device, Store } from "../../store.ts";
-import { HOME_MAX_ITEMS, MAX_NOW_WAIT_MS } from "../../tv.ts";
+import { MAX_NOW_WAIT_MS } from "../../playing.ts";
+import { HOME_MAX_ITEMS } from "../../tv.ts";
 import { adoptBody, approveBody, commandBody, companionLinkBody, companionResolveBody, cursorBody, devicePatchBody, diagnosticsBody, homeBody, intParam, intQuery, isId, limitQuery, parseBody, parseWait } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
 
@@ -25,7 +26,7 @@ export function requireDevice(store: Store, id: string): Device {
 }
 
 export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
-  const { store, tv, pairing, devices, catalog, companion } = ctx;
+  const { store, tv, pairing, devices, catalog, companion, playing } = ctx;
 
   app.post("/api/v1/admin/pair/approve", async (c) => {
     const body = await parseBody(c, approveBody);
@@ -87,7 +88,7 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
     const d = requireDevice(store, c.req.param("id"));
     const seq = intQuery(c.req.query("seq"), "seq", 0) ?? null;
     const waitSec = parseWait(c.req.query("wait"), 0, MAX_NOW_WAIT_MS / 1000);
-    const n = await tv.waitNow(d.id, seq, waitSec * 1000, c.req.raw.signal);
+    const n = await playing.waitCurrent(d.id, seq, waitSec * 1000, c.req.raw.signal);
     return c.json(devices.now(d, n));
   });
 
