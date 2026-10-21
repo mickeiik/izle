@@ -6,7 +6,7 @@
 
 import { isLiveItem } from "@izle/contract";
 import { SERVER, tvActor, type Actor } from "./actor.ts";
-import { playingKey, samePlaying, type CatalogService, type PlayableRef } from "./catalog.ts";
+import { describePlayable, playingKey, samePlaying, type CatalogService, type PlayableRef } from "./catalog.ts";
 import type { EventLog } from "./eventlog.ts";
 import type { EventHub } from "./events.ts";
 import { HttpError } from "./errors.ts";
@@ -112,7 +112,8 @@ export class ViewingService {
     }
     const { trigger, actor, commandId } = this.origin(device.id, input);
     if (running) this.end(running, "replaced", t, lastPosition(running), actor);
-    const { itemKind, itemTitle, episodeTitle, season, number } = this.s.catalog.describe(playing);
+    // The ref's own titles: the catalog may have been reloaded while the adapter was awaited.
+    const { itemKind, itemTitle, episodeTitle, season, number } = describePlayable(ref);
     const v = store.insertViewing({
       deviceId: device.id, deviceName: device.name, catalogId: this.s.catalog.catalogId, ...playing, itemKind, itemTitle, episodeTitle, season, number, sourceId,
       startedAt: t, endedAt: null, startPositionMs: positionMs, endPositionMs: null, durationMs, watchedMs: 0, endReason: null, seen: false,

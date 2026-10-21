@@ -61,6 +61,18 @@ export interface PlayingDescription {
   missing: boolean;
 }
 
+/**
+ * The description of a ref itself, with no lookup: a viewing records the titles of what was resolved, not what the
+ * catalog says by the time the adapter answered (a reload may have happened in between).
+ */
+export function describePlayable(ref: PlayableRef): PlayingDescription {
+  const episode = ref.kind === "episode" ? ref.episode : null;
+  return {
+    itemId: ref.item.id, itemKind: ref.item.kind, itemTitle: ref.item.title,
+    episodeId: episode?.id ?? null, episodeTitle: episode?.title ?? null, season: episode?.season ?? null, number: episode?.number ?? null, missing: false,
+  };
+}
+
 export interface LoadedCatalog {
   dir: string;
   manifest: BundleManifest;
@@ -205,13 +217,9 @@ export class CatalogService {
    */
   describe(key: PlayingKey): PlayingDescription {
     const ref = this.playing(key);
-    const item = ref?.item ?? this.item(key.itemId);
-    const episode = ref?.kind === "episode" ? ref.episode : null;
-    return {
-      itemId: item?.id ?? key.itemId, itemKind: item?.kind ?? null, itemTitle: item?.title ?? null,
-      episodeId: key.episodeId, episodeTitle: episode?.title ?? null, season: episode?.season ?? null, number: episode?.number ?? null,
-      missing: key.episodeId !== null ? !ref : !item,
-    };
+    if (ref) return describePlayable(ref);
+    const item = this.item(key.itemId);
+    return { itemId: item?.id ?? key.itemId, itemKind: item?.kind ?? null, itemTitle: item?.title ?? null, episodeId: key.episodeId, episodeTitle: null, season: null, number: null, missing: key.episodeId !== null || !item };
   }
 
   /** Relative URL of an item's poster, served by GET /assets/:file. */

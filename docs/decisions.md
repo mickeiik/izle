@@ -298,7 +298,9 @@ The server side of the specification above, in one change (the admin page and th
   rest goes through `samePlaying`. A problem row may know an episode without its item, so `problemKey` fills the item
   from the catalog and the catalog-id check stays at `problems.list`.
 - A running viewing now continues only for the same item and episode, not the same episode id alone; they differ
-  only when an episode moved to another item between resolves.
+  only when an episode moved to another item between resolves (the row's item columns would be stale otherwise).
+  The one deliberate behaviour change of the step. A viewing's title columns come from the resolved ref itself
+  (`describePlayable`), never from a fresh lookup: the catalog may have been reloaded while the adapter ran.
 - Left alone: `failureKey` (a map key string, already per catalog, item, episode and source); `commandBody`'s play
   branches (an item with an optional episode, not the exclusive pair the fragment builds); the episode report's
   match in `viewings.onReport` (it names the episode alone, like its session lookup).

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { CatalogService, samePlaying, type PlayingKey } from "../src/catalog.ts";
+import { CatalogService, describePlayable, samePlaying, type PlayingKey } from "../src/catalog.ts";
 import { fixtureItems, fixtureManifest, silentLogger, tempDir, writeBundle, type Json } from "./helpers.ts";
 
 /** The fixture catalog plus a channel whose item id is an episode id of the series ("show.e1"): the recorded bug. */
@@ -68,4 +68,15 @@ test("samePlaying: both fields, so an episode never equals a channel whose item 
   // A stored row carries more than the key; only the key counts.
   const [a, b] = [{ ...channel, sourceId: "a" }, { ...channel, sourceId: "b" }];
   assert.equal(samePlaying(a, b), true);
+});
+
+test("describePlayable: a ref describes itself, with no lookup (a viewing keeps the titles that were resolved)", async () => {
+  const c = await catalog();
+  const ref = c.episode("show.e1")!;
+  assert.deepEqual(describePlayable(ref), c.describe({ itemId: "show", episodeId: "show.e1" }));
+  // The catalog moves on; the ref in hand still says what it said.
+  const renamed = { ...ref, item: { ...ref.item, title: "Renamed" }, episode: { ...ref.episode, title: "Pilot, revised" } };
+  assert.equal(describePlayable(renamed).itemTitle, "Renamed");
+  assert.equal(describePlayable(renamed).episodeTitle, "Pilot, revised");
+  assert.equal(c.describe({ itemId: "show", episodeId: "show.e1" }).itemTitle, "Şov Dünyası");
 });
