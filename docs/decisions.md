@@ -263,3 +263,23 @@ The server side of the specification above, in one change (the admin page and th
   episode viewing that ended before its first report, which used to read "at –").
 - The TVs list and the TV app page show nothing about what a TV plays, so they needed no channel wording; "Live ·
   <title>" there would be a new feature (polling `/admin/status`).
+
+## Live channels: TV app (2026-10-21)
+
+- Where "live" is decided: `ItemCard.isLive` (`kind == "live"`); a Home tile or a `play` command with
+  `episodeId: null` becomes `PlayableRef.Channel(itemId)`, everything else `PlayableRef.Episode`; in the player the
+  resolve answer's `item.kind` confirms it. `media.kind` only picks the MIME type (`ts` → `video/mp2t`).
+- Zapping is computed from the latest cached home state (`ChannelZap.neighbour`: Home order, shows skipped, no
+  wrap, null when the channel is not on Home) and also works while a channel is still loading, so CH+ CH+ jumps two
+  channels like a real TV; the channel being left is reported `stopped`.
+- Beyond the UX text: on a channel OK, Play and Play/Pause resume playback when the system paused it (lost audio
+  focus, headphones unplugged), else they do nothing; a channel's information shows no play icon, just the name and
+  "Live"; on a channel's error screen commands answer `not_in_player` as for shows.
+- The same source is retried "once" per failure streak, and again only after it had played 60 s
+  (`LIVE_STABLE_PLAYED_MS`): a stream that keeps breaking cannot loop forever. A `ts` stream never retries in
+  place (ExoPlayer would Range-resume an endless response); the error reaches the app, which resolves again at the
+  live edge. A clean end of a channel's stream sends no problem report; `gave_up` goes out only when every source
+  failed.
+- A `400` on a channel's progress report no longer switches the reporter into its old-server mode; that fallback is
+  for episode reports only. `ResolveRequest` refuses both or neither of `episodeId` and `itemId`.
+- The "Live" chip is `#C62828` with white text (5.6:1), 20 sp like the other chips, the same red as the admin page.

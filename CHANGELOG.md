@@ -34,6 +34,13 @@ contract share one version number. How to update (back up, update the server, th
   its sources, Test sources and Play on; channels counted in the catalog contents and its build changes; a
   channel's history shows when it was on and for how long; Listen along says channels are not covered, and `ts`
   sources show as MPEG-TS.
+- **TV app: live channels.** Channels appear on Home with a red "Live" chip ("Canlı"), no progress bar and no
+  "new" count. OK plays a channel at its live edge (autoplay on start offers it as "Live"). CH+/CH− and |◀◀ ▶▶|
+  switch between Home's channels in Home order, without wrapping around. A channel cannot be paused or sought: its
+  information is its name and "Live", and the hidden menu (Audio language and Subtitles only) does not pause it.
+  A channel whose stream ends or breaks restarts at the live edge, then tries its other sources, then shows "Can't
+  play right now". MPEG-TS (`ts`) streams play. Owner commands can play a channel; pause, resume and seek on a
+  channel are answered `live`, next and previous switch channels (`no_channel` at the ends).
 
 ### Changed
 

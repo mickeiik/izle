@@ -919,8 +919,8 @@ as before):
   ([TV app updates](#tv-app-updates)). A TV without them is shown with `app.update: "unknown"` and gets no
   `update` it could not act on (it acknowledges and ignores an unknown type).
 
-**Live channels** (breaking (pre-release); specified, not implemented in the TV app yet). A TV that shows channels
-has to know all of this:
+**Live channels** (breaking (pre-release); implemented in the TV app, Unreleased). A TV that shows channels has to
+know all of this:
 
 - A home entry with `item.kind: "live"` (its `continue` is null) is a channel: OK resolves it with
   [`POST /tv/resolve`](#post-apiv1tvresolve) `{"itemId"}` instead of `episodeId` and plays it at its live edge (the
