@@ -27,6 +27,7 @@
     <string name="badge_new">Yeni</string>
     <string name="badge_continue">Devam et</string>
     <string name="badge_watch_again">Tekrar izle</string>
+    <string name="badge_live">Canlı</string>
     <string name="badge_continue_episode">Devam et · %1$s</string>
     <string name="episode_number">Bölüm %1$d</string>
     <string name="episode_season_number">Sezon %1$d, Bölüm %2$d</string>

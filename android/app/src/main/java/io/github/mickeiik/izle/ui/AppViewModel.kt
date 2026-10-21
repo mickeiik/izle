@@ -17,6 +17,8 @@ import io.github.mickeiik.izle.data.api.ServerUrls
 import io.github.mickeiik.izle.data.api.TvState
 import io.github.mickeiik.izle.data.api.orNullOnFailure
 import io.github.mickeiik.izle.domain.AutoplayPlan
+import io.github.mickeiik.izle.domain.ChannelZap
+import io.github.mickeiik.izle.domain.PlayableRef
 import io.github.mickeiik.izle.domain.PlaybackOrigin
 import io.github.mickeiik.izle.domain.Problems
 import io.github.mickeiik.izle.domain.RemoteCommand
@@ -85,7 +87,7 @@ data class AboutInfo(
     val updateVersion: String? = null,
 )
 
-/** "Autoplay on start": the show about to start over Home, and the seconds left before it does. */
+/** "Autoplay on start": the show or channel about to start over Home, and the seconds left before it does. */
 data class AutoplayUi(val entry: HomeEntry, val secondsLeft: Int)
 
 class AppViewModel(private val graph: AppGraph) : ViewModel() {
@@ -274,9 +276,30 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         autoplayArmed = false
     }
 
-    /** CH+/CH− and |◀◀ ▶▶|: switch episodes while video is showing; everywhere else they do nothing (but are consumed). */
-    fun onEpisodeKey(direction: Int) {
-        if (_screen.value == Screen.Player && _menu.value == null) player.stepEpisode(direction, PlaybackOrigin.Next)
+    /**
+     * CH+/CH− and |◀◀ ▶▶|: switch episodes while video is showing, or channels while one plays or loads; everywhere
+     * else they do nothing (but are consumed).
+     */
+    fun onChannelKey(direction: Int) {
+        if (_screen.value != Screen.Player || _menu.value != null) return
+        if (player.ui.value.live) zap(direction, PlaybackOrigin.Next) else player.stepEpisode(direction, PlaybackOrigin.Next)
+    }
+
+    /**
+     * To the channel after (+1) or before (−1) the one playing, among the channels of the latest home state, in Home
+     * order ([ChannelZap]): it starts in the same player at its live edge (the one left is reported stopped), its name
+     * showing while it loads. At the first or last channel only the information shows. The result is an owner's
+     * `next`/`previous` command's.
+     */
+    private fun zap(direction: Int, origin: PlaybackOrigin): CommandResult {
+        val current = player.zappableChannelId ?: return CommandResult.ignored(CommandResult.NOT_IN_PLAYER)
+        val next = ChannelZap.neighbour(state.value?.home.orEmpty(), current, direction) ?: run {
+            player.showInfo()
+            return CommandResult.ignored(CommandResult.NO_CHANNEL)
+        }
+        homeFocusItemId = next.item.id
+        player.play(PlayableRef.Channel(next.item.id), origin, hint = next.item)
+        return CommandResult.Done
     }
 
     /** Back: closes the menu, leaves the player, steps back from pairing. Never leaves the app from Home. */
@@ -396,18 +419,22 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     fun onTileClicked(entry: HomeEntry) = playTile(entry, PlaybackOrigin.Viewer)
 
-    /** OK on a tile, or autoplay on start: the show's `continue` episode under the normal resume rules. */
+    /**
+     * OK on a tile, or autoplay on start: the show's `continue` episode under the normal resume rules, or the channel
+     * at its live edge (resolved by its item id).
+     */
     private fun playTile(entry: HomeEntry, origin: PlaybackOrigin) {
         if (!online.value) {
             homeMessages.show(HomeMessage.NoConnection, forMs = 5_000)
             repository.refreshSoon()
             return
         }
+        val ref = PlayableRef.of(entry) ?: return
         homeFocusItemId = entry.item.id
-        startPlayback(entry.playNext.episodeId, origin, startAtMs = null, hint = entry.item)
+        startPlayback(ref, origin, startAtMs = null, hint = entry.item)
     }
 
-    /** The show [itemId] on Home in the latest state, if it is there. */
+    /** The show or channel [itemId] on Home in the latest state, if it is there. */
     private fun homeEntry(itemId: String?): HomeEntry? = state.value?.home?.firstOrNull { it.item.id == itemId }
 
     private fun focusedEntry(): HomeEntry? = homeEntry(homeFocusItemId) ?: state.value?.home?.firstOrNull()
@@ -444,8 +471,8 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     /**
-     * "Play now", or the end of the countdown: the show's `continue` episode under the normal resume rules. Both are
-     * autoplay's playback (the viewer only confirmed what autoplay offered).
+     * "Play now", or the end of the countdown: the show's `continue` episode under the normal resume rules, or the
+     * channel at its live edge. Both are autoplay's playback (the viewer only confirmed what autoplay offered).
      */
     fun onAutoplayPlayNow() {
         val itemId = endAutoplay() ?: return
@@ -472,11 +499,11 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         _autoplay.value = null
     }
 
-    private fun startPlayback(episodeId: String, origin: PlaybackOrigin, startAtMs: Long?, hint: ItemCard?, playCommand: Boolean = false) {
+    private fun startPlayback(ref: PlayableRef, origin: PlaybackOrigin, startAtMs: Long?, hint: ItemCard?, playCommand: Boolean = false) {
         clearAutoplay()
         _menu.value = null
         _screen.value = Screen.Player
-        player.play(episodeId, origin, startAtMs, hint, playCommand = playCommand)
+        player.play(ref, origin, startAtMs, hint, playCommand = playCommand)
     }
 
     private fun onPlayerExit() {
@@ -487,7 +514,8 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     private fun onCommand(command: ServerEvent.Command) {
-        val actions = CommandPlan.actions(RemoteCommand.of(command), _screen.value, player.ui.value.phase, menuOpen = _menu.value != null)
+        val playing = player.ui.value
+        val actions = CommandPlan.actions(RemoteCommand.of(command), _screen.value, playing.phase, menuOpen = _menu.value != null, live = playing.live)
         // The server the command came from (the repository acknowledged it there).
         val api = repository.api
         val report = { result: CommandResult -> if (api != null) graph.commandResults.report(api, command.id, result) }
@@ -496,13 +524,14 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             when (action) {
                 is CommandPlan.Action.Play -> {
                     action.itemId?.let { homeFocusItemId = it }
-                    startPlayback(action.episodeId, origin, action.positionMs, homeEntry(action.itemId)?.item, playCommand = true)
+                    startPlayback(action.ref, origin, action.positionMs, homeEntry(action.itemId)?.item, playCommand = true)
                 }
                 CommandPlan.Action.Exit -> player.exit()
                 CommandPlan.Action.Pause -> player.pause()
                 CommandPlan.Action.Resume -> player.resume()
                 is CommandPlan.Action.Seek -> player.seekRemote(action.command)
                 is CommandPlan.Action.Step -> player.stepEpisode(action.direction, origin, report)
+                is CommandPlan.Action.Zap -> report(zap(action.direction, origin))
                 is CommandPlan.Action.CloseMenu -> closeMenu(action.resume)
                 CommandPlan.Action.StayPausedAfterMenu -> resumeAfterMenu = false
                 is CommandPlan.Action.ShowMessage -> banners.show(action.message.text, forMs = action.message.durationSec * 1_000L)
@@ -735,9 +764,11 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         val fromPlayer = _screen.value == Screen.Player
         val item = if (fromPlayer) player.ui.value.item else focusedEntry()?.item
         val entries = MenuPlan.rootEntries(item?.kind, fromPlayer, audioTrackCount = if (fromPlayer) player.audioTracks().size else 0)
+        // Over a show the video pauses; a channel plays on (it has no pause), and closing the menu has nothing to resume.
         if (fromPlayer) {
-            resumeAfterMenu = player.ui.value.playWhenReady
-            player.pause()
+            val live = player.ui.value.live
+            resumeAfterMenu = !live && player.ui.value.playWhenReady
+            if (!live) player.pause()
         }
         val playing = if (fromPlayer) player.ui.value.episode?.id else null
         _menu.value = MenuUi(listOf(MenuPage.Root(entries)), item, fromPlayer, playing)
@@ -771,8 +802,10 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
                     closeMenu(resume = false)
                     player.startOver()
                 } else {
+                    // Never offered for a channel, which has no beginning.
                     val home = focusedEntry() ?: return
-                    startPlayback(home.playNext.episodeId, PlaybackOrigin.Viewer, startAtMs = 0, hint = home.item)
+                    val episodeId = home.playNext?.episodeId?.takeIf { !home.item.isLive } ?: return
+                    startPlayback(PlayableRef.Episode(episodeId), PlaybackOrigin.Viewer, startAtMs = 0, hint = home.item)
                 }
             }
             RootEntry.Audio -> push(MenuPage.Audio(player.audioTracks()))
@@ -786,7 +819,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         val menu = _menu.value ?: return
         if (!episode.playbackAllowed) return
         menu.item?.let { homeFocusItemId = it.id }
-        startPlayback(episode.id, PlaybackOrigin.Viewer, startAtMs = null, hint = menu.item)
+        startPlayback(PlayableRef.Episode(episode.id), PlaybackOrigin.Viewer, startAtMs = null, hint = menu.item)
     }
 
     fun onAudioChosen(option: TrackOption?) {

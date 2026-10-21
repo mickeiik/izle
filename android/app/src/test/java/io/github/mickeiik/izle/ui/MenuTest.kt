@@ -26,6 +26,13 @@ class MenuTest {
     }
 
     @Test
+    fun aChannelHasNeitherEpisodesNorStartOverButKeepsItsTracksInThePlayer() {
+        assertEquals(listOf(Settings, About), MenuPlan.rootEntries("live", fromPlayer = false, audioTrackCount = 0))
+        assertEquals(listOf(Audio, Subtitles, Settings, About), MenuPlan.rootEntries("live", fromPlayer = true, audioTrackCount = 2))
+        assertEquals(listOf(Subtitles, Settings, About), MenuPlan.rootEntries("live", fromPlayer = true, audioTrackCount = 1))
+    }
+
+    @Test
     fun installUpdateIsOfferedWhileANewerVersionIsButNeverOverThePlayer() {
         assertEquals("0.3.0", MenuPlan.installUpdateVersion("0.3.0", fromPlayer = false))
         assertNull(MenuPlan.installUpdateVersion("0.3.0", fromPlayer = true))

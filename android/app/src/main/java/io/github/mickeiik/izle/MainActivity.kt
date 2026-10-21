@@ -16,6 +16,8 @@ import io.github.mickeiik.izle.ui.AppViewModel
 import io.github.mickeiik.izle.ui.IzleRoot
 import io.github.mickeiik.izle.ui.Screen
 import io.github.mickeiik.izle.ui.input.OkPressDetector
+import io.github.mickeiik.izle.ui.input.PlayerKeyAction
+import io.github.mickeiik.izle.ui.input.PlayerKeys
 import io.github.mickeiik.izle.update.AppInstaller
 import kotlinx.coroutines.launch
 
@@ -91,9 +93,9 @@ class MainActivity : ComponentActivity() {
         }
 
         // Channel and track-skip keys never reach the system: unconsumed, many TVs open their Live TV app and the
-        // viewer is out of izle. They switch episodes while video is showing, and do nothing anywhere else.
-        EPISODE_KEYS[code]?.let { direction ->
-            if (down && event.repeatCount == 0) vm.onEpisodeKey(direction)
+        // viewer is out of izle. They switch episodes (or channels) in the player, and do nothing anywhere else.
+        CHANNEL_KEYS[code]?.let { direction ->
+            if (down && event.repeatCount == 0) vm.onChannelKey(direction)
             return true
         }
 
@@ -109,7 +111,7 @@ class MainActivity : ComponentActivity() {
                 OkPressDetector.Result.Swallow -> Unit
                 OkPressDetector.Result.LongPress -> vm.openMenu()
                 OkPressDetector.Result.Click -> if (vm.playerHasKeys) {
-                    vm.player.togglePause()
+                    PlayerKeys.action(code, vm.player.ui.value.live)?.let { run(it, event, first = true) }
                 } else {
                     // Deliver the held-back press as a normal click to whatever has focus.
                     super.dispatchKeyEvent(KeyEvent.changeAction(event, KeyEvent.ACTION_DOWN))
@@ -123,24 +125,32 @@ class MainActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
-    /** Video is showing: Left/Right seek, media keys work, Up/Down do nothing. Back is handled by Compose. */
+    /**
+     * The player has the keys ([PlayerKeys]): an episode seeks with Left/Right and pauses, a channel only shows its
+     * information; Up/Down do nothing. Back is handled by Compose.
+     */
     private fun handlePlayerKey(event: KeyEvent): Boolean {
-        val down = event.action == KeyEvent.ACTION_DOWN
-        val first = down && event.repeatCount == 0
-        val player = vm.player
-        when (event.keyCode) {
-            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_REWIND ->
-                if (down) player.onSeekKeyDown(-1, event.eventTime, event.downTime, event.repeatCount) else player.onSeekKeyUp()
-            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_FAST_FORWARD ->
-                if (down) player.onSeekKeyDown(1, event.eventTime, event.downTime, event.repeatCount) else player.onSeekKeyUp()
-            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> if (first) player.togglePause()
-            KeyEvent.KEYCODE_MEDIA_PLAY -> if (first) player.resume()
-            KeyEvent.KEYCODE_MEDIA_PAUSE -> if (first) player.pause()
-            KeyEvent.KEYCODE_MEDIA_STOP -> if (first) player.exit()
-            KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> Unit
-            else -> return false
-        }
+        val action = PlayerKeys.action(event.keyCode, vm.player.ui.value.live) ?: return false
+        run(action, event, first = event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0)
         return true
+    }
+
+    /** [first]: the key's first DOWN (not a repeat, not the release), when one-shot actions happen. */
+    private fun run(action: PlayerKeyAction, event: KeyEvent, first: Boolean) {
+        val down = event.action == KeyEvent.ACTION_DOWN
+        val player = vm.player
+        when (action) {
+            PlayerKeyAction.SeekBack ->
+                if (down) player.onSeekKeyDown(-1, event.eventTime, event.downTime, event.repeatCount) else player.onSeekKeyUp()
+            PlayerKeyAction.SeekForward ->
+                if (down) player.onSeekKeyDown(1, event.eventTime, event.downTime, event.repeatCount) else player.onSeekKeyUp()
+            PlayerKeyAction.TogglePause -> if (first) player.togglePause()
+            PlayerKeyAction.Play -> if (first) player.resume()
+            PlayerKeyAction.Pause -> if (first) player.pause()
+            PlayerKeyAction.Info -> if (first) player.showChannelInfo()
+            PlayerKeyAction.Stop -> if (first) player.exit()
+            PlayerKeyAction.Nothing -> Unit
+        }
     }
 
     companion object {
@@ -149,8 +159,8 @@ class MainActivity : ComponentActivity() {
 
         private val OK_KEYS = setOf(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)
 
-        /** CH+/CH− and the remote's |◀◀ ▶▶| keys: the next (+1) or previous (−1) episode. */
-        private val EPISODE_KEYS = mapOf(
+        /** CH+/CH− and the remote's |◀◀ ▶▶| keys: the next (+1) or previous (−1) episode or channel. */
+        private val CHANNEL_KEYS = mapOf(
             KeyEvent.KEYCODE_CHANNEL_UP to 1,
             KeyEvent.KEYCODE_MEDIA_NEXT to 1,
             KeyEvent.KEYCODE_CHANNEL_DOWN to -1,

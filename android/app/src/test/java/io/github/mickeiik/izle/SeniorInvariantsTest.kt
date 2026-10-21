@@ -28,14 +28,20 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.printToString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.toSize
+import androidx.activity.compose.setContent
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import io.github.mickeiik.izle.data.api.ItemCard
+import io.github.mickeiik.izle.player.PlayerPhase
+import io.github.mickeiik.izle.player.PlayerUi
 import io.github.mickeiik.izle.ui.AppViewModel
 import io.github.mickeiik.izle.ui.Screen
 import io.github.mickeiik.izle.ui.SettingsEntry
 import io.github.mickeiik.izle.ui.UpdatePhase
+import io.github.mickeiik.izle.ui.player.PlayerScreen
+import io.github.mickeiik.izle.ui.theme.IzleTheme
 import io.github.mickeiik.izle.update.AppInstaller
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
@@ -67,7 +73,8 @@ import java.util.concurrent.TimeUnit
  * The senior viewer's rules (docs/ux/senior-tv.md) on the real [MainActivity], under Robolectric on a 960×540 dp TV.
  * The app is paired with an in-process server through its own settings store before it starts; remote keys go
  * through `MainActivity.dispatchKeyEvent` as the system delivers them. Nothing here needs ExoPlayer: the server has
- * nothing playable, so a play attempt ends on the player's error screen.
+ * nothing playable, so a play attempt ends on the player's error screen (a channel's after a while, so that its
+ * loading screen can be looked at).
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], qualifiers = "w960dp-h540dp-land-television")
@@ -118,7 +125,12 @@ class SeniorInvariantsTest {
                     } ?: json(404, """{"error":"not_found"}""")
                     "/api/v1/tv/app" -> json(200, """{"versionName":"99.0.0","versionCode":990000,"sha256":"${sha256(apk)}","size":${apk.size},"auto":false}""")
                     "/api/v1/tv/app/apk" -> MockResponse.Builder().body(Buffer().write(apk)).build()
-                    // resolve included: nothing is playable.
+                    "/api/v1/tv/resolve" -> {
+                        // A channel loads for a while before it fails too.
+                        if (request.body?.utf8().orEmpty().contains("\"itemId\":")) Thread.sleep(3_000)
+                        json(404, """{"error":"not_found"}""")
+                    }
+                    // Nothing else either.
                     else -> json(404, """{"error":"not_found"}""")
                 }
             }
@@ -229,6 +241,58 @@ class SeniorInvariantsTest {
             waitUntil("the resolve request") { resolveRequests().isNotEmpty() }
             assertEquals(listOf("""{"episodeId":"b.e7","trigger":"viewer"}"""), resolveRequests())
         }
+    }
+
+    @Test
+    fun aChannelsCardSaysLiveAndItLoadsWithItsNameAndLive() {
+        // B is a channel; even with a count (never from a correct server) its card has no "2 new".
+        entries = mapOf("b" to """{"item":{"id":"b","kind":"live","title":"Show B"},"continue":null,"newEpisodes":2}""")
+        onTv { tv ->
+            awaitTiles("Show A", "Show B", "Show C")
+            val live = string(R.string.badge_live)
+            assertEquals(setOf("Show B", live), tileTexts("Show B"))
+            assertEquals(emptyList<String>(), tileDescriptions("Show B"))
+            // The chips at 20 sp, the names at 24.
+            assertTextSizes(chips = setOf(string(R.string.badge_new), live))
+            assertEquals(20f, drawnTexts().first { it.first == live }.second.value, 0.01f)
+
+            tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
+            assertFocusedTile("Show B")
+            tv.press(KeyEvent.KEYCODE_DPAD_CENTER)
+            assertEquals(Screen.Player, tv.vm.screen.value)
+            waitUntil("the resolve request") { resolveRequests().isNotEmpty() }
+            assertEquals(listOf("""{"itemId":"b","trigger":"viewer"}"""), resolveRequests())
+            // While it loads: its name and "Live", large, nothing about time.
+            assertEquals(setOf("Show B", live), allTexts().toSet())
+            assertAllTextAtLeast24Sp()
+            // Its keys: ← / → and Pause do nothing, channel keys neither (no other channel on Home): still loading B.
+            for (key in listOf(KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_CHANNEL_DOWN)) {
+                tv.press(key)
+            }
+            assertEquals(Screen.Player, tv.vm.screen.value)
+            assertEquals(PlayerPhase.Loading, tv.vm.player.ui.value.phase)
+            assertEquals(1, resolveRequests().size)
+            waitUntil("the player's error screen") { exists(string(R.string.cannot_play)) }
+        }
+    }
+
+    @Test
+    fun aChannelsInformationIsItsNameAndLiveWithoutTimes() = onTv { tv ->
+        awaitTiles("Show A", "Show B", "Show C")
+        fun show(ui: PlayerUi) {
+            tv.onActivity { it.setContent { IzleTheme { PlayerScreen(ui, player = null, onPlayNext = {}, onHome = {}, onRetry = {}) } } }
+            compose.waitForIdle()
+        }
+        // A show's information has its times: what this test would notice on a channel.
+        show(PlayerUi(PlayerPhase.Playing, ItemCard("m", "movie", "Film"), playWhenReady = true, showInfo = true, positionMs = 65_000, durationMs = 600_000))
+        assertEquals(listOf("1:05", "10:00"), allTexts().filter { CLOCK.matches(it) })
+
+        show(PlayerUi(PlayerPhase.Playing, ItemCard("news", "live", "News 24"), playWhenReady = true, showInfo = true, positionMs = 65_000, live = true))
+        assertEquals(listOf("News 24", string(R.string.badge_live)), allTexts())
+        assertAllTextAtLeast24Sp()
+        // Paused by the system, a channel still says nothing of a pause.
+        show(PlayerUi(PlayerPhase.Playing, ItemCard("news", "live", "News 24"), playWhenReady = false, showInfo = true, live = true))
+        assertEquals(listOf("News 24", string(R.string.badge_live)), allTexts())
     }
 
     @Test
@@ -455,15 +519,26 @@ class SeniorInvariantsTest {
     }
 
     /** Every text on the screen is drawn at 24 sp or more. */
-    private fun assertAllTextAtLeast24Sp() {
+    private fun assertAllTextAtLeast24Sp() = assertTextSizes(chips = emptySet())
+
+    /** Every text on the screen is drawn at 24 sp or more, except the Home cards' [chips], at 20 sp or more. */
+    private fun assertTextSizes(chips: Set<String>) {
+        val texts = drawnTexts()
+        assertTrue("texts on screen", texts.isNotEmpty())
+        for ((text, size) in texts) {
+            val min = if (text in chips) 20f else 24f
+            assertTrue("\"$text\" at $size", size.isSp && size.value >= min)
+        }
+    }
+
+    /** Every text drawn on the screen, with its size. */
+    private fun drawnTexts(): List<Pair<String, androidx.compose.ui.unit.TextUnit>> {
         fun collect(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::collect)
-        val texts = collect(compose.onRoot(useUnmergedTree = true).fetchSemanticsNode()).flatMap { node ->
+        return collect(compose.onRoot(useUnmergedTree = true).fetchSemanticsNode()).flatMap { node ->
             val layouts = mutableListOf<TextLayoutResult>()
             node.config.getOrNull(SemanticsActions.GetTextLayoutResult)?.action?.invoke(layouts)
             layouts.map { it.layoutInput.text.text to it.layoutInput.style.fontSize }
         }
-        assertTrue("texts on screen", texts.isNotEmpty())
-        for ((text, size) in texts) assertTrue("\"$text\" at $size", size.isSp && size.value >= 24f)
     }
 
     private fun vm(activity: MainActivity): AppViewModel = ViewModelProvider(activity)[AppViewModel::class.java]

@@ -383,8 +383,8 @@ private fun BoxScope.CardPicture(backdropUrl: String?, posterUrl: String?, title
 }
 
 /**
- * At the bottom, the chip saying what OK does (when it fits the card on one line) and the progress bar; at the top
- * right, the new-episode count (when it fits too).
+ * At the bottom, the chip saying what OK does (when it fits the card on one line; "Live" on a channel) and the progress
+ * bar; at the top right, the new-episode count (when it fits too). A channel has neither a progress bar nor a count.
  */
 @Composable
 private fun BoxScope.CardChips(entry: HomeEntry, grid: HomeGrid, measurer: TextMeasurer) {
@@ -420,12 +420,13 @@ private fun BoxScope.CardChips(entry: HomeEntry, grid: HomeGrid, measurer: TextM
             }
         }
     }
-    if (entry.newEpisodes > 0) {
-        val short = pluralStringResource(R.plurals.badge_new_episodes_short, entry.newEpisodes, entry.newEpisodes)
+    val newEpisodes = EpisodeNames.newEpisodes(entry)
+    if (newEpisodes > 0) {
+        val short = pluralStringResource(R.plurals.badge_new_episodes_short, newEpisodes, newEpisodes)
         val newChip = chipSize(measurer, short, MaterialTheme.typography.labelSmall, 0.dp)
         val fits = newChip.width <= cardWidth - 2 * IzleSpacing.Small &&
             IzleSpacing.Small + newChip.height + bottomHeight <= cardHeight
-        if (fits) NewEpisodesChip(entry.newEpisodes, short, Modifier.align(Alignment.TopEnd).padding(IzleSpacing.Small))
+        if (fits) NewEpisodesChip(newEpisodes, short, Modifier.align(Alignment.TopEnd).padding(IzleSpacing.Small))
     }
 }
 
@@ -443,10 +444,14 @@ private fun chipSize(measurer: TextMeasurer, text: String, style: TextStyle, ver
     }
 }
 
-/** What OK does, in a solid chip that reads on any picture: mint for "New", the accent when OK resumes, else grey. */
+/**
+ * What OK does, in a solid chip that reads on any picture: mint for "New", the accent when OK resumes, red with white
+ * text for a channel ("Live"), else grey.
+ */
 @Composable
 private fun ActionChip(badge: TileBadge, label: String) {
     val (background, foreground) = when (badge) {
+        TileBadge.Live -> IzleColors.Live to IzleColors.OnLive
         TileBadge.New -> IzleColors.New to IzleColors.OnNew
         TileBadge.Continue -> IzleColors.Accent to IzleColors.OnAccent
         TileBadge.WatchAgain -> IzleColors.ChipNeutral to IzleColors.OnChipNeutral
@@ -473,8 +478,8 @@ private fun NewEpisodesChip(count: Int, text: String, modifier: Modifier) {
 }
 
 /**
- * "Autoplay on start", drawn over Home like the player's "Up next": what OK on the show's tile would play, the
- * countdown, **Play now** (focused) and **Not now**. Back and any other key cancel it (see MainActivity).
+ * "Autoplay on start", drawn over Home like the player's "Up next": what OK on the tile would play ("Live" for a
+ * channel), the countdown, **Play now** (focused) and **Not now**. Back and any other key cancel it (see MainActivity).
  */
 @Composable
 fun AutoplayOverlay(ui: AutoplayUi, posterUrl: String?, onPlayNow: () -> Unit, onNotNow: () -> Unit) {

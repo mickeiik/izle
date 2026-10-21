@@ -30,6 +30,21 @@ class RemoteCommandTest {
     }
 
     @Test
+    fun playWithoutAnEpisodeIsTheChannel() {
+        val channel = command("""{"id":32,"type":"play","payload":{"itemId":"news-24","episodeId":null}}""")
+        assertEquals(RemoteCommand.Play("news-24", episodeId = null), channel)
+        assertEquals(PlayableRef.Channel("news-24"), (channel as RemoteCommand.Play).ref)
+        // A channel has no position: one sent anyway (never by a correct server) is left out.
+        assertEquals(
+            RemoteCommand.Play("news-24", episodeId = null, positionMs = null),
+            command("""{"id":33,"type":"play","payload":{"itemId":"news-24","episodeId":null,"positionMs":5000}}"""),
+        )
+        assertEquals(PlayableRef.Episode("show.e2"), RemoteCommand.Play("show", "show.e2").ref)
+        // Neither: nothing to play.
+        assertEquals(RemoteCommand.Ignored("play"), command("""{"id":34,"type":"play","payload":{"itemId":null,"episodeId":null}}"""))
+    }
+
+    @Test
     fun seekIsRelativeOrAbsolute() {
         assertEquals(RemoteCommand.Seek(deltaMs = -30_000, positionMs = null), command("""{"id":7,"type":"seek","payload":{"deltaMs":-30000}}"""))
         assertEquals(RemoteCommand.Seek(deltaMs = null, positionMs = 600_000), command("""{"id":8,"type":"seek","payload":{"positionMs":600000}}"""))

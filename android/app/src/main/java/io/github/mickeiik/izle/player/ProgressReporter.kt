@@ -16,12 +16,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.IOException
 
 /**
- * Delivers the player's progress reports (`POST /tv/progress`) through one ordered queue in [scope], the application
- * scope: a report outlives the screen, and a late heartbeat can never overwrite a `finished`. Heartbeats are best
- * effort (the next one carries the position again); `stopped` and `finished` are the last word on an episode, so they
- * are retried a few times and then [onFinalDelivered] refreshes Home, whose tile depends on them. A 400 means a server
- * from before "Listen along" rejecting the anchor fields (`playing`, `ageMs`): the report is sent again without them,
- * and so is every later one. Other 4xx answers drop the report (an unknown episode after a catalog change).
+ * Delivers the player's progress reports (`POST /tv/progress`), an episode's or a channel's, through one ordered queue
+ * in [scope], the application scope: a report outlives the screen, and a late heartbeat can never overwrite a
+ * `finished` or `stopped`. Heartbeats are best effort (the next one carries the position again); `stopped` and
+ * `finished` are the last word on an episode (and end a channel's viewing), so they are retried a few times and then
+ * [onFinalDelivered] refreshes Home, whose tile depends on them. A 400 to an episode's report means a server from
+ * before "Listen along" rejecting the anchor fields (`playing`, `ageMs`): the report is sent again without them, and
+ * so is every later one. Other 4xx answers drop the report (an unknown episode or item after a catalog change).
  */
 class ProgressReporter(
     scope: CoroutineScope,
@@ -51,10 +52,16 @@ class ProgressReporter(
         }
     }
 
-    /** Queues a report of [positionMs] (sampled now, never negative) for [api]'s server. */
-    fun report(api: ApiClient, sessionId: String?, episodeId: String, status: ProgressStatus, positionMs: Long, durationMs: Long?, playing: Boolean) {
+    /** Queues a report of [positionMs] in [episodeId] (sampled now, never negative) for [api]'s server. */
+    fun report(api: ApiClient, sessionId: String?, episodeId: String, status: ProgressStatus, positionMs: Long, durationMs: Long?, playing: Boolean) =
+        enqueue(api, ProgressReport.episode(sessionId, episodeId, status, positionMs, durationMs, playing))
+
+    /** Queues a report of the channel [itemId] (sampled now): `playing` or `stopped`, without a position. */
+    fun reportChannel(api: ApiClient, sessionId: String?, itemId: String, status: ProgressStatus, playing: Boolean) =
+        enqueue(api, ProgressReport.channel(sessionId, itemId, status, playing))
+
+    private fun enqueue(api: ApiClient, report: ProgressReport) {
         pendingReports.update { it + 1 }
-        val report = ProgressReport(sessionId, episodeId, positionMs.coerceAtLeast(0), durationMs, status, playing = playing)
         reports.trySend(QueuedReport(api, report, clock()))
     }
 
@@ -77,9 +84,10 @@ class ProgressReporter(
             } catch (e: IOException) {
                 attempt++ // retried for final reports
             } catch (e: ApiException) {
-                if (e.status == 400 && (report.playing != null || report.ageMs != null)) {
+                if (e.status == 400 && report.episodeId != null && (report.playing != null || report.ageMs != null)) {
                     // A server from before "Listen along" rejects the anchor fields: resend without them, from now on
-                    // (a second 400 then finds none and drops the report).
+                    // (a second 400 then finds none and drops the report). A server that takes channel reports knows
+                    // them: a 400 there (`has_episodes`) is any other refusal.
                     legacyProgress = true
                     continue
                 }

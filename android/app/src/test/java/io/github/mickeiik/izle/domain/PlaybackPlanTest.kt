@@ -37,6 +37,7 @@ class PlaybackPlanTest {
     fun statusesFollowWhatTheViewerWantsAndFinishNearTheEnd() {
         assertEquals(ProgressStatus.Playing, PlaybackPlan.liveStatus(playWhenReady = true))
         assertEquals(ProgressStatus.Paused, PlaybackPlan.liveStatus(playWhenReady = false))
+        assertEquals("a channel is never paused", ProgressStatus.Playing, PlaybackPlan.liveStatus(playWhenReady = false, channel = true))
         assertEquals(ProgressStatus.Finished, PlaybackPlan.stopStatus(twoHours - 60_000, twoHours))
         assertEquals(ProgressStatus.Stopped, PlaybackPlan.stopStatus(60_000, twoHours))
         assertEquals(ProgressStatus.Stopped, PlaybackPlan.stopStatus(60_000, null))
@@ -76,6 +77,16 @@ class PlaybackPlanTest {
         assertEquals(Recovery.NextSource, PlaybackPlan.recovery(403, 10_000, retriedSameSource = false, alternativesLeft = true))
         assertEquals(Recovery.NextSource, PlaybackPlan.recovery(null, 10 * 60_000, retriedSameSource = false, alternativesLeft = true))
         assertEquals(Recovery.GiveUp, PlaybackPlan.recovery(500, 10_000, retriedSameSource = false, alternativesLeft = false))
+    }
+
+    @Test
+    fun aChannelIsResolvedAgainOnceWhateverTheErrorThenFallsBackUnlessItPlayedAWhile() {
+        val stable = PlaybackPlan.LIVE_STABLE_PLAYED_MS
+        assertEquals(Recovery.RetrySameSource, PlaybackPlan.liveRecovery(0, retriedSameSource = false, alternativesLeft = false))
+        assertEquals(Recovery.RetrySameSource, PlaybackPlan.liveRecovery(0, retriedSameSource = false, alternativesLeft = true))
+        assertEquals(Recovery.NextSource, PlaybackPlan.liveRecovery(5_000, retriedSameSource = true, alternativesLeft = true))
+        assertEquals(Recovery.GiveUp, PlaybackPlan.liveRecovery(stable - 1, retriedSameSource = true, alternativesLeft = false))
+        assertEquals("it was working", Recovery.RetrySameSource, PlaybackPlan.liveRecovery(stable, retriedSameSource = true, alternativesLeft = false))
     }
 }
 
@@ -257,5 +268,35 @@ class SourceAttemptsTest {
         assertFalse(attempts.retriedSameSource)
         assertFalse(attempts.alternativesLeft("other"))
         assertEquals(0, attempts.triedCount)
+    }
+
+    @Test
+    fun aChannelsStreamIsRestartedOnTheSameSourceThenTheLadder() {
+        val attempts = SourceAttempts()
+        attempts.reset(live = true)
+        attempts.onResolved(null, listOf("main", "backup"))
+        // It ended (or fell behind the live window, or failed): the same source again, pinned, at the live edge.
+        assertEquals(Recovery.RetrySameSource, attempts.afterPlaybackError("main", httpStatus = null, playedMs = 0))
+        assertNull(attempts.excludeFor("main"))
+        attempts.onResolved("main", emptyList())
+        // Its first frame proves little: failing again soon after moves on to the next source.
+        attempts.onPlaying()
+        assertEquals(Recovery.NextSource, attempts.afterPlaybackError("main", httpStatus = 404, playedMs = 3_000))
+        assertEquals(listOf("main"), attempts.excludeFor(null))
+        attempts.onResolved(null, listOf("backup"))
+        attempts.onPlaying()
+        // The backup plays for hours, then its stream ends: the same source again, and again after it played a while.
+        assertEquals(Recovery.RetrySameSource, attempts.afterPlaybackError("backup", httpStatus = null, playedMs = 3 * 3_600_000L))
+        attempts.onResolved("backup", emptyList())
+        attempts.onPlaying()
+        assertEquals(Recovery.RetrySameSource, attempts.afterPlaybackError("backup", httpStatus = 410, playedMs = PlaybackPlan.LIVE_STABLE_PLAYED_MS))
+        attempts.onResolved("backup", emptyList())
+        assertEquals(Recovery.GiveUp, attempts.afterPlaybackError("backup", httpStatus = null, playedMs = 1_000))
+        assertEquals(2, attempts.triedCount)
+
+        // A show afterwards: its own rules (no re-resolve without an expired URL).
+        attempts.reset()
+        attempts.onResolved(null, listOf("x"))
+        assertEquals(Recovery.GiveUp, attempts.afterPlaybackError("x", httpStatus = null, playedMs = 0))
     }
 }

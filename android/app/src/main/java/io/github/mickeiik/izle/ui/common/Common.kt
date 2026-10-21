@@ -94,9 +94,13 @@ fun episodeNameText(name: EpisodeName): String? = when (name) {
         else stringResource(R.string.episode_number, name.number)
 }
 
-/** What a home tile's chip says: New / Continue / Watch again, or the episode OK plays ("Continue · Episode 2"). */
+/**
+ * What a home tile's chip says: New / Continue / Watch again, the episode OK plays ("Continue · Episode 2"), or Live
+ * for a channel.
+ */
 @Composable
 fun tileBadgeText(badge: TileBadge): String = when (badge) {
+    TileBadge.Live -> stringResource(R.string.badge_live)
     TileBadge.New -> stringResource(R.string.badge_new)
     TileBadge.Continue -> stringResource(R.string.badge_continue)
     TileBadge.WatchAgain -> stringResource(R.string.badge_watch_again)
