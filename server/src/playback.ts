@@ -1,17 +1,17 @@
 // Pure play-order rules: which episode OK plays, what auto-next does, and in which order sources are tried.
 // No I/O here so the rules are easy to test.
 
-import type { CatalogItem, LanguageFacts, Source } from "@izle/contract";
+import type { EpisodicItem, LanguageFacts, Source } from "@izle/contract";
 import type { Progress } from "./store.ts";
 
 
 /** Index of the first episode after `from` (exclusive) with playbackAllowed, or -1 (`from` -1: the first one). */
-function nextAllowedIndex(item: CatalogItem, from: number): number {
+function nextAllowedIndex(item: EpisodicItem, from: number): number {
   for (let i = from + 1; i < item.episodes.length; i++) if (item.episodes[i]!.playbackAllowed) return i;
   return -1;
 }
 
-export function isPlayable(item: CatalogItem): boolean {
+export function isPlayable(item: EpisodicItem): boolean {
   return nextAllowedIndex(item, -1) >= 0;
 }
 
@@ -31,7 +31,7 @@ interface CursorLike {
  * - Without a usable cursor: the first allowed episode not yet finished, else the first allowed one (rewatch).
  */
 export function cursorIndex(
-  item: CatalogItem,
+  item: EpisodicItem,
   cursor: string | CursorLike | null,
   progress: ReadonlyMap<string, Pick<Progress, "status">>,
   appended: ReadonlySet<string> = new Set(),
@@ -71,7 +71,7 @@ export type ProgressReportStatus = (typeof PROGRESS_REPORT_STATUSES)[number];
  * episode).
  */
 export function cursorAfterReport(
-  item: CatalogItem,
+  item: EpisodicItem,
   index: number,
   status: ProgressReportStatus,
   before: CursorLike | null,
@@ -88,7 +88,7 @@ export function cursorAfterReport(
  * The episode auto-next would start after `index`, or -1: the end of the item, or an autoAdvance boundary (the
  * episode's setting, else the item's, else true).
  */
-export function autoNextIndex(item: CatalogItem, index: number): number {
+export function autoNextIndex(item: EpisodicItem, index: number): number {
   const episode = item.episodes[index];
   if (!episode || !(episode.autoAdvance ?? item.autoAdvance ?? true)) return -1;
   return nextAllowedIndex(item, index);

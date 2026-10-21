@@ -350,6 +350,21 @@ test("catalog reload: new build applies, invalid build is refused and the old on
   assert.equal((await s.admin("GET", "/catalog")).json.buildId, "fixture-2");
 });
 
+test("catalog reload: a bundle with a live item is refused for now and the old one stays", async (t) => {
+  const { s } = await setup(t);
+  const channel = {
+    id: "channel", kind: "live", title: "Channel", poster: null, playbackAllowed: true,
+    sources: [{ id: "hls", type: "direct", languages: { audio: ["tr"], subtitles: [] }, media: { kind: "hls", url: "https://media.example.test/live.m3u8" } }],
+  };
+  await publishBuild(s.bundleDir, "fixture-live", (items) => [...items, channel]);
+  const bad = await s.admin("POST", "/catalog/reload");
+  assert.deepEqual([bad.status, bad.json.error], [422, "invalid_catalog"]);
+  const live = { severity: "error", file: "items.json", path: `/items/${fixtureItems().items.length}`, message: "live items are not supported by this server yet" };
+  assert.deepEqual(bad.json.issues, [live]);
+  const current = (await s.admin("GET", "/catalog")).json;
+  assert.deepEqual([current.buildId, current.stats.items], ["fixture-1", 16]);
+});
+
 test("catalog reload on SIGHUP: bumps every TV like the route; a reload that throws is logged, never rejected", async (t) => {
   const { s, tv } = await setup(t);
   const es = await openEvents(s.base, tv.token);

@@ -27,6 +27,15 @@ test("izle-validate exits 0 with a summary for a valid bundle, or JSON with --js
   assert.equal(JSON.parse(json.stdout).ok, true);
 });
 
+test("izle-validate counts items by kind, live channels included", async () => {
+  const dir = await makeBundle();
+  const r = await run([dir]);
+  assert.equal(r.code, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /3 items \(1 movies, 1 series, 1 live\), 3 episodes \(2 playable\), 3 sources/);
+  const json = await run([dir, "--json"]);
+  assert.equal(JSON.parse(json.stdout).stats.live, 1);
+});
+
 test("izle-validate exits 1 and lists errors for an invalid bundle", async () => {
   const dir = await makeBundle({ items: (i) => (i.items[1].id = "movie-a") });
   const r = await run([dir]);

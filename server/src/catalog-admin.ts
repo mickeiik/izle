@@ -2,7 +2,7 @@
 // item with its episodes and sources. Upstream URLs, headers and adapter refs are never part of it. Also the reload
 // that the admin route and SIGHUP share.
 
-import type { CatalogItem } from "@izle/contract";
+import type { EpisodicItem } from "@izle/contract";
 import { SERVER, type Actor } from "./actor.ts";
 import type { CatalogService, ReloadResult } from "./catalog.ts";
 import type { AppContext, Services } from "./context.ts";
@@ -74,12 +74,12 @@ export async function reloadOnSignal(deps: ReloadDeps & Pick<Services, "log">, s
 }
 
 /** A search hit: the item's card with its episode counts. */
-export function searchHitJson(catalog: CatalogService, item: CatalogItem) {
+export function searchHitJson(catalog: CatalogService, item: EpisodicItem) {
   return { ...itemCard(catalog, item), episodeCount: item.episodes.length, playableCount: item.episodes.filter((e) => e.playbackAllowed).length };
 }
 
 /** An item with every episode and source, as the admin page's item view shows it. */
-export function catalogItemJson(catalog: CatalogService, item: CatalogItem) {
+export function catalogItemJson(catalog: CatalogService, item: EpisodicItem) {
   return {
     ...itemDetails(catalog, item),
     autoAdvance: item.autoAdvance ?? true,

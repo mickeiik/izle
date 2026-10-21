@@ -55,7 +55,7 @@ export async function main(argv: string[]): Promise<number> {
     const s = result.stats;
     out(
       `✔ ${dir}: valid izle-bundle v1 "${manifest.name}" (catalog ${manifest.catalogId}, build ${manifest.buildId})\n` +
-        `  ${s.items} items (${s.movies} movies, ${s.series} series), ${s.episodes} episodes (${s.playableEpisodes} playable), ` +
+        `  ${s.items} items (${s.movies} movies, ${s.series} series, ${s.live} live), ${s.episodes} episodes (${s.playableEpisodes} playable), ` +
         `${s.sources} sources, ${s.posters} posters, ${s.backdrops} backdrops` +
         (warnings.length ? `, ${warnings.length} warning(s)` : ""),
     );
@@ -66,7 +66,8 @@ export async function main(argv: string[]): Promise<number> {
   if (probes) {
     for (const { target: t, ...p } of probes) {
       const outcome = p.ok ? `${p.status}` : p.status !== undefined ? `HTTP ${p.status}` : p.error;
-      const where = `${t.itemId}/${t.episodeId}/${t.sourceId} ${t.what} ${hostOf(t.url)}`;
+      const playable = t.episodeId === null ? t.itemId : `${t.itemId}/${t.episodeId}`;
+      const where = `${playable}/${t.sourceId} ${t.what} ${hostOf(t.url)}`;
       out(`${p.ok ? "  ✔" : "  ✖"} ${where} ${outcome} ${p.ms}ms`);
     }
     out(

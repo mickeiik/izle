@@ -398,7 +398,7 @@ The first install is the only one done at the TV. The server keeps one current A
 
 ## 9. Docker (alternative to systemd)
 
-The repository's [`Dockerfile`](../../Dockerfile) builds an image from the same package (Node 24, runs as an
+The repository's [`Dockerfile`](../../Dockerfile) builds an image from the same package (Node 26, runs as an
 unprivileged user, data in a volume). Without further options it serves the sample catalog:
 
 ```bash

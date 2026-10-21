@@ -33,6 +33,52 @@ jobs:
       - run: npm run pack:server
       - run: npm run smoke:server
 
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: docker build -t izle-server:ci .
+      - name: Smoke-test the image offline, including restart with persisted data
+        shell: bash
+        run: |
+          set -euo pipefail
+          config="$RUNNER_TEMP/izle-docker.json"
+          python3 -c 'import json, sys; json.dump({"listen": {"host": "0.0.0.0", "port": 8787}, "dataDir": "/var/lib/izle", "appUpdates": {"source": "manual"}}, open(sys.argv[1], "w"))' "$config"
+          docker run -d --name izle-ci --network none --health-interval 1s --health-start-period 5s \
+            --mount type=bind,src="$config",dst=/etc/izle/izle.json,readonly \
+            --mount type=volume,src=izle-ci-data,dst=/var/lib/izle izle-server:ci
+          smoke() {
+            docker exec izle-ci node --input-type=module -e '
+              import assert from "node:assert/strict";
+              assert.notEqual(process.getuid(), 0);
+              assert.equal(process.versions.node.split(".")[0], "26");
+              let ready = false;
+              for (let i = 0; i < 60; i++) {
+                try {
+                  const response = await fetch("http://127.0.0.1:8787/healthz");
+                  if (response.ok && (await response.json()).ok === true) { ready = true; break; }
+                } catch {}
+                await new Promise(resolve => setTimeout(resolve, 500));
+              }
+              assert.ok(ready, "server becomes healthy");
+              assert.equal((await fetch("http://127.0.0.1:8787/admin/")).status, 200);
+            '
+          }
+          smoke
+          docker exec izle-ci node -e 'require("node:fs").writeFileSync("/var/lib/izle/smoke-marker", "persisted")'
+          docker restart --time 10 izle-ci
+          smoke
+          docker exec izle-ci node -e 'require("node:assert/strict").equal(require("node:fs").readFileSync("/var/lib/izle/smoke-marker", "utf8"), "persisted")'
+      - name: Container logs on failure
+        if: failure()
+        run: docker logs izle-ci 2>/dev/null || true
+      - name: Clean up the container and volume
+        if: always()
+        run: |
+          docker rm -f izle-ci || true
+          docker volume rm izle-ci-data || true
+
   android:
     runs-on: ubuntu-latest
     defaults:
@@ -40,7 +86,7 @@ jobs:
         working-directory: android
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
           java-version: 21

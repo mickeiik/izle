@@ -2,13 +2,13 @@
 // an id in the path, 400 for one in a request body, 403 or 400 for an episode that may not be played), so every
 // caller names its status and code.
 
-import type { CatalogItem, Episode, Source } from "@izle/contract";
+import type { Episode, EpisodicItem, Source } from "@izle/contract";
 import type { CatalogService, EpisodeRef } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
 
 type LookupStatus = 400 | 403 | 404;
 
-export function requireItem(catalog: CatalogService, itemId: string, status: LookupStatus, code: string): CatalogItem {
+export function requireItem(catalog: CatalogService, itemId: string, status: LookupStatus, code: string): EpisodicItem {
   const item = catalog.item(itemId);
   if (!item) throw new HttpError(status, code);
   return item;

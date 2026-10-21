@@ -53,7 +53,7 @@
       "additionalProperties": { "type": "string", "pattern": "^[^\\r\\n]*$", "maxLength": 8192 },
       "maxProperties": 32
     },
-    "MediaKind": { "enum": ["hls", "dash", "mp4"] },
+    "MediaKind": { "enum": ["hls", "dash", "mp4", "ts"] },
     "SubtitleTrack": {
       "type": "object",
       "required": ["url", "language", "format"],
