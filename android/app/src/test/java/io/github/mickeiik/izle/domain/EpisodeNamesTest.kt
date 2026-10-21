@@ -2,6 +2,8 @@ package io.github.mickeiik.izle.domain
 
 import io.github.mickeiik.izle.data.api.ContinueInfo
 import io.github.mickeiik.izle.data.api.EpisodeDetails
+import io.github.mickeiik.izle.data.api.HomeEntry
+import io.github.mickeiik.izle.data.api.ItemCard
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -33,6 +35,18 @@ class EpisodeNamesTest {
             TileBadge.Episode(EpisodeName.Numbered(null, 2), resume = false),
             EpisodeNames.badge("series", cont(status = "new", number = 2, index = 1)),
         )
+    }
+
+    @Test
+    fun aChannelSaysLiveWithoutProgressOrNewEpisodes() {
+        assertEquals(TileBadge.Live, EpisodeNames.badge("live", null))
+        // Whatever its entry carries (never from a correct server).
+        assertEquals(TileBadge.Live, EpisodeNames.badge("live", cont(status = "watching", positionMs = 45_000, durationMs = 90_000)))
+        assertNull(EpisodeNames.progressFraction(null))
+        assertEquals(0, EpisodeNames.newEpisodes(HomeEntry(ItemCard("news", "live", "News"), playNext = null, newEpisodes = 2)))
+        assertEquals(2, EpisodeNames.newEpisodes(HomeEntry(ItemCard("show", "series", "Show"), cont(status = "new"), newEpisodes = 2)))
+        assertEquals(0, EpisodeNames.newEpisodes(HomeEntry(ItemCard("show", "series", "Show"), cont(status = "new"), newEpisodes = -1)))
+        assertEquals("a show without `continue` says New", TileBadge.New, EpisodeNames.badge("series", null))
     }
 
     @Test

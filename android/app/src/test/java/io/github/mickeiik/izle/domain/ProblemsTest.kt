@@ -18,6 +18,8 @@ class ProblemsTest {
     /** A made-up signed URL (nothing real): what a hostile exception message may contain. */
     private val signedUrl = "https://cdn.example.net/s/eyJhbGciOiJIUzI1NiJ9.c2VjcmV0/seg042.ts?token=SECRET-TOKEN-123&sig=abcdef0123456789" // gitleaks:allow
 
+    private val show = PlayableRef.Episode("show.e1")
+
     private fun json(report: ProblemReport?) = ApiJson.encodeToString(ProblemReport.serializer(), report!!)
 
     private fun assertNothingSecret(body: String) {
@@ -32,7 +34,7 @@ class ProblemsTest {
         val cause = IOException("Response code: 403 for $signedUrl", SocketTimeoutException("timeout reading $signedUrl"))
         val error = HostilePlaybackException("Source error: $signedUrl", cause)
         val report = Problems.playbackError(
-            error, error.errorCodeName, httpStatus = 403, episodeId = "film.film", sourceId = "signed-hls",
+            error, error.errorCodeName, httpStatus = 403, ref = PlayableRef.Episode("film.film"), sourceId = "signed-hls",
             sessionId = "Q8mQ8mQ8mQ8mQ8mQ", positionMs = 61_000, appVersion = "0.2.0",
         )
         assertEquals("playback", report.kind)
@@ -51,28 +53,48 @@ class ProblemsTest {
 
     @Test
     fun aFailedResolveCarriesTheServersCodeOrNetwork() {
-        val api = Problems.resolveFailure(ApiException(502, "no_playable_source"), "show.e1", null, "0.2.0")!!
+        val api = Problems.resolveFailure(ApiException(502, "no_playable_source"), show, null, "0.2.0")!!
         assertEquals("resolve", api.kind)
         assertEquals("no_playable_source", api.code)
         assertEquals(502, api.httpStatus)
-        assertEquals("http_403", Problems.resolveFailure(ApiException(403, "http_403"), "show.e1", "a", "0.2.0")!!.code)
-        val network = Problems.resolveFailure(IOException("failed to connect to $signedUrl"), "show.e1", "a", "0.2.0")!!
+        assertEquals("http_403", Problems.resolveFailure(ApiException(403, "http_403"), show, "a", "0.2.0")!!.code)
+        val network = Problems.resolveFailure(IOException("failed to connect to $signedUrl"), show, "a", "0.2.0")!!
         assertEquals("network", network.code)
         assertEquals("IOException", network.detail)
         assertNull(network.httpStatus)
         assertNothingSecret(json(network))
         // A removed device is told so elsewhere; its report would be refused anyway.
-        assertNull(Problems.resolveFailure(ApiException(401, "unauthorized"), "show.e1", null, "0.2.0"))
+        assertNull(Problems.resolveFailure(ApiException(401, "unauthorized"), show, null, "0.2.0"))
     }
 
     @Test
     fun givingUpSaysHowManySourcesWereTried() {
-        assertEquals("tried 3 sources", Problems.gaveUp("show.e1", "c", 5_000, 3, "0.2.0").detail)
-        assertEquals("tried 1 source", Problems.gaveUp("show.e1", "c", 5_000, 1, "0.2.0").detail)
-        val r = Problems.gaveUp("show.e1", null, null, 0, "0.2.0", reason = "then resolve failed: no_playable_source")
+        assertEquals("tried 3 sources", Problems.gaveUp(show, "c", 5_000, 3, "0.2.0").detail)
+        assertEquals("tried 1 source", Problems.gaveUp(show, "c", 5_000, 1, "0.2.0").detail)
+        val r = Problems.gaveUp(show, null, null, 0, "0.2.0", reason = "then resolve failed: no_playable_source")
         assertEquals("gave_up", r.code)
         assertEquals("playback", r.kind)
         assertEquals("tried 0 sources, then resolve failed: no_playable_source", r.detail)
+    }
+
+    @Test
+    fun aChannelIsNamedByItsItemWithoutAPosition() {
+        val channel = PlayableRef.Channel("news-24")
+        assertEquals(
+            """{"kind":"playback","code":"gave_up","itemId":"news-24","sourceId":"main","detail":"tried 2 sources","appVersion":"0.3.0"}""",
+            json(Problems.gaveUp(channel, "main", positionMs = null, sourcesTried = 2, appVersion = "0.3.0")),
+        )
+        assertEquals(
+            """{"kind":"resolve","code":"no_playable_source","itemId":"news-24","httpStatus":502,"appVersion":"0.3.0"}""",
+            json(Problems.resolveFailure(ApiException(502, "no_playable_source"), channel, null, "0.3.0")),
+        )
+        val behind = Problems.playbackError(IOException(), "ERROR_CODE_BEHIND_LIVE_WINDOW", null, channel, "main", "Q8m", null, "0.3.0")
+        assertEquals("news-24", behind.itemId)
+        assertNull(behind.episodeId)
+        assertNull(behind.positionMs)
+        assertEquals("ERROR_CODE_BEHIND_LIVE_WINDOW", behind.code)
+        // An episode is named by its id alone.
+        assertNull(Problems.gaveUp(show, "c", 5_000, 1, "0.2.0").itemId)
     }
 
     @Test

@@ -39,12 +39,12 @@ data class MenuUi(val pages: List<MenuPage>, val item: ItemCard?, val fromPlayer
 /** What the hidden menu offers (docs/ux/senior-tv.md, "Hidden menu"). */
 object MenuPlan {
     /**
-     * The root page's entries for a show of [itemKind] (null: no show, an empty Home): Episodes for a series and Start
-     * over for any show; in the player, Audio language with at least two audio tracks, and Subtitles; then Settings and
-     * About, always.
+     * The root page's entries for a show or channel of [itemKind] (null: none, an empty Home): Episodes for a series
+     * and Start over for any show (a channel has neither); in the player (shows and channels), Audio language with at
+     * least two audio tracks, and Subtitles; then Settings and About, always.
      */
     fun rootEntries(itemKind: String?, fromPlayer: Boolean, audioTrackCount: Int): List<RootEntry> = buildList {
-        if (itemKind != null) {
+        if (itemKind != null && itemKind != ItemCard.KIND_LIVE) {
             if (itemKind == "series") add(RootEntry.Episodes)
             add(RootEntry.StartOver)
         }

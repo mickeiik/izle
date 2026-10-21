@@ -42,15 +42,26 @@ data class DeviceInfo(
 data class CatalogInfo(val id: String, val buildId: String, val name: String)
 
 /**
- * `newEpisodes`: playable episodes added to the catalog since the viewer last watched this show (0 when none, and
- * from servers that do not send it). It only labels the tile; what OK plays is [playNext].
+ * A home tile. [playNext] (`continue`) is the episode OK plays; null for a channel ([ItemCard.isLive]), which OK plays
+ * at its live edge. `newEpisodes`: playable episodes added to the catalog since the viewer last watched this show (0
+ * when none, and always for a channel). It only labels the tile.
  */
 @Serializable
-data class HomeEntry(val item: ItemCard, @SerialName("continue") val playNext: ContinueInfo, val newEpisodes: Int = 0)
+data class HomeEntry(val item: ItemCard, @SerialName("continue") val playNext: ContinueInfo? = null, val newEpisodes: Int = 0)
 
-/** `posterUrl` (2:3) and `backdropUrl` (16:9, optional) are relative to the server (`/assets/<file>`). */
+/**
+ * `kind`: `movie`, `series` or `live` (a channel). `posterUrl` (2:3) and `backdropUrl` (16:9, optional) are relative
+ * to the server (`/assets/<file>`).
+ */
 @Serializable
-data class ItemCard(val id: String, val kind: String, val title: String, val posterUrl: String? = null, val backdropUrl: String? = null)
+data class ItemCard(val id: String, val kind: String, val title: String, val posterUrl: String? = null, val backdropUrl: String? = null) {
+    /** A channel: no episodes, no position, played at its live edge and resolved by its item id. */
+    val isLive: Boolean get() = kind == KIND_LIVE
+
+    companion object {
+        const val KIND_LIVE = "live"
+    }
+}
 
 /** What OK on a home tile plays. `status`: `new`, `watching` or `finished` (starts over). */
 @Serializable
@@ -65,12 +76,18 @@ data class ContinueInfo(
     val status: String = "new",
 )
 
+/** `GET /tv/items/:itemId`: a show's episodes and cursor, or a channel's [channel] instead. */
 @Serializable
 data class ItemDetailsResponse(
     val item: ItemCard,
     val cursorEpisodeId: String? = null,
     val episodes: List<EpisodeDetails> = emptyList(),
+    val channel: ChannelDetails? = null,
 )
+
+/** A channel's playability (its sources are the server's business). */
+@Serializable
+data class ChannelDetails(val playbackAllowed: Boolean = false)
 
 @Serializable
 data class EpisodeDetails(
@@ -89,17 +106,23 @@ data class EpisodeDetails(
 data class EpisodeProgress(val positionMs: Long, val status: String)
 
 /**
- * `trigger` and `commandId` say who or what started the playback, for the server's viewing history; every resolve of
- * one playback (fallbacks, expiry refreshes, Try again) repeats them. See [io.github.mickeiik.izle.domain.PlaybackOrigin].
+ * Exactly one of [episodeId] and [itemId] (a channel). `trigger` and `commandId` say who or what started the playback,
+ * for the server's viewing history; every resolve of one playback (fallbacks, expiry refreshes, Try again) repeats
+ * them. See [io.github.mickeiik.izle.domain.PlaybackOrigin].
  */
 @Serializable
 data class ResolveRequest(
-    val episodeId: String,
+    val episodeId: String? = null,
+    val itemId: String? = null,
     val sourceId: String? = null,
     val exclude: List<String>? = null,
     val trigger: Trigger? = null,
     val commandId: Long? = null,
-)
+) {
+    init {
+        require((episodeId == null) != (itemId == null)) { "an episode or a channel" }
+    }
+}
 
 /** A resolve's `trigger`, spelled on the wire as the server expects. */
 @Serializable
@@ -115,9 +138,10 @@ enum class Trigger {
 }
 
 /**
- * What to play. `expiresAt` (ISO 8601) is the stream's validity hint, or null; the TV resolves the same source again
- * shortly before it. [serverDateMs] is not part of the body: it is the answer's `Date` header (the server's clock),
- * filled in by [ApiClient.resolve] so the expiry can be scheduled without trusting the TV's clock.
+ * What to play. A channel ([ItemCard.isLive]) has no [episode], [next] or [resume]: it plays at its live edge.
+ * `expiresAt` (ISO 8601) is the stream's validity hint, or null; the TV resolves the same source again shortly before
+ * it. [serverDateMs] is not part of the body: it is the answer's `Date` header (the server's clock), filled in by
+ * [ApiClient.resolve] so the expiry can be scheduled without trusting the TV's clock.
  */
 @Serializable
 data class ResolveResponse(
@@ -128,13 +152,13 @@ data class ResolveResponse(
     val alternatives: List<String> = emptyList(),
     val next: NextEpisode? = null,
     val item: ItemCard,
-    val episode: EpisodeRef,
+    val episode: EpisodeRef? = null,
     val resume: Resume? = null,
     val expiresAt: String? = null,
     @Transient val serverDateMs: Long? = null,
 )
 
-/** `kind` is `hls`, `dash` or `mp4`; `url` may be relative to the server (proxied media). */
+/** `kind` is `hls`, `dash`, `mp4` or `ts` (progressive MPEG-TS); `url` may be relative to the server (proxied media). */
 @Serializable
 data class Media(val kind: String, val url: String)
 
@@ -166,20 +190,39 @@ data class EpisodeRef(
 data class Resume(val positionMs: Long, val durationMs: Long? = null)
 
 /**
- * `playing` says whether the player was actually advancing when the position was sampled (false during a rebuffer
- * stall) and `ageMs` how old the sample is when the report is sent: the server anchors "Listen along" on them. Both
- * are omitted when null.
+ * `POST /tv/progress`, for an episode ([episode]: its id and position) or a channel ([channel]: its item id, no
+ * position). `playing` says whether the player was actually advancing when the report was sampled (false during a
+ * rebuffer stall) and `ageMs` how old the sample is when the report is sent: the server anchors "Listen along" on
+ * them. Null fields are left out.
  */
 @Serializable
 data class ProgressReport(
     val sessionId: String?,
-    val episodeId: String,
-    val positionMs: Long,
-    val durationMs: Long?,
+    val episodeId: String? = null,
+    val itemId: String? = null,
+    val positionMs: Long? = null,
+    val durationMs: Long? = null,
     val status: ProgressStatus,
     val playing: Boolean? = null,
     val ageMs: Long? = null,
-)
+) {
+    companion object {
+        /** Where the viewer is in an episode (never a negative position). */
+        fun episode(sessionId: String?, episodeId: String, status: ProgressStatus, positionMs: Long, durationMs: Long?, playing: Boolean) =
+            ProgressReport(sessionId, episodeId = episodeId, positionMs = positionMs.coerceAtLeast(0), durationMs = durationMs, status = status, playing = playing)
+
+        /**
+         * A channel's heartbeat, stall or stop: no position or duration, and only `playing` or `stopped` (a channel is
+         * never paused and never finishes): a final [status] is sent as `stopped`, any other as `playing`.
+         */
+        fun channel(sessionId: String?, itemId: String, status: ProgressStatus, playing: Boolean) = ProgressReport(
+            sessionId,
+            itemId = itemId,
+            status = if (status.isFinal) ProgressStatus.Stopped else ProgressStatus.Playing,
+            playing = playing,
+        )
+    }
+}
 
 /** A progress report's `status`, spelled on the wire as the server expects. */
 @Serializable
@@ -211,6 +254,8 @@ data class ProblemReport(
     val kind: String,
     val code: String,
     val ageMs: Long? = null,
+    /** A channel's (an episode is named by [episodeId] alone). */
+    val itemId: String? = null,
     val episodeId: String? = null,
     val sourceId: String? = null,
     val sessionId: String? = null,
@@ -249,6 +294,8 @@ data class CommandResult(val result: Outcome, val reason: String? = null) {
         const val NOT_IN_PLAYER = "not_in_player" // a transport command without video showing
         const val NOT_READY = "not_ready" // the pairing or server address screen
         const val NO_EPISODE = "no_episode" // next/previous at the end of the item
+        const val LIVE = "live" // pause, resume or seek while a channel plays: a channel is never paused
+        const val NO_CHANNEL = "no_channel" // next/previous with no channel after / before the playing one on Home
         const val UNKNOWN_TYPE = "unknown_type" // a type this TV does not know, or an unusable payload
         const val NO_PLAYABLE_SOURCE = "no_playable_source" // a play whose resolve found nothing
         const val PLAYBACK_ERROR = "playback_error" // a play that failed in the player

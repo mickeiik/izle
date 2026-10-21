@@ -14,6 +14,7 @@ import io.github.mickeiik.izle.data.api.ContinueInfo
 import io.github.mickeiik.izle.data.api.EpisodeDetails
 import io.github.mickeiik.izle.data.api.HomeEntry
 import io.github.mickeiik.izle.data.api.ItemCard
+import io.github.mickeiik.izle.domain.AutoplayPlan
 import io.github.mickeiik.izle.player.PlayerPhase
 import io.github.mickeiik.izle.update.AppInstaller
 import io.github.mickeiik.izle.update.UpdateCapability
@@ -56,7 +57,8 @@ import java.util.concurrent.TimeUnit
  * in-process server: pairing, the owner's commands (over a live event stream), the timed messages, the countdowns
  * and the hidden menu's stack. Time is Robolectric's paused main-looper clock, advanced by the test; server answers
  * arrive on OkHttp's threads and are waited for. Nothing here needs ExoPlayer: nothing on this server is playable,
- * so playing ends on the player's error screen.
+ * so playing ends on the player's error screen. Home entries named `tv…` are channels, whose resolve takes a while so
+ * that the TV is still loading one when a key or a command comes.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], qualifiers = "w960dp-h540dp-land-television")
@@ -114,6 +116,11 @@ class AppViewModelTest {
                     path == "/api/v1/tv/app/apk" -> apk?.let { bytes ->
                         MockResponse.Builder().addHeader("Content-Type", "application/vnd.android.package-archive").body(Buffer().write(bytes)).build()
                     } ?: json(404, """{"error":"no_apk"}""")
+                    // A channel, still loading while the test zaps or sends commands.
+                    path == "/api/v1/tv/resolve" && request.body?.utf8().orEmpty().contains("\"itemId\":") -> {
+                        Thread.sleep(CHANNEL_RESOLVE_MS)
+                        json(404, """{"error":"unknown_item"}""")
+                    }
                     // An episode whose resolve takes a while, so something else can happen meanwhile.
                     path == "/api/v1/tv/resolve" && request.body?.utf8().orEmpty().contains("\"slow.") -> {
                         Thread.sleep(2_000)
@@ -723,6 +730,140 @@ class AppViewModelTest {
         assertTrue(installer.installs.isEmpty())
     }
 
+    @Test
+    fun okOnAChannelResolvesItByItsItemIdAndTheOwnerHearsOfItByItsItem() {
+        paired()
+        home = listOf("a", "tv1", "c", "tv2")
+        val vm = startTvOnHome()
+        val channel = vm.state.value!!.home[1]
+        assertTrue(channel.item.isLive)
+        assertNull(channel.playNext)
+        // On Home its menu has neither Episodes nor Start over.
+        vm.onTileFocused("tv1")
+        vm.openMenu()
+        assertEquals(listOf(RootEntry.Settings, RootEntry.About), (vm.menu.value?.page as MenuPage.Root).entries)
+        vm.onBack()
+
+        vm.onTileClicked(channel)
+        assertEquals(Screen.Player, vm.screen.value)
+        assertEquals(PlayerPhase.Loading, vm.player.ui.value.phase)
+        assertTrue("its name and Live while it loads", vm.player.ui.value.live)
+        assertEquals("Channel 1", vm.player.ui.value.item?.title)
+        assertEquals("tv1", vm.homeFocusItemId)
+        waitUntil("the resolve request") { count("/api/v1/tv/resolve") == 1 }
+        assertEquals("""{"itemId":"tv1","trigger":"viewer"}""", resolveBodies().single())
+        waitUntil("the error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
+        waitUntil("the problem reports") { problemBodies().size == 2 }
+        // The failed resolve and "Can't play right now", by the channel's item id, without an episode or position.
+        assertEquals(
+            setOf("resolve" to "unknown_item", "playback" to "gave_up"),
+            problemBodies().map { it.substringAfter("\"kind\":\"").substringBefore('"') to it.substringAfter("\"code\":\"").substringBefore('"') }.toSet(),
+        )
+        for (body in problemBodies()) {
+            assertTrue(body, body.contains("\"itemId\":\"tv1\""))
+            assertFalse(body, body.contains("episodeId") || body.contains("positionMs"))
+        }
+        // Try again: the channel once more, at its live edge.
+        vm.player.retry()
+        waitUntil("the second resolve") { count("/api/v1/tv/resolve") == 2 }
+        assertEquals("""{"itemId":"tv1","trigger":"viewer"}""", resolveBodies().last())
+        assertTrue(vm.player.ui.value.live)
+    }
+
+    @Test
+    fun channelKeysZapAmongHomesChannelsInHomeOrderWithoutWrappingAround() {
+        paired()
+        home = listOf("tv1", "c", "tv2", "a", "tv3")
+        val vm = startTvOnHome()
+        vm.onTileClicked(vm.state.value!!.home[0])
+        waitUntil("the first resolve") { count("/api/v1/tv/resolve") == 1 }
+        // CH+ while it loads: past show C, to channel 2, whose name shows while it loads.
+        vm.onChannelKey(1)
+        assertEquals(PlayerPhase.Loading, vm.player.ui.value.phase)
+        assertEquals("Channel 2", vm.player.ui.value.item?.title)
+        assertTrue(vm.player.ui.value.live)
+        assertEquals("tv2", vm.homeFocusItemId)
+        waitUntil("the second resolve") { count("/api/v1/tv/resolve") == 2 }
+        vm.onChannelKey(1)
+        waitUntil("the third resolve") { count("/api/v1/tv/resolve") == 3 }
+        assertEquals("Channel 3", vm.player.ui.value.item?.title)
+        // The last channel: nothing after it.
+        vm.onChannelKey(1)
+        settle()
+        assertEquals(3, count("/api/v1/tv/resolve"))
+        assertEquals("Channel 3", vm.player.ui.value.item?.title)
+        vm.onChannelKey(-1)
+        waitUntil("the fourth resolve") { count("/api/v1/tv/resolve") == 4 }
+        assertEquals("tv2", vm.homeFocusItemId)
+        assertEquals(
+            listOf(
+                """{"itemId":"tv1","trigger":"viewer"}""", """{"itemId":"tv2","trigger":"next"}""",
+                """{"itemId":"tv3","trigger":"next"}""", """{"itemId":"tv2","trigger":"next"}""",
+            ),
+            resolveBodies(),
+        )
+        // Back: Home, the channel played last focused.
+        vm.onBack()
+        assertEquals(Screen.Home, vm.screen.value)
+        assertEquals("tv2", vm.homeFocusItemId)
+    }
+
+    @Test
+    fun aPlayCommandWithoutAnEpisodePlaysTheChannelWhichIsNeverPaused() {
+        paired()
+        home = listOf("a", "tv1", "c", "tv2")
+        val vm = startTvOnHome()
+        val play = command("play", """{"itemId":"tv1","episodeId":null}""")
+        waitUntil("the resolve request") { count("/api/v1/tv/resolve") == 1 }
+        assertEquals("""{"itemId":"tv1","trigger":"command","commandId":$play}""", resolveBodies().single())
+        assertTrue(vm.player.ui.value.live)
+        assertEquals("Channel 1", vm.player.ui.value.item?.title)
+        assertEquals("tv1", vm.homeFocusItemId)
+        // No pause on a channel: pause, resume and seek do nothing.
+        for ((type, payload) in listOf("pause" to "{}", "resume" to "{}", "seek" to """{"deltaMs":30000}""")) {
+            assertEquals(type, """{"result":"ignored","reason":"live"}""", awaitResult(command(type, payload)))
+        }
+        assertEquals(PlayerPhase.Loading, vm.player.ui.value.phase)
+        assertTrue(vm.player.ui.value.playWhenReady)
+        // Previous: channel 1 is Home's first. Next: channel 2, as CH+ would.
+        assertEquals("""{"result":"ignored","reason":"no_channel"}""", awaitResult(command("previous")))
+        val next = command("next")
+        assertEquals("""{"result":"done"}""", awaitResult(next))
+        assertEquals("the play command was replaced", """{"result":"ignored","reason":"superseded"}""", awaitResult(play))
+        waitUntil("the zap's resolve") { count("/api/v1/tv/resolve") == 2 }
+        assertEquals("""{"itemId":"tv2","trigger":"command","commandId":$next}""", resolveBodies().last())
+        assertEquals("tv2", vm.homeFocusItemId)
+
+        // A channel that is not on Home has no neighbours there.
+        val elsewhere = command("play", """{"itemId":"tv9","episodeId":null}""")
+        waitUntil("its resolve") { count("/api/v1/tv/resolve") == 3 }
+        assertNull("no name before the answer", vm.player.ui.value.item)
+        assertTrue(vm.player.ui.value.live)
+        assertEquals("""{"result":"ignored","reason":"no_channel"}""", awaitResult(command("next")))
+        assertEquals(3, count("/api/v1/tv/resolve"))
+        waitUntil("the error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
+        assertEquals("""{"result":"failed","reason":"no_playable_source"}""", awaitResult(elsewhere))
+        // On its error screen the transport commands find no video, as for a show.
+        assertEquals("""{"result":"ignored","reason":"not_in_player"}""", awaitResult(command("pause")))
+    }
+
+    @Test
+    fun autoplayOffersAChannelAsLiveAndPlaysItAtItsLiveEdge() {
+        paired()
+        autoplayOnStart = true
+        home = listOf("tv1", "a")
+        val vm = startTv()
+        waitUntil("the autoplay countdown") { vm.autoplay.value != null }
+        assertEquals("tv1", vm.autoplay.value?.entry?.item?.id)
+        advance(AUTOPLAY_COUNTDOWN_MS)
+        assertEquals(Screen.Player, vm.screen.value)
+        assertTrue(vm.player.ui.value.live)
+        waitUntil("the resolve request") { count("/api/v1/tv/resolve") == 1 }
+        assertEquals("""{"itemId":"tv1","trigger":"autoplay"}""", resolveBodies().single())
+    }
+
+    private fun problemBodies() = requests.filter { it.url.encodedPath == "/api/v1/tv/problems" }.map { it.body?.utf8().orEmpty() }
+
     private fun grantInstalls(granted: Boolean) = shadowOf(app.packageManager).setCanRequestPackageInstalls(granted)
 
     /** What the system sends back for session 7. */
@@ -866,7 +1007,9 @@ class AppViewModelTest {
 
     private fun stateJson(): String {
         val list = home.joinToString(",") { id ->
-            if (id == "c") {
+            if (id.startsWith("tv")) {
+                """{"item":{"id":"$id","kind":"live","title":"Channel ${id.removePrefix("tv")}"},"continue":null,"newEpisodes":0}"""
+            } else if (id == "c") {
                 """{"item":{"id":"c","kind":"series","title":"Show C"},"continue":{"episodeId":"c.e1","index":0,"count":3,"status":"new"}}"""
             } else {
                 """{"item":{"id":"$id","kind":"movie","title":"Show ${id.uppercase()}"},"continue":{"episodeId":"$id.film","status":"new"}}"""
@@ -874,5 +1017,13 @@ class AppViewModelTest {
         }
         return """{"version":$version,"device":{"id":"tv-1","name":"Living room","uiLanguage":"en","autoplayOnStart":$autoplayOnStart},""" +
             """"catalog":{"id":"sample","buildId":"b1","name":"Sample"},"home":[$list]}"""
+    }
+
+    private companion object {
+        /** How long a channel's resolve takes here (real time): the TV is still loading it meanwhile. */
+        const val CHANNEL_RESOLVE_MS = 2_500L
+
+        /** Autoplay on start's whole countdown. */
+        const val AUTOPLAY_COUNTDOWN_MS = AutoplayPlan.COUNTDOWN_SEC * 1_000L
     }
 }

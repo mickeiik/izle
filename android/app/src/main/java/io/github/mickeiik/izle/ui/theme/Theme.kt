@@ -18,7 +18,8 @@ import androidx.tv.material3.darkColorScheme
 
 /**
  * High-contrast palette on a near-black background. Each colour has one role: white is the focus, the warm accent
- * is "time and attention" (Continue, countdowns, the owner's message), mint is "New", red is "no connection".
+ * is "time and attention" (Continue, countdowns, the owner's message, a channel's "Live" line), mint is "New", the
+ * light red is "no connection", the deep red with white text a live channel (television's own convention).
  */
 object IzleColors {
     val Background = Color(0xFF0B0B0F)
@@ -43,6 +44,10 @@ object IzleColors {
     /** The "New" chip: a show never played. */
     val New = Color(0xFF7FE3C4)
     val OnNew = Color(0xFF002118)
+
+    /** The "Live" chip of a channel: solid red, white text (5.6:1). */
+    val Live = Color(0xFFC62828)
+    val OnLive = Color(0xFFFFFFFF)
 
     /** The tile chip naming the episode OK plays, or "Watch again": light, so it reads on dark posters too. */
     val ChipNeutral = Color(0xFFE2E2EA)

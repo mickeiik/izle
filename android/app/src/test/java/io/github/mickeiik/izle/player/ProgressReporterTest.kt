@@ -164,8 +164,40 @@ class ProgressReporterTest {
         val reporter = reporter()
         reporter.report(api, "session-1", "show.e1", Paused, positionMs = -40, durationMs = null, playing = false)
         advanceUntilIdle()
-        assertEquals(ProgressReport("session-1", "show.e1", 0, null, Paused, playing = false, ageMs = 0), sent.single().report)
+        assertEquals(ProgressReport("session-1", episodeId = "show.e1", positionMs = 0, status = Paused, playing = false, ageMs = 0), sent.single().report)
         assertEquals("only a final report refreshes Home", 0, finalsDelivered)
+    }
+
+    @Test
+    fun aChannelsReportsNameItsItemWithoutPositionAndItsStopIsFinal() = runTest {
+        val reporter = reporter()
+        reporter.reportChannel(api, "session-9", "news-24", Playing, playing = false)
+        reporter.reportChannel(api, "session-9", "news-24", Paused, playing = false) // never paused
+        advanceUntilIdle()
+        val playing = ProgressReport("session-9", itemId = "news-24", status = Playing, playing = false, ageMs = 0)
+        assertEquals(listOf(playing, playing), sent.map { it.report })
+        assertEquals(0, finalsDelivered)
+        // Leaving the channel ends its viewing: retried like an episode's final report.
+        repeat(3) { answers += failWith(IOException("unreachable")) }
+        reporter.reportChannel(api, "session-9", "news-24", Stopped, playing = false)
+        advanceUntilIdle()
+        assertEquals(listOf(0L, 2_000L, 6_000L, 12_000L), sent.drop(2).map { it.atMs })
+        assertEquals(Stopped, sent.last().report.status)
+        assertNull(sent.last().report.positionMs)
+        assertEquals(1, finalsDelivered)
+    }
+
+    @Test
+    fun aRefusedChannelReportIsDroppedAndKeepsTheAnchor() = runTest {
+        val reporter = reporter()
+        answers += failWith(ApiException(400, "has_episodes")) // the item became a show in a catalog reload
+        reporter.reportChannel(api, "session-9", "news-24", Playing, playing = true)
+        reporter.report(Playing)
+        advanceUntilIdle()
+        assertEquals(2, sent.size)
+        assertEquals("show.e1", sent.last().report.episodeId)
+        assertEquals(true, sent.last().report.playing)
+        assertEquals(0L, sent.last().report.ageMs)
     }
 
     @Test

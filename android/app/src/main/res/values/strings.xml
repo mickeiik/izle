@@ -29,6 +29,8 @@
     <string name="badge_new">New</string>
     <string name="badge_continue">Continue</string>
     <string name="badge_watch_again">Watch again</string>
+    <!-- A channel: the chip on its card and the line under its name in the player. -->
+    <string name="badge_live">Live</string>
     <string name="badge_continue_episode">Continue · %1$s</string>
     <string name="episode_number">Episode %1$d</string>
     <string name="episode_season_number">Season %1$d, Episode %2$d</string>

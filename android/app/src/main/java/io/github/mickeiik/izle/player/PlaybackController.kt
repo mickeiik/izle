@@ -12,11 +12,14 @@ import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
+import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import io.github.mickeiik.izle.data.CommandResultReporter
 import io.github.mickeiik.izle.data.ProblemReporter
 import io.github.mickeiik.izle.data.ServerRepository
@@ -32,6 +35,7 @@ import io.github.mickeiik.izle.data.api.ResolveResponse
 import io.github.mickeiik.izle.data.api.orNullOnFailure
 import io.github.mickeiik.izle.domain.EpisodeSteps
 import io.github.mickeiik.izle.domain.ExpiryPlan
+import io.github.mickeiik.izle.domain.PlayableRef
 import io.github.mickeiik.izle.domain.PlaybackOrigin
 import io.github.mickeiik.izle.domain.PlaybackPlan
 import io.github.mickeiik.izle.domain.Problems
@@ -81,15 +85,22 @@ data class PlayerUi(
     val durationMs: Long? = null,
     val seekPreviewMs: Long? = null,
     val cues: String? = null,
+    /**
+     * A channel: its name and "Live" instead of the episode, position and times; no pause. Decided by the item's kind
+     * (the home tile's, then the resolve answer's), never by the stream's format.
+     */
+    val live: Boolean = false,
 )
 
 /** An audio or text track of the current media, for the hidden menu. */
 data class TrackOption(val groupIndex: Int, val trackIndex: Int, val language: String?, val label: String?, val selected: Boolean)
 
 /**
- * Plays one episode at a time: resolve → play → heartbeat → auto-next, with source fallback on errors, a refresh of
- * expiring stream URLs and CH+/CH− episode steps. All methods run on the main thread. Progress reports go through one
- * ordered queue in [reportScope], which outlives the screen.
+ * Plays one episode or channel at a time: resolve → play → heartbeat → auto-next, with source fallback on errors, a
+ * refresh of expiring stream URLs and CH+/CH− episode steps. A channel (docs/ux/senior-tv.md, "Live channels") starts
+ * at its live edge, is never paused, sought or finished, and when its stream ends or fails it is resolved again and
+ * restarted at the live edge before the source fallback. All methods run on the main thread. Progress reports go
+ * through one ordered queue in [reportScope], which outlives the screen.
  */
 @OptIn(UnstableApi::class)
 class PlaybackController(
@@ -114,13 +125,18 @@ class PlaybackController(
     private val _player = MutableStateFlow<ExoPlayer?>(null)
     val player: StateFlow<ExoPlayer?> = _player.asStateFlow()
 
-    private class Session(val api: ApiClient, val resolved: ResolveResponse)
+    private class Session(val api: ApiClient, val resolved: ResolveResponse) {
+        /** A channel's session: its reports name the item and carry no position. */
+        val live: Boolean get() = resolved.item.isLive
+    }
 
     /** An owner command [id] from [api]'s server, waiting for its result. */
     private class PendingCommand(val api: ApiClient, val id: Long)
 
     private var session: Session? = null
-    private var episodeId: String? = null
+
+    /** The episode or channel this player visit plays (loading, playing or on its end screens). */
+    private var target: PlayableRef? = null
 
     /** Who started this playback: every resolve made for it (fallback, expiry refresh, Try again) says so. */
     private var origin = PlaybackOrigin.Viewer
@@ -131,7 +147,7 @@ class PlaybackController(
     private var readyAt: Long? = null
     private var reported = false
 
-    /** Where Try again restarts; null = from the server's saved position under the resume rules. */
+    /** Where Try again restarts; null = from the server's saved position under the resume rules (a channel: always). */
     private var lastPositionMs: Long? = null
     private val seek = SeekAccumulator()
 
@@ -158,14 +174,20 @@ class PlaybackController(
     /** A player visit is on (loading, playing or one of its end screens). */
     val inUse: Boolean get() = _ui.value.phase != PlayerPhase.Idle
 
+    /** The channel loading or playing, which CH+/CH− zap from; null otherwise (an episode, an end screen, nothing). */
+    val zappableChannelId: String?
+        get() = (target as? PlayableRef.Channel)?.itemId
+            ?.takeIf { _ui.value.phase == PlayerPhase.Playing || _ui.value.phase == PlayerPhase.Loading }
+
     /**
-     * Plays [episodeId] from [startAtMs], or from the server's saved position under the resume rules when null.
-     * [hint] (the home tile's item) and [episodeHint] are shown while the stream is being resolved. [origin] goes with
-     * every resolve of this playback; with [playCommand], it is the owner's `play` command whose result this playback
-     * reports: `done` at its first frame, `failed` on "Can't play right now", `ignored` when left or replaced first.
+     * Plays [ref]: an episode from [startAtMs], or from the server's saved position under the resume rules when null;
+     * a channel at its live edge ([startAtMs] does not apply). [hint] (the home tile's item) and [episodeHint] are
+     * shown while the stream is being resolved. [origin] goes with every resolve of this playback; with [playCommand],
+     * it is the owner's `play` command whose result this playback reports: `done` at its first frame, `failed` on
+     * "Can't play right now", `ignored` when left or replaced first.
      */
     fun play(
-        episodeId: String,
+        ref: PlayableRef,
         origin: PlaybackOrigin,
         startAtMs: Long? = null,
         hint: ItemCard? = null,
@@ -181,20 +203,26 @@ class PlaybackController(
         val commandId = origin.commandId
         this.playCommand = if (playCommand && api != null && commandId != null) PendingCommand(api, commandId) else null
         this.origin = origin
-        this.episodeId = episodeId
-        attempts.reset()
+        this.target = ref
+        // Only a channel is resolved by its item id: it is live until the answer says otherwise.
+        val live = ref is PlayableRef.Channel
+        val start = if (live) null else startAtMs
+        attempts.reset(live)
         lastRefreshAt = null
-        lastPositionMs = startAtMs
+        lastPositionMs = start
         val keep = _ui.value
+        // Without a hint the item on screen stays (Try again, an episode step), unless another channel is starting.
+        val kept = keep.item?.takeIf { keep.phase != PlayerPhase.Idle && (ref !is PlayableRef.Channel || it.id == ref.itemId) }
         _ui.value = PlayerUi(
             phase = PlayerPhase.Loading,
-            item = hint ?: keep.item?.takeIf { keep.phase != PlayerPhase.Idle },
+            item = hint ?: kept,
             episode = episodeHint,
-            posterUrl = hint?.posterUrl?.let { api?.resolve(it)?.toString() } ?: keep.posterUrl,
+            posterUrl = hint?.posterUrl?.let { api?.resolve(it)?.toString() } ?: keep.posterUrl.takeIf { kept != null },
             playWhenReady = true,
+            live = live,
         )
         if (api == null) return showFailed()
-        resolveJob = scope.launch { resolveAndStart(api, episodeId, origin, sourceId = null, startAtMs = startAtMs) }
+        resolveJob = scope.launch { resolveAndStart(api, ref, origin, sourceId = null, startAtMs = start) }
     }
 
     /** Leaves the player: reports where the viewer stopped, releases the decoder, goes Home. */
@@ -215,41 +243,58 @@ class PlaybackController(
             it.release()
         }
         _player.value = null
-        episodeId = null
+        target = null
         episodeLists.clear()
         _ui.value = PlayerUi()
     }
 
-    /** Try again: continues the failed playback, with its origin (a `play` command's result was already sent). */
+    /**
+     * Try again: continues the failed playback, with its origin (a `play` command's result was already sent); a channel
+     * restarts at its live edge.
+     */
     fun retry() {
-        val id = episodeId ?: return exit()
-        play(id, origin, startAtMs = lastPositionMs)
+        val ref = target ?: return exit()
+        play(ref, origin, startAtMs = lastPositionMs)
     }
 
     fun playNextNow() {
         val phase = _ui.value.phase as? PlayerPhase.UpNext ?: return
-        play(phase.next.episodeId, PlaybackOrigin.Next)
+        play(PlayableRef.Episode(phase.next.episodeId), PlaybackOrigin.Next)
     }
 
+    /** OK while an episode plays. A channel has no pause: see [showChannelInfo]. */
     fun togglePause() {
         val p = _player.value ?: return
         if (_ui.value.phase == PlayerPhase.Playing) setPlaying(!p.playWhenReady)
     }
 
+    /** Never on a channel. */
     fun pause() = setPlaying(false)
 
+    /** Plays on; on a channel only a pause the system made (lost audio focus) has anything to undo. */
     fun resume() = setPlaying(true)
+
+    /**
+     * OK on a channel: the information (its name and "Live"), and the picture goes on if the system paused it (a
+     * channel has no pause the viewer could undo otherwise).
+     */
+    fun showChannelInfo() {
+        resume()
+        showInfo()
+    }
 
     private fun setPlaying(play: Boolean) {
         val p = _player.value ?: return
-        if (p.playWhenReady == play) return
+        if (p.playWhenReady == play || (!play && _ui.value.live)) return
         if (play) p.play() else p.pause()
         reportCurrent(PlaybackPlan.liveStatus(play))
         showInfo()
     }
 
+    /** Start over (the hidden menu, never over a channel). */
     fun startOver() {
         val p = _player.value ?: return
+        if (_ui.value.live) return
         seek.cancel()
         p.seekTo(0)
         p.play()
@@ -257,12 +302,12 @@ class PlaybackController(
         showInfo()
     }
 
-    /** Left/Right DOWN (first press or key repeat). */
+    /** Left/Right DOWN (first press or key repeat); a channel is not sought. */
     fun onSeekKeyDown(direction: Int, eventTimeMs: Long, downTimeMs: Long, repeatCount: Int) {
         val p = _player.value ?: return
-        if (_ui.value.phase != PlayerPhase.Playing) return
-        val target = seek.onKeyDown(direction, eventTimeMs, downTimeMs, repeatCount, p.currentPosition, durationOf(p)) ?: return
-        _ui.update { it.copy(seekPreviewMs = target) }
+        if (_ui.value.phase != PlayerPhase.Playing || _ui.value.live) return
+        val preview = seek.onKeyDown(direction, eventTimeMs, downTimeMs, repeatCount, p.currentPosition, durationOf(p)) ?: return
+        _ui.update { it.copy(seekPreviewMs = preview) }
         showInfo()
     }
 
@@ -271,17 +316,17 @@ class PlaybackController(
         seekNow(p, seek.commit() ?: return)
     }
 
-    /** The owner's seek command, shown like a key press. */
+    /** The owner's seek command, shown like a key press (never on a channel). */
     fun seekRemote(command: RemoteCommand.Seek) {
         val p = _player.value ?: return
-        if (_ui.value.phase != PlayerPhase.Playing) return
+        if (_ui.value.phase != PlayerPhase.Playing || _ui.value.live) return
         seek.cancel()
         seekNow(p, command.targetMs(p.currentPosition.coerceAtLeast(0), durationOf(p) ?: _ui.value.durationMs))
     }
 
-    private fun seekNow(p: ExoPlayer, target: Long) {
-        p.seekTo(target)
-        _ui.update { it.copy(seekPreviewMs = null, positionMs = target) }
+    private fun seekNow(p: ExoPlayer, toMs: Long) {
+        p.seekTo(toMs)
+        _ui.update { it.copy(seekPreviewMs = null, positionMs = toMs) }
         reportLive(p)
         showInfo()
     }
@@ -297,9 +342,9 @@ class PlaybackController(
         if (_ui.value.phase != PlayerPhase.Playing) return onResult(notInPlayer)
         if (stepJob?.isActive == true) return onResult(CommandResult.ignored(CommandResult.BUSY))
         val s = session ?: return onResult(notInPlayer)
-        val current = episodeId ?: return onResult(notInPlayer)
+        val current = (target as? PlayableRef.Episode)?.episodeId ?: return onResult(notInPlayer)
         val item = s.resolved.item
-        val ref = s.resolved.episode
+        val ref = s.resolved.episode ?: return onResult(notInPlayer)
         if (!EpisodeSteps.mayHaveNeighbour(ref.index, ref.count, direction)) {
             showInfo()
             return onResult(CommandResult.ignored(CommandResult.NO_EPISODE))
@@ -311,7 +356,7 @@ class PlaybackController(
             try {
                 val episodes = orNullOnFailure { s.api.item(item.id).episodes }
                 if (episodes != null) episodeLists[item.id] = episodes
-                if (episodeId != current || _ui.value.phase != PlayerPhase.Playing) return@launch
+                if ((target as? PlayableRef.Episode)?.episodeId != current || _ui.value.phase != PlayerPhase.Playing) return@launch
                 result = if (episodes == null) {
                     showInfo()
                     CommandResult.failed(CommandResult.EPISODES_UNAVAILABLE)
@@ -326,12 +371,12 @@ class PlaybackController(
 
     /** Plays the neighbour of [current] in [direction] (`done`); without one, shows the info overlay (`no_episode`). */
     private fun stepTo(episodes: List<EpisodeDetails>, current: String, direction: Int, item: ItemCard, origin: PlaybackOrigin): CommandResult {
-        val target = EpisodeSteps.neighbour(episodes, current, direction) ?: run {
+        val next = EpisodeSteps.neighbour(episodes, current, direction) ?: run {
             showInfo()
             return CommandResult.ignored(CommandResult.NO_EPISODE)
         }
-        val hint = EpisodeRef(target.id, target.index, episodes.size, target.season, target.number, target.title, target.label, target.durationMs)
-        play(target.id, origin, startAtMs = null, hint = item, episodeHint = hint)
+        val hint = EpisodeRef(next.id, next.index, episodes.size, next.season, next.number, next.title, next.label, next.durationMs)
+        play(PlayableRef.Episode(next.id), origin, startAtMs = null, hint = item, episodeHint = hint)
         return CommandResult.Done
     }
 
@@ -369,12 +414,13 @@ class PlaybackController(
     }
 
     /**
-     * Resolves and starts playback. [sourceId] pins one source (re-resolving an expired URL); when that fails the
-     * remaining alternatives are tried unpinned.
+     * Resolves and starts playback: an episode at [startAtMs] (null: under the resume rules), a channel at its live
+     * edge. [sourceId] pins one source (re-resolving an expired URL, or a channel's stream that ended or failed); when
+     * that fails the remaining alternatives are tried unpinned.
      */
     private suspend fun resolveAndStart(
         api: ApiClient,
-        episodeId: String,
+        ref: PlayableRef,
         origin: PlaybackOrigin,
         sourceId: String?,
         startAtMs: Long?,
@@ -383,11 +429,11 @@ class PlaybackController(
         // A stopped/finished report still on its way would make `resume` and the cursor stale.
         reporter.awaitDelivered()
         val resolved = try {
-            api.resolve(origin.request(episodeId, sourceId, exclude = attempts.excludeFor(sourceId)))
+            api.resolve(origin.request(ref, sourceId, exclude = attempts.excludeFor(sourceId)))
         } catch (e: Exception) {
-            onResolveFailure(e, api, episodeId, sourceId)
+            onResolveFailure(e, api, ref, sourceId)
             if (attempts.continueAfterFailedResolve(sourceId)) {
-                resolveAndStart(api, episodeId, origin, sourceId = null, startAtMs, playWhenReady)
+                resolveAndStart(api, ref, origin, sourceId = null, startAtMs, playWhenReady)
             } else {
                 showFailed(reason = "then resolve failed: " + Problems.code(if (e is ApiException) e.code else "network"), resolveFailed = true)
             }
@@ -395,10 +441,13 @@ class PlaybackController(
         }
         val receivedAt = SystemClock.elapsedRealtime()
         attempts.onResolved(sourceId, resolved.alternatives)
+        val live = resolved.item.isLive
+        val episode = resolved.episode
+        if (!live && episode == null) return showFailed(reason = "then the answer named no episode")
         val item = mediaItemFor(api, resolved) ?: return showFailed(reason = "then the media address was unusable")
         val resume = resolved.resume
-        val start = startAtMs
-            ?: PlaybackPlan.resumePositionMs(resume?.positionMs, resume?.durationMs ?: resolved.episode.durationMs)
+        // A channel: no position, the live edge.
+        val start = if (live) null else startAtMs ?: PlaybackPlan.resumePositionMs(resume?.positionMs, resume?.durationMs ?: episode?.durationMs)
         session = Session(api, resolved)
         readyAt = null
         reported = false
@@ -406,28 +455,43 @@ class PlaybackController(
         _ui.update {
             it.copy(
                 item = resolved.item,
-                episode = resolved.episode,
+                episode = episode,
                 posterUrl = api.resolve(resolved.item.posterUrl)?.toString(),
-                durationMs = resolved.episode.durationMs,
-                positionMs = start,
+                durationMs = episode?.durationMs,
+                positionMs = start ?: 0,
                 cues = null,
+                live = live,
             )
         }
         val p = ensurePlayer()
         applyTrackPreferences(p)
-        p.setMediaItem(item, start)
+        setMedia(p, item, resolved, start)
         p.prepare()
-        p.playWhenReady = playWhenReady
+        // Nothing pauses a channel: a re-resolve after its stream broke off plays on.
+        p.playWhenReady = playWhenReady || live
         startHeartbeat()
         watchExpiry(api, resolved, receivedAt)
     }
 
     /** Rethrows anything but a network failure or an error answer; else reports it (unless the viewer left). */
-    private suspend fun onResolveFailure(e: Exception, api: ApiClient, episodeId: String, sourceId: String?) {
+    private suspend fun onResolveFailure(e: Exception, api: ApiClient, ref: PlayableRef, sourceId: String?) {
         if (e !is ApiException && e !is IOException) throw e
         currentCoroutineContext().ensureActive()
-        problems.send(Problems.resolveFailure(e, episodeId, sourceId, appVersion), api = api)
+        problems.send(Problems.resolveFailure(e, ref, sourceId, appVersion), api = api)
         if (e is ApiException && e.status == 401) repository.refreshSoon() // the next state fetch notices the removal
+    }
+
+    /**
+     * Hands [item] to the player: an episode at [startMs], a channel at its default position, the live edge. A channel's
+     * progressive stream gets a source that never retries in place ([restartsInsteadOfResuming]).
+     */
+    private fun setMedia(p: ExoPlayer, item: MediaItem, resolved: ResolveResponse, startMs: Long?) {
+        val live = resolved.item.isLive
+        when {
+            restartsInsteadOfResuming(resolved.media.kind, live) -> p.setMediaSource(liveStreamSources.createMediaSource(item))
+            live || startMs == null -> p.setMediaItem(item)
+            else -> p.setMediaItem(item, startMs)
+        }
     }
 
     /** The media item for a resolve answer (server-relative URLs made absolute), or null when its URL is unusable. */
@@ -445,7 +509,7 @@ class PlaybackController(
             .setUri(Uri.parse(mediaUrl.toString()))
             .setMimeType(mediaMimeType(resolved.media.kind))
             .setSubtitleConfigurations(subtitles)
-            .setMediaId(resolved.episode.id)
+            .setMediaId(resolved.episode?.id ?: resolved.item.id)
             .build()
     }
 
@@ -480,14 +544,14 @@ class PlaybackController(
         var retried = false
         while (true) {
             val s = session ?: return null
-            val episodeId = this.episodeId ?: return null
+            val ref = this.target ?: return null
             if (_ui.value.phase != PlayerPhase.Playing && _ui.value.phase != PlayerPhase.Loading) return null
             val sourceId = s.resolved.sourceId
             lastRefreshAt = SystemClock.elapsedRealtime()
             val resolved = try {
-                api.resolve(origin.request(episodeId, sourceId = sourceId))
+                api.resolve(origin.request(ref, sourceId = sourceId))
             } catch (e: Exception) {
-                onResolveFailure(e, api, episodeId, sourceId)
+                onResolveFailure(e, api, ref, sourceId)
                 if (session !== s) return null
                 val retryable = ExpiryPlan.isRetryable((e as? ApiException)?.status)
                 val retry = ExpiryPlan.retryDelayMs(retryable, retried, deadline - SystemClock.elapsedRealtime()) ?: return null
@@ -503,16 +567,17 @@ class PlaybackController(
     }
 
     /**
-     * Progress goes to the re-resolved session; the media is swapped at the current position only when its URL
-     * changed, `playWhenReady` untouched. The last unpinned resolve's fallback order stays.
+     * Progress goes to the re-resolved session; the media is swapped only when its URL changed, `playWhenReady`
+     * untouched: at the current position, or for a channel at the live edge. The last unpinned resolve's fallback order
+     * stays.
      */
     private fun adoptRefreshed(api: ApiClient, old: Session, resolved: ResolveResponse) {
         session = Session(api, resolved)
         val p = _player.value ?: return
         if (resolved.media.url != old.resolved.media.url) {
             mediaItemFor(api, resolved)?.let { item ->
-                val position = p.currentPosition.coerceAtLeast(0)
-                p.setMediaItem(item, position)
+                val position = if (resolved.item.isLive) null else p.currentPosition.coerceAtLeast(0)
+                setMedia(p, item, resolved, position)
                 p.prepare()
                 lastPositionMs = position
                 _ui.update { it.copy(cues = null) }
@@ -562,15 +627,18 @@ class PlaybackController(
         it.copy(
             playWhenReady = p.playWhenReady,
             buffering = p.playbackState == Player.STATE_BUFFERING,
-            durationMs = durationOf(p) ?: it.durationMs,
+            // A live stream's duration is its window, nothing to show.
+            durationMs = if (it.live) null else durationOf(p) ?: it.durationMs,
         )
     }
 
     private fun onEnded(p: ExoPlayer) {
         val s = session ?: return
         if (reported) return
+        // A channel never ends: its stream is resolved again at the live edge (or the next source, or the error screen).
+        if (s.live) return recover(s, httpStatus = null, positionMs = 0)
         reported = true
-        val duration = durationOf(p) ?: s.resolved.episode.durationMs
+        val duration = durationOf(p) ?: s.resolved.episode?.durationMs
         report(s, ProgressStatus.Finished, duration ?: p.currentPosition, duration, playing = false)
         stopSessionLoops()
         lastPositionMs = 0
@@ -586,7 +654,7 @@ class PlaybackController(
                 countDown(PlaybackPlan.AUTO_NEXT_COUNTDOWN_SEC) { left ->
                     _ui.update { it.copy(phase = PlayerPhase.UpNext(next, left), showInfo = false, cues = null) }
                 }
-                play(next.episodeId, PlaybackOrigin.Next)
+                play(PlayableRef.Episode(next.episodeId), PlaybackOrigin.Next)
             }
         }
     }
@@ -594,37 +662,51 @@ class PlaybackController(
     private fun onError(error: PlaybackException) {
         val p = _player.value
         val s = session
+        val live = _ui.value.live
         val position = p?.currentPosition?.coerceAtLeast(0) ?: lastPositionMs ?: 0
         val httpStatus = error.httpStatus()
         problems.send(
             Problems.playbackError(
-                error, error.errorCodeName, httpStatus, episodeId, s?.resolved?.sourceId, s?.resolved?.sessionId,
-                position, appVersion,
+                error, error.errorCodeName, httpStatus, target, s?.resolved?.sourceId, s?.resolved?.sessionId,
+                position.takeIf { !live }, appVersion,
             ),
             api = s?.api,
         )
-        val episodeId = this.episodeId
-        if (s == null || episodeId == null) return showFailed()
-        lastPositionMs = position
+        if (s == null || target == null) return showFailed()
+        recover(s, httpStatus, position)
+    }
+
+    /**
+     * The playing source failed (a channel: or its stream ended or fell behind the live window): the same source
+     * again, the next alternative or "Can't play right now" ([SourceAttempts.afterPlaybackError]). An episode goes on
+     * at [positionMs]; a channel restarts at its live edge.
+     */
+    private fun recover(s: Session, httpStatus: Int?, positionMs: Long) {
+        val ref = target ?: return showFailed()
+        val start = if (s.live) null else positionMs
+        lastPositionMs = start
         val played = readyAt?.let { SystemClock.elapsedRealtime() - it } ?: 0
         val sourceId = s.resolved.sourceId
         when (attempts.afterPlaybackError(sourceId, httpStatus, played)) {
-            PlaybackPlan.Recovery.RetrySameSource -> relaunch(s.api, episodeId, sourceId, position)
-            PlaybackPlan.Recovery.NextSource -> relaunch(s.api, episodeId, sourceId = null, position)
+            PlaybackPlan.Recovery.RetrySameSource -> relaunch(s.api, ref, sourceId, start)
+            PlaybackPlan.Recovery.NextSource -> relaunch(s.api, ref, sourceId = null, start)
             PlaybackPlan.Recovery.GiveUp -> {
-                if (readyAt != null) report(s, ProgressStatus.Stopped, position, p?.let(::durationOf), playing = false)
+                if (readyAt != null) report(s, ProgressStatus.Stopped, positionMs, _player.value?.let(::durationOf), playing = false)
                 reported = true
                 showFailed()
             }
         }
     }
 
-    /** Re-resolves silently (the last frame or the spinner stays) and goes on at [positionMs], paused if it was. */
-    private fun relaunch(api: ApiClient, episodeId: String, sourceId: String?, positionMs: Long) {
+    /**
+     * Re-resolves silently (the last frame or the spinner stays) and goes on at [positionMs], paused if it was; a
+     * channel (no position) starts again at its live edge.
+     */
+    private fun relaunch(api: ApiClient, ref: PlayableRef, sourceId: String?, positionMs: Long?) {
         val playWhenReady = _player.value?.playWhenReady ?: true
         resolveJob?.cancel()
         expiryJob?.cancel()
-        resolveJob = scope.launch { resolveAndStart(api, episodeId, origin, sourceId, positionMs, playWhenReady) }
+        resolveJob = scope.launch { resolveAndStart(api, ref, origin, sourceId, positionMs, playWhenReady) }
     }
 
     /**
@@ -635,8 +717,8 @@ class PlaybackController(
         answerPlayCommand(CommandResult.failed(if (resolveFailed) CommandResult.NO_PLAYABLE_SOURCE else CommandResult.PLAYBACK_ERROR))
         stopSessionLoops()
         _player.value?.stop()
-        episodeId?.let { id ->
-            problems.send(Problems.gaveUp(id, session?.resolved?.sourceId ?: attempts.lastTried, lastPositionMs, attempts.triedCount, appVersion, reason))
+        target?.let { ref ->
+            problems.send(Problems.gaveUp(ref, session?.resolved?.sourceId ?: attempts.lastTried, lastPositionMs, attempts.triedCount, appVersion, reason))
         }
         val seconds = PlaybackPlan.FAILED_AUTO_HOME_SEC
         _ui.update { it.copy(phase = PlayerPhase.Failed(seconds), showInfo = false, buffering = false, cues = null) }
@@ -646,7 +728,8 @@ class PlaybackController(
         }
     }
 
-    private fun showInfo() {
+    /** The information for a few seconds (as after a key press); at the first or last channel or episode, only this. */
+    fun showInfo() {
         _ui.update { it.copy(showInfo = true, positionMs = _player.value?.currentPosition ?: it.positionMs) }
         infoJob?.cancel()
         infoJob = scope.launch {
@@ -671,25 +754,29 @@ class PlaybackController(
         }
     }
 
-    /** Reports the position with the status the viewer wants: playing, or paused. */
-    private fun reportLive(p: ExoPlayer) = reportCurrent(PlaybackPlan.liveStatus(p.playWhenReady))
+    /** Reports the position with the status the viewer wants: playing, or paused (a channel: always playing). */
+    private fun reportLive(p: ExoPlayer) = reportCurrent(PlaybackPlan.liveStatus(p.playWhenReady, channel = _ui.value.live))
 
     private fun reportCurrent(status: ProgressStatus) {
         val s = session ?: return
         val p = _player.value ?: return
         if (reported || readyAt == null) return
-        lastPositionMs = p.currentPosition
+        if (!s.live) lastPositionMs = p.currentPosition
         report(s, status, p.currentPosition, durationOf(p) ?: _ui.value.durationMs, playing = p.isPlaying)
     }
 
-    /** Reports where the viewer left the current episode (stopped, or finished within the end threshold). */
+    /**
+     * Reports where the viewer left the current episode (stopped, or finished within the end threshold), or that the
+     * channel was left (stopped).
+     */
     private fun endSession() {
         val s = session
         val p = _player.value
         if (s != null && p != null && !reported && readyAt != null) {
             val position = p.currentPosition
-            val duration = durationOf(p) ?: s.resolved.episode.durationMs
-            report(s, PlaybackPlan.stopStatus(position, duration), position, duration, playing = false)
+            val duration = durationOf(p) ?: s.resolved.episode?.durationMs
+            val status = if (s.live) ProgressStatus.Stopped else PlaybackPlan.stopStatus(position, duration)
+            report(s, status, position, duration, playing = false)
         }
         reported = true
         session = null
@@ -704,8 +791,15 @@ class PlaybackController(
         commandResults.report(command.api, command.id, result)
     }
 
-    private fun report(s: Session, status: ProgressStatus, positionMs: Long, durationMs: Long?, playing: Boolean) =
-        reporter.report(s.api, s.resolved.sessionId, s.resolved.episode.id, status, positionMs, durationMs, playing)
+    /** An episode's report carries [positionMs] and [durationMs]; a channel's only its item and [status]. */
+    private fun report(s: Session, status: ProgressStatus, positionMs: Long, durationMs: Long?, playing: Boolean) {
+        val episode = s.resolved.episode
+        if (s.live || episode == null) {
+            reporter.reportChannel(s.api, s.resolved.sessionId, s.resolved.item.id, status, playing)
+        } else {
+            reporter.report(s.api, s.resolved.sessionId, episode.id, status, positionMs, durationMs, playing)
+        }
+    }
 
     /** Up next's countdown, "The end"'s pause or the error screen's countdown, replacing the one before. */
     private fun launchOverlay(block: suspend CoroutineScope.() -> Unit) {
@@ -724,13 +818,17 @@ class PlaybackController(
         infoJob?.cancel()
     }
 
+    /** Media requests: the app's connection pool, the media User-Agent, never the device token. */
+    private val dataSources: DataSource.Factory by lazy {
+        DefaultDataSource.Factory(context, OkHttpDataSource.Factory(mediaHttp).setUserAgent(userAgent))
+    }
+
+    /** A channel's progressive stream: no retry in place, see [restartsInsteadOfResuming]. */
+    private val liveStreamSources by lazy { DefaultMediaSourceFactory(dataSources).setLoadErrorHandlingPolicy(NoRetryInPlace()) }
+
     private fun ensurePlayer(): ExoPlayer = _player.value ?: ExoPlayer.Builder(context)
         .setRenderersFactory(DefaultRenderersFactory(context).setEnableDecoderFallback(true))
-        .setMediaSourceFactory(
-            DefaultMediaSourceFactory(
-                DefaultDataSource.Factory(context, OkHttpDataSource.Factory(mediaHttp).setUserAgent(userAgent)),
-            ),
-        )
+        .setMediaSourceFactory(DefaultMediaSourceFactory(dataSources))
         .setAudioAttributes(
             AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),
             /* handleAudioFocus = */ true,
@@ -754,4 +852,9 @@ class PlaybackController(
     }
 
     private fun durationOf(p: ExoPlayer): Long? = p.duration.takeIf { it != C.TIME_UNSET && it > 0 }
+
+    /** Every load error is final: the player reports it, and the app decides (a new resolve at the live edge). */
+    private class NoRetryInPlace : DefaultLoadErrorHandlingPolicy() {
+        override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long = C.TIME_UNSET
+    }
 }

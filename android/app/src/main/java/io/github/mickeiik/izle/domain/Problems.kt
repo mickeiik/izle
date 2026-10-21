@@ -36,12 +36,15 @@ object Problems {
         return names.joinToString(" < ")
     }
 
-    /** A Media3 player error: [errorCodeName] (`ERROR_CODE_IO_BAD_HTTP_STATUS`, …), [httpStatus] of an HTTP answer. */
+    /**
+     * A Media3 player error: [errorCodeName] (`ERROR_CODE_IO_BAD_HTTP_STATUS`, …), [httpStatus] of an HTTP answer, while
+     * [ref] played (a channel has no [positionMs]).
+     */
     fun playbackError(
         error: Throwable,
         errorCodeName: String,
         httpStatus: Int?,
-        episodeId: String?,
+        ref: PlayableRef?,
         sourceId: String?,
         sessionId: String?,
         positionMs: Long?,
@@ -49,7 +52,8 @@ object Problems {
     ): ProblemReport = ProblemReport(
         kind = "playback",
         code = code(errorCodeName),
-        episodeId = episodeId,
+        itemId = ref?.itemId,
+        episodeId = ref?.episodeId,
         sourceId = sourceId,
         sessionId = sessionId,
         positionMs = positionMs?.coerceAtLeast(0),
@@ -62,13 +66,14 @@ object Problems {
      * A resolve request that failed: the server's error code (`no_playable_source`, `http_502`, …) or `network`. Null
      * for a 401: the device was removed, and the report would be refused the same way.
      */
-    fun resolveFailure(error: Exception, episodeId: String, sourceId: String?, appVersion: String): ProblemReport? {
+    fun resolveFailure(error: Exception, ref: PlayableRef, sourceId: String?, appVersion: String): ProblemReport? {
         if (error is ApiException && error.status == 401) return null
         val api = error as? ApiException
         return ProblemReport(
             kind = "resolve",
             code = if (api != null) code(api.code) else "network",
-            episodeId = episodeId,
+            itemId = ref.itemId,
+            episodeId = ref.episodeId,
             sourceId = sourceId,
             httpStatus = api?.status?.takeIf { it in 100..599 },
             detail = if (api != null) null else classChain(error).take(MAX_DETAIL_CHARS),
@@ -76,9 +81,12 @@ object Problems {
         )
     }
 
-    /** "Can't play right now" after [sourcesTried] sources; [reason]: what ended it when not a player error. */
+    /**
+     * "Can't play right now" for [ref] after [sourcesTried] sources (a channel has no [positionMs]); [reason]: what
+     * ended it when not a player error.
+     */
     fun gaveUp(
-        episodeId: String,
+        ref: PlayableRef,
         sourceId: String?,
         positionMs: Long?,
         sourcesTried: Int,
@@ -87,7 +95,8 @@ object Problems {
     ): ProblemReport = ProblemReport(
         kind = "playback",
         code = "gave_up",
-        episodeId = episodeId,
+        itemId = ref.itemId,
+        episodeId = ref.episodeId,
         sourceId = sourceId,
         positionMs = positionMs?.coerceAtLeast(0),
         detail = listOfNotNull(if (sourcesTried == 1) "tried 1 source" else "tried $sourcesTried sources", reason)
