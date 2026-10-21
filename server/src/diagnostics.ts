@@ -1,12 +1,12 @@
-// Admin "test this episode" tool: runs every source through the same resolve path as the TV (adapters, deadlines,
-// validation) without creating sessions, and optionally probes the upstream. The report is safe to show in the
-// admin UI: hosts and header names only, never URLs, header values, refs or playlist text.
+// Admin "test this episode" tool (or this channel): runs every source through the same resolve path as the TV
+// (adapters, deadlines, validation) without creating sessions, and optionally probes the upstream. The report is safe
+// to show in the admin UI: hosts and header names only, never URLs, header values, refs or playlist text.
 
 import type { ResolveResult, Source } from "@izle/contract";
-import type { CatalogService } from "./catalog.ts";
+import { episodeIdOf, playableOf, type CatalogService } from "./catalog.ts";
 import { errorName } from "./errors.ts";
 import { isPlaylistText, summarizePlaylist, type PlaylistSummary } from "./hls.ts";
-import { requireEpisode, requireSource } from "./lookup.ts";
+import { requirePlayableRef, requireSource, type PlayableId } from "./lookup.ts";
 import { MAX_PLAYLIST_BYTES, readText } from "./proxy.ts";
 import { deliveryPlan, type ResolveService, type TriedCode, type UpstreamStream } from "./resolve.ts";
 import { stopwatch } from "./stopwatch.ts";
@@ -81,23 +81,26 @@ async function probe(stream: UpstreamStream, signal: AbortSignal | undefined, fe
   }
 }
 
-/** What the admin asks to test (`POST /admin/diagnostics/resolve`, validated in validation.ts). */
-export interface DiagnosticsInput {
-  episodeId: string;
-  /** Only this source; every source of the episode otherwise. */
+/**
+ * What the admin asks to test (`POST /admin/diagnostics/resolve`, validated in validation.ts): an episode by its
+ * episode id, or a channel by its item id.
+ */
+export type DiagnosticsInput = PlayableId & {
+  /** Only this source; every source of the episode or channel otherwise. */
   sourceId?: string;
   preferredAudioLanguage?: string | null;
   /** Whether to probe the upstream of each stream found (default true). */
   probe?: boolean;
-}
+};
 
-export async function diagnoseEpisode(
+export async function diagnosePlayable(
   deps: { catalog: CatalogService; resolver: ResolveService; fetch: typeof fetch },
   input: DiagnosticsInput,
   signal?: AbortSignal,
 ) {
-  const ref = requireEpisode(deps.catalog, input.episodeId, 404, "unknown_episode");
-  const sources = input.sourceId === undefined ? ref.episode.sources : [requireSource(ref.episode, input.sourceId, 404, "unknown_source")];
+  const ref = requirePlayableRef(deps.catalog, input, 404);
+  const playable = playableOf(ref);
+  const sources = input.sourceId === undefined ? playable.sources : [requireSource(playable, input.sourceId, 404, "unknown_source")];
   const { proxyAlways, deadlineMs } = deps.resolver;
   const attemptOpts = { preferredAudioLanguage: input.preferredAudioLanguage ?? null, deadlineMs, signal };
   const reports: SourceReport[] = [];
@@ -115,6 +118,5 @@ export async function diagnoseEpisode(
     }
     reports.push(report);
   }
-  const { item, episode } = ref;
-  return { itemId: item.id, episodeId: episode.id, playbackAllowed: episode.playbackAllowed, sources: reports };
+  return { itemId: ref.item.id, episodeId: episodeIdOf(ref), playbackAllowed: playable.playbackAllowed, sources: reports };
 }

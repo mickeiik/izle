@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import path from "node:path";
-import { fixtureItems, fixtureManifest, listen, startTestServer, tempDir, writeBundle, type Json } from "./helpers.ts";
+import { fixtureItems, fixtureManifest, listen, publishBuild, startTestServer, tempDir, writeBundle, type Json } from "./helpers.ts";
 
 const PROXY_MP4 = /^\/p\/([A-Za-z0-9_-]{43})\/video\.mp4$/;
 const PROXY_HLS = /^\/p\/([A-Za-z0-9_-]{43})\/index\.m3u8$/;
@@ -30,7 +30,8 @@ async function setup(t: { after(fn: () => unknown): void }) {
   const up = await startUpstream();
   t.after(() => up.close());
   const items = fixtureItems();
-  // A series whose first episode has a TV source (Referer-bound HLS), a plain MP4 in another language and a DASH source.
+  // A series whose first episode has a TV source (Referer-bound HLS), a plain MP4 in another language and a DASH
+  // source; its third has the same TV source and a Referer-bound MPEG-TS one.
   items.items.push({
     id: "dual",
     kind: "series",
@@ -49,6 +50,15 @@ async function setup(t: { after(fn: () => unknown): void }) {
         ],
       },
       { id: "dual.e2", number: 2, playbackAllowed: false, sources: [direct("fr-mp4", ["fr"], { kind: "mp4", url: `${up.url}/plain/video.mp4` })] },
+      {
+        id: "dual.e3",
+        number: 3,
+        playbackAllowed: true,
+        sources: [
+          direct("tv-hls", ["tr"], { kind: "hls", url: `${up.url}/ref/master.m3u8`, headers: { Referer: REFERER } }),
+          direct("tr-ts", ["tr"], { kind: "ts", url: `${up.url}/ref/live.ts`, headers: { Referer: REFERER } }),
+        ],
+      },
     ],
   });
   const bundleDir = await writeBundle(path.join(await tempDir(), "bundle"), fixtureManifest(), items);
@@ -239,4 +249,47 @@ test("companion resolve: forced source, always proxied, own session scope, DASH 
   // Deleting the TV ends its companion sessions too.
   await s.admin("DELETE", `/devices/${tv.deviceId}`);
   assert.equal((await get(c3.json.media.url)).status, 410);
+});
+
+test("a channel playing: named with no candidates; the other routes take episodes only; nothing once it left the catalog", async (t) => {
+  const { s, tv, as, progress, companion } = await setup(t);
+  const view = async () => (await s.admin("GET", `/devices/${tv.deviceId}/companion`)).json;
+  const r = await as("POST", "/resolve", { itemId: "news" });
+  assert.equal(r.status, 200);
+  const nowPlaying = { itemId: "news", itemKind: "live", episodeId: null, sourceId: "hls", itemTitle: "Haber 24", episodeTitle: null, state: "starting" };
+  assert.deepEqual(await view(), { nowPlaying, candidates: [] });
+  await progress({ sessionId: r.json.sessionId, itemId: "news", status: "playing" });
+  assert.deepEqual(await view(), { nowPlaying: { ...nowPlaying, state: "playing" }, candidates: [] });
+
+  // A channel's item id names no episode.
+  const refused = [
+    await companion({ episodeId: "news", sourceId: "hls" }),
+    await s.admin("PUT", "/companion/links/news/hls", { offsetMs: 0, rate: 1 }),
+    await s.admin("POST", "/companion/links/news/hls/copy-to-item"),
+  ];
+  assert.deepEqual(refused.map((r) => [r.status, r.json.error]), [[404, "unknown_episode"], [404, "unknown_episode"], [404, "unknown_episode"]]);
+  assert.equal((await companion({ itemId: "news", sourceId: "hls" })).json.error, "invalid_request");
+
+  await publishBuild(s.bundleDir, "fixture-2", (items) => items.filter((i) => i.id !== "news"));
+  assert.equal((await s.admin("POST", "/catalog/reload")).status, 200);
+  assert.deepEqual(await view(), { nowPlaying: null, candidates: [] });
+});
+
+test("an episode's MPEG-TS source: a candidate marked unsupported (ts), refused for the phone with its kind", async (t) => {
+  const { s, tv, up, as, now, companion } = await setup(t);
+  assert.equal((await as("POST", "/resolve", { episodeId: "dual.e3", sourceId: "tv-hls" })).status, 200);
+  const before = (await now()).json;
+  const cand = (await s.admin("GET", `/devices/${tv.deviceId}/companion`)).json;
+  assert.equal(cand.nowPlaying.episodeId, "dual.e3");
+  assert.deepEqual(
+    cand.candidates.map((x: Json) => [x.sourceId, x.type, x.kind, x.current, x.supported, x.reason]),
+    [["tv-hls", "direct", "hls", true, true, null], ["tr-ts", "direct", "ts", false, false, "ts"]],
+  );
+
+  const ts = await companion({ episodeId: "dual.e3", sourceId: "tr-ts" });
+  assert.deepEqual([ts.status, ts.json.error, ts.json.kind], [400, "unsupported_media", "ts"]);
+  assert.deepEqual((await now()).json, before, "the TV's now-playing row is untouched");
+  assert.ok(!JSON.stringify(cand).includes(up.url) && !JSON.stringify(ts.json).includes(up.url), "no upstream URL reaches the phone");
+  const logs = s.logs.join("\n");
+  for (const leak of [up.url, "http://", REFERER, "live.ts"]) assert.ok(!logs.includes(leak), `log leaked ${leak}`);
 });
