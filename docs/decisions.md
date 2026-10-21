@@ -215,3 +215,25 @@ The specs and the contract were written first; the server, admin page and TV app
   `companion/resolve` on a `ts` source answers `400 unsupported_media` like DASH; `no_channel` means no channel
   after or before the playing one on the TV's Home list, which also covers a channel started remotely that is not
   on Home. The proxy problem `detail` word for `stream.ts` requests is left to the server step.
+
+## Live channels: server (2026-10-21)
+
+The server side of the specification above, in one change (the admin page and the TV app follow).
+- `PlayableRef` (`{kind: "episode", item, episode, index} | {kind: "live", item}`) is the one value resolve, the
+  viewing history, problem reports and the proxy sessions work from; `playableOf(ref)` gives the shared
+  `Playable`. Stored rows and session keys carry `{itemId, episodeId | null}` rather than the episode id alone,
+  because an episode id may equal an item id: the failure penalty and `PlaybackSessions.owned` match on both.
+- Migration 9 rebuilds `now_playing` and `viewings` (SQLite cannot drop a `NOT NULL`), copying the rows, the
+  viewing ranges and the `sqlite_sequence` entry so viewing ids never repeat; `catalog_seen_items` tracks channels
+  by item id next to `catalog_seen` (its primary key is the episode id, which a channel does not have).
+- The proxy problem `detail` word for `stream.ts` requests is `stream` (next to `playlist`, `segment`, `video`,
+  `subtitles`); the spec's table lists it now.
+- A channel's report writes now playing with null positions and `anchor: null` in `GET …/now`, and is the
+  heartbeat of its viewing: watched time between consecutive reports while playing, stall and recovery events with
+  `positionMs: null`, no ranges, no seeks, never seen; the 10 s drop rule and the lost sweep apply unchanged.
+- `GET …/now` and `GET /admin/status` match the running viewing to the now-playing row by item and episode, since
+  two channels have the same (null) episode id.
+- Problem reports take `itemId` and resolve titles from the item when there is no episode; `missing` then says the
+  item left the catalog. The `problem.recorded` event carries `itemId` too.
+- The test fixture gained two channels (`news`, playable, with HLS and a Referer-bound `ts` source, and `off-air`,
+  not playable), so every server test runs with channels in the catalog.

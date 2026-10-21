@@ -2,7 +2,7 @@
 // episodes with what was seen and covered, and the day counts. Marks are the family's: `device` narrows the viewings
 // and the counts, never whether an episode is seen.
 
-import type { EpisodicItem } from "@izle/contract";
+import { isLiveItem, type CatalogItem, type Episode } from "@izle/contract";
 import { byTitle, type CatalogService } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
 import { iso } from "./presenters.ts";
@@ -71,7 +71,7 @@ class HistoryView {
     this.d = d;
     const catalogId = d.catalog.catalogId;
     for (const s of d.store.episodeViewingStats(catalogId, deviceId, itemId)) {
-      this.statsByEpisode.set(s.episodeId, s);
+      if (s.episodeId !== null) this.statsByEpisode.set(s.episodeId, s); // a channel's viewings have no episode
       this.statsByItem.set(s.itemId, [...(this.statsByItem.get(s.itemId) ?? []), s]);
     }
     for (const e of d.store.episodeSeenAt(catalogId, itemId)) this.seenAt.set(e.episodeId, e.seenAt);
@@ -96,40 +96,48 @@ class HistoryView {
 
   /** The episodes the history knows of an item that is not (or no longer) in the catalog: with a viewing or a mark. */
   knownEpisodes(itemId: string): string[] {
-    const ids = new Set((this.statsByItem.get(itemId) ?? []).map((s) => s.episodeId));
+    const ids = new Set((this.statsByItem.get(itemId) ?? []).flatMap((s) => (s.episodeId === null ? [] : [s.episodeId])));
     for (const m of this.marks.values()) if (m.itemId === itemId) ids.add(m.episodeId);
     return [...ids];
   }
 
-  /** `TitleSummary` of an item with a viewing or a mark; `item` is its catalog entry, when it has one. */
-  title(itemId: string, item: EpisodicItem | undefined) {
+  /**
+   * `TitleSummary` of an item with a viewing or a mark; `item` is its catalog entry, when it has one. A channel has
+   * no episodes to count or see: `episodes` is null, and its status is `watching` or `idle` by the 30-day rule.
+   */
+  title(itemId: string, item: CatalogItem | undefined) {
     const known = item ? null : this.known.get(itemId);
+    const kind = item?.kind ?? known?.kind ?? null;
     const stats = this.statsByItem.get(itemId) ?? [];
+    const lastWatchedAt = stats.length > 0 ? Math.max(...stats.map((s) => s.lastStartedAt)) : null;
+    const watching = lastWatchedAt !== null && this.d.now() - lastWatchedAt <= WATCHING_WINDOW_MS;
+    const common = {
+      itemId, kind, title: item?.title ?? known?.title ?? itemId, inCatalog: item !== undefined,
+      firstWatchedAt: iso(stats.length > 0 ? Math.min(...stats.map((s) => s.firstStartedAt)) : null), lastWatchedAt: iso(lastWatchedAt),
+      viewings: sum(stats, (s) => s.viewings), watchedMs: sum(stats, (s) => s.watchedMs), shortViewings: sum(stats, (s) => s.shortViewings),
+    };
+    if (kind === "live") {
+      const status: TitleStatus = watching ? "watching" : "idle";
+      return { ...common, status, episodes: null, seasons: [], rewatches: 0 };
+    }
     const started = new Set(stats.map((s) => s.episodeId));
     // The universe the counts are over: the item's playable episodes, or, once it left the catalog, what was seen or started.
     const episodes: Array<{ id: string; season: number | null }> = item
-      ? item.episodes.filter((e) => e.playbackAllowed).map((e) => ({ id: e.id, season: e.season ?? null }))
+      ? (isLiveItem(item) ? [] : item.episodes).filter((e) => e.playbackAllowed).map((e) => ({ id: e.id, season: e.season ?? null }))
       : this.knownEpisodes(itemId).filter((id) => this.isSeen(id) || started.has(id)).map((id) => ({ id, season: this.statsByEpisode.get(id)?.season ?? null }));
     const count = (list: Array<{ id: string }>) => ({ total: list.length, seen: list.filter((e) => this.isSeen(e.id)).length, started: list.filter((e) => started.has(e.id)).length });
     const seasons = [...new Set(episodes.map((e) => e.season))].map((season) => ({ season, ...count(episodes.filter((e) => e.season === season)) }));
     const counts = count(episodes);
-    const lastWatchedAt = stats.length > 0 ? Math.max(...stats.map((s) => s.lastStartedAt)) : null;
-    const firstWatchedAt = stats.length > 0 ? Math.min(...stats.map((s) => s.firstStartedAt)) : null;
     const unseen = episodes.filter((e) => !this.isSeen(e.id)).map((e) => e.id);
     let status: TitleStatus = "idle";
     if (counts.total > 0 && counts.seen === counts.total) status = "finished";
     else if (item && lastWatchedAt !== null && unseen.length > 0 && unseen.every((id) => (this.firstSeen.get(id) ?? 0) > lastWatchedAt)) status = "new_episodes";
-    else if (lastWatchedAt !== null && this.d.now() - lastWatchedAt <= WATCHING_WINDOW_MS) status = "watching";
-    return {
-      itemId, kind: item?.kind ?? known?.kind ?? null, title: item?.title ?? known?.title ?? itemId, inCatalog: item !== undefined,
-      firstWatchedAt: iso(firstWatchedAt), lastWatchedAt: iso(lastWatchedAt), viewings: sum(stats, (s) => s.viewings), watchedMs: sum(stats, (s) => s.watchedMs),
-      status, episodes: counts, seasons: (item?.kind ?? known?.kind) === "series" ? seasons : [],
-      rewatches: sum(stats, (s) => Math.max(0, s.seenViewings - 1)), shortViewings: sum(stats, (s) => s.shortViewings),
-    };
+    else if (watching) status = "watching";
+    return { ...common, status, episodes: counts, seasons: kind === "series" ? seasons : [], rewatches: sum(stats, (s) => Math.max(0, s.seenViewings - 1)) };
   }
 
   /** `EpisodeHistory` of one episode (`episode` its catalog entry, when it has one), with the ranges of its viewings. */
-  episode(episodeId: string, episode: EpisodicItem["episodes"][number] | undefined, ranges: ReadonlyArray<readonly [number, number]>) {
+  episode(episodeId: string, episode: Episode | undefined, ranges: ReadonlyArray<readonly [number, number]>) {
     const stats = this.statsByEpisode.get(episodeId);
     const durationMs = episode?.durationMs ?? stats?.lastDurationMs ?? null;
     const covered = stats && !stats.onlyImported && durationMs ? coveredFraction(ranges, durationMs) : null;
@@ -166,7 +174,8 @@ export function titleDetail(d: SummaryDeps, itemId: string, deviceId: string | n
   const view = new HistoryView(d, deviceId, itemId);
   if (!item && view.knownEpisodes(itemId).length === 0) throw new HttpError(404, "unknown_item");
   const ranges = d.store.itemRanges(d.catalog.catalogId, deviceId, itemId);
-  const inCatalog = new Set(item?.episodes.map((e) => e.id));
+  const catalogEpisodes = item && !isLiveItem(item) ? item.episodes : [];
+  const inCatalog = new Set(catalogEpisodes.map((e) => e.id));
   const gone = view.knownEpisodes(itemId).filter((id) => !inCatalog.has(id));
   const key = (id: string) => [view.statsByEpisode.get(id)?.season ?? Infinity, view.statsByEpisode.get(id)?.number ?? Infinity, id] as const;
   gone.sort((a, b) => {
@@ -175,7 +184,7 @@ export function titleDetail(d: SummaryDeps, itemId: string, deviceId: string | n
     return sa - sb || na - nb || ia.localeCompare(ib);
   });
   const episodes = [
-    ...(item?.episodes ?? []).map((e) => view.episode(e.id, e, ranges.get(e.id) ?? [])),
+    ...catalogEpisodes.map((e) => view.episode(e.id, e, ranges.get(e.id) ?? [])),
     ...gone.map((id) => view.episode(id, undefined, ranges.get(id) ?? [])),
   ];
   return { title: view.title(itemId, item), episodes };

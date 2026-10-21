@@ -414,7 +414,7 @@ test("adapter failures reach the TV and the log only as {adapterId, code, name};
   const failures = s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === "adapter failed");
   assert.ok(failures.length >= 5);
   for (const f of failures) {
-    const keys = ["adapterId", "code", "deviceId", "episodeId", "ms", ...("name" in f ? ["name"] : []), "sourceId"];
+    const keys = ["adapterId", "code", "deviceId", "episodeId", "itemId", "ms", ...("name" in f ? ["name"] : []), "sourceId"];
     assert.deepEqual(Object.keys(f).filter((k) => !["time", "level", "msg"].includes(k)).sort(), keys.sort());
   }
 });
@@ -466,4 +466,60 @@ test("admin diagnostics: every source tried, hosts and header names only, option
   assert.equal((await s.admin("POST", "/diagnostics/resolve", { episodeId: "nope" })).status, 404);
   assert.equal((await s.call("POST", "/api/v1/admin/diagnostics/resolve", { token: tv.token, body: { episodeId: "hls.main" } })).status, 401);
   assert.deepEqual((await s.admin("GET", "/catalog")).json.resolver.adapters, ["example", "test"]);
+});
+
+test("MPEG-TS through the proxy: stream.ts streams through with Range forwarded and is never aligned; plain ts goes direct", async (t) => {
+  // A stand-in for an IPTV-style channel: a Referer-bound endless-looking stream whose bytes start with junk (which
+  // the segment aligner would cut from an HLS segment, never from stream.ts).
+  const bytes = Buffer.concat([junkBytes(300), syntheticTsSegment(5)]);
+  let refuse = false;
+  const upstream = createServer((req, res) => {
+    if (req.headers.referer !== DEFAULT_REFERER || refuse) return void res.writeHead(403).end("no");
+    const m = /^bytes=(\d+)-(\d*)$/.exec(req.headers.range ?? "");
+    if (m) {
+      const [start, end] = [Number(m[1]), m[2] ? Number(m[2]) : bytes.length - 1];
+      res.writeHead(206, { "Content-Type": "video/mp2t", "Content-Range": `bytes ${start}-${end}/${bytes.length}`, "Content-Length": end - start + 1, "Accept-Ranges": "bytes" });
+      return void res.end(bytes.subarray(start, end + 1));
+    }
+    res.writeHead(200, { "Content-Type": "video/mp2t" });
+    res.end(bytes);
+  });
+  const local = await listen(upstream);
+  t.after(() => local.close());
+  const channel = (id: string, sources: Json[]) => ({ id, kind: "live", title: id, poster: null, playbackAllowed: true, sources });
+  const items = () => ({
+    items: [
+      channel("iptv", [direct("ts", { kind: "ts", url: `${local.url}/live.ts`, headers: REF })]),
+      channel("plain", [direct("ts", { kind: "ts", url: "https://media.example.test/live.ts" })]),
+    ],
+  });
+  const { s, tv, get } = await setupProxy(t, { items, configFile: { proxy: { alignTsSegments: true } } });
+  const resolveItem = (itemId: string) => s.call("POST", "/api/v1/tv/resolve", { token: tv.token, body: { itemId } });
+
+  const r = await resolveItem("iptv");
+  assert.equal(r.status, 200, JSON.stringify(r.json));
+  assert.equal(r.json.media.kind, "ts");
+  const [, token] = /^\/p\/([A-Za-z0-9_-]{43})\/stream\.ts$/.exec(r.json.media.url) ?? [];
+  assert.ok(token, r.json.media.url);
+  const whole = await get(r.json.media.url);
+  assert.equal(whole.status, 200);
+  assert.equal(whole.headers.get("content-type"), "video/mp2t");
+  assert.deepEqual(Buffer.from(await whole.arrayBuffer()), bytes, "streamed as it is: alignment applies to HLS segments only");
+  const part = await get(r.json.media.url, { Range: "bytes=300-487" });
+  assert.equal(part.status, 206);
+  assert.equal(part.headers.get("content-range"), `bytes 300-487/${bytes.length}`);
+  assert.deepEqual(Buffer.from(await part.arrayBuffer()), bytes.subarray(300, 488));
+  assert.equal((await get(`/p/${token}/video.mp4`)).status, 404, "an MPEG-TS session has no MP4 entry");
+  assert.equal((await get(`/p/${token}/index.m3u8`)).status, 404, "nor a playlist");
+
+  const plain = await resolveItem("plain");
+  assert.deepEqual(plain.json.media, { kind: "ts", url: "https://media.example.test/live.ts" }, "without headers the URL goes to the TV as it is");
+
+  // An upstream refusal marks the session stale and is reported with what was requested: the stream.
+  refuse = true;
+  const stale = await get(r.json.media.url);
+  assert.deepEqual([stale.status, await stale.json()], [410, { error: "stale" }]);
+  const problems = (await s.admin("GET", `/devices/${tv.deviceId}/problems`)).json.problems;
+  assert.deepEqual(problems.map((p: Json) => [p.kind, p.code, p.httpStatus, p.detail, p.itemId]), [["proxy", "upstream_403", 403, "stream", "iptv"]]);
+  assert.ok(!s.logs.join("\n").includes(token!), "the session token is never logged");
 });

@@ -1,7 +1,9 @@
 // The media proxy. It serves header-bound and inline-playlist streams to the TV so upstream request headers never
-// leave the server: `/p/<token>/index.m3u8` (or `video.mp4`) is the entry point, every URI inside a playlist is
-// rewritten to `/p/<token>/u/<signed ref>`, and subtitle files are served from `/p/<token>/sub/<n>.<ext>`.
-// Sessions live in memory only; a restart answers 410 and the TV re-resolves.
+// leave the server: `/p/<token>/index.m3u8` (or `video.mp4`, or `stream.ts` for progressive MPEG-TS) is the entry
+// point, every URI inside a playlist is rewritten to `/p/<token>/u/<signed ref>`, and subtitle files are served
+// from `/p/<token>/sub/<n>.<ext>`. A playlist is fetched upstream anew on every request, so a live playlist slides
+// along; an MP4 or MPEG-TS body streams through for as long as the TV reads it (a channel's never ends). Sessions
+// live in memory only; a restart answers 410 and the TV re-resolves.
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { newToken } from "./auth.ts";
@@ -38,14 +40,18 @@ const PASSED_HEADERS = ["content-type", "content-length", "content-range", "acce
 /** Formats the TS aligner never touches (by URL extension). */
 const NOT_TS_EXTENSIONS = new Set(["m4s", "mp4", "m4a", "m4v", "cmfv", "cmfa", "aac", "mp3", "ac3", "ec3", "vtt", "webvtt", "key"]);
 
+/** Kinds of main media the proxy serves: HLS (rewritten playlists), and MP4 and MPEG-TS (streamed through). */
+export type ProxyMainKind = "hls" | "mp4" | "ts";
+
 interface ProxySessionInit {
   /** Owner key of the session-limit bucket: the TV's device id, or `companion:<deviceId>` for the phone. */
   deviceId: string;
-  /** What the session plays, for problem reports. */
+  /** What the session plays, for problem reports: an item's episode, or (`episodeId` null) a channel. */
+  itemId?: string | null;
   episodeId?: string | null;
   sourceId?: string | null;
   /** Null when only subtitle tracks need the proxy. */
-  main: { kind: "hls" | "mp4"; url: string; playlist?: undefined } | { kind: "hls"; playlist: string; baseUrl: string } | null;
+  main: { kind: ProxyMainKind; url: string; playlist?: undefined } | { kind: "hls"; playlist: string; baseUrl: string } | null;
   /** Upstream headers for the main media and everything its playlists reference. */
   headers: Record<string, string>;
   /** One entry per subtitle track the TV gets; null = that track is not proxied. */
@@ -61,7 +67,7 @@ interface Session extends ProxySessionInit {
   stale: boolean;
 }
 
-export type ProxyTarget = { type: "index" } | { type: "video" } | { type: "u"; ref: string } | { type: "sub"; file: string };
+export type ProxyTarget = { type: "index" } | { type: "video" } | { type: "stream" } | { type: "u"; ref: string } | { type: "sub"; file: string };
 
 /**
  * `upstream_<status>` (401/403/410: the session went stale), `upstream_error` (5xx, or a playlist that broke off),
@@ -80,11 +86,13 @@ export type ProxyProblemCode =
 export interface ProxyProblem {
   /** The session's owner key: a TV's device id, or `companion:<deviceId>`. */
   owner: string;
+  /** What the session plays: the item, and its episode (null for a channel). */
+  itemId: string | null;
   episodeId: string | null;
   sourceId: string | null;
   code: ProxyProblemCode;
   httpStatus: number | null;
-  /** What was requested (`playlist`, `segment`, `video`, `subtitles`) and, when unreachable, why. Never a URL. */
+  /** What was requested (`playlist`, `segment`, `video`, `stream`, `subtitles`) and, when unreachable, why. Never a URL. */
   detail: string;
 }
 
@@ -102,7 +110,9 @@ interface ProxyOptions {
   onProblem?: (problem: ProxyProblem) => void;
 }
 
-export const entryPath = (token: string, kind: "hls" | "mp4"): string => `/p/${token}/${kind === "hls" ? "index.m3u8" : "video.mp4"}`;
+const ENTRY_FILE: Record<ProxyMainKind, string> = { hls: "index.m3u8", mp4: "video.mp4", ts: "stream.ts" };
+
+export const entryPath = (token: string, kind: ProxyMainKind): string => `/p/${token}/${ENTRY_FILE[kind]}`;
 
 export const subtitlePath = (token: string, index: number, format: string): string => `/p/${token}/sub/${index}.${format}`;
 
@@ -189,8 +199,8 @@ export class ProxyService {
 
   private problem(s: Session, code: ProxyProblemCode, httpStatus: number | null, detail: string): void {
     try {
-      const { deviceId: owner, episodeId = null, sourceId = null } = s;
-      this.o.onProblem?.({ owner, episodeId, sourceId, code, httpStatus, detail });
+      const { deviceId: owner, itemId = null, episodeId = null, sourceId = null } = s;
+      this.o.onProblem?.({ owner, itemId, episodeId, sourceId, code, httpStatus, detail });
     } catch (err) {
       this.log.warn("problem hook failed", { error: err });
     }
@@ -257,6 +267,10 @@ export class ProxyService {
       case "video":
         if (s.main?.kind !== "mp4") return json(404, "not_found");
         return this.forward(req, s, s.main.url, s.headers, { kind: "r", prefix: null, what: "video", origin: mainOrigin });
+      case "stream":
+        // Progressive MPEG-TS, streamed like MP4 (Range forwarded); for a channel the body never ends.
+        if (s.main?.kind !== "ts") return json(404, "not_found");
+        return this.forward(req, s, s.main.url, s.headers, { kind: "r", prefix: null, what: "stream", origin: mainOrigin });
       case "u": {
         const link = this.verify(s, target.ref);
         if (!link) return json(404, "not_found");

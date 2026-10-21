@@ -35,9 +35,13 @@ const direct = (id: string, audio: string[] | null, extra: Record<string, unknow
 // Loosely typed on purpose: tests mutate fixtures into other shapes.
 export type Json = any;
 
+/** The channel sources of the fixture: a plain HLS playlist, and a Referer-bound MPEG-TS stream (proxied as stream.ts). */
+export const CHANNEL_REFERER = "https://site.example.test/";
+
 /**
- * A synthetic bundle exercising play order, approval, auto-advance boundaries and language ranking. `fillers` plain
- * playable movies (filler-01 …) follow; a home-limit test asks for more.
+ * A synthetic bundle exercising play order, approval, auto-advance boundaries and language ranking, with two
+ * channels: "news" (playable) and "off-air" (not). `fillers` plain playable movies (filler-01 …) follow; a
+ * home-limit test asks for more.
  */
 export function fixtureItems(fillers = 12): Json {
   return {
@@ -73,6 +77,15 @@ export function fixtureItems(fillers = 12): Json {
       },
       { id: "locked", kind: "movie", title: "Locked", poster: null, episodes: [{ id: "locked.main", playbackAllowed: false, sources: [] }] },
       { id: "silent", kind: "movie", title: "Silent", poster: null, episodes: [{ id: "silent.main", playbackAllowed: true, sources: [direct("only", [])] }] },
+      {
+        id: "news", kind: "live", title: "Haber 24", poster: `assets/${TINY_PNG_NAME}`, playbackAllowed: true,
+        sources: [
+          { id: "hls", type: "direct", languages: lang(["tr"]), media: { kind: "hls", url: "https://media.example.test/news/live.m3u8" } },
+          { id: "ts", type: "direct", languages: lang(["tr"]), media: { kind: "ts", url: "https://media.example.test/news/live.ts", headers: { Referer: CHANNEL_REFERER } } },
+          { id: "en", type: "direct", languages: lang(["en"]), media: { kind: "hls", url: "https://media.example.test/news/en.m3u8" } },
+        ],
+      },
+      { id: "off-air", kind: "live", title: "Off air", poster: null, playbackAllowed: false, sources: [] },
       ...Array.from({ length: fillers }, (_, i) => {
         const id = `filler-${String(i + 1).padStart(2, "0")}`;
         return { id, kind: "movie", title: `Filler ${i + 1}`, poster: null, episodes: [{ id: `${id}.main`, playbackAllowed: true, sources: [direct("only", ["en"])] }] };

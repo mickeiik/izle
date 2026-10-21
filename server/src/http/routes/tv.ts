@@ -27,6 +27,7 @@ export function registerTv(app: Hono<Env>, ctx: AppContext, clientKey: (c: Conte
   };
   app.get("/p/:token/index.m3u8", proxyRoute(() => ({ type: "index" })));
   app.get("/p/:token/video.mp4", proxyRoute(() => ({ type: "video" })));
+  app.get("/p/:token/stream.ts", proxyRoute(() => ({ type: "stream" })));
   app.get("/p/:token/u/:ref", proxyRoute((c) => ({ type: "u", ref: c.req.param("ref") ?? "" })));
   app.get("/p/:token/sub/:file", proxyRoute((c) => ({ type: "sub", file: c.req.param("file") ?? "" })));
 

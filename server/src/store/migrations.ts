@@ -239,6 +239,85 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE devices ADD COLUMN home_columns INTEGER NOT NULL DEFAULT 4;
   ALTER TABLE devices ADD COLUMN home_rows INTEGER NOT NULL DEFAULT 2;
   `,
+  // 9 — live channels: now_playing and viewings may name a channel (an item alone: episode_id and the positions
+  // become nullable, which SQLite only allows by rebuilding the table; the viewing ids and their sequence are kept),
+  // and the catalog history records when each channel first appeared, by item id (channels have no episodes).
+  `
+  CREATE TABLE now_playing_new (
+    device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+    catalog_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    episode_id TEXT,                        -- NULL for a channel
+    source_id TEXT,
+    position_ms INTEGER,                    -- NULL for a channel (no timeline)
+    duration_ms INTEGER,
+    state TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    playing INTEGER NOT NULL DEFAULT 0,
+    anchor_at INTEGER,
+    seq INTEGER NOT NULL DEFAULT 0
+  );
+  INSERT INTO now_playing_new (device_id, catalog_id, item_id, episode_id, source_id, position_ms, duration_ms, state, updated_at, playing, anchor_at, seq)
+    SELECT device_id, catalog_id, item_id, episode_id, source_id, position_ms, duration_ms, state, updated_at, playing, anchor_at, seq FROM now_playing;
+  DROP TABLE now_playing;
+  ALTER TABLE now_playing_new RENAME TO now_playing;
+  CREATE TABLE viewings_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id TEXT NOT NULL,
+    device_name TEXT NOT NULL,
+    catalog_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    item_kind TEXT,
+    item_title TEXT,
+    episode_id TEXT,                        -- NULL for a channel
+    episode_title TEXT,
+    season INTEGER,
+    number INTEGER,
+    source_id TEXT,
+    started_at INTEGER NOT NULL,
+    ended_at INTEGER,
+    start_position_ms INTEGER,
+    end_position_ms INTEGER,
+    duration_ms INTEGER,
+    watched_ms INTEGER,
+    end_reason TEXT,
+    seen INTEGER NOT NULL DEFAULT 0,
+    trigger TEXT NOT NULL,
+    actor_json TEXT NOT NULL,
+    command_id INTEGER,
+    imported INTEGER NOT NULL DEFAULT 0,
+    last_report_at INTEGER,
+    last_position_ms INTEGER,
+    last_playing INTEGER,
+    last_anchor_at INTEGER,
+    last_state TEXT
+  );
+  INSERT INTO viewings_new SELECT id, device_id, device_name, catalog_id, item_id, item_kind, item_title, episode_id, episode_title, season, number,
+    source_id, started_at, ended_at, start_position_ms, end_position_ms, duration_ms, watched_ms, end_reason, seen, trigger, actor_json, command_id,
+    imported, last_report_at, last_position_ms, last_playing, last_anchor_at, last_state FROM viewings;
+  DELETE FROM sqlite_sequence WHERE name = 'viewings_new';
+  INSERT INTO sqlite_sequence (name, seq) SELECT 'viewings_new', seq FROM sqlite_sequence WHERE name = 'viewings';
+  CREATE TABLE viewing_ranges_new (
+    viewing_id INTEGER NOT NULL REFERENCES viewings_new(id) ON DELETE CASCADE,
+    from_ms INTEGER NOT NULL,
+    to_ms INTEGER NOT NULL
+  );
+  INSERT INTO viewing_ranges_new (viewing_id, from_ms, to_ms) SELECT viewing_id, from_ms, to_ms FROM viewing_ranges;
+  DROP TABLE viewing_ranges;
+  DROP TABLE viewings;
+  ALTER TABLE viewings_new RENAME TO viewings;
+  ALTER TABLE viewing_ranges_new RENAME TO viewing_ranges;
+  CREATE INDEX viewings_by_device ON viewings (device_id, started_at);
+  CREATE INDEX viewings_by_item ON viewings (catalog_id, item_id);
+  CREATE INDEX viewings_by_episode ON viewings (catalog_id, episode_id);
+  CREATE INDEX viewings_by_end ON viewings (ended_at);
+  CREATE INDEX viewing_ranges_by_viewing ON viewing_ranges (viewing_id);
+  CREATE TABLE catalog_seen_items (
+    catalog_id TEXT NOT NULL, item_id TEXT NOT NULL,
+    first_seen_at INTEGER NOT NULL,                                 -- 0 for channels present at the first load ever
+    build_id TEXT NOT NULL, removed_at INTEGER,                     -- set while absent from the loaded catalog
+    PRIMARY KEY (catalog_id, item_id));
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;

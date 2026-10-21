@@ -1,9 +1,8 @@
 // Pure play-order rules: which episode OK plays, what auto-next does, and in which order sources are tried.
 // No I/O here so the rules are easy to test.
 
-import type { EpisodicItem, LanguageFacts, Source } from "@izle/contract";
+import { isLiveItem, type CatalogItem, type EpisodicItem, type LanguageFacts, type Source } from "@izle/contract";
 import type { Progress } from "./store.ts";
-
 
 /** Index of the first episode after `from` (exclusive) with playbackAllowed, or -1 (`from` -1: the first one). */
 function nextAllowedIndex(item: EpisodicItem, from: number): number {
@@ -11,8 +10,9 @@ function nextAllowedIndex(item: EpisodicItem, from: number): number {
   return -1;
 }
 
-export function isPlayable(item: EpisodicItem): boolean {
-  return nextAllowedIndex(item, -1) >= 0;
+/** Whether OK can play the item: an episode with playbackAllowed, or a channel whose playback is allowed. */
+export function isPlayable(item: CatalogItem): boolean {
+  return isLiveItem(item) ? item.playbackAllowed : nextAllowedIndex(item, -1) >= 0;
 }
 
 /** An item's cursor as the play-order rules see it; a bare episode id is an ordinary (not wrapped) cursor. */
@@ -61,6 +61,11 @@ export function cursorIndex(
 export const PROGRESS_REPORT_STATUSES = ["playing", "paused", "stopped", "finished"] as const;
 
 export type ProgressReportStatus = (typeof PROGRESS_REPORT_STATUSES)[number];
+
+/** What a channel's report may say: a channel is never paused and never finishes. */
+export const LIVE_REPORT_STATUSES = ["playing", "stopped"] as const;
+
+export type LiveReportStatus = (typeof LIVE_REPORT_STATUSES)[number];
 
 /**
  * The cursor after a progress report on the episode at `index`. `finished` moves it to the next allowed episode,

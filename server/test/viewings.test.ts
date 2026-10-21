@@ -533,3 +533,83 @@ test("hostile fixture: titles and names with URLs and tokens never reach the log
   assert.deepEqual(Object.keys(JSON.parse(mine[1]!)).sort(), ["deviceId", "dropped", "endReason", "level", "msg", "seen", "time", "viewingId", "watchedMs"]);
   for (const leak of [RUN, RUN.slice(0, 24), "evil.example.test", "Pilot", "Şov", ADMIN_TOKEN, h.tv.token]) assert.ok(!lines.join("\n").includes(leak), `leaked ${leak}`);
 });
+
+test("channels: a viewing without episode or positions, watched time from heartbeats, stalls, never seen; drop, lost and replace", async (t) => {
+  const { s, as, resolve, report, running } = await setup(t);
+  const live = (status: string, extra: Json = {}) => as("POST", "/progress", { itemId: "news", status, ...extra });
+  const channel = (extra: Json = {}) => as("POST", "/resolve", { itemId: "news", ...extra });
+  assert.equal((await channel()).status, 200);
+  const started = (await events(s, "playback.started"))[0];
+  const id = started.data.viewingId;
+  assert.deepEqual(started.data, {
+    viewingId: id, itemId: "news", itemKind: "live", itemTitle: "Haber 24", episodeId: null, episodeTitle: null, season: null, number: null, sourceId: "hls",
+    positionMs: null, trigger: "unknown",
+  });
+  await live("playing");
+  s.clock.advance(15_000);
+  await live("playing", { playing: false }); // a stall: the 15 s before it count
+  s.clock.advance(10_000);
+  await live("playing"); // recovered: the stall does not count
+  s.clock.advance(15_000);
+  const again = await channel({ sourceId: "en" }); // a re-resolve (another source) continues the viewing
+  assert.deepEqual([again.status, running()!.id, running()!.sourceId], [200, id, "en"]);
+  s.clock.advance(15_000);
+  await live("playing"); // 30 s since the last report while playing
+  s.clock.advance(5_000);
+  await live("stopped");
+  const { viewing: v, ranges } = await viewing(s, id);
+  assert.deepEqual(ended(v), { endReason: "stopped", seen: false, watchedMs: 50_000, startPositionMs: null, endPositionMs: null, endedAt: at(s) });
+  assert.deepEqual([v.itemKind, v.episodeId, v.episodeTitle, v.season, v.number, v.durationMs, v.sourceId], ["live", null, null, null, null, null, "en"]);
+  assert.deepEqual(ranges, [], "a channel has no played ranges");
+  assert.equal(running(), null);
+  const seq = (await events(s, "playback.,episode.")).map((e: Json) => [e.type, e.data.positionMs]);
+  assert.deepEqual(seq, [["playback.started", null], ["playback.stalled", null], ["playback.recovered", null], ["playback.ended", null]], "no episode.seen for a channel");
+  assert.deepEqual((await events(s, "playback.ended"))[0].data, { viewingId: id, endReason: "stopped", seen: false, positionMs: null, watchedMs: 50_000, dropped: false });
+
+  // A mis-press is dropped; a channel that falls silent is lost (at its last report, no position).
+  await channel();
+  await live("playing");
+  s.clock.advance(5_000);
+  await live("stopped");
+  const dropped = (await events(s, "playback.ended")).at(-1)!;
+  assert.deepEqual([dropped.data.dropped, (await viewings(s, "?item=news")).viewings.length], [true, 1]);
+  await channel();
+  await live("playing");
+  s.clock.advance(MIN);
+  await live("playing");
+  const lostAt = at(s);
+  s.clock.advance(2 * MIN);
+  s.srv.ctx.viewings.sweep();
+  const lost = (await viewings(s, "?item=news")).viewings[0];
+  assert.deepEqual(ended(lost), { endReason: "lost", seen: false, watchedMs: MIN, startPositionMs: null, endPositionMs: null, endedAt: lostAt });
+
+  // Resolving an episode replaces a channel's viewing, and a channel replaces an episode's; the reports of one are
+  // not applied to the other.
+  await channel();
+  await live("playing");
+  s.clock.advance(20_000);
+  await live("playing");
+  await resolve("show.e1");
+  const replaced = (await viewings(s, "?item=news")).viewings[0];
+  assert.deepEqual([replaced.endReason, replaced.watchedMs], ["replaced", 20_000]);
+  await report("show.e1", "playing", 0);
+  await live("playing"); // ignored by the history: the running viewing is the episode's
+  s.clock.advance(20_000);
+  await report("show.e1", "playing", 20_000);
+  await channel();
+  const show = (await viewings(s, "?item=show")).viewings[0];
+  assert.deepEqual([show.endReason, show.watchedMs, show.endPositionMs], ["replaced", 20_000, 20_000]);
+  assert.equal(running()!.episodeId, null);
+
+  // Listing and the title summary; a channel is never marked.
+  const list = (await viewings(s, "?item=news")).viewings;
+  assert.ok(list.length >= 3 && list.every((x: Json) => x.episodeId === null && x.itemKind === "live"));
+  const title = (await s.admin("GET", "/history/titles/news")).json;
+  assert.deepEqual([title.title.kind, title.title.status, title.title.episodes, title.title.seasons, title.title.rewatches, title.episodes], ["live", "watching", null, [], 0, []]);
+  const summary = (await s.admin("GET", "/history/titles?sort=title")).json.titles.find((x: Json) => x.itemId === "news");
+  assert.deepEqual([summary.kind, summary.episodes, summary.viewings], ["live", null, list.length]);
+  const marks = await s.admin("POST", "/history/marks", { episodeIds: ["news"], seen: true });
+  assert.deepEqual([marks.status, marks.json.error], [400, "unknown_episode"]);
+  const days = (await s.admin("GET", "/history/days?tz=UTC")).json.days[0];
+  assert.ok(days.items.some((i: Json) => i.itemId === "news" && i.title === "Haber 24"), "a channel's watched time counts on its day");
+});

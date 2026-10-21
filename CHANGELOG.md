@@ -15,14 +15,20 @@ contract share one version number. How to update (back up, update the server, th
 - **Landscape pictures in catalogs:** a catalog item may carry an optional 16:9 `backdrop` image next to its poster
   (an additive change to the v1 bundle contract, checked by `izle-validate` like posters). The server sends it as
   `backdropUrl`; the TV shows it on the show's card.
-- **Live channels in catalog bundles (contract and specs):** a catalog item may be a `live` channel, carrying
+- **Live channels (contract, specs and server):** a catalog item may be a `live` channel, carrying
   `playbackAllowed` and its `sources` itself, with no episodes; `izle-validate` checks it and counts it (`live` in
   its summary and stats). The specs say how a channel plays (at its live edge, no pause or seek, CH+/CH− zap
   between Home's channels), is reported (heartbeats without a position) and is kept in the history (when and for
-  how long, never "seen"). The server, the admin page and the TV app follow in later steps; a server of this
-  version refuses a bundle with a channel.
-- **Media kind `ts`:** a source may be a progressive MPEG-TS stream over HTTP (IPTV-style), meant for channels. A
-  server of this version does not serve it yet (such a source counts as `unsupported`, like DASH with headers).
+  how long, never "seen"). The server now serves channels: they go on a TV's Home (`continue: null`), are resolved
+  by their item id (`POST /tv/resolve {"itemId"}`), report without a position (`POST /tv/progress {"itemId"}`,
+  which never bumps the state version), get viewings without episode, positions or duration, appear in problem
+  reports, the catalog history and the admin catalog (`playable` on search hits and home rows, a channel's sources
+  under `items/:id`), and play by remote command (`play` with a channel's `itemId`). The admin page and the TV app
+  follow in later steps.
+- **Media kind `ts`:** a source may be a progressive MPEG-TS stream over HTTP (IPTV-style), meant for channels. The
+  server serves it like MP4: a plain URL goes to the TV as it is, one that needs upstream headers streams through
+  the proxy at `/p/<token>/stream.ts` (`Range` forwarded, never buffered, never aligned). "Listen along" cannot play
+  it in a browser and marks such a source unsupported.
 
 ### Changed
 

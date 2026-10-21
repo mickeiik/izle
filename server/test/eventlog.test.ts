@@ -53,7 +53,7 @@ test("events: every change appends one, in order, with its actor and data; nothi
   assert.deepEqual([cursor.actor, cursor.data], [agent, { itemId: "show", episodeId: "show.e2" }]);
   assert.deepEqual([sent.actor, sent.data], [agent, { commandId: cmd.json.id, type: "message", online: false }]);
   assert.deepEqual([delivered.actor, delivered.data], [{ type: "tv", deviceId: d }, { commandId: cmd.json.id }]);
-  assert.deepEqual([problem.actor, problem.data], [{ type: "tv", deviceId: d }, { problemId: problem.data.problemId, origin: "tv", kind: "playback", code: "ERROR_CODE_IO", episodeId: "show.e1" }]);
+  assert.deepEqual([problem.actor, problem.data], [{ type: "tv", deviceId: d }, { problemId: problem.data.problemId, origin: "tv", kind: "playback", code: "ERROR_CODE_IO", itemId: "show", episodeId: "show.e1" }]);
   assert.deepEqual([reloaded.deviceId, reloaded.actor, reloaded.data], [null, agent, { buildId: "fixture-2", added: { items: 0, episodes: 0 }, removed: { items: 1, episodes: 1 } }]);
   assert.deepEqual([failed.actor, failed.data.issues > 0], [{ type: "owner" }, true]);
   assert.deepEqual([removed.deviceId, removed.actor, removed.data], [d, { type: "owner" }, { name: "Living room" }]);

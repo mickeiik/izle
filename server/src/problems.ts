@@ -1,7 +1,7 @@
 // Problem reports, kept for the owner (usually not in the room): what a TV reports itself, and what the server sees
 // for a TV (resolves with nothing playable, sources it fell back past, proxy upstreams that refused, broke or could
-// not be reached; never "Listen along" ones). Free text from the TV is redacted before it is stored, and detail is
-// never logged.
+// not be reached; never "Listen along" ones). A problem names an episode, or a channel by its item alone. Free text
+// from the TV is redacted before it is stored, and detail is never logged.
 
 import { SERVER, tvActor } from "./actor.ts";
 import type { Services } from "./context.ts";
@@ -23,6 +23,8 @@ export interface ProblemReportBody {
   kind: (typeof TV_PROBLEM_KINDS)[number];
   code: string;
   ageMs?: number;
+  /** The item (a channel's only name; with an episode, the episode's item wins). */
+  itemId?: string;
   episodeId?: string;
   sourceId?: string;
   sessionId?: string;
@@ -49,6 +51,8 @@ const MAX_DETAIL = 500;
 interface ServerProblem {
   kind: "resolve" | "proxy";
   code: "no_playable_source" | "source_failed" | ProxyProblemCode;
+  /** The channel's item, or the episode's (taken from the episode when both are given). */
+  itemId?: string | null;
   episodeId?: string | null;
   sourceId?: string | null;
   httpStatus?: number | null;
@@ -85,13 +89,15 @@ export class ProblemService {
     this.proxyProblems = new RateLimiter(1, PROXY_PROBLEM_INTERVAL_MS, opts.now);
   }
 
-  private insert(deviceId: string, origin: ProblemOrigin, p: Omit<Problem, "id" | "deviceId" | "origin" | "catalogId" | "itemId">): Problem {
+  /** Stores a problem; `catalogId` is set when the episode (or, for a channel, the item) is in the catalog. */
+  private insert(deviceId: string, origin: ProblemOrigin, p: Omit<Problem, "id" | "deviceId" | "origin" | "catalogId">): Problem {
     const ref = p.episodeId ? this.o.catalog.episode(p.episodeId) : undefined;
-    const catalogId = ref ? this.o.catalog.catalogId : null;
+    const item = ref?.item ?? (p.itemId ? this.o.catalog.item(p.itemId) : undefined);
+    const catalogId = item ? this.o.catalog.catalogId : null;
     return this.o.store.transaction(() => {
-      const problem = this.o.store.insertProblem({ ...p, deviceId, origin, catalogId, itemId: ref?.item.id ?? null }, PROBLEMS_KEPT);
+      const problem = this.o.store.insertProblem({ ...p, deviceId, origin, catalogId, itemId: ref?.item.id ?? p.itemId }, PROBLEMS_KEPT);
       // Ids, kind and code only: the detail stays in the problem list.
-      const data = { problemId: problem.id, origin, kind: problem.kind, code: problem.code, episodeId: problem.episodeId };
+      const data = { problemId: problem.id, origin, kind: problem.kind, code: problem.code, itemId: problem.itemId, episodeId: problem.episodeId };
       this.o.eventLog.append("problem.recorded", deviceId, origin === "tv" ? tvActor(deviceId) : SERVER, data);
       return problem;
     });
@@ -101,12 +107,12 @@ export class ProblemService {
   report(device: Device, body: ProblemReportBody): Problem {
     const rate = this.reports.hit(device.id);
     if (!rate.ok) throw tooManyRequests("too_many_problems", "too many problem reports from this TV", rate.retryAfterSec);
-    // Only the TV's own session, and only for the episode it played.
-    const session = this.o.sessions.owned(body.sessionId, device.id, body.episodeId);
+    // Only the TV's own session, and only for what the report says it played (an episode, or a channel's item).
+    const session = this.o.sessions.owned(body.sessionId, device.id, { itemId: body.itemId, episodeId: body.episodeId });
     const text = (value: string | undefined) => (value === undefined || value.trim() === "" ? null : redactReportText(value));
     const problem = this.insert(device.id, "tv", {
       at: this.o.now() - (body.ageMs ?? 0), kind: body.kind, code: redactReportText(body.code),
-      episodeId: body.episodeId ?? session?.episodeId ?? null, sourceId: body.sourceId ?? session?.sourceId ?? null,
+      itemId: body.itemId ?? session?.itemId ?? null, episodeId: body.episodeId ?? session?.episodeId ?? null, sourceId: body.sourceId ?? session?.sourceId ?? null,
       positionMs: body.positionMs ?? null, httpStatus: body.httpStatus ?? null, detail: text(body.detail), appVersion: text(body.appVersion),
     });
     // Kind and code only: the detail may hold anything the TV saw.
@@ -117,9 +123,9 @@ export class ProblemService {
   /** A problem the server saw for a TV. Never throws: recording must not break the request that ran into it. */
   record(deviceId: string, p: ServerProblem): void {
     try {
-      const { kind, code, episodeId = null, sourceId = null, httpStatus = null } = p;
+      const { kind, code, itemId = null, episodeId = null, sourceId = null, httpStatus = null } = p;
       const detail = p.detail ? cap(p.detail) : null;
-      this.insert(deviceId, "server", { at: this.o.now(), kind, code, episodeId, sourceId, positionMs: null, httpStatus, detail, appVersion: null });
+      this.insert(deviceId, "server", { at: this.o.now(), kind, code, itemId, episodeId, sourceId, positionMs: null, httpStatus, detail, appVersion: null });
       this.o.log.debug("problem recorded", { deviceId, kind: p.kind, code: p.code });
     } catch (err) {
       this.o.log.warn("problem not recorded", { deviceId, kind: p.kind, code: p.code, error: err });
@@ -130,7 +136,7 @@ export class ProblemService {
   recordProxy(p: ProxyProblem): void {
     if (isCompanionScope(p.owner)) return;
     if (!this.proxyProblems.hit(`${p.owner}\u0000${p.code}`).ok) return;
-    this.record(p.owner, { kind: "proxy", code: p.code, episodeId: p.episodeId, sourceId: p.sourceId, httpStatus: p.httpStatus, detail: p.detail });
+    this.record(p.owner, { kind: "proxy", code: p.code, itemId: p.itemId, episodeId: p.episodeId, sourceId: p.sourceId, httpStatus: p.httpStatus, detail: p.detail });
   }
 
   /** `Device.problems`: how many happened in the last 24 hours, and when the latest one did. */
@@ -139,16 +145,22 @@ export class ProblemService {
     return { recent: s.recent, lastAt: iso(s.lastAt) };
   }
 
-  /** The admin list, newest first, with titles from the current catalog (`missing` when the episode is gone). */
+  /**
+   * The admin list, newest first, with titles from the current catalog (`missing` when the episode, or a channel's
+   * item, is gone).
+   */
   list(deviceId: string, limit: number) {
     const { catalog } = this.o;
     return this.o.store.listProblems(deviceId, limit).map((p) => {
-      const ref = p.episodeId && (p.catalogId === null || p.catalogId === catalog.catalogId) ? catalog.episode(p.episodeId) : undefined;
+      const sameCatalog = p.catalogId === null || p.catalogId === catalog.catalogId;
+      const ref = p.episodeId && sameCatalog ? catalog.episode(p.episodeId) : undefined;
+      const item = ref?.item ?? (p.itemId && sameCatalog ? catalog.item(p.itemId) : undefined);
       const { id, origin, kind, code, episodeId, sourceId, positionMs, httpStatus, detail, appVersion } = p;
-      // The item kind names the episode (films have none to show).
-      const item = { itemId: ref?.item.id ?? p.itemId, itemTitle: ref?.item.title ?? null, itemKind: ref?.item.kind ?? null };
+      // The item kind names the episode (films have none to show) or says that this is a channel.
+      const about = { itemId: ref?.item.id ?? p.itemId, itemTitle: item?.title ?? null, itemKind: item?.kind ?? null };
       const episode = { episodeId, episodeTitle: ref?.episode.title ?? null, season: ref?.episode.season ?? null, number: ref?.episode.number ?? null };
-      return { id, at: iso(p.at), origin, kind, code, ...item, ...episode, sourceId, positionMs, httpStatus, detail, appVersion, missing: episodeId !== null && !ref };
+      const missing = episodeId !== null ? !ref : p.itemId !== null && !item;
+      return { id, at: iso(p.at), origin, kind, code, ...about, ...episode, sourceId, positionMs, httpStatus, detail, appVersion, missing };
     });
   }
 

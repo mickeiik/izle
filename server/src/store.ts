@@ -100,6 +100,16 @@ export interface SeenEpisode {
   removedAt: number | null;
 }
 
+/** A channel as the catalog history knows it (items without episodes are tracked by their id alone). */
+export interface SeenItem {
+  itemId: string;
+  /** When the first build carrying it was loaded (epoch ms); 0 for channels present at the first load ever. */
+  firstSeenAt: number;
+  buildId: string;
+  /** Set while the loaded catalog does not carry it. */
+  removedAt: number | null;
+}
+
 /** What a build changed against the catalog loaded before it. Each list holds at most 500 entries. */
 export interface CatalogChanges {
   items: {
@@ -175,7 +185,10 @@ export interface EventFilter {
   newest?: boolean;
 }
 
-/** One playback of one episode on one TV, as stored (the running state in the `last*` fields is the history's own). */
+/**
+ * One playback of one episode, or of one channel, on one TV, as stored (the running state in the `last*` fields is
+ * the history's own). A channel's viewing has no episode, positions or duration, and is never seen.
+ */
 export interface Viewing {
   id: number;
   deviceId: string;
@@ -184,7 +197,8 @@ export interface Viewing {
   itemId: string;
   itemKind: string | null;
   itemTitle: string | null;
-  episodeId: string;
+  /** Null for a channel. */
+  episodeId: string | null;
   episodeTitle: string | null;
   season: number | null;
   number: number | null;
@@ -227,10 +241,10 @@ export interface ViewingFilter {
   limit: number;
 }
 
-/** Viewings of one episode summed up (the `device` filter applied). */
+/** Viewings of one episode (or, with `episodeId` null, of one channel) summed up (the `device` filter applied). */
 export interface EpisodeViewingStats {
   itemId: string;
-  episodeId: string;
+  episodeId: string | null;
   viewings: number;
   watchedMs: number;
   firstStartedAt: number;
@@ -288,9 +302,11 @@ export interface Problem {
 export interface NowPlaying {
   catalogId: string;
   itemId: string;
-  episodeId: string;
+  /** Null for a channel. */
+  episodeId: string | null;
   sourceId: string | null;
-  positionMs: number;
+  /** Null for a channel, which has no timeline. */
+  positionMs: number | null;
   durationMs: number | null;
   /** `starting` from a resolve until the player's first report, then the report's status. */
   state: "starting" | ProgressReportStatus;
@@ -967,6 +983,30 @@ export class Store {
   episodeFirstSeen(catalogId: string, itemId: string | null = null): Map<string, number> {
     const sql = "SELECT episode_id, first_seen_at FROM catalog_seen WHERE catalog_id = ? AND removed_at IS NULL AND (? IS NULL OR item_id = ?)";
     return new Map(this.many<{ episodeId: string; firstSeenAt: number }>(sql, [catalogId, itemId, itemId]).map((r) => [r.episodeId, r.firstSeenAt]));
+  }
+
+  // --- catalog history: channels (items without episodes, by item id) -------------------------------------------
+
+  /** Every channel the catalog has ever carried, present or removed, ordered by item id. */
+  catalogSeenItems(catalogId: string): SeenItem[] {
+    return this.many("SELECT item_id, first_seen_at, build_id, removed_at FROM catalog_seen_items WHERE catalog_id = ? ORDER BY item_id", [catalogId]);
+  }
+
+  insertSeenItems(catalogId: string, buildId: string, firstSeenAt: number, itemIds: readonly string[]): void {
+    const insert = this.db.prepare("INSERT INTO catalog_seen_items (catalog_id, item_id, first_seen_at, build_id) VALUES (?, ?, ?, ?)");
+    for (const id of itemIds) insert.run(catalogId, id, firstSeenAt, buildId);
+  }
+
+  /** Marks channels absent from the loaded catalog; one already marked keeps its first removal time. */
+  markSeenItemsRemoved(catalogId: string, itemIds: readonly string[], at: number): void {
+    const update = this.db.prepare("UPDATE catalog_seen_items SET removed_at = ? WHERE catalog_id = ? AND item_id = ? AND removed_at IS NULL");
+    for (const id of itemIds) update.run(at, catalogId, id);
+  }
+
+  /** Channels back in the loaded catalog: present again, with their first-seen date unchanged. */
+  clearSeenItemsRemoved(catalogId: string, itemIds: readonly string[]): void {
+    const update = this.db.prepare("UPDATE catalog_seen_items SET removed_at = NULL WHERE catalog_id = ? AND item_id = ?");
+    for (const id of itemIds) update.run(catalogId, id);
   }
 
   /** Stores a loaded build. A build id loaded again later (a rollback) replaces its row with the new load. */

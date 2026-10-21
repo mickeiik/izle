@@ -66,7 +66,7 @@ export class CompanionService {
   /** The sources of the episode the TV is playing, as companion candidates, with their stored links. */
   candidates(device: Device) {
     const n = this.s.store.getNowPlaying(device.id);
-    const ref = n ? this.s.catalog.episode(n.episodeId) : undefined;
+    const ref = n?.episodeId != null ? this.s.catalog.episode(n.episodeId) : undefined;
     if (!n || !ref) return { nowPlaying: null, candidates: [] };
     const links = new Map(this.s.store.listCompanionLinks(this.s.catalog.catalogId, ref.episode.id).map((l) => [l.sourceId, l]));
     const { item, episode } = ref;

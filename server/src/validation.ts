@@ -7,7 +7,7 @@ import { LANGUAGE_TAG_PATTERN, objectSchema as object } from "./config.ts";
 import type { DiagnosticsInput } from "./diagnostics.ts";
 import { HttpError } from "./errors.ts";
 import { PAIR_CODE } from "./pairing.ts";
-import { PROGRESS_REPORT_STATUSES } from "./playback.ts";
+import { LIVE_REPORT_STATUSES, PROGRESS_REPORT_STATUSES } from "./playback.ts";
 import { TV_PROBLEM_KINDS, type ProblemReportBody } from "./problems.ts";
 import type { ResolveInput } from "./resolve.ts";
 import type { DevicePatch } from "./store.ts";
@@ -76,40 +76,42 @@ export const commandBody = ajv.compile<CommandBody>({
   ],
 });
 
-export const resolveBody = ajv.compile<ResolveInput>(
-  object(
-    {
-      episodeId: ID, sourceId: ID, exclude: { type: "array", items: ID, maxItems: 64 },
-      // The viewing history: what started this playback, and the command when it was a remote one.
-      trigger: { enum: VIEWING_TRIGGERS }, commandId: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
-    },
-    ["episodeId"],
-  ),
-);
+const RESOLVE_FIELDS = {
+  sourceId: ID, exclude: { type: "array", items: ID, maxItems: 64 },
+  // The viewing history: what started this playback, and the command when it was a remote one.
+  trigger: { enum: VIEWING_TRIGGERS }, commandId: { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+};
+
+// An episode by its id, or a channel by its item id: each branch forbids the other's field, so a body matches one.
+export const resolveBody = ajv.compile<ResolveInput>({
+  oneOf: [object({ episodeId: ID, ...RESOLVE_FIELDS }, ["episodeId"]), object({ itemId: ID, ...RESOLVE_FIELDS }, ["itemId"])],
+});
 
 export const marksBody = ajv.compile<{ episodeIds: string[]; seen: boolean | null }>(
   object({ episodeIds: { type: "array", items: ID, minItems: 1, maxItems: 500 }, seen: { anyOf: [BOOLEAN, NULL] } }, ["episodeIds", "seen"]),
 );
 
-export const diagnosticsBody = ajv.compile<DiagnosticsInput>(
-  object({ episodeId: ID, sourceId: ID, preferredAudioLanguage: LANGUAGE_TAG_OR_NULL, probe: BOOLEAN }, ["episodeId"]),
-);
+const DIAGNOSTICS_FIELDS = { sourceId: ID, preferredAudioLanguage: LANGUAGE_TAG_OR_NULL, probe: BOOLEAN };
 
-export const progressBody = ajv.compile<ProgressInput>(
-  object(
-    {
-      sessionId: { anyOf: [{ type: "string", maxLength: 64 }, NULL] },
-      episodeId: ID,
-      positionMs: MS,
-      durationMs: { anyOf: [MS, NULL] },
-      status: { enum: PROGRESS_REPORT_STATUSES },
-      // Listen along: whether the player was actually advancing, and how old the sample is (queue delays).
-      playing: BOOLEAN,
-      ageMs: { type: "integer", minimum: 0, maximum: 60_000 },
-    },
-    ["episodeId", "positionMs", "status"],
-  ),
-);
+export const diagnosticsBody = ajv.compile<DiagnosticsInput>({
+  oneOf: [object({ episodeId: ID, ...DIAGNOSTICS_FIELDS }, ["episodeId"]), object({ itemId: ID, ...DIAGNOSTICS_FIELDS }, ["itemId"])],
+});
+
+const REPORT_FIELDS = {
+  sessionId: { anyOf: [{ type: "string", maxLength: 64 }, NULL] },
+  // Listen along: whether the player was actually advancing, and how old the sample is (queue delays).
+  playing: BOOLEAN,
+  ageMs: { type: "integer", minimum: 0, maximum: 60_000 },
+};
+
+// An episode's report carries its position; a channel's names its item and carries none (a channel is never paused
+// and never finishes). Each branch forbids the other's fields, so a body matches one.
+export const progressBody = ajv.compile<ProgressInput>({
+  oneOf: [
+    object({ ...REPORT_FIELDS, episodeId: ID, positionMs: MS, durationMs: { anyOf: [MS, NULL] }, status: { enum: PROGRESS_REPORT_STATUSES } }, ["episodeId", "positionMs", "status"]),
+    object({ ...REPORT_FIELDS, itemId: ID, status: { enum: LIVE_REPORT_STATUSES } }, ["itemId", "status"]),
+  ],
+});
 
 export const problemBody = ajv.compile<ProblemReportBody>(
   object(
@@ -118,6 +120,7 @@ export const problemBody = ajv.compile<ProblemReportBody>(
       code: CODE,
       // How long ago it happened: a report queued while the server was unreachable keeps its time.
       ageMs: { type: "integer", minimum: 0, maximum: 86_400_000 },
+      itemId: ID,
       episodeId: ID,
       sourceId: ID,
       sessionId: { type: "string", maxLength: 64 },

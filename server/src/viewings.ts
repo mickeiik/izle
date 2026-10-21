@@ -1,16 +1,17 @@
-// The viewing history's writing side: a viewing (one playback of one episode on one TV) starts with a successful
-// resolve, follows the TV's progress reports (watched time, played ranges, pauses, seeks, stalls), and ends with a
-// stopped or finished report, with the TV resolving something else, or with silence (the lost sweep). Also the
-// owner's marks and deletions. Every change appends its events in its own transaction; nothing here is logged
-// beyond ids and small facts.
+// The viewing history's writing side: a viewing (one playback of one episode, or of one channel, on one TV) starts
+// with a successful resolve, follows the TV's reports (watched time; for an episode also played ranges, pauses and
+// seeks; stalls), and ends with a stopped or finished report, with the TV resolving something else, or with silence
+// (the lost sweep). A channel's viewing has no positions and is never seen. Also the owner's marks and deletions.
+// Every change appends its events in its own transaction; nothing here is logged beyond ids and small facts.
 
+import { isLiveItem } from "@izle/contract";
 import { SERVER, tvActor, type Actor } from "./actor.ts";
-import type { CatalogService, EpisodeRef } from "./catalog.ts";
+import type { CatalogService, PlayableRef } from "./catalog.ts";
 import type { EventLog } from "./eventlog.ts";
 import type { EventHub } from "./events.ts";
 import { HttpError } from "./errors.ts";
 import type { Logger } from "./log.ts";
-import type { ProgressReportStatus } from "./playback.ts";
+import type { LiveReportStatus, ProgressReportStatus } from "./playback.ts";
 import type { ResolveInput } from "./resolve.ts";
 import type { Device, Store, Viewing, ViewingEndReason, ViewingTrigger } from "./store.ts";
 
@@ -50,6 +51,24 @@ export interface ViewingReport {
   anchorAt: number;
 }
 
+/** A channel's report as the history sees it: no position, only whether the player advanced and when it said so. */
+export interface LiveViewingReport {
+  itemId: string;
+  status: LiveReportStatus;
+  playing: boolean;
+  anchorAt: number;
+}
+
+/** Whether the viewing is of what the ref plays: the episode, or (no episode) the channel. */
+function plays(v: Viewing, ref: PlayableRef): boolean {
+  return ref.kind === "episode" ? v.episodeId === ref.episode.id : v.episodeId === null && v.itemId === ref.item.id;
+}
+
+/** Where a viewing was last (its last report, else where it started); null for a channel, which has no position. */
+function lastPosition(v: Viewing): number | null {
+  return v.episodeId === null ? null : (v.lastPositionMs ?? v.startPositionMs ?? 0);
+}
+
 /** What the player was doing according to a report: `playing` with `playing: false` is a stall. */
 type PlayerState = "starting" | "playing" | "paused" | "stalled";
 
@@ -82,32 +101,34 @@ export class ViewingService {
   }
 
   /**
-   * A successful TV resolve, inside its transaction: continues the running viewing of the same episode (the source
-   * may change; no event), or ends the running one as `replaced` and starts a new one. `positionMs` is where
-   * playback will start (the resume position offered), `durationMs` the catalog's.
+   * A successful TV resolve, inside its transaction: continues the running viewing of the same episode or channel
+   * (the source may change; no event), or ends the running one as `replaced` and starts a new one. `positionMs` is
+   * where playback will start (the resume position offered), `durationMs` the catalog's; both null for a channel,
+   * which plays at its live edge.
    */
-  onResolve(device: Device, ref: EpisodeRef, sourceId: string, positionMs: number, durationMs: number | null, input: ResolveInput): void {
+  onResolve(device: Device, ref: PlayableRef, sourceId: string, positionMs: number | null, durationMs: number | null, input: ResolveInput): void {
     const { store, eventLog } = this.s;
     const running = store.runningViewing(device.id);
     const t = this.s.now();
-    if (running?.episodeId === ref.episode.id) {
+    if (running && plays(running, ref)) {
       if (running.sourceId !== sourceId) store.updateViewing(running.id, { sourceId });
       return;
     }
     const { trigger, actor, commandId } = this.origin(device.id, input);
-    if (running) this.end(running, "replaced", t, running.lastPositionMs ?? running.startPositionMs ?? 0, actor);
-    const { item, episode } = ref;
+    if (running) this.end(running, "replaced", t, lastPosition(running), actor);
+    const { item } = ref;
+    const episode = ref.kind === "episode" ? ref.episode : null;
     const v = store.insertViewing({
       deviceId: device.id, deviceName: device.name, catalogId: this.s.catalog.catalogId, itemId: item.id, itemKind: item.kind, itemTitle: item.title,
-      episodeId: episode.id, episodeTitle: episode.title ?? null, season: episode.season ?? null, number: episode.number ?? null, sourceId,
+      episodeId: episode?.id ?? null, episodeTitle: episode?.title ?? null, season: episode?.season ?? null, number: episode?.number ?? null, sourceId,
       startedAt: t, endedAt: null, startPositionMs: positionMs, endPositionMs: null, durationMs, watchedMs: 0, endReason: null, seen: false,
       trigger, actor, commandId, imported: false, lastReportAt: null, lastPositionMs: null, lastPlaying: false, lastAnchorAt: null, lastState: null,
     });
-    const { id: viewingId, itemKind, itemTitle, episodeTitle, season, number } = v;
+    const { id: viewingId, itemKind, itemTitle, episodeId, episodeTitle, season, number } = v;
     eventLog.append("playback.started", device.id, actor, {
-      viewingId, itemId: item.id, itemKind, itemTitle, episodeId: episode.id, episodeTitle, season, number, sourceId, positionMs, trigger,
+      viewingId, itemId: item.id, itemKind, itemTitle, episodeId, episodeTitle, season, number, sourceId, positionMs, trigger,
     });
-    this.s.log.debug("viewing started", { deviceId: device.id, viewingId, itemId: item.id, episodeId: episode.id, trigger });
+    this.s.log.debug("viewing started", { deviceId: device.id, viewingId, itemId: item.id, episodeId, trigger });
   }
 
   /** The trigger, actor and command behind a resolve: a command's actor when the TV names one of its play/next/previous commands. */
@@ -127,7 +148,7 @@ export class ViewingService {
   onReport(device: Device, r: ViewingReport): void {
     const { store, eventLog } = this.s;
     const v = store.runningViewing(device.id);
-    if (!v || v.episodeId !== r.episodeId) return;
+    if (!v || v.episodeId === null || v.episodeId !== r.episodeId) return;
     const t = this.s.now();
     const actor = tvActor(device.id);
     const patch: Partial<Omit<Viewing, "id" | "actor">> = {
@@ -161,11 +182,39 @@ export class ViewingService {
     if (r.status === "finished") this.end(updated, "finished", t, updated.durationMs ?? r.positionMs, actor);
   }
 
-  /** Ends `v` (already updated with its last report), or drops it when it was too short to keep; the events follow. */
-  private end(v: Viewing, reason: ViewingEndReason, at: number, positionMs: number, actor: Actor): void {
+  /**
+   * A channel's report, inside its transaction. Applied only to the TV's running viewing of that channel: watched
+   * time between consecutive reports while the player advanced (there is no position, so no ranges or seeks), the
+   * stall transitions, and the end on `stopped`.
+   */
+  onLiveReport(device: Device, r: LiveViewingReport): void {
+    const { store, eventLog } = this.s;
+    const v = store.runningViewing(device.id);
+    if (!v || v.episodeId !== null || v.itemId !== r.itemId) return;
+    const t = this.s.now();
+    const actor = tvActor(device.id);
+    const patch: Partial<Omit<Viewing, "id" | "actor">> = { lastReportAt: t, lastPlaying: r.playing, lastAnchorAt: r.anchorAt, lastState: r.status, watchedMs: v.watchedMs ?? 0 };
+    const before = playerState(v.lastState, v.lastPlaying);
+    if (v.lastReportAt !== null && before === "playing") {
+      const elapsed = Math.max(0, r.anchorAt - (v.lastAnchorAt ?? v.lastReportAt));
+      patch.watchedMs! += Math.min(elapsed, MAX_REPORT_GAP_MS);
+    }
+    const after = r.status === "playing" ? playerState(r.status, r.playing) : null;
+    const data = { viewingId: v.id, positionMs: null };
+    if (after === "playing" && before === "stalled") eventLog.append("playback.recovered", device.id, actor, data);
+    if (after === "stalled" && before !== "stalled") eventLog.append("playback.stalled", device.id, actor, data);
+    store.updateViewing(v.id, patch);
+    if (r.status === "stopped") this.end({ ...v, ...patch }, "stopped", t, null, actor);
+  }
+
+  /**
+   * Ends `v` (already updated with its last report), or drops it when it was too short to keep; the events follow.
+   * `positionMs` is where it ended (null for a channel, which is never seen).
+   */
+  private end(v: Viewing, reason: ViewingEndReason, at: number, positionMs: number | null, actor: Actor): void {
     const { store, eventLog } = this.s;
     const watchedMs = v.watchedMs ?? 0;
-    const seen = reason === "finished" || (v.durationMs !== null && v.durationMs > 0 && positionMs >= SEEN_FRACTION * v.durationMs);
+    const seen = reason === "finished" || (positionMs !== null && v.durationMs !== null && v.durationMs > 0 && positionMs >= SEEN_FRACTION * v.durationMs);
     const dropped = !seen && watchedMs < DROP_UNDER_MS;
     if (dropped) store.deleteViewing(v.id);
     else store.updateViewing(v.id, { endedAt: at, endReason: reason, endPositionMs: positionMs, seen, watchedMs });
@@ -177,12 +226,13 @@ export class ViewingService {
   /** `episode.seen`: whether this is the episode's first time, and whether the item is now finished. */
   private seenEvent(v: Viewing, actor: Actor): void {
     const { store, catalog } = this.s;
+    if (v.episodeId === null) return; // a channel is never seen
     const catalogId = catalog.catalogId;
     const mark = store.getMark(catalogId, v.episodeId);
     const firstTime = !(mark ? mark.seen : store.episodeSeenByOther(catalogId, v.episodeId, v.id));
     const item = catalog.item(v.itemId);
     let itemFinished = false;
-    if (item) {
+    if (item && !isLiveItem(item)) {
       const marks = store.listMarks(catalogId, item.id);
       const seenByViewing = new Set(store.episodeSeenAt(catalogId, item.id).map((e) => e.episodeId));
       const playable = item.episodes.filter((e) => e.playbackAllowed);
@@ -204,11 +254,14 @@ export class ViewingService {
       const offlineSince = this.s.events.isOnline(v.deviceId) ? null : (this.offlineAt.get(v.deviceId) ?? this.startedAt);
       const offline = offlineSince !== null && t - offlineSince >= LOST_AFTER_MS;
       if (!silent && !offline) continue;
-      this.s.store.transaction(() => this.end(v, "lost", lastAt, v.lastPositionMs ?? v.startPositionMs ?? 0, SERVER));
+      this.s.store.transaction(() => this.end(v, "lost", lastAt, lastPosition(v), SERVER));
     }
   }
 
-  /** The owner's word on episodes (`seen: null` removes it); each must be in the catalog or the history. Returns how many. */
+  /**
+   * The owner's word on episodes (`seen: null` removes it); each must be in the catalog or the history. Returns how
+   * many. A channel's item id is no episode id: channels are never marked.
+   */
   setMarks(episodeIds: readonly string[], seen: boolean | null, actor: Actor): number {
     const { store, catalog } = this.s;
     const catalogId = catalog.catalogId;

@@ -477,7 +477,7 @@ What went wrong on a TV, kept for the owner: the TV's own reports (`origin: "tv"
 |---|---|---|
 | `resolve` · `no_playable_source` | a TV resolve answers `502 no_playable_source` | `detail`: the `tried` list in short (`src-a: timeout; src-b: error InvalidResult`) and the sources the TV excluded |
 | `resolve` · `source_failed` | a source failed during a TV resolve and a later candidate played | `sourceId`; `detail`: `<code> <name?>` (`error InvalidResult`, `timeout`, `empty`). Missing adapters are not recorded (the catalog page warns about them) |
-| `proxy` · `upstream_401` / `upstream_403` / `upstream_410` | the upstream refused a request of a TV's proxy session, which is now stale | `httpStatus`; `detail`: what was requested (`playlist`, `segment`, `video`, `subtitles`) |
+| `proxy` · `upstream_401` / `upstream_403` / `upstream_410` | the upstream refused a request of a TV's proxy session, which is now stale | `httpStatus`; `detail`: what was requested (`playlist`, `segment`, `video`, `stream` for `stream.ts`, `subtitles`) |
 | `proxy` · `upstream_error` | the upstream answered 5xx, or a playlist broke off | `httpStatus`; `detail` as above |
 | `proxy` · `upstream_unreachable` | network error, or no answer within 20 s | `detail`: what was requested and why (`ECONNREFUSED`, `no answer within 20 s`) |
 | `proxy` · `not_a_playlist` / `playlist_too_large` | the upstream sent something else than a playlist (`detail` gives its media type), or more than 4 MiB, or one the rewrite cannot keep in bounds (more than 250,000 lines, more than 16 MiB rewritten, or a URI longer than 4096 characters) | |
