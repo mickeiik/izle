@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type { ValidateFunction } from "ajv/dist/2020.js";
-import { BUNDLE_ASSETS_DIR, BUNDLE_ITEMS_FILE, BUNDLE_MANIFEST_FILE } from "./bundle.ts";
-import type { Bundle, BundleManifest, CatalogItem } from "./bundle.ts";
+import { BUNDLE_ASSETS_DIR, BUNDLE_ITEMS_FILE, BUNDLE_MANIFEST_FILE, isLiveItem } from "./bundle.ts";
+import type { Bundle, BundleManifest, CatalogItem, Playable } from "./bundle.ts";
 import { simplifySchemaErrors, validateItemsSchema, validateManifestSchema } from "./schemas.ts";
 
 export interface ValidationIssue {
@@ -16,9 +16,12 @@ export interface ValidationIssue {
 }
 
 export interface BundleStats {
+  /** movies + series + live. */
   items: number;
   movies: number;
   series: number;
+  /** Live items (channels). */
+  live: number;
   episodes: number;
   playableEpisodes: number;
   sources: number;
@@ -137,37 +140,63 @@ type ImageField = (typeof IMAGE_FIELDS)[number];
 type ImageRefs = Map<string, Array<[ImageField, string]>>;
 
 /**
- * The semantic rules for items, episodes and sources (no I/O). Returns every count but `posters` and `backdrops`,
- * the image paths with the JSON pointers that reference them, and the adapter ids the sources use.
+ * The semantic rules for items, episodes, live items and sources (no I/O). Returns every count but `posters` and
+ * `backdrops`, the image paths with the JSON pointers that reference them, and the adapter ids the sources use.
  */
 function checkItems(manifest: BundleManifest, items: CatalogItem[], issues: ValidationIssue[]) {
   const error = (pointer: string, message: string) => void issues.push(issue("error", BUNDLE_ITEMS_FILE, pointer, message));
+  const warn = (pointer: string, message: string) => void issues.push(issue("warning", BUNDLE_ITEMS_FILE, pointer, message));
   const checkUrl = (url: string, pointer: string) => {
     if (!["http:", "https:"].includes(URL.parse(url)?.protocol ?? "")) error(pointer, "not a valid http(s) URL");
   };
-  const stats: BundleStats = { items: items.length, movies: 0, series: 0, episodes: 0, playableEpisodes: 0, sources: 0, posters: 0, backdrops: 0 };
+  const stats: BundleStats = {
+    items: items.length, movies: 0, series: 0, live: 0, episodes: 0, playableEpisodes: 0, sources: 0, posters: 0, backdrops: 0,
+  };
   const itemIds = new Map<string, number>();
   const episodeOwners = new Map<string, string>();
   const declaredAdapters = new Set(manifest.adapters);
   const adapters = new Set<string>();
   const images: ImageRefs = new Map();
 
+  /** The rules for what an episode or a live item plays; `scope` names it in messages. */
+  const checkSources = (p: Playable, pointer: string, scope: "episode" | "item") => {
+    if (p.sources.length === 0 && p.playbackAllowed) error(`${pointer}/playbackAllowed`, "must be false when sources is empty");
+    const sourceIds = new Set<string>();
+    p.sources.forEach((src, s) => {
+      const sp = `${pointer}/sources/${s}`;
+      stats.sources++;
+      if (sourceIds.has(src.id)) error(`${sp}/id`, `duplicate source id "${src.id}" within the ${scope}`);
+      sourceIds.add(src.id);
+      if (src.type === "direct") checkUrl(src.media.url, `${sp}/media/url`);
+      else {
+        adapters.add(src.adapter);
+        if (!declaredAdapters.has(src.adapter)) error(`${sp}/adapter`, `adapter "${src.adapter}" is not listed in ${BUNDLE_MANIFEST_FILE} "adapters"`);
+      }
+      src.subtitleTracks?.forEach((t, k) => checkUrl(t.url, `${sp}/subtitleTracks/${k}/url`));
+    });
+  };
+
   items.forEach((item, i) => {
     const ip = `/items/${i}`;
-    stats[item.kind === "movie" ? "movies" : "series"]++;
-
     const firstIndex = itemIds.get(item.id);
     if (firstIndex !== undefined) error(`${ip}/id`, `duplicate item id "${item.id}" (also /items/${firstIndex})`);
     else itemIds.set(item.id, i);
-
-    if (item.kind === "movie" && item.episodes.length !== 1) {
-      error(`${ip}/episodes`, `a movie must have exactly one episode (found ${item.episodes.length})`);
-    }
     for (const field of IMAGE_FIELDS) {
       const rel = item[field];
       if (rel) images.set(rel, [...(images.get(rel) ?? []), [field, `${ip}/${field}`]]);
     }
 
+    if (isLiveItem(item)) {
+      stats.live++;
+      checkSources(item, ip, "item");
+      if (!item.playbackAllowed) warn(ip, `live item "${item.id}" has playbackAllowed: false`);
+      return;
+    }
+
+    stats[item.kind === "movie" ? "movies" : "series"]++;
+    if (item.kind === "movie" && item.episodes.length !== 1) {
+      error(`${ip}/episodes`, `a movie must have exactly one episode (found ${item.episodes.length})`);
+    }
     let playable = 0;
     item.episodes.forEach((ep, e) => {
       const ep_ = `${ip}/episodes/${e}`;
@@ -177,24 +206,10 @@ function checkItems(manifest: BundleManifest, items: CatalogItem[], issues: Vali
       const owner = episodeOwners.get(ep.id);
       if (owner !== undefined) error(`${ep_}/id`, `duplicate episode id "${ep.id}" (episode ids must be unique in the bundle; also used in item "${owner}")`);
       else episodeOwners.set(ep.id, item.id);
-      if (ep.sources.length === 0 && ep.playbackAllowed) error(`${ep_}/playbackAllowed`, "must be false when sources is empty");
-
-      const sourceIds = new Set<string>();
-      ep.sources.forEach((src, s) => {
-        const sp = `${ep_}/sources/${s}`;
-        stats.sources++;
-        if (sourceIds.has(src.id)) error(`${sp}/id`, `duplicate source id "${src.id}" within the episode`);
-        sourceIds.add(src.id);
-        if (src.type === "direct") checkUrl(src.media.url, `${sp}/media/url`);
-        else {
-          adapters.add(src.adapter);
-          if (!declaredAdapters.has(src.adapter)) error(`${sp}/adapter`, `adapter "${src.adapter}" is not listed in ${BUNDLE_MANIFEST_FILE} "adapters"`);
-        }
-        src.subtitleTracks?.forEach((t, k) => checkUrl(t.url, `${sp}/subtitleTracks/${k}/url`));
-      });
+      checkSources(ep, ep_, "episode");
     });
     stats.playableEpisodes += playable;
-    if (playable === 0) issues.push(issue("warning", BUNDLE_ITEMS_FILE, ip, `item "${item.id}" has no episode with playbackAllowed: true`));
+    if (playable === 0) warn(ip, `item "${item.id}" has no episode with playbackAllowed: true`);
   });
 
   return { stats, images, adapters };

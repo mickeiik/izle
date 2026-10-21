@@ -1,9 +1,9 @@
 import path from "node:path";
-import { BundleValidationError, formatIssue, loadBundle, type BundleManifest, type BundleStats, type CatalogItem, type Episode, type ValidationIssue } from "@izle/contract";
+import { BundleValidationError, formatIssue, isLiveItem, loadBundle, type BundleManifest, type BundleStats, type Episode, type EpisodicItem, type ValidationIssue } from "@izle/contract";
 import type { Logger } from "./log.ts";
 
 export interface EpisodeRef {
-  item: CatalogItem;
+  item: EpisodicItem;
   episode: Episode;
   /** Position in the item's play order. */
   index: number;
@@ -12,8 +12,8 @@ export interface EpisodeRef {
 export interface LoadedCatalog {
   dir: string;
   manifest: BundleManifest;
-  items: CatalogItem[];
-  itemsById: Map<string, CatalogItem>;
+  items: EpisodicItem[];
+  itemsById: Map<string, EpisodicItem>;
   episodesById: Map<string, EpisodeRef>;
   warnings: ValidationIssue[];
   stats: BundleStats;
@@ -70,13 +70,19 @@ export class CatalogService {
     const missing = this.adapters ? bundle.manifest.adapters.filter((a) => !this.adapters!.has(a)) : [];
     const issue = (a: string) => ({ severity: "error" as const, file: "bundle.json", path: "/adapters", message: `adapter "${a}" is not provided by the resolver module` });
     if (missing.length > 0) throw new BundleValidationError(this.dir, missing.map(issue));
-    const itemsById = new Map<string, CatalogItem>();
+    // Temporary: live channels are specified but not served yet; refuse them rather than dropping them silently.
+    const live = bundle.items.flatMap((item, i) =>
+      isLiveItem(item) ? [{ severity: "error" as const, file: "items.json", path: `/items/${i}`, message: "live items are not supported by this server yet" }] : [],
+    );
+    if (live.length > 0) throw new BundleValidationError(this.dir, live);
+    const items = bundle.items.filter((item): item is EpisodicItem => !isLiveItem(item));
+    const itemsById = new Map<string, EpisodicItem>();
     const episodesById = new Map<string, EpisodeRef>();
-    for (const item of bundle.items) {
+    for (const item of items) {
       itemsById.set(item.id, item);
       item.episodes.forEach((episode, index) => episodesById.set(episode.id, { item, episode, index }));
     }
-    return { dir: bundle.dir, manifest: bundle.manifest, items: bundle.items, itemsById, episodesById, warnings, stats, loadedAt: this.now() };
+    return { dir: bundle.dir, manifest: bundle.manifest, items, itemsById, episodesById, warnings, stats, loadedAt: this.now() };
   }
 
   private report(c: LoadedCatalog, msg: string): void {
@@ -129,7 +135,7 @@ export class CatalogService {
     return this.current.manifest.catalogId;
   }
 
-  item(id: string): CatalogItem | undefined {
+  item(id: string): EpisodicItem | undefined {
     return this.current.itemsById.get(id);
   }
 
@@ -138,12 +144,12 @@ export class CatalogService {
   }
 
   /** Relative URL of an item's poster, served by GET /assets/:file. */
-  posterUrl(item: CatalogItem): string | null {
+  posterUrl(item: EpisodicItem): string | null {
     return assetUrl(item.poster);
   }
 
   /** Relative URL of an item's backdrop (its landscape image), served by GET /assets/:file. */
-  backdropUrl(item: CatalogItem): string | null {
+  backdropUrl(item: EpisodicItem): string | null {
     return assetUrl(item.backdrop);
   }
 
@@ -153,9 +159,9 @@ export class CatalogService {
     return path.join(this.current.dir, this.current.manifest.assetsDir, file);
   }
 
-  search(query: string, limit: number): CatalogItem[] {
+  search(query: string, limit: number): EpisodicItem[] {
     const q = fold(query.trim());
-    const matches = (i: CatalogItem) => q === "" || fold(i.title).includes(q) || (i.originalTitle && fold(i.originalTitle).includes(q)) || fold(i.id).includes(q);
+    const matches = (i: EpisodicItem) => q === "" || fold(i.title).includes(q) || (i.originalTitle && fold(i.originalTitle).includes(q)) || fold(i.id).includes(q);
     return this.current.items.filter(matches).sort((a, b) => byTitle(a.title, b.title)).slice(0, limit);
   }
 }

@@ -42,7 +42,8 @@ export interface Adapter {
 export interface ResolveRequest {
   catalogId: string;
   itemId: string;
-  episodeId: string;
+  /** null: an item-level source (a live channel). */
+  episodeId: string | null;
   sourceId: string;
   ref: Record<string, unknown>;
   preferredAudioLanguage: string | null;

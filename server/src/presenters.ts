@@ -1,7 +1,7 @@
 // Response shapes shared by the TV and admin APIs. Only shapes that are the same everywhere live here: the source
 // projections differ by what each side may see, and stay with their services and routes.
 
-import type { CatalogItem, Episode } from "@izle/contract";
+import type { Episode, EpisodicItem } from "@izle/contract";
 import type { CatalogService } from "./catalog.ts";
 
 /** Epoch milliseconds as an ISO 8601 string; null stays null. */
@@ -13,11 +13,11 @@ export function episodeSummary(episode: Episode) {
 }
 
 /** An item as a tile. */
-export function itemCard(catalog: CatalogService, item: CatalogItem) {
+export function itemCard(catalog: CatalogService, item: EpisodicItem) {
   return { id: item.id, kind: item.kind, title: item.title, year: item.year ?? null, posterUrl: catalog.posterUrl(item), backdropUrl: catalog.backdropUrl(item) };
 }
 
-export function itemDetails(catalog: CatalogService, item: CatalogItem) {
+export function itemDetails(catalog: CatalogService, item: EpisodicItem) {
   return { ...itemCard(catalog, item), originalTitle: item.originalTitle ?? null, synopsis: item.synopsis ?? null, genres: item.genres ?? [] };
 }
 

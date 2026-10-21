@@ -1,4 +1,4 @@
-import type { CatalogItem } from "@izle/contract";
+import type { EpisodicItem } from "@izle/contract";
 import type { Actor } from "./actor.ts";
 import type { Services } from "./context.ts";
 import { HttpError } from "./errors.ts";
@@ -116,7 +116,7 @@ export class TvService {
    * item was watched to the end (a wrapped cursor), episodes the catalog gained since then come first. `facts` is
    * what the device saved about the item, when the caller already has it (see homeFacts).
    */
-  continueFor(deviceId: string, item: CatalogItem, facts = this.itemFacts(deviceId, item.id)) {
+  continueFor(deviceId: string, item: EpisodicItem, facts = this.itemFacts(deviceId, item.id)) {
     const { progress, cursor } = facts;
     const appended = cursor?.wrapped ? new Set(facts.seenAfter(cursor.updatedAt)) : undefined;
     const index = cursorIndex(item, cursor, progress, appended);
@@ -134,7 +134,7 @@ export class TvService {
    * report on the item and the moment the item went on its home list (`addedAt`). Episodes of the first load of
    * the catalog (the history's baseline) never count.
    */
-  newEpisodesFor(deviceId: string, item: CatalogItem, addedAt: number | null, facts = this.itemFacts(deviceId, item.id)): number {
+  newEpisodesFor(deviceId: string, item: EpisodicItem, addedAt: number | null, facts = this.itemFacts(deviceId, item.id)): number {
     const lastProgressAt = Math.max(0, ...[...facts.progress.values()].map((p) => p.updatedAt));
     const added = facts.seenAfter(Math.max(lastProgressAt, addedAt ?? 0));
     const allowed = new Set(item.episodes.filter((e) => e.playbackAllowed).map((e) => e.id));

@@ -2,7 +2,7 @@
 // episodes with what was seen and covered, and the day counts. Marks are the family's: `device` narrows the viewings
 // and the counts, never whether an episode is seen.
 
-import type { CatalogItem } from "@izle/contract";
+import type { EpisodicItem } from "@izle/contract";
 import { byTitle, type CatalogService } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
 import { iso } from "./presenters.ts";
@@ -102,7 +102,7 @@ class HistoryView {
   }
 
   /** `TitleSummary` of an item with a viewing or a mark; `item` is its catalog entry, when it has one. */
-  title(itemId: string, item: CatalogItem | undefined) {
+  title(itemId: string, item: EpisodicItem | undefined) {
     const known = item ? null : this.known.get(itemId);
     const stats = this.statsByItem.get(itemId) ?? [];
     const started = new Set(stats.map((s) => s.episodeId));
@@ -129,7 +129,7 @@ class HistoryView {
   }
 
   /** `EpisodeHistory` of one episode (`episode` its catalog entry, when it has one), with the ranges of its viewings. */
-  episode(episodeId: string, episode: CatalogItem["episodes"][number] | undefined, ranges: ReadonlyArray<readonly [number, number]>) {
+  episode(episodeId: string, episode: EpisodicItem["episodes"][number] | undefined, ranges: ReadonlyArray<readonly [number, number]>) {
     const stats = this.statsByEpisode.get(episodeId);
     const durationMs = episode?.durationMs ?? stats?.lastDurationMs ?? null;
     const covered = stats && !stats.onlyImported && durationMs ? coveredFraction(ranges, durationMs) : null;

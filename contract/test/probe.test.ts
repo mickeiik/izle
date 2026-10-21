@@ -37,12 +37,22 @@ test("probe range-GETs direct media and subtitles, follows redirects, forwards h
           },
         ],
       },
+      {
+        id: "ch", kind: "live", title: "c", poster: null, playbackAllowed: true,
+        sources: [
+          { id: "live", type: "direct", languages, media: { kind: "hls", url: `${base}/ok.m3u8` } },
+          { id: "live-adapter", type: "adapter", adapter: "a", ref: {}, languages },
+        ],
+      },
     ],
   };
   try {
     const results = await probeBundle(bundle, { concurrency: 2 });
     const byId = Object.fromEntries(results.map((r) => [`${r.target.sourceId}:${r.target.what}`, r]));
-    assert.equal(results.length, 4, "adapter sources are not probed");
+    assert.equal(results.length, 5, "adapter sources are not probed");
+    assert.equal(byId["live:media"]?.ok, true);
+    assert.deepEqual([byId["live:media"]?.target.itemId, byId["live:media"]?.target.episodeId], ["ch", null], "a live item's own sources");
+    assert.equal(byId["ok:media"]?.target.episodeId, "e");
     assert.equal(byId["ok:media"]?.ok, true);
     assert.equal(byId["ok:media"]?.status, 206);
     assert.equal(byId["ok:subtitle"]?.ok, false);

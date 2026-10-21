@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { CatalogItem, Source } from "@izle/contract";
+import type { EpisodicItem, Source } from "@izle/contract";
 import { autoNextIndex, cursorAfterReport, cursorIndex, isPlayable, orderSources } from "../src/playback.ts";
 import { fixtureItems } from "./helpers.ts";
 
-const items = fixtureItems().items as CatalogItem[];
+const items = fixtureItems().items as EpisodicItem[];
 const show = items.find((i) => i.id === "show")!;
 const locked = items.find((i) => i.id === "locked")!;
 /** Saved positions with these episodes finished. */
@@ -24,7 +24,7 @@ test("cursor: without one, the first allowed unfinished episode (else the first)
 });
 
 // The fixture's show as if a later build appended e6 (not allowed), e7 and e8, after it was watched to the end.
-const grown: CatalogItem = {
+const grown: EpisodicItem = {
   ...show,
   episodes: [
     ...show.episodes, { ...show.episodes[4]!, id: "show.e6", playbackAllowed: false, sources: [] }, { ...show.episodes[4]!, id: "show.e7" },
