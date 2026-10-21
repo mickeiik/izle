@@ -7,6 +7,8 @@ contract share one version number. How to update (back up, update the server, th
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-21
+
 ### Added
 
 - **Home grid size per TV:** the owner sets how many columns (3–6) and rows (1–4) one screen of the TV's Home shows,
@@ -351,7 +353,8 @@ The first release: everything needed to run izle at home with your own catalog.
 - The TV app needs Android 7.0 (API 24) or newer. It carries Let's Encrypt's root certificates, so a TV on 7.0 can
   reach a server behind Caddy's default certificate.
 
-[Unreleased]: https://github.com/mickeiik/izle/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/mickeiik/izle/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/mickeiik/izle/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mickeiik/izle/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mickeiik/izle/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/mickeiik/izle/releases/tag/v0.1.0

@@ -26,7 +26,7 @@ android {
         applicationId = "io.github.mickeiik.izle"
         minSdk = 24
         targetSdk = 36
-        versionName = "0.3.0" // set with `node scripts/version.mjs set X.Y.Z`
+        versionName = "0.4.0" // set with `node scripts/version.mjs set X.Y.Z`
         // 1.2.3 → 10203, so every release installs over the previous one (minor and patch stay below 100).
         versionCode = versionName!!.substringBefore('-').split('.').map(String::toInt)
             .let { (major, minor, patch) -> major * 10_000 + minor * 100 + patch }
