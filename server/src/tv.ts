@@ -111,9 +111,8 @@ export class TvService {
       subtitleTracks: r.subtitleTracks.map((s) => ({ url: s.url, language: s.language, format: s.format, label: s.label ?? null })),
       languages: r.languages, alternatives: r.alternatives, item: itemCard(this.s.catalog, ref.item), expiresAt: r.expiresAt,
     };
-    const played = { ref, sourceId: r.source.id };
     if (ref.kind === "live") {
-      this.s.playing.started(device, played, null, input);
+      this.s.playing.started(device, { ref, sourceId: r.source.id }, null, input);
       return { ...answer, next: null, episode: null, resume: null };
     }
     const { item, episode, index } = ref;
@@ -122,7 +121,7 @@ export class TvService {
     const progress = this.s.store.getProgress(device.id, this.s.catalog.catalogId, episode.id);
     const resume = progress?.status === "watching" ? { positionMs: progress.positionMs, durationMs: progress.durationMs } : null;
     // Playback starts where the resume offered says, with the duration the TV last reported, else the catalog's.
-    this.s.playing.started(device, played, { positionMs: resume?.positionMs ?? 0, durationMs: progress?.durationMs ?? episode.durationMs ?? null }, input);
+    this.s.playing.started(device, { ref, sourceId: r.source.id }, { positionMs: resume?.positionMs ?? 0, durationMs: progress?.durationMs ?? episode.durationMs ?? null }, input);
     return {
       ...answer, next: next ? { episodeId: next.id, ...episodeSummary(next) } : null,
       episode: { id: episode.id, index, count: item.episodes.length, ...episodeSummary(episode), durationMs: episode.durationMs ?? null }, resume,

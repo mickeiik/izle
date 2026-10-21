@@ -30,12 +30,8 @@ interface ItemFacts {
 }
 
 /** The episode OK plays for an item and where it starts. */
-export interface Continue {
+export interface Continue extends ReturnType<typeof episodeSummary> {
   episodeId: string;
-  season: number | null;
-  number: number | null;
-  title: string | null;
-  label: string | null;
   index: number;
   count: number;
   positionMs: number;

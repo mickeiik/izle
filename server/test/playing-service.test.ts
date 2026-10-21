@@ -35,7 +35,9 @@ async function setup(t: { after(fn: () => unknown): void }) {
     /** A resolve as TvService makes it: a playback session, then the start. Returns the session id. */
     resolve(ref: PlayableRef, sourceId = "main", start: Position | null = null): string {
       const session = sessions.open({ deviceId: device.id, catalogId: catalog.catalogId, ...playingKey(ref), sourceId });
-      playing.started(device, { ref, sourceId }, start, { trigger: "viewer" });
+      // tv.ts's start when it has no saved position: 0, with the catalog's duration.
+      if (ref.kind === "live") playing.started(device, { ref, sourceId }, null, { trigger: "viewer" });
+      else playing.started(device, { ref, sourceId }, start ?? { positionMs: 0, durationMs: ref.episode.durationMs ?? null }, { trigger: "viewer" });
       return session.id;
     },
     report(ref: EpisodeRef, status: ProgressReportStatus, positionMs: number, extra: Json = {}) {

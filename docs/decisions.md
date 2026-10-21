@@ -303,7 +303,8 @@ The server side of the specification above, in one change (the admin page and th
   (`describePlayable`), never from a fresh lookup: the catalog may have been reloaded while the adapter ran.
 - Left alone: `failureKey` (a map key string, already per catalog, item, episode and source); `commandBody`'s play
   branches (an item with an optional episode, not the exclusive pair the fragment builds); the episode report's
-  match in `viewings.onReport` (it names the episode alone, like its session lookup).
+  match on the running viewing (it names the episode alone, like its session lookup; `matchesSaid` since the next
+  step).
 
 ## Architecture: what a TV is playing (2026-10-21)
 

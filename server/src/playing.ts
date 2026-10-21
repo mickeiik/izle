@@ -204,13 +204,15 @@ export class PlayingService {
   /**
    * A successful TV resolve: the row goes to `starting`; the running viewing of the same episode or channel goes on
    * (the source may change; no event), any other is ended as `replaced` and a new one started. `start` is where an
-   * episode starts (the resume position offered, else 0) and its duration as last known; without one it starts at 0
-   * with the catalog's duration. A channel plays at its live edge: `start` is ignored.
+   * episode starts and its duration as known, as tv.ts decides them; a channel plays at its live edge and has none.
    */
+  started(device: Device, played: { ref: EpisodeRef; sourceId: string }, start: Position, input: Pick<ResolveInput, "trigger" | "commandId">): void;
+  started(device: Device, played: { ref: LiveRef; sourceId: string }, start: null, input: Pick<ResolveInput, "trigger" | "commandId">): void;
   started(device: Device, played: { ref: PlayableRef; sourceId: string }, start: Position | null, input: Pick<ResolveInput, "trigger" | "commandId">): void {
     const { ref, sourceId } = played;
     const t = this.s.now();
-    const position = ref.kind === "live" ? null : (start ?? { positionMs: 0, durationMs: ref.episode.durationMs ?? null });
+    // The overloads pair an episode's ref with its start and a channel's with none.
+    const position = ref.kind === "live" ? null : start;
     this.s.store.transaction(() => {
       this.write(device.id, ref, sourceId, { state: "starting", position, playing: false, anchorAt: t }, t);
       this.startViewing(device, ref, sourceId, position, input, t);
