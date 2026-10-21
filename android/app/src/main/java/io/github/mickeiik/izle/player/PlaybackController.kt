@@ -1,25 +1,7 @@
 package io.github.mickeiik.izle.player
 
-import android.content.Context
-import android.net.Uri
 import android.os.SystemClock
-import androidx.annotation.OptIn
-import androidx.media3.common.AudioAttributes
-import androidx.media3.common.C
-import androidx.media3.common.MediaItem
-import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.common.TrackSelectionOverride
-import androidx.media3.common.text.CueGroup
-import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DataSource
-import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.okhttp.OkHttpDataSource
-import androidx.media3.exoplayer.DefaultRenderersFactory
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
-import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import io.github.mickeiik.izle.data.CommandResultReporter
 import io.github.mickeiik.izle.data.ProblemReporter
 import io.github.mickeiik.izle.data.ServerRepository
@@ -54,7 +36,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import okhttp3.OkHttpClient
 import java.io.IOException
 
 sealed interface PlayerPhase {
@@ -92,9 +73,6 @@ data class PlayerUi(
     val live: Boolean = false,
 )
 
-/** An audio or text track of the current media, for the hidden menu. */
-data class TrackOption(val groupIndex: Int, val trackIndex: Int, val language: String?, val label: String?, val selected: Boolean)
-
 /**
  * Plays one episode or channel at a time: resolve → play → heartbeat → auto-next, with source fallback on errors, a
  * refresh of expiring stream URLs and CH+/CH− episode steps. A channel (docs/ux/senior-tv.md, "Live channels") starts
@@ -102,28 +80,28 @@ data class TrackOption(val groupIndex: Int, val trackIndex: Int, val language: S
  * restarted at the live edge before the source fallback. All methods run on the main thread. Progress reports go
  * through one ordered queue in [reportScope], which outlives the screen.
  */
-@OptIn(UnstableApi::class)
 class PlaybackController(
-    private val context: Context,
+    private val engine: MediaEngine,
     private val scope: CoroutineScope,
     reportScope: CoroutineScope,
-    private val mediaHttp: OkHttpClient,
     private val repository: ServerRepository,
     private val problems: ProblemReporter,
     /** The owner's `play` commands report once their playback runs or fails. */
     private val commandResults: CommandResultReporter,
-    private val userAgent: String,
     private val appVersion: String,
-    private val capVideoTo720p: Boolean,
     private val onExit: () -> Unit,
     /** A playback reached its first frame. */
     private val onPlaybackStarted: (ItemCard) -> Unit,
+    private val clock: () -> Long = SystemClock::elapsedRealtime,
 ) {
     private val _ui = MutableStateFlow(PlayerUi())
     val ui: StateFlow<PlayerUi> = _ui.asStateFlow()
 
-    private val _player = MutableStateFlow<ExoPlayer?>(null)
-    val player: StateFlow<ExoPlayer?> = _player.asStateFlow()
+    private val _player = MutableStateFlow<Player?>(null)
+    val player: StateFlow<Player?> = _player.asStateFlow()
+
+    /** Loaded for this visit, independently of whether the engine has a renderable surface. */
+    private var activeEngine: MediaEngine? = null
 
     private class Session(val api: ApiClient, val resolved: ResolveResponse) {
         /** A channel's session: its reports name the item and carry no position. */
@@ -158,7 +136,7 @@ class PlaybackController(
     private var expiryJob: Job? = null
     private var stepJob: Job? = null
 
-    /** When this playback last re-resolved its stream ahead of the expiry (elapsedRealtime), for the 60 s spacing. */
+    /** When this playback last re-resolved its stream ahead of the expiry on [clock], for the 60 s spacing. */
     private var lastRefreshAt: Long? = null
 
     /** CH+/CH−: the items' episode lists, fetched on first use and kept for this player visit. */
@@ -168,7 +146,7 @@ class PlaybackController(
         reportScope,
         send = { api, report -> api.progress(report) },
         onFinalDelivered = repository::refreshSoon,
-        clock = SystemClock::elapsedRealtime,
+        clock = clock,
     )
 
     /** A player visit is on (loading, playing or one of its end screens). */
@@ -198,7 +176,7 @@ class PlaybackController(
         resolveJob?.cancel()
         endSession()
         cancelOverlays()
-        _player.value?.stop()
+        activeEngine?.stop()
         answerPlayCommand(CommandResult.ignored(CommandResult.SUPERSEDED))
         val commandId = origin.commandId
         this.playCommand = if (playCommand && api != null && commandId != null) PendingCommand(api, commandId) else null
@@ -238,10 +216,11 @@ class PlaybackController(
         stepJob?.cancel()
         cancelOverlays()
         endSession()
-        _player.value?.let {
-            it.removeListener(listener)
+        activeEngine?.let {
+            it.setListener(null)
             it.release()
         }
+        activeEngine = null
         _player.value = null
         target = null
         episodeLists.clear()
@@ -264,7 +243,7 @@ class PlaybackController(
 
     /** OK while an episode plays. A channel has no pause: see [showChannelInfo]. */
     fun togglePause() {
-        val p = _player.value ?: return
+        val p = activeEngine ?: return
         if (_ui.value.phase == PlayerPhase.Playing) setPlaying(!p.playWhenReady)
     }
 
@@ -284,7 +263,7 @@ class PlaybackController(
     }
 
     private fun setPlaying(play: Boolean) {
-        val p = _player.value ?: return
+        val p = activeEngine ?: return
         if (p.playWhenReady == play || (!play && _ui.value.live)) return
         if (play) p.play() else p.pause()
         reportCurrent(PlaybackPlan.liveStatus(play))
@@ -293,7 +272,7 @@ class PlaybackController(
 
     /** Start over (the hidden menu, never over a channel). */
     fun startOver() {
-        val p = _player.value ?: return
+        val p = activeEngine ?: return
         if (_ui.value.live) return
         seek.cancel()
         p.seekTo(0)
@@ -304,27 +283,27 @@ class PlaybackController(
 
     /** Left/Right DOWN (first press or key repeat); a channel is not sought. */
     fun onSeekKeyDown(direction: Int, eventTimeMs: Long, downTimeMs: Long, repeatCount: Int) {
-        val p = _player.value ?: return
+        val p = activeEngine ?: return
         if (_ui.value.phase != PlayerPhase.Playing || _ui.value.live) return
-        val preview = seek.onKeyDown(direction, eventTimeMs, downTimeMs, repeatCount, p.currentPosition, durationOf(p)) ?: return
+        val preview = seek.onKeyDown(direction, eventTimeMs, downTimeMs, repeatCount, p.positionMs, p.durationMs) ?: return
         _ui.update { it.copy(seekPreviewMs = preview) }
         showInfo()
     }
 
     fun onSeekKeyUp() {
-        val p = _player.value ?: return
+        val p = activeEngine ?: return
         seekNow(p, seek.commit() ?: return)
     }
 
     /** The owner's seek command, shown like a key press (never on a channel). */
     fun seekRemote(command: RemoteCommand.Seek) {
-        val p = _player.value ?: return
+        val p = activeEngine ?: return
         if (_ui.value.phase != PlayerPhase.Playing || _ui.value.live) return
         seek.cancel()
-        seekNow(p, command.targetMs(p.currentPosition.coerceAtLeast(0), durationOf(p) ?: _ui.value.durationMs))
+        seekNow(p, command.targetMs(p.positionMs.coerceAtLeast(0), p.durationMs ?: _ui.value.durationMs))
     }
 
-    private fun seekNow(p: ExoPlayer, toMs: Long) {
+    private fun seekNow(p: MediaEngine, toMs: Long) {
         p.seekTo(toMs)
         _ui.update { it.copy(seekPreviewMs = null, positionMs = toMs) }
         reportLive(p)
@@ -380,37 +359,18 @@ class PlaybackController(
         return CommandResult.Done
     }
 
-    fun audioTracks(): List<TrackOption> = tracksOf(C.TRACK_TYPE_AUDIO)
+    fun audioTracks(): List<TrackOption> = activeEngine?.audioTracks().orEmpty()
 
-    fun textTracks(): List<TrackOption> = tracksOf(C.TRACK_TYPE_TEXT)
+    fun textTracks(): List<TrackOption> = activeEngine?.textTracks().orEmpty()
 
     /** null = automatic (the server's preferred audio language). */
-    fun selectAudio(option: TrackOption?) = selectTrack(C.TRACK_TYPE_AUDIO, option)
+    fun selectAudio(option: TrackOption?) { activeEngine?.selectAudio(option) }
 
     /** null = subtitles off. */
-    fun selectText(option: TrackOption?) = selectTrack(C.TRACK_TYPE_TEXT, option)
-
-    private fun selectTrack(type: Int, option: TrackOption?) {
-        val p = _player.value ?: return
-        val builder = p.trackSelectionParameters.buildUpon().clearOverridesOfType(type)
-        if (option != null) {
-            val group = p.currentTracks.groups.getOrNull(option.groupIndex) ?: return
-            builder.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, option.trackIndex))
-        }
-        if (type == C.TRACK_TYPE_TEXT) builder.setTrackTypeDisabled(type, option == null)
-        p.trackSelectionParameters = builder.build()
-        if (type == C.TRACK_TYPE_TEXT && option == null) _ui.update { it.copy(cues = null) }
-    }
-
-    private fun tracksOf(type: Int): List<TrackOption> {
-        val p = _player.value ?: return emptyList()
-        val textDisabled = type == C.TRACK_TYPE_TEXT && type in p.trackSelectionParameters.disabledTrackTypes
-        return p.currentTracks.groups.withIndex().filter { it.value.type == type }.flatMap { (g, group) ->
-            (0 until group.length).filter { group.isTrackSupported(it) }.map { t ->
-                val format = group.getTrackFormat(t)
-                TrackOption(g, t, format.language, format.label, selected = !textDisabled && group.isTrackSelected(t))
-            }
-        }.distinctBy { it.language to it.label } // adaptive audio renditions repeat the same language
+    fun selectText(option: TrackOption?) {
+        val p = activeEngine ?: return
+        p.selectText(option)
+        if (option == null) _ui.update { it.copy(cues = null) }
     }
 
     /**
@@ -439,12 +399,12 @@ class PlaybackController(
             }
             return
         }
-        val receivedAt = SystemClock.elapsedRealtime()
+        val receivedAt = clock()
         attempts.onResolved(sourceId, resolved.alternatives)
         val live = resolved.item.isLive
         val episode = resolved.episode
         if (!live && episode == null) return showFailed(reason = "then the answer named no episode")
-        val item = mediaItemFor(api, resolved) ?: return showFailed(reason = "then the media address was unusable")
+        val media = mediaSpecFor(api, resolved) ?: return showFailed(reason = "then the media address was unusable")
         val resume = resolved.resume
         // A channel: no position, the live edge.
         val start = if (live) null else startAtMs ?: PlaybackPlan.resumePositionMs(resume?.positionMs, resume?.durationMs ?: episode?.durationMs)
@@ -463,12 +423,14 @@ class PlaybackController(
                 live = live,
             )
         }
-        val p = ensurePlayer()
-        applyTrackPreferences(p)
-        setMedia(p, item, resolved, start)
-        p.prepare()
+        activeEngine = engine
+        engine.setListener(listener)
+        val device = repository.state.value?.device
+        engine.applyPreferences(device?.preferredAudioLanguage, device?.subtitlesLanguage)
+        engine.load(media, start)
+        _player.value = engine.surface
         // Nothing pauses a channel: a re-resolve after its stream broke off plays on.
-        p.playWhenReady = playWhenReady || live
+        engine.playWhenReady = playWhenReady || live
         startHeartbeat()
         watchExpiry(api, resolved, receivedAt)
     }
@@ -481,36 +443,17 @@ class PlaybackController(
         if (e is ApiException && e.status == 401) repository.refreshSoon() // the next state fetch notices the removal
     }
 
-    /**
-     * Hands [item] to the player: an episode at [startMs], a channel at its default position, the live edge. A channel's
-     * progressive stream gets a source that never retries in place ([restartsInsteadOfResuming]).
-     */
-    private fun setMedia(p: ExoPlayer, item: MediaItem, resolved: ResolveResponse, startMs: Long?) {
-        val live = resolved.item.isLive
-        when {
-            restartsInsteadOfResuming(resolved.media.kind, live) -> p.setMediaSource(liveStreamSources.createMediaSource(item))
-            live || startMs == null -> p.setMediaItem(item)
-            else -> p.setMediaItem(item, startMs)
-        }
-    }
-
-    /** The media item for a resolve answer (server-relative URLs made absolute), or null when its URL is unusable. */
-    private fun mediaItemFor(api: ApiClient, resolved: ResolveResponse): MediaItem? {
+    /** The engine's media specification, with server-relative addresses made absolute. */
+    private fun mediaSpecFor(api: ApiClient, resolved: ResolveResponse): MediaSpec? {
         val mediaUrl = api.resolve(resolved.media.url) ?: return null
         val subtitles = resolved.subtitleTracks.mapNotNull { track ->
             val url = api.resolve(track.url) ?: return@mapNotNull null
-            MediaItem.SubtitleConfiguration.Builder(Uri.parse(url.toString()))
-                .setMimeType(subtitleMimeType(track.format))
-                .setLanguage(track.language)
-                .setLabel(track.label)
-                .build()
+            SubtitleSpec(url.toString(), track.language, track.format, track.label)
         }
-        return MediaItem.Builder()
-            .setUri(Uri.parse(mediaUrl.toString()))
-            .setMimeType(mediaMimeType(resolved.media.kind))
-            .setSubtitleConfigurations(subtitles)
-            .setMediaId(resolved.episode?.id ?: resolved.item.id)
-            .build()
+        return MediaSpec(
+            mediaUrl.toString(), resolved.media.kind, subtitles, resolved.episode?.id ?: resolved.item.id,
+            live = resolved.item.isLive,
+        )
     }
 
     /**
@@ -523,7 +466,7 @@ class PlaybackController(
         expiryJob = scope.launch {
             var deadline = first
             while (true) {
-                val now = SystemClock.elapsedRealtime()
+                val now = clock()
                 val wait = ExpiryPlan.refreshDelayMs(deadline - now, lastRefreshAt?.let { now - it }) ?: return@launch
                 delay(wait)
                 deadline = refreshBeforeExpiry(api, deadline) ?: return@launch
@@ -531,7 +474,7 @@ class PlaybackController(
         }
     }
 
-    /** When the answer's stream expires, on the elapsedRealtime clock; null without (a readable) `expiresAt`. */
+    /** When the answer's stream expires, on [clock]; null without (a readable) `expiresAt`. */
     private fun expiryDeadline(resolved: ResolveResponse, receivedAt: Long): Long? =
         ExpiryPlan.validForMs(resolved.expiresAt, resolved.serverDateMs, System.currentTimeMillis())?.let { receivedAt + it }
 
@@ -547,20 +490,20 @@ class PlaybackController(
             val ref = this.target ?: return null
             if (_ui.value.phase != PlayerPhase.Playing && _ui.value.phase != PlayerPhase.Loading) return null
             val sourceId = s.resolved.sourceId
-            lastRefreshAt = SystemClock.elapsedRealtime()
+            lastRefreshAt = clock()
             val resolved = try {
                 api.resolve(origin.request(ref, sourceId = sourceId))
             } catch (e: Exception) {
                 onResolveFailure(e, api, ref, sourceId)
                 if (session !== s) return null
                 val retryable = ExpiryPlan.isRetryable((e as? ApiException)?.status)
-                val retry = ExpiryPlan.retryDelayMs(retryable, retried, deadline - SystemClock.elapsedRealtime()) ?: return null
+                val retry = ExpiryPlan.retryDelayMs(retryable, retried, deadline - clock()) ?: return null
                 retried = true
                 delay(retry)
                 continue
             }
             if (session !== s) return null
-            val receivedAt = SystemClock.elapsedRealtime()
+            val receivedAt = clock()
             adoptRefreshed(api, s, resolved)
             return expiryDeadline(resolved, receivedAt)
         }
@@ -573,12 +516,11 @@ class PlaybackController(
      */
     private fun adoptRefreshed(api: ApiClient, old: Session, resolved: ResolveResponse) {
         session = Session(api, resolved)
-        val p = _player.value ?: return
+        val p = activeEngine ?: return
         if (resolved.media.url != old.resolved.media.url) {
-            mediaItemFor(api, resolved)?.let { item ->
-                val position = if (resolved.item.isLive) null else p.currentPosition.coerceAtLeast(0)
-                setMedia(p, item, resolved, position)
-                p.prepare()
+            mediaSpecFor(api, resolved)?.let { media ->
+                val position = if (resolved.item.isLive) null else p.positionMs.coerceAtLeast(0)
+                p.load(media, position)
                 lastPositionMs = position
                 _ui.update { it.copy(cues = null) }
             }
@@ -587,59 +529,58 @@ class PlaybackController(
         reportLive(p)
     }
 
-    private val listener = object : Player.Listener {
-        override fun onPlaybackStateChanged(playbackState: Int) {
-            val p = _player.value ?: return
-            when (playbackState) {
-                Player.STATE_READY -> {
-                    if (readyAt == null) {
-                        readyAt = SystemClock.elapsedRealtime()
-                        session?.resolved?.item?.let(onPlaybackStarted)
-                        answerPlayCommand(CommandResult.Done)
-                    }
-                    attempts.onPlaying()
-                    if (_ui.value.phase == PlayerPhase.Loading) _ui.update { it.copy(phase = PlayerPhase.Playing) }
-                }
-                Player.STATE_ENDED -> onEnded(p)
+    private val listener = object : MediaEngine.Listener {
+        override fun onReady() {
+            if (activeEngine == null) return
+            if (readyAt == null) {
+                readyAt = clock()
+                session?.resolved?.item?.let(onPlaybackStarted)
+                answerPlayCommand(CommandResult.Done)
             }
-            syncFlags(p)
+            attempts.onPlaying()
+            if (_ui.value.phase == PlayerPhase.Loading) _ui.update { it.copy(phase = PlayerPhase.Playing) }
         }
 
-        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-            _player.value?.let(::syncFlags)
+        override fun onEnded() { activeEngine?.let(this@PlaybackController::onEnded) }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean) {
+            activeEngine?.let(::syncFlags)
         }
 
         // A rebuffer stall, its end, a pause or a resume: the phone's "Listen along" follows this anchor, so report
         // at once (a stall is status "playing" with playing=false).
         override fun onIsPlayingChanged(isPlaying: Boolean) {
-            _player.value?.let(::reportLive)
+            activeEngine?.let(::reportLive)
         }
 
-        override fun onPlayerError(error: PlaybackException) = onError(error)
+        override fun onStateChanged() {
+            activeEngine?.let(::syncFlags)
+        }
 
-        override fun onCues(cueGroup: CueGroup) {
-            val text = cueGroup.cues.mapNotNull { it.text?.toString()?.trim() }.filter { it.isNotEmpty() }.joinToString("\n")
-            _ui.update { it.copy(cues = text.ifEmpty { null }) }
+        override fun onError(error: MediaError) = this@PlaybackController.onError(error)
+
+        override fun onCues(text: String?) {
+            _ui.update { it.copy(cues = text) }
         }
     }
 
-    private fun syncFlags(p: ExoPlayer) = _ui.update {
+    private fun syncFlags(p: MediaEngine) = _ui.update {
         it.copy(
             playWhenReady = p.playWhenReady,
-            buffering = p.playbackState == Player.STATE_BUFFERING,
+            buffering = p.buffering,
             // A live stream's duration is its window, nothing to show.
-            durationMs = if (it.live) null else durationOf(p) ?: it.durationMs,
+            durationMs = if (it.live) null else p.durationMs ?: it.durationMs,
         )
     }
 
-    private fun onEnded(p: ExoPlayer) {
+    private fun onEnded(p: MediaEngine) {
         val s = session ?: return
         if (reported) return
         // A channel never ends: its stream is resolved again at the live edge (or the next source, or the error screen).
         if (s.live) return recover(s, httpStatus = null, positionMs = 0)
         reported = true
-        val duration = durationOf(p) ?: s.resolved.episode?.durationMs
-        report(s, ProgressStatus.Finished, duration ?: p.currentPosition, duration, playing = false)
+        val duration = p.durationMs ?: s.resolved.episode?.durationMs
+        report(s, ProgressStatus.Finished, duration ?: p.positionMs, duration, playing = false)
         stopSessionLoops()
         lastPositionMs = 0
         val next = s.resolved.next
@@ -659,15 +600,15 @@ class PlaybackController(
         }
     }
 
-    private fun onError(error: PlaybackException) {
-        val p = _player.value
+    private fun onError(error: MediaError) {
+        val p = activeEngine
         val s = session
         val live = _ui.value.live
-        val position = p?.currentPosition?.coerceAtLeast(0) ?: lastPositionMs ?: 0
-        val httpStatus = error.httpStatus()
+        val position = p?.positionMs?.coerceAtLeast(0) ?: lastPositionMs ?: 0
+        val httpStatus = error.httpStatus
         problems.send(
             Problems.playbackError(
-                error, error.errorCodeName, httpStatus, target, s?.resolved?.sourceId, s?.resolved?.sessionId,
+                error.cause, error.codeName, httpStatus, target, s?.resolved?.sourceId, s?.resolved?.sessionId,
                 position.takeIf { !live }, appVersion,
             ),
             api = s?.api,
@@ -685,13 +626,13 @@ class PlaybackController(
         val ref = target ?: return showFailed()
         val start = if (s.live) null else positionMs
         lastPositionMs = start
-        val played = readyAt?.let { SystemClock.elapsedRealtime() - it } ?: 0
+        val played = readyAt?.let { clock() - it } ?: 0
         val sourceId = s.resolved.sourceId
         when (attempts.afterPlaybackError(sourceId, httpStatus, played)) {
             PlaybackPlan.Recovery.RetrySameSource -> relaunch(s.api, ref, sourceId, start)
             PlaybackPlan.Recovery.NextSource -> relaunch(s.api, ref, sourceId = null, start)
             PlaybackPlan.Recovery.GiveUp -> {
-                if (readyAt != null) report(s, ProgressStatus.Stopped, positionMs, _player.value?.let(::durationOf), playing = false)
+                if (readyAt != null) report(s, ProgressStatus.Stopped, positionMs, activeEngine?.durationMs, playing = false)
                 reported = true
                 showFailed()
             }
@@ -703,7 +644,7 @@ class PlaybackController(
      * channel (no position) starts again at its live edge.
      */
     private fun relaunch(api: ApiClient, ref: PlayableRef, sourceId: String?, positionMs: Long?) {
-        val playWhenReady = _player.value?.playWhenReady ?: true
+        val playWhenReady = activeEngine?.playWhenReady ?: true
         resolveJob?.cancel()
         expiryJob?.cancel()
         resolveJob = scope.launch { resolveAndStart(api, ref, origin, sourceId, positionMs, playWhenReady) }
@@ -716,7 +657,7 @@ class PlaybackController(
     private fun showFailed(reason: String? = null, resolveFailed: Boolean = false) {
         answerPlayCommand(CommandResult.failed(if (resolveFailed) CommandResult.NO_PLAYABLE_SOURCE else CommandResult.PLAYBACK_ERROR))
         stopSessionLoops()
-        _player.value?.stop()
+        activeEngine?.stop()
         target?.let { ref ->
             problems.send(Problems.gaveUp(ref, session?.resolved?.sourceId ?: attempts.lastTried, lastPositionMs, attempts.triedCount, appVersion, reason))
         }
@@ -730,7 +671,7 @@ class PlaybackController(
 
     /** The information for a few seconds (as after a key press); at the first or last channel or episode, only this. */
     fun showInfo() {
-        _ui.update { it.copy(showInfo = true, positionMs = _player.value?.currentPosition ?: it.positionMs) }
+        _ui.update { it.copy(showInfo = true, positionMs = activeEngine?.positionMs ?: it.positionMs) }
         infoJob?.cancel()
         infoJob = scope.launch {
             var shownFor = 0L
@@ -738,7 +679,7 @@ class PlaybackController(
                 delay(250)
                 shownFor += 250
                 val hide = shownFor >= PlaybackPlan.INFO_OVERLAY_MS && seek.pendingTargetMs == null
-                _ui.update { it.copy(positionMs = _player.value?.currentPosition ?: it.positionMs, showInfo = !hide) }
+                _ui.update { it.copy(positionMs = activeEngine?.positionMs ?: it.positionMs, showInfo = !hide) }
                 if (hide) break
             }
         }
@@ -749,20 +690,20 @@ class PlaybackController(
         heartbeatJob = scope.launch {
             while (isActive) {
                 delay(PlaybackPlan.HEARTBEAT_INTERVAL_MS)
-                if (_player.value?.isPlaying == true) reportCurrent(ProgressStatus.Playing)
+                if (activeEngine?.isPlaying == true) reportCurrent(ProgressStatus.Playing)
             }
         }
     }
 
     /** Reports the position with the status the viewer wants: playing, or paused (a channel: always playing). */
-    private fun reportLive(p: ExoPlayer) = reportCurrent(PlaybackPlan.liveStatus(p.playWhenReady, channel = _ui.value.live))
+    private fun reportLive(p: MediaEngine) = reportCurrent(PlaybackPlan.liveStatus(p.playWhenReady, channel = _ui.value.live))
 
     private fun reportCurrent(status: ProgressStatus) {
         val s = session ?: return
-        val p = _player.value ?: return
+        val p = activeEngine ?: return
         if (reported || readyAt == null) return
-        if (!s.live) lastPositionMs = p.currentPosition
-        report(s, status, p.currentPosition, durationOf(p) ?: _ui.value.durationMs, playing = p.isPlaying)
+        if (!s.live) lastPositionMs = p.positionMs
+        report(s, status, p.positionMs, p.durationMs ?: _ui.value.durationMs, playing = p.isPlaying)
     }
 
     /**
@@ -771,10 +712,10 @@ class PlaybackController(
      */
     private fun endSession() {
         val s = session
-        val p = _player.value
+        val p = activeEngine
         if (s != null && p != null && !reported && readyAt != null) {
-            val position = p.currentPosition
-            val duration = durationOf(p) ?: s.resolved.episode?.durationMs
+            val position = p.positionMs
+            val duration = p.durationMs ?: s.resolved.episode?.durationMs
             val status = if (s.live) ProgressStatus.Stopped else PlaybackPlan.stopStatus(position, duration)
             report(s, status, position, duration, playing = false)
         }
@@ -816,45 +757,5 @@ class PlaybackController(
     private fun cancelOverlays() {
         overlayJob?.cancel()
         infoJob?.cancel()
-    }
-
-    /** Media requests: the app's connection pool, the media User-Agent, never the device token. */
-    private val dataSources: DataSource.Factory by lazy {
-        DefaultDataSource.Factory(context, OkHttpDataSource.Factory(mediaHttp).setUserAgent(userAgent))
-    }
-
-    /** A channel's progressive stream: no retry in place, see [restartsInsteadOfResuming]. */
-    private val liveStreamSources by lazy { DefaultMediaSourceFactory(dataSources).setLoadErrorHandlingPolicy(NoRetryInPlace()) }
-
-    private fun ensurePlayer(): ExoPlayer = _player.value ?: ExoPlayer.Builder(context)
-        .setRenderersFactory(DefaultRenderersFactory(context).setEnableDecoderFallback(true))
-        .setMediaSourceFactory(DefaultMediaSourceFactory(dataSources))
-        .setAudioAttributes(
-            AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),
-            /* handleAudioFocus = */ true,
-        )
-        .setHandleAudioBecomingNoisy(true)
-        .build()
-        .apply { addListener(listener) }
-        .also { _player.value = it }
-
-    /** Preferred audio from the server (owner-controlled); subtitles off unless the owner chose a language. */
-    private fun applyTrackPreferences(p: ExoPlayer) {
-        val device = repository.state.value?.device
-        val subtitles = device?.subtitlesLanguage
-        val builder = p.trackSelectionParameters.buildUpon()
-            .clearOverrides()
-            .setPreferredAudioLanguages(*languagePreference(device?.preferredAudioLanguage))
-            .setPreferredTextLanguages(*languagePreference(subtitles))
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, subtitles == null)
-        if (capVideoTo720p) builder.setMaxVideoSize(1280, 720)
-        p.trackSelectionParameters = builder.build()
-    }
-
-    private fun durationOf(p: ExoPlayer): Long? = p.duration.takeIf { it != C.TIME_UNSET && it > 0 }
-
-    /** Every load error is final: the player reports it, and the app decides (a new resolve at the live edge). */
-    private class NoRetryInPlace : DefaultLoadErrorHandlingPolicy() {
-        override fun getRetryDelayMsFor(loadErrorInfo: LoadErrorHandlingPolicy.LoadErrorInfo): Long = C.TIME_UNSET
     }
 }
