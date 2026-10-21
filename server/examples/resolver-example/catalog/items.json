@@ -230,6 +230,33 @@
           ]
         }
       ]
+    },
+    {
+      "id": "live-demo",
+      "kind": "live",
+      "title": "Live demo",
+      "synopsis": "The test pattern as a TV channel: the upstream plays it in a loop as if it were broadcast. A live playlist that slides on every 6 seconds, or the same channel as one endless MPEG-TS stream.",
+      "genres": ["Test"],
+      "poster": null,
+      "playbackAllowed": true,
+      "sources": [
+        {
+          "id": "signed-live-hls",
+          "type": "adapter",
+          "adapter": "example",
+          "label": "Live playlist",
+          "ref": { "video": "demo", "live": true },
+          "languages": { "audio": ["en", "tr"], "subtitles": [] }
+        },
+        {
+          "id": "raw-ts",
+          "type": "adapter",
+          "adapter": "example",
+          "label": "MPEG-TS stream",
+          "ref": { "video": "demo", "format": "ts" },
+          "languages": { "audio": ["en", "tr"], "subtitles": [] }
+        }
+      ]
     }
   ]
 }
