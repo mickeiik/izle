@@ -5,14 +5,14 @@
 
 import { SERVER, tvActor } from "./actor.ts";
 import { playingKey, type CatalogService, type PlayingKey } from "./catalog.ts";
-import type { Services } from "./context.ts";
 import { tooManyRequests } from "./errors.ts";
-import { redactReportText } from "./log.ts";
+import type { EventLog } from "./eventlog.ts";
+import { redactReportText, type Logger } from "./log.ts";
 import { iso } from "./presenters.ts";
 import type { ProxyProblem, ProxyProblemCode } from "./proxy.ts";
 import { RateLimiter } from "./ratelimit.ts";
-import { isCompanionScope, type Tried } from "./resolve.ts";
-import type { Device, Problem, ProblemOrigin } from "./store.ts";
+import { isCompanionScope, type PlaybackSessions, type Tried } from "./resolve.ts";
+import type { Device, Problem, ProblemOrigin, Store } from "./store.ts";
 
 /** Problem kinds a TV may report (`proxy` problems are only recorded by the server). */
 export const TV_PROBLEM_KINDS = ["playback", "resolve", "network", "other"] as const;
@@ -60,7 +60,15 @@ interface ServerProblem {
   detail?: string | null;
 }
 
-type ProblemDeps = Pick<Services, "store" | "catalog" | "log" | "now" | "sessions" | "eventLog">;
+interface ProblemDeps {
+  store: Store;
+  catalog: CatalogService;
+  /** The playback sessions a report names. */
+  sessions: PlaybackSessions;
+  eventLog: EventLog;
+  log: Logger;
+  now: () => number;
+}
 
 /**
  * What a problem names, as a playing key; null when it names nothing, or an episode alone (the TV gave no item and

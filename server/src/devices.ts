@@ -1,20 +1,52 @@
 // The owner's side of the paired TVs (admin API): how a TV appears in the device list and on its page, what it has
 // watched and is playing, settings changes, and deletion.
 
-import { isLiveItem } from "@izle/contract";
 import { tvActor, type Actor } from "./actor.ts";
-import type { PlayingKey } from "./catalog.ts";
-import type { Services } from "./context.ts";
+import type { AppUpdateService } from "./app-updates.ts";
+import type { CatalogService, PlayingKey } from "./catalog.ts";
+import type { ServerConfig } from "./config.ts";
 import { HttpError } from "./errors.ts";
-import { isPlayable } from "./playback.ts";
+import type { EventLog } from "./eventlog.ts";
+import type { EventHub, Notifier } from "./events.ts";
+import type { HomeService } from "./home.ts";
+import type { Logger } from "./log.ts";
 import type { Current } from "./playing.ts";
 import { iso } from "./presenters.ts";
+import type { ProblemService } from "./problems.ts";
 import type { ProxyService } from "./proxy.ts";
 import { companionScope } from "./resolve.ts";
-import type { Device, DevicePatch, TvAppInfo } from "./store.ts";
-import type { TvService } from "./tv.ts";
+import type { Device, DevicePatch, Store, TvAppInfo } from "./store.ts";
 
-type DeviceDeps = Services & { tv: TvService; proxy: ProxyService };
+interface DeviceDeps {
+  config: ServerConfig;
+  store: Store;
+  catalog: CatalogService;
+  events: EventHub;
+  notifier: Notifier;
+  eventLog: EventLog;
+  problems: ProblemService;
+  appUpdates: AppUpdateService;
+  /** The home list the device page shows. */
+  home: HomeService;
+  /** A deleted device's proxy sessions end with it. */
+  proxy: ProxyService;
+  log: Logger;
+  now: () => number;
+}
+
+/** The device's settings, falling back to the server's defaults, then to the catalog's hints (what the TV gets). */
+export function effectiveSettings(device: Device, config: ServerConfig, catalog: CatalogService) {
+  const hints = catalog.current.manifest.defaults ?? {};
+  const ui = device.uiLanguage ?? config.defaults.uiLanguage ?? hints.uiLanguage ?? "en";
+  return {
+    uiLanguage: ui === "tr" ? ("tr" as const) : ("en" as const),
+    preferredAudioLanguage: device.preferredAudioLanguage ?? config.defaults.preferredAudioLanguage ?? hints.preferredAudioLanguage ?? null,
+    subtitlesLanguage: device.subtitlesLanguage,
+    autoplayOnStart: device.autoplayOnStart,
+    homeColumns: device.homeColumns,
+    homeRows: device.homeRows,
+  };
+}
 
 /** Whether the device row already has what the TV reports. */
 export function sameApp(d: Device, info: TvAppInfo): boolean {
@@ -35,7 +67,7 @@ export class DeviceService {
       lastSeenAt: iso(d.lastSeenAt), stateVersion: d.stateVersion,
       settings: { uiLanguage: d.uiLanguage, preferredAudioLanguage: d.preferredAudioLanguage, subtitlesLanguage: d.subtitlesLanguage, autoplayOnStart: d.autoplayOnStart,
         homeColumns: d.homeColumns, homeRows: d.homeRows },
-      effective: this.s.tv.settings(d), problems: this.s.problems.stats(d.id), app: this.app(d),
+      effective: effectiveSettings(d, this.s.config, this.s.catalog), problems: this.s.problems.stats(d.id), app: this.app(d),
     };
   }
 
@@ -74,8 +106,7 @@ export class DeviceService {
 
   /** Every device, with the length of its home list. */
   list() {
-    const { store, catalog } = this.s;
-    return store.listDevices().map((d) => ({ ...this.view(d), homeCount: store.getHomeEntries(d.id, catalog.catalogId).length }));
+    return this.s.store.listDevices().map((d) => ({ ...this.view(d), homeCount: this.s.home.ids(d.id).length }));
   }
 
   /**
@@ -83,16 +114,12 @@ export class DeviceService {
    * stay and are flagged `missing`. A channel has no `continue` and no new episodes.
    */
   home(d: Device) {
-    const { store, catalog, tv } = this.s;
-    const factsFor = tv.homeFacts(d.id);
-    return store.getHomeEntries(d.id, catalog.catalogId).map(({ itemId, addedAt }) => {
-      const item = catalog.item(itemId);
-      if (!item) return { itemId, title: null, kind: null, posterUrl: null, backdropUrl: null, missing: true, playable: false, continue: null, newEpisodes: 0 };
-      const { title, kind } = item;
-      const card = { itemId, title, kind, posterUrl: catalog.posterUrl(item), backdropUrl: catalog.backdropUrl(item), missing: false, playable: isPlayable(item) };
-      if (isLiveItem(item)) return { ...card, continue: null, newEpisodes: 0 };
-      const facts = factsFor(item.id);
-      return { ...card, continue: tv.continueFor(d.id, item, facts), newEpisodes: tv.newEpisodesFor(d.id, item, addedAt, facts) };
+    const { catalog } = this.s;
+    return this.s.home.list(d.id).map(({ itemId, item, missing, playable, continue: cont, newEpisodes }) => {
+      const card = item
+        ? { title: item.title, kind: item.kind, posterUrl: catalog.posterUrl(item), backdropUrl: catalog.backdropUrl(item) }
+        : { title: null, kind: null, posterUrl: null, backdropUrl: null };
+      return { itemId, ...card, missing, playable, continue: cont, newEpisodes };
     });
   }
 

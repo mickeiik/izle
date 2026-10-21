@@ -5,7 +5,7 @@
 import { isLiveItem, type CatalogItem, type Source } from "@izle/contract";
 import { SERVER, type Actor } from "./actor.ts";
 import type { CatalogService, ReloadResult } from "./catalog.ts";
-import type { AppContext, Services } from "./context.ts";
+import type { AppContext } from "./context.ts";
 import { errorName } from "./errors.ts";
 import { isPlayable } from "./playback.ts";
 import { episodeDetails, iso, itemCard, itemDetails } from "./presenters.ts";
@@ -38,7 +38,7 @@ export function catalogInfo(ctx: Pick<AppContext, "catalog" | "store" | "resolve
   };
 }
 
-type ReloadDeps = Pick<Services, "catalog" | "notifier" | "store" | "eventLog">;
+type ReloadDeps = Pick<AppContext, "catalog" | "notifier" | "store" | "eventLog">;
 
 /**
  * Re-reads the catalog bundle (the admin route and SIGHUP). After a good load every TV's state version is bumped,
@@ -66,7 +66,7 @@ export async function reloadCatalog({ catalog, notifier, store, eventLog }: Relo
  * The reload for a signal handler: it never rejects. A reload that throws (the store is already closed during
  * shutdown) is logged with the error's class name, never its message, instead of ending the process.
  */
-export async function reloadOnSignal(deps: ReloadDeps & Pick<Services, "log">, signal: string): Promise<void> {
+export async function reloadOnSignal(deps: ReloadDeps & Pick<AppContext, "log">, signal: string): Promise<void> {
   try {
     await reloadCatalog(deps, SERVER);
   } catch (err) {

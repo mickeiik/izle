@@ -1,10 +1,13 @@
 import { randomInt } from "node:crypto";
 import { SERVER, tvActor, type Actor } from "./actor.ts";
 import { newId, newToken, secretsEqual, sha256 } from "./auth.ts";
-import type { Services } from "./context.ts";
 import { HttpError, tooManyRequests } from "./errors.ts";
+import type { EventLog } from "./eventlog.ts";
+import type { EventHub } from "./events.ts";
+import type { Logger } from "./log.ts";
 import type { ProxyService } from "./proxy.ts";
 import { RateLimiter } from "./ratelimit.ts";
+import type { Store } from "./store.ts";
 import { Waiters } from "./waiters.ts";
 
 const PAIR_CODE_TTL_MS = 10 * 60_000;
@@ -29,7 +32,15 @@ export interface PairingOptions {
  * Pairing: the TV asks for a 6-digit code and long-polls with its pair token; the owner approves the code in the
  * admin API; the next poll creates the device token, hands it over once, and only its hash is kept.
  */
-type PairingDeps = Pick<Services, "store" | "log" | "now" | "eventLog" | "events"> & { proxy: ProxyService };
+interface PairingDeps {
+  store: Store;
+  eventLog: EventLog;
+  events: EventHub;
+  /** A replaced TV's proxy sessions end with it. */
+  proxy: ProxyService;
+  log: Logger;
+  now: () => number;
+}
 
 export class PairingService {
   private readonly waiters = new Waiters<string>();

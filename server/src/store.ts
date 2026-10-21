@@ -22,9 +22,9 @@ export interface Device {
   stateVersion: number;
   /** When the app opens, the show watched last (else the first tile) starts after a countdown. */
   autoplayOnStart: boolean;
-  /** Cards per row on Home (HOME_COLUMNS in tv.ts). */
+  /** Cards per row on Home (HOME_COLUMNS in home.ts). */
   homeColumns: number;
-  /** Rows of cards one screen of Home shows; more scroll (HOME_ROWS in tv.ts). */
+  /** Rows of cards one screen of Home shows; more scroll (HOME_ROWS in home.ts). */
   homeRows: number;
   /** The TV app's version as its User-Agent reported it; null until a TV that sends one connected. */
   appVersion: string | null;

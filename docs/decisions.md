@@ -328,3 +328,21 @@ The server side of the specification above, in one change (the admin page and th
 - `DeviceService.now` takes the `Current` value (the route passes the waited one), so its constructor needed no
   `playing`; `playing` is on `AppContext`, not on `Services`. `running()` stays public for the HTTP tests, which now
   read `ctx.playing.running` and call `ctx.playing.sweep`.
+
+## Architecture: the Home list (2026-10-21)
+
+- A TV's Home list is one value, `HomeService.list` (home.ts): every entry in display order, with the item (null when
+  it left the catalog), `missing`, `playable`, what OK plays (`continue`) and the new-episode count, read in three
+  queries. The TV's state and the admin page are its two projections: `TvService.state` drops the missing and
+  unplayable entries (the TV shows nothing it cannot play), `DeviceService.home` keeps and flags them, so the owner
+  sees what a reload took away. New episodes are counted for an unplayable item too; only the admin page shows them.
+- The owner's operations live with the list: `set` (with its expected-list check), `add`, `move`, `remove` (each
+  rebuilds the whole list and goes through `set`) and the "continue from" override `setCursor`, so the routes call
+  `ctx.home` directly. A progress report's cursor move stays in tv.ts, next to the saved position it writes;
+  `HomeService.itemProgress` gives the hidden menu's item view its positions and cursor in one facts load.
+- The effective settings (server defaults, then the catalog's hints) became `effectiveSettings` in devices.ts: the
+  device page shows them and the TV gets them, and DeviceService was the last module that needed `tv` for them.
+- The `Services` bag is gone: every module declares the deps interface it uses, and `AppContext` is the routes' view
+  of the running server, every module and the settings in one flat interface (`sessions` stays on it although no
+  route reads it, since it is one of the modules). server.ts still spreads one object of the built modules into each
+  constructor; the types, not the call site, say what a module may use. `StartOptions` is left for a later step.

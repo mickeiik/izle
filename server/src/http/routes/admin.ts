@@ -8,13 +8,13 @@ import { buildJson, catalogInfo, catalogItemJson, reloadCatalog, searchHitJson }
 import type { AppContext } from "../../context.ts";
 import { diagnosePlayable } from "../../diagnostics.ts";
 import { HttpError } from "../../errors.ts";
+import { HOME_MAX_ITEMS } from "../../home.ts";
 import { requireItem } from "../../lookup.ts";
 import { PAIR_CODE } from "../../pairing.ts";
 import { PROBLEM_LIST_DEFAULT, PROBLEM_LIST_MAX } from "../../problems.ts";
 import { iso } from "../../presenters.ts";
 import type { Device, Store } from "../../store.ts";
 import { MAX_NOW_WAIT_MS } from "../../playing.ts";
-import { HOME_MAX_ITEMS } from "../../tv.ts";
 import { adoptBody, approveBody, commandBody, companionLinkBody, companionResolveBody, cursorBody, devicePatchBody, diagnosticsBody, homeBody, intParam, intQuery, isId, limitQuery, parseBody, parseWait } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
 
@@ -26,7 +26,7 @@ export function requireDevice(store: Store, id: string): Device {
 }
 
 export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
-  const { store, tv, pairing, devices, catalog, companion, playing } = ctx;
+  const { store, home, pairing, devices, catalog, companion, playing } = ctx;
 
   app.post("/api/v1/admin/pair/approve", async (c) => {
     const body = await parseBody(c, approveBody);
@@ -71,14 +71,14 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
   app.put("/api/v1/admin/devices/:id/home", async (c) => {
     const d = requireDevice(store, c.req.param("id"));
     const body = await parseBody(c, homeBody);
-    const version = tv.setHome(d.id, body.itemIds, c.get("actor"), body.expected);
+    const version = home.set(d.id, body.itemIds, c.get("actor"), body.expected);
     return c.json({ version, home: devices.home(d) });
   });
 
   app.put("/api/v1/admin/devices/:id/cursor", async (c) => {
     const d = requireDevice(store, c.req.param("id"));
     const body = await parseBody(c, cursorBody);
-    return c.json({ version: tv.setCursor(d.id, body.itemId, body.episodeId, c.get("actor")) });
+    return c.json({ version: home.setCursor(d.id, body.itemId, body.episodeId, c.get("actor")) });
   });
 
   app.get("/api/v1/admin/devices/:id/progress", (c) => c.json(devices.progress(requireDevice(store, c.req.param("id")))));

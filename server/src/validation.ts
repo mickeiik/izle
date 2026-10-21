@@ -6,6 +6,7 @@ import type { CompanionResolveInput, LinkInput } from "./companion.ts";
 import { LANGUAGE_TAG_PATTERN, objectSchema as object } from "./config.ts";
 import type { DiagnosticsInput } from "./diagnostics.ts";
 import { HttpError } from "./errors.ts";
+import { HOME_COLUMNS, HOME_ROWS } from "./home.ts";
 import { PAIR_CODE } from "./pairing.ts";
 import { LIVE_REPORT_STATUSES, PROGRESS_REPORT_STATUSES } from "./playback.ts";
 import type { ProgressInput } from "./playing.ts";
@@ -13,7 +14,6 @@ import { TV_PROBLEM_KINDS, type ProblemReportBody } from "./problems.ts";
 import type { ResolveInput } from "./resolve.ts";
 import type { DevicePatch } from "./store.ts";
 import { SCOPES, type Scope } from "./tokens.ts";
-import { HOME_COLUMNS, HOME_ROWS } from "./tv.ts";
 import { VIEWING_TRIGGERS } from "./viewings.ts";
 
 const ajv = new Ajv2020({ strict: true, allErrors: true });

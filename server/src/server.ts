@@ -16,6 +16,7 @@ import { DeviceService } from "./devices.ts";
 import { EventLog } from "./eventlog.ts";
 import { EventHub, Notifier } from "./events.ts";
 import { CatalogHistory } from "./history.ts";
+import { HomeService } from "./home.ts";
 import { clientKeyFor, registerMiddleware, type Env } from "./http/middleware.ts";
 import { registerAdmin } from "./http/routes/admin.ts";
 import { registerAdminApp } from "./http/routes/admin-app.ts";
@@ -91,7 +92,9 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     throw err;
   }
   const events = new EventHub(opts.offlineGraceMs);
+  const notifier = new Notifier(store, events);
   const eventLog = new EventLog(store, log, now, config.events.retentionDays);
+  const home = new HomeService({ store, catalog, eventLog, notifier, now });
   const viewings = new ViewingService({ store, catalog, eventLog, now });
   const appUpdates = new AppUpdateService({
     store, eventLog, events, log, now, config, fetch: fetchUpstream, githubApiBase: opts.githubApiBase,
@@ -113,11 +116,10 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     deadlineMs: config.resolver?.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,
     budgetMs: config.resolver?.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
   });
-  const services = { config, store, catalog, events, notifier: new Notifier(store, events), eventLog, resolver, sessions, problems, viewings, appUpdates, log, now };
-  const tv = new TvService({ ...services, playing });
+  const modules = { config, store, catalog, events, notifier, eventLog, resolver, sessions, problems, viewings, appUpdates, home, playing, proxy, log, now };
   const ctx: AppContext = {
-    ...services, tv, playing, companion: new CompanionService({ ...services, playing }), pairing: new PairingService({ ...services, proxy }, opts.pairing), proxy,
-    devices: new DeviceService({ ...services, tv, proxy }), commands: new CommandService({ ...services, tv }), tokens: new TokenService(store, log, now),
+    ...modules, tv: new TvService(modules), companion: new CompanionService(modules), pairing: new PairingService(modules, opts.pairing),
+    devices: new DeviceService(modules), commands: new CommandService(modules), tokens: new TokenService(store, log, now),
     resolverModule, adminToken, pingMs: opts.pingMs ?? 20_000, fetch: fetchUpstream, adminUiDir: fileURLToPath(new URL("../admin", import.meta.url)),
   };
 

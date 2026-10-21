@@ -9,7 +9,7 @@ import type { Env } from "../middleware.ts";
 import { requireDevice } from "./admin.ts";
 
 export function registerAdminHome(app: Hono<Env>, ctx: AppContext): void {
-  const { store, tv, devices } = ctx;
+  const { store, home, devices } = ctx;
 
   /** The device and the item a `…/home/items/:itemId` route names; an id that cannot be on a list is not on it. */
   const target = (c: Context<Env>) => {
@@ -22,20 +22,20 @@ export function registerAdminHome(app: Hono<Env>, ctx: AppContext): void {
   app.post("/api/v1/admin/devices/:id/home/items", async (c) => {
     const d = requireDevice(store, c.req.param("id"));
     const body = await parseBody(c, homeItemBody);
-    const version = tv.addHomeItem(d.id, body.itemId, body.position, c.get("actor"));
+    const version = home.add(d.id, body.itemId, body.position, c.get("actor"));
     return c.json({ version, home: devices.home(d) });
   });
 
   app.patch("/api/v1/admin/devices/:id/home/items/:itemId", async (c) => {
     const { d, itemId } = target(c);
     const body = await parseBody(c, homeMoveBody);
-    const version = tv.moveHomeItem(d.id, itemId, body.position, c.get("actor"));
+    const version = home.move(d.id, itemId, body.position, c.get("actor"));
     return c.json({ version, home: devices.home(d) });
   });
 
   app.delete("/api/v1/admin/devices/:id/home/items/:itemId", (c) => {
     const { d, itemId } = target(c);
-    const version = tv.removeHomeItem(d.id, itemId, c.get("actor"));
+    const version = home.remove(d.id, itemId, c.get("actor"));
     return c.json({ version, home: devices.home(d) });
   });
 }

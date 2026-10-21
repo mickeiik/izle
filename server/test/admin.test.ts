@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { OWNER } from "../src/actor.ts";
 import { reloadOnSignal } from "../src/catalog-admin.ts";
-import { HOME_COLUMNS, HOME_MAX_ITEMS, HOME_ROWS } from "../src/tv.ts";
+import { HOME_COLUMNS, HOME_MAX_ITEMS, HOME_ROWS } from "../src/home.ts";
 import { fixtureItems, fixtureManifest, openEvents, publishBuild, startTestServer, tempDir, writeBundle, type Json } from "./helpers.ts";
 
 /** A server with a paired TV; `fillers` playable movies beyond the fixture's usual ones (for the home limit). */

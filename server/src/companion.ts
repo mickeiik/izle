@@ -3,12 +3,13 @@
 // playing, keeps the owner's timing links (offset, speed, audio language) and resolves the companion stream under
 // its own proxy scope so the TV's sessions are never disturbed.
 
-import type { Services } from "./context.ts";
+import type { CatalogService } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
 import { requireEpisodeSource } from "./lookup.ts";
 import type { PlayingService } from "./playing.ts";
 import { iso } from "./presenters.ts";
-import type { CompanionLink, Device } from "./store.ts";
+import type { ResolveService } from "./resolve.ts";
+import type { CompanionLink, Device, Store } from "./store.ts";
 
 export interface LinkInput {
   /** Companion position when the TV is at 0. */
@@ -28,10 +29,14 @@ export interface CompanionResolveInput {
 /** A link as the admin API shows it: the stored values, or the defaults (no offset, same speed). */
 const linkJson = (l: CompanionLink | null) => ({ offsetMs: l?.offsetMs ?? 0, rate: l?.rate ?? 1, language: l?.language ?? null, updatedAt: l ? iso(l.updatedAt) : null });
 
-type CompanionDeps = Pick<Services, "store" | "catalog" | "resolver" | "now"> & {
+interface CompanionDeps {
+  store: Store;
+  catalog: CatalogService;
+  resolver: ResolveService;
   /** What the TV plays: the candidates are its sources. */
   playing: PlayingService;
-};
+  now: () => number;
+}
 
 export class CompanionService {
   private readonly s: CompanionDeps;
