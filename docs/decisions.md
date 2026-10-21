@@ -237,3 +237,12 @@ The server side of the specification above, in one change (the admin page and th
   item left the catalog. The `problem.recorded` event carries `itemId` too.
 - The test fixture gained two channels (`news`, playable, with HLS and a Referer-bound `ts` source, and `off-air`,
   not playable), so every server test runs with channels in the catalog.
+- The example upstream's channel view numbers live segments from the epoch (every request agrees on "now", and a
+  returning player starts at the live edge), answers `stream.ts` with 200 whatever the `Range` (an endless stream
+  has no byte position to go back to; the TV app should restart a live `ts` stream after an error rather than
+  resume it), refuses `?delivery=inline` for a channel (`400 inline_is_vod_only`), and for real media rewrites the
+  PCR/PTS/DTS and continuity counters where the loop restarts, since a raw stream has no `#EXT-X-DISCONTINUITY`.
+  The looped 360p rendition is silent: the catalog's audio facts for `live-demo` describe the VOD, a known gap.
+- The work ran as three batches: S1 (core, sequential) took the kind branches of history, catalog-admin, devices,
+  commands, problems and viewing-summaries along, because they were needed to compile and were the feature; S2
+  (diagnostics, companion, tests) and S3 (example, proxy tests) ran in parallel on disjoint files.
