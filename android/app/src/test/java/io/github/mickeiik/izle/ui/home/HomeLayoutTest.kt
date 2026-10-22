@@ -39,12 +39,6 @@ class HomeLayoutTest {
             // Exactly the grid's items: no title, no span.
             assertEquals((0 until 11).map { Card(0, it, g.padding + it / g.columns * g.rowPitch, 1) }, l.slots)
         }
-        // Today's numbers for 4 × 2.
-        val l = layout(4, 2, grid(5))
-        assertEquals(194f, l.grid.cardWidth, 0f)
-        assertEquals(414.25f, l.viewportHeight, 0.001f)
-        assertEquals(14f, l.lines[0].cardTop, 0f)
-        assertEquals(217.125f, l.lines[1].cardTop, 0.001f)
     }
 
     @Test

@@ -35,11 +35,6 @@ fun IzleRoot(vm: AppViewModel) {
             val state by vm.state.collectAsStateWithLifecycle()
             val autoplay by vm.autoplay.collectAsStateWithLifecycle()
             val banner by vm.banner.collectAsStateWithLifecycle()
-            // The owner's message: an overlay across the top, over Home's grid (whose cards stay where they are), the
-            // video, the hidden menu and the autoplay countdown. Other screens (the update screen included) ignore
-            // messages.
-            val homeCovered = menu != null || autoplay != null
-            val bannerOverlay = banner.takeIf { screen == Screen.Player || screen == Screen.Home }
             Box(Modifier.fillMaxSize().background(IzleColors.Background)) {
                 when (screen) {
                     Screen.Starting -> Unit
@@ -59,7 +54,7 @@ fun IzleRoot(vm: AppViewModel) {
                             online = online,
                             message = message,
                             initialFocusItemId = vm.homeFocusItemId,
-                            active = !homeCovered,
+                            active = menu == null && autoplay == null,
                             imageUrl = vm::absoluteUrl,
                             onFocused = vm::onTileFocused,
                             onPlay = vm::onTileClicked,
@@ -80,16 +75,12 @@ fun IzleRoot(vm: AppViewModel) {
                     val actions = remember(vm) {
                         MenuActions(vm::onRootEntry, vm::onEpisodeChosen, vm::onAudioChosen, vm::onSubtitlesChosen, vm::onSettingsEntry)
                     }
-                    HiddenMenu(
-                        menu = m,
-                        uiLanguage = state?.device?.uiLanguage ?: language,
-                        uiLanguageOverride = override,
-                        about = vm.aboutInfo(),
-                        actions = actions,
-                    )
+                    HiddenMenu(m, state?.device?.uiLanguage ?: language, override, vm.aboutInfo(), actions)
                 }
-                // Above everything; playback goes on under it.
-                bannerOverlay?.let { MessageBannerOverlay(it, Modifier.align(Alignment.TopCenter)) }
+                // The owner's message, over Home and the player only (and over what is on them); playback goes on under it.
+                if (screen == Screen.Player || screen == Screen.Home) {
+                    banner?.let { MessageBannerOverlay(it, Modifier.align(Alignment.TopCenter)) }
+                }
             }
         }
     }

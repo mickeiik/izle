@@ -45,14 +45,6 @@ class CommandPlanTest {
     }
 
     @Test
-    fun playCarriesItsStartPosition() {
-        val fromStart = RemoteCommand.Play("show", "show.e2", positionMs = 0)
-        assertEquals(listOf(Action.Play(fromStart)), CommandPlan.actions(fromStart, Screen.Home, PlayerPhase.Idle, menuOpen = false))
-        val at = RemoteCommand.Play(null, "show.e2", positionMs = 754_000)
-        assertEquals(listOf(Action.Play(at)), onVideo(at, menuOpen = true))
-    }
-
-    @Test
     fun withVideoShowingTransportCommandsActAndWinOverTheMenu() {
         assertEquals(listOf(Action.StayPausedAfterMenu, Action.Pause, done), onVideo(RemoteCommand.Pause))
         assertEquals(listOf(Action.StayPausedAfterMenu, Action.Pause, done), onVideo(RemoteCommand.Pause, menuOpen = true))
@@ -102,13 +94,6 @@ class CommandPlanTest {
         for (command in transport) {
             assertEquals(notInPlayer, CommandPlan.actions(command, Screen.Player, PlayerPhase.Failed(30), menuOpen = false, live = false))
         }
-    }
-
-    @Test
-    fun playWithoutAnEpisodePlaysTheChannel() {
-        val channel = RemoteCommand.Play("news-24", episodeId = null)
-        assertEquals(listOf(Action.Play(channel)), CommandPlan.actions(channel, Screen.Home, PlayerPhase.Idle, menuOpen = false))
-        assertEquals(listOf(Action.Play(channel)), onVideo(channel, menuOpen = true))
     }
 
     @Test

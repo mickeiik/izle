@@ -5,54 +5,37 @@ import io.github.mickeiik.izle.domain.RemoteCommand
 import io.github.mickeiik.izle.player.PlayerPhase
 
 /**
- * What the owner's commands do on this TV. They act only on Home and in the player (the repository acknowledges every
- * command right after handing it over, unknown types included, and drops replays of an id it has seen). Transport
- * commands need video showing, paused or not, and win over the hidden menu: `resume`, `next` and `previous` close it,
- * `pause` makes sure closing it later does not resume, `seek` happens under it.
- *
- * On a channel (loading or playing) `pause`, `resume` and `seek` do nothing (`ignored`, `live`): a channel is never
- * paused. `next` and `previous` zap to the channel after / before it on Home, as CH+/CH− do ([Action.Zap]), also from
- * the channel's error screen.
- *
- * Every command ends in exactly one result for the server: a [Action.Report] last when it is known at once, else
- * [Action.Play] (reports once its playback runs or fails), [Action.Step] or [Action.Zap] (report whether they
- * switched) or [Action.Update] (reports what became of the update).
+ * What the owner's commands do on this TV: they act only on Home and in the player. Transport commands need video
+ * showing and win over the hidden menu (`resume`, `next`, `previous` close it, `pause` keeps closing it from resuming,
+ * `seek` happens under it). A channel is never paused (`ignored`, `live`); `next`/`previous` zap as CH+/CH− do, also
+ * from its error screen. Every command ends in exactly one result: a [Action.Report] last, or the [Action.Play],
+ * [Action.Step], [Action.Zap] or [Action.Update] that reports it later.
  */
 object CommandPlan {
     sealed interface Action {
-        /** Plays what [command] names, its item's tile (if on Home) as the hint and the focus. */
         data class Play(val command: RemoteCommand.Play) : Action
         data object Exit : Action
         data object Pause : Action
         data object Resume : Action
         data class Seek(val command: RemoteCommand.Seek) : Action
 
-        /** The next (+1) or previous (−1) episode, as CH+/CH−. */
+        /** The next (+1) or previous (−1) episode, or channel on Home. */
         data class Step(val direction: Int) : Action
-
-        /** The next (+1) or previous (−1) channel on Home, as CH+/CH− while a channel plays. */
         data class Zap(val direction: Int) : Action
 
-        /** Closes the hidden menu; [resume]: resumes playback if opening it paused it. */
+        /** [resume]: resumes playback if opening the menu paused it. */
         data class CloseMenu(val resume: Boolean) : Action
 
         /** Closing the hidden menu later (open now or not) does not resume playback. */
         data object StayPausedAfterMenu : Action
         data class ShowMessage(val message: RemoteCommand.Message) : Action
-
-        /** The command's result, known now. */
         data class Report(val result: CommandResult) : Action
-
-        /** The owner's `update`: [io.github.mickeiik.izle.update.UpdatePlan] decides (and reports). */
         data class Update(val command: RemoteCommand.Update) : Action
     }
 
     private val done = Action.Report(CommandResult.Done)
 
-    /**
-     * The actions for [command] on [screen], with the player in [phase] and the hidden menu open or not, in order.
-     * [live]: the player's playback is a channel.
-     */
+    /** The actions, in order, for [command] on [screen] with the player in [phase]; [live]: it plays a channel. */
     fun actions(command: RemoteCommand, screen: Screen, phase: PlayerPhase, menuOpen: Boolean, live: Boolean = false): List<Action> {
         // An `update` while the update screen shows is the update plan's (`busy`).
         val ready = screen == Screen.Home || screen == Screen.Player || (screen is Screen.Update && command is RemoteCommand.Update)
@@ -71,15 +54,13 @@ object CommandPlan {
             RemoteCommand.Pause -> if (channel) noPause else if (video) listOf(Action.StayPausedAfterMenu, Action.Pause, done) else notInPlayer
             RemoteCommand.Resume -> if (channel) noPause else if (video) closingMenu(resume = false) + Action.Resume + done else notInPlayer
             is RemoteCommand.Seek -> if (channel) noPause else if (video) listOf(Action.Seek(command), done) else notInPlayer
-            RemoteCommand.Next -> when {
-                zaps -> closingMenu(resume = true) + Action.Zap(1)
-                video -> closingMenu(resume = true) + Action.Step(1)
-                else -> notInPlayer
-            }
-            RemoteCommand.Previous -> when {
-                zaps -> closingMenu(resume = true) + Action.Zap(-1)
-                video -> closingMenu(resume = true) + Action.Step(-1)
-                else -> notInPlayer
+            RemoteCommand.Next, RemoteCommand.Previous -> {
+                val direction = if (command == RemoteCommand.Next) 1 else -1
+                when {
+                    zaps -> closingMenu(resume = true) + Action.Zap(direction)
+                    video -> closingMenu(resume = true) + Action.Step(direction)
+                    else -> notInPlayer
+                }
             }
             is RemoteCommand.Message -> listOf(Action.ShowMessage(command), done)
             is RemoteCommand.Update -> listOf(Action.Update(command))
