@@ -3,7 +3,7 @@
 // then polls every tab, shown or not: what it plays every 5 s, the rest every 15 s. Controls are built once and only
 // enabled, disabled and relabelled, so polling never takes the keyboard focus away.
 
-import { ApiError, api, attempt, devicePath } from "./api.js";
+import { ApiError, api, attempt, devicePath, sendCommand } from "./api.js";
 import { companionCard } from "./companion.js";
 import { homeCard } from "./device-home.js";
 import { actionButton, card, chip, h, keepFocus, onSubmit, page, progressBar, setChip, setOff, setProgress, setTitle, slot, statusChip, tabs, toast } from "./dom.js";
@@ -44,11 +44,7 @@ export function deviceView(scope, id, tab) {
     id,
     path,
     scope,
-    async send(body, what) {
-      const r = await attempt(() => api("POST", `${path}/commands`, body));
-      if (r.ok) toast(r.value.online ? `${what} sent to the TV.` : `${what} queued: the TV is offline and gets it if it connects within 2 minutes.`, r.value.online ? "ok" : "info");
-      return r.ok;
-    },
+    send: (body, what) => sendCommand(id, body, what),
     reload: () => loadDevice(),
   };
 
@@ -405,8 +401,7 @@ function historyCard(ctx) {
   const shown = slot();
   const list = rebuiltOnChange();
   const refresh = async () => {
-    const id = ctx.path.slice("/devices/".length);
-    const { viewings } = await ctx.scope.read(`/history/viewings?device=${id}&limit=30`);
+    const { viewings } = await ctx.scope.read(`/history/viewings?device=${encodeURIComponent(ctx.id)}&limit=30`);
     const content = list.content(viewings, (time) => {
       if (viewings.length === 0) return h("p", { class: "muted" }, "Nothing watched yet.");
       const tr = (/** @type {any} */ v) => {

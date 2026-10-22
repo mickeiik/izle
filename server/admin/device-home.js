@@ -506,7 +506,6 @@ export function homeCard(ctx) {
   });
   // The card goes to the end of the chosen section and stays selected there.
   const sectionChoice = h("select", { id: uid("section") });
-  let choiceKey = "";
   sectionChoice.addEventListener("change", async () => {
     const e = entryNow();
     const to = sections.find((s) => s.id === sectionChoice.value);
@@ -539,8 +538,7 @@ export function homeCard(ctx) {
     }
     const box = /** @type {import("./lib.js").SectionBox} */ (L.sections[at.s]);
     const n = box.count;
-    const c0 = cols();
-    where.textContent = cardPlace(box, at.i, n, c0);
+    where.textContent = cardPlace(box, at.i, n, cols());
     const title = nameOf(e);
     name.textContent = title;
     const c = e.continue;
@@ -557,11 +555,6 @@ export function homeCard(ctx) {
     setOff(up, box.row || row === 0);
     setOff(down, box.row || row === box.rowTops.length - 1);
     setOff(first, at.i === 0);
-    const key = JSON.stringify(sections.map((s) => [s.id, s.title]));
-    if (key !== choiceKey) {
-      choiceKey = key;
-      sectionChoice.replaceChildren(...sections.map((s) => h("option", { value: s.id }, sectionName(s))));
-    }
     sectionChoice.value = at.sec.id;
     sectionChoice.setAttribute("aria-label", `Section of ${title}`);
     remove.setAttribute("aria-label", `Remove ${title} from Home`);
@@ -591,7 +584,8 @@ export function homeCard(ctx) {
   // "Add to": the section a show is added to, the untitled one unless the owner picks another, kept while the tab is open.
   const addTo = h("select", { id: uid("add-to") });
   let addToId = UNTITLED;
-  let addToKey = "";
+  /** The sections the two section selects were last filled with. */
+  let sectionsKey = "";
   addTo.addEventListener("change", () => {
     addToId = addTo.value;
   });
@@ -670,9 +664,9 @@ export function homeCard(ctx) {
     full.textContent = `A Home holds at most ${sectionsMax} sections.`;
     if (!sections.some((s) => s.id === addToId)) addToId = UNTITLED;
     const key = JSON.stringify(sections.map((s) => [s.id, s.title]));
-    if (key !== addToKey) {
-      addToKey = key;
-      addTo.replaceChildren(...sections.map((s) => h("option", { value: s.id }, sectionName(s))));
+    if (key !== sectionsKey) {
+      sectionsKey = key;
+      for (const select of [addTo, sectionChoice]) select.replaceChildren(...sections.map((s) => h("option", { value: s.id }, sectionName(s))));
     }
     addTo.value = addToId;
     if (anchor !== null && !sections.some((s) => s.id === anchor)) anchor = null;

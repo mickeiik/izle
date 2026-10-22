@@ -211,7 +211,6 @@ export function catalogBrowser(scope, o) {
     element,
     /** The search box: where the keyboard goes when nothing else is left. */
     search,
-    run,
     /** Redraws the shown rows (their state changed, such as "On Home"), with no request. */
     refresh: () => rows.set(items),
     /** After a reload of the catalog: its facets and builds (the reload's answer), then the first page. */

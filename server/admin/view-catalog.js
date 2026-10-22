@@ -75,13 +75,12 @@ export function catalogView(scope, query) {
 
   /** @param {any} c the answer of GET /admin/catalog */
   const renderInfo = (c) => {
-    const s = c.stats;
     /** @type {Array<[string, import("./dom.js").Child | import("./dom.js").Child[]]>} */
     const rows = [
       ["Name", c.name],
       ["Catalog id", h("code", null, c.id)],
       ["Build", [h("code", null, c.buildId), h("span", { class: "muted" }, ` built ${formatRelative(c.builtAt)}, loaded ${formatRelative(c.loadedAt)}`)]],
-      ["Contents", catalogContents(s)],
+      ["Contents", catalogContents(c.stats)],
       ["Adapters", c.adapters.length ? c.adapters.join(", ") : "none"],
       ["Resolver module", c.resolver ? [`provides ${c.resolver.adapters.join(", ") || "nothing"}`, h("br"), h("code", { class: "hash" }, `sha256 ${c.resolver.sha256}`)] : "none configured"],
       ["Server", `izle-server ${c.server.version}`],

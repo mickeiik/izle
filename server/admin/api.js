@@ -70,6 +70,17 @@ export function onUnauthorized(fn) {
 export const devicePath = (id) => `/devices/${encodeURIComponent(id)}`;
 
 /**
+ * Sends a command to a TV and toasts that it was sent (`what` to `tv`, then `sentNote`) or queued for an offline TV.
+ * Resolves with whether the server took it. @param {string} deviceId @param {unknown} body @param {string} what
+ * @param {string} [tv] @param {string} [sentNote]
+ */
+export async function sendCommand(deviceId, body, what, tv = "the TV", sentNote = "") {
+  const r = await attempt(() => api("POST", `${devicePath(deviceId)}/commands`, body));
+  if (r.ok) toast(r.value.online ? `${what} sent to ${tv}.${sentNote}` : `${what} queued: ${tv} is offline and gets it if it connects within 2 minutes.`, r.value.online ? "ok" : "info");
+  return r.ok;
+}
+
+/**
  * One admin API call. Resolves with the JSON answer (null for 204), rejects with an `ApiError`: the server's error
  * code, `network` when it cannot be reached, `aborted` when `signal` fired.
  * @param {string} method
@@ -83,15 +94,14 @@ export async function api(method, path, body, opts = {}) {
 }
 
 /**
- * Uploads a file as the raw request body (`PUT`), as an APK (`Content-Type`) with its name in `X-Izle-Filename`;
- * `headers` are added. Answers and fails like `api()`.
+ * Uploads a file as the raw request body (`PUT`), as an APK (`Content-Type`) with its name in `X-Izle-Filename`.
+ * Answers and fails like `api()`.
  * @param {string} path below /api/v1/admin
  * @param {File} file
- * @param {Record<string, string>} [headers]
  * @returns {Promise<any>}
  */
-export async function upload(path, file, headers = {}) {
-  return request("PUT", path, { "Content-Type": "application/vnd.android.package-archive", "X-Izle-Filename": file.name, ...headers }, file, {});
+export async function upload(path, file) {
+  return request("PUT", path, { "Content-Type": "application/vnd.android.package-archive", "X-Izle-Filename": file.name }, file, {});
 }
 
 /**

@@ -9,7 +9,7 @@ import {
   actorLabel, buildSummary, candidateOptions, catalogContents, clockOffset, commandResultText, companionTarget,
   continueText, episodeHistoryLine, episodeName, episodeStateLabel, episodeStates, errorText, formatClock, formatCode,
   formatCountdown, formatDrift, formatDuration, formatPosition, formatRelative, gridSummary, groupEpisodeChanges, isActive, issueLine,
-  languageLabel, liveViewingLine, mediaKindLabel, moveItem, nowPlayingLine, parseCandidate, parseSse, percent, playbackState, plural,
+  languageLabel, liveViewingLine, mediaKindLabel, nowPlayingLine, parseCandidate, parseSse, percent, playbackState, plural,
   problemContext, resumes, sameLanguage, scopeLabel, serverAddress, shortId, showMeta, sourceReport, syncDecision,
   titleLine, titleStatusLabel, tokenFromHash, triggerLabel, tvPositionAt, viewingEnd, viewingSpan,
   onTv, tvCard, tvGrid,
@@ -52,7 +52,7 @@ test("admin helpers: clocks, relative times, codes, sign-in links and the addres
   ]);
 });
 
-test("admin helpers: episode names, what OK does, list moves and episode states", () => {
+test("admin helpers: episode names, what OK does and episode states", () => {
   const c = { episodeId: "show.s1e2", season: 1, number: 2, title: "Two", label: null, durationMs: 600_000 };
   cases([
     [episodeName({ season: 1, number: 2, title: "Gran Dillama" }, "series"), "S1 · E2 — Gran Dillama"],
@@ -68,8 +68,6 @@ test("admin helpers: episode names, what OK does, list moves and episode states"
     [resumes({ ...c, status: "watching", positionMs: 29_999 }), false, "the TV resumes from 30 s on"],
     [resumes({ ...c, status: "finished", positionMs: 90_000 }), false], [resumes(null), false],
     [percent(30, 120), 25], [percent(30, null), null], [percent(500, 100), 100],
-    [moveItem(["a", "b", "c"], 1, -1), ["b", "a", "c"]], [moveItem(["a", "b", "c"], 2, 1), ["a", "b", "c"]],
-    [moveItem(["a", "b", "c"], 0, 2), ["b", "c", "a"]],
   ]);
   const states = episodeStates([{ id: "e1" }, { id: "e2" }, { id: "e3" }], "e2", [
     { episodeId: "e1", status: "finished", positionMs: 10, durationMs: 10 },
