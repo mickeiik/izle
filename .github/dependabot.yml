@@ -49,7 +49,7 @@ updates:
         patterns: ["*"]
         update-types: [minor, patch]
 
-  # No group: the Dockerfile's tags carry only the major (`node:24-slim`), so every update is a major one.
+  # No group: the Dockerfile's tags carry only the major (`node:<major>-slim`), so every update is a major one.
   - package-ecosystem: docker
     directory: /
     schedule:

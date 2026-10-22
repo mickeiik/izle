@@ -5,20 +5,17 @@
 // catalog validation, admin token and sign-in link, the admin page, pairing (admin API and shell), the home state
 // with posters, resolve, a database backup while the server runs, catalog reload on SIGHUP and a clean stop on
 // SIGTERM. Only loopback HTTP; nothing is fetched from the network.
-//
-// Usage: node scripts/smoke-server.mjs [<izle-server-x.y.z.tgz>] [--keep]
 import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { parseArgs, promisify } from "node:util";
+import { promisify } from "node:util";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
-const { values: opts, positionals } = parseArgs({ options: { keep: { type: "boolean" } }, allowPositionals: true });
 const version = JSON.parse(await readFile(path.join(ROOT, "server", "package.json"), "utf8")).version;
-const tarball = path.resolve(positionals[0] ?? path.join(ROOT, "dist", `izle-server-${version}.tgz`));
+const tarball = path.join(ROOT, "dist", `izle-server-${version}.tgz`);
 
 const run = promisify(execFile);
 const work = await mkdtemp(path.join(tmpdir(), "izle-smoke-"));
@@ -160,6 +157,5 @@ try {
   process.exitCode = 1;
 } finally {
   server?.kill("SIGKILL");
-  if (opts.keep) process.stdout.write(`kept ${work}\n`);
-  else await rm(work, { recursive: true, force: true });
+  await rm(work, { recursive: true, force: true });
 }

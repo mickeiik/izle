@@ -1,7 +1,6 @@
 # Node
 node_modules/
 dist/
-*.tsbuildinfo
 npm-debug.log*
 
 # Server runtime data and local config (never commit tokens or databases)
@@ -19,7 +18,6 @@ android/build/
 android/app/build/
 android/local.properties
 android/.kotlin/
-android/.idea/
 *.jks
 keystore.properties
 *.apk

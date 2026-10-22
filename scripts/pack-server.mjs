@@ -15,7 +15,7 @@
 //   deploy/                          example config, systemd units (server, backup) and Caddyfile (from docs/deploy)
 //   LICENSE, THIRD_PARTY_LICENSES.md, README.md
 //
-// Usage: node scripts/pack-server.mjs [--out <dir>] [--keep-stage]
+// Usage: node scripts/pack-server.mjs [--out <dir>]
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
@@ -29,7 +29,7 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const at = (/** @type {string[]} */ ...p) => path.join(ROOT, ...p);
 const readJson = async (/** @type {string} */ file) => JSON.parse(await readFile(file, "utf8"));
 
-const { values: args } = parseArgs({ options: { out: { type: "string" }, "keep-stage": { type: "boolean" } } });
+const { values: args } = parseArgs({ options: { out: { type: "string" } } });
 const outDir = path.resolve(args.out ?? at("dist"));
 
 const rootPackage = await readJson(at("package.json"));
@@ -156,5 +156,4 @@ process.stdout.write(
     `  bundled: ${bundled.join(", ")}\n  sha256 ${digest}\n`,
 );
 
-if (args["keep-stage"]) process.stdout.write(`  stage kept in ${stage}\n`);
-else await rm(path.dirname(stage), { recursive: true, force: true });
+await rm(path.dirname(stage), { recursive: true, force: true });
