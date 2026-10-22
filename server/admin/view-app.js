@@ -1,15 +1,18 @@
 // @ts-check
 // The TV app: the APK the server offers to the TVs (fetched from the GitHub releases or uploaded here), a new one
-// uploaded, and every TV with its installed version and "Install now". Refreshed every 15 s and on the app's
-// events; a server without TV app updates (404) says so and offers nothing.
+// uploaded, and every TV with its installed version and "Install now". A server without TV app updates (404) says so
+// and offers nothing.
 
 import { ApiError, api, attempt, sendCommand, upload } from "./api.js";
-import { actionButton, card, chip, h, keyedRows, onSubmit, page, setChip, setOff, slot, toast, uid } from "./dom.js";
+import { actionButton, card, chip, factRows, h, keyedRows, onSubmit, page, setChip, setOff, slot, toast, uid } from "./dom.js";
+
 import { watchEvents } from "./events.js";
 import {
   APK_MAX_BYTES, androidText, apkVersion, appCheckText, appUpdateChip, checkResultText, commandResultText, errorText,
   formatBytes, formatRelative, installNowBlocked, newApkText,
 } from "./lib.js";
+
+const GUIDED = "Someone at the TV has to press OK when the screen appears.";
 
 /** @param {import("./router.js").Scope} scope */
 export function appView(scope) {
@@ -19,7 +22,6 @@ export function appView(scope) {
   /** Device names by id, for the command result toasts. @type {Map<string, string>} */
   const names = new Map();
 
-  // Stored app --------------------------------------------------------------------------------------------------
   const storedSlot = slot();
   const oldServer = h("div", { class: "callout info" }, h("p", null, "This server has no TV app updates. Update izle-server to offer the TV app to the TVs from here."));
   const none = h("p", { class: "muted" });
@@ -48,26 +50,24 @@ export function appView(scope) {
   const showStored = () => {
     if (unsupported || !app) return storedSlot.show(oldServer);
     const apk = app.apk;
+    const github = app.source === "github";
     none.hidden = Boolean(apk);
+    none.textContent = github
+      ? `No TV app is stored yet. The server fetches the latest release of ${app.repo} on its next check, or now with Check now.`
+      : "No TV app is stored yet. Upload the release APK below.";
     facts.hidden = !apk;
-    if (!apk) {
-      none.textContent = app.source === "github"
-        ? `No TV app is stored yet. The server fetches the latest release of ${app.repo} on its next check, or now with Check now.`
-        : "No TV app is stored yet. Upload the release APK below.";
-    } else {
+    if (apk) {
       const stored = `${formatRelative(apk.storedAt)} · ${new Date(apk.storedAt).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}`;
-      /** @type {Array<[string, string | Node]>} */
-      const rows = [
+      facts.replaceChildren(...factRows([
         ["Version", `${apk.versionName} (code ${apk.versionCode})`],
         ["Source", apk.source === "github" ? `GitHub release ${apk.releaseTag ?? apk.versionName}` : "uploaded here"],
         ["Size", formatBytes(apk.size)],
         ["Stored", stored],
         ["SHA-256", h("code", { class: "hash" }, apk.sha256)],
-      ];
-      facts.replaceChildren(...rows.flatMap(([k, v]) => [h("dt", null, k), h("dd", null, v)]));
+      ]));
     }
     const every = Number.isInteger(app.checkIntervalHours) ? `every ${app.checkIntervalHours} h` : "on a schedule";
-    origin.textContent = app.source === "github"
+    origin.textContent = github
       ? `New versions come from the GitHub releases of ${app.repo}, checked ${every} and with Check now.`
       : "New versions come only from uploads (the server's app source is manual).";
     autoLine.textContent = app.auto
@@ -84,7 +84,6 @@ export function appView(scope) {
     storedSlot.show(none, facts, origin, autoLine, checkLine, storedActions, checkHint);
   };
 
-  // Upload ------------------------------------------------------------------------------------------------------
   const file = h("input", { type: "file", id: "apk-file", accept: ".apk,application/vnd.android.package-archive", "aria-describedby": "apk-hint apk-status" });
   const hint = h("p", { class: "hint", id: "apk-hint" },
     "Use the release APK from GitHub, named izle-tv-X.Y.Z.apk as on the releases page: only a release-signed APK installs over the app on the TVs (a debug build is signed with a throwaway key).");
@@ -99,8 +98,7 @@ export function appView(scope) {
   const problem = (f) => {
     if (!f) return null;
     if (apkVersion(f.name) === null) return `“${f.name}” is not named like a release APK: name it izle-tv-X.Y.Z.apk, as on the releases page.`;
-    if (f.size > APK_MAX_BYTES) return `That file is ${formatBytes(f.size)}; the server takes at most 64 MiB.`;
-    return null;
+    return f.size > APK_MAX_BYTES ? `That file is ${formatBytes(f.size)}; the server takes at most 64 MiB.` : null;
   };
   file.addEventListener("change", () => {
     const f = file.files?.[0];
@@ -113,8 +111,7 @@ export function appView(scope) {
     const p = problem(f);
     if (p) {
       setStatus(p, true);
-      file.focus();
-      return;
+      return file.focus();
     }
     return async () => {
       setStatus(`Uploading ${f.name} (${formatBytes(f.size)})…`);
@@ -128,7 +125,6 @@ export function appView(scope) {
   });
   const uploadCard = card({ title: "Upload an APK", intro: "Replaces the stored app, for example with a release the server cannot fetch by itself." }, form);
 
-  // TVs ---------------------------------------------------------------------------------------------------------
   const devicesSlot = slot();
   const list = h("div", { class: "list" });
   const empty = h("p", { class: "muted" }, "No TV is paired yet.");
@@ -138,18 +134,15 @@ export function appView(scope) {
     const link = h("a", { href: `#/devices/${encodeURIComponent(d.id)}` });
     const meta = h("div", { class: "muted" });
     const state = chip("");
-    const whyId = uid("install-why");
-    const why = h("span", { class: "visually-hidden", id: whyId });
-    /** @type {any} */
+    const why = h("span", { class: "visually-hidden", id: uid("install-why") });
     let current = d;
-    const install = actionButton("Install now", { "data-control": "install", "aria-describedby": whyId }, () => {
-      const guided = current.app?.capability === "guided" ? " Someone at the TV has to press OK when the screen appears." : "";
+    const install = actionButton("Install now", { "data-control": "install", "aria-describedby": why.id }, () => {
+      const guided = current.app?.capability === "guided" ? ` ${GUIDED}` : "";
       return sendCommand(current.id, { type: "update" }, "Install now", `“${current.name}”`, guided);
     });
-    const guided = h("p", { class: "hint" }, "Someone at the TV has to press OK when the screen appears.");
-    const element = h("div", null, h("div", { class: "row" }, h("div", { class: "grow" }, h("strong", null, link), meta), state, install, why), guided);
+    const guided = h("p", { class: "hint" }, GUIDED);
     return {
-      element,
+      element: h("div", null, h("div", { class: "row" }, h("div", { class: "grow" }, h("strong", null, link), meta), state, install, why), guided),
       /** @param {any} next */
       update(next) {
         current = next;

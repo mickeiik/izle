@@ -10,9 +10,7 @@ import { errorText } from "./lib.js";
  * Creates an element. `on*` props become listeners, `class` the class name, `value`/`disabled`/`selected` are set
  * as properties, everything else as attributes (`true` as an empty attribute; null, undefined and false leave it out).
  * @template {keyof HTMLElementTagNameMap} K
- * @param {K} tag
- * @param {Record<string, any> | null} [props]
- * @param {...(Child | Child[])} children
+ * @param {K} tag @param {Record<string, any> | null} [props] @param {...(Child | Child[])} children
  * @returns {HTMLElementTagNameMap[K]}
  */
 export function h(tag, props, ...children) {
@@ -29,23 +27,32 @@ export function h(tag, props, ...children) {
 }
 
 let lastId = 0;
-/** A page-unique element id. @param {string} prefix */
+/** @param {string} prefix */
 export const uid = (prefix) => `${prefix}-${++lastId}`;
 
-/** Text for screen readers only. @param {string} text */
+/** @param {string} text */
 export const srOnly = (text) => h("span", { class: "visually-hidden" }, text);
 
 /** @param {string} text */
 export const pageTitle = (text) => `${text} · izle admin`;
 
-/** Sets the view's heading and the tab title together. @param {HTMLElement} heading @param {string} text */
+/** @param {HTMLElement} heading @param {string} text */
 export function setTitle(heading, text) {
   heading.textContent = text;
   document.title = pageTitle(text);
 }
 
+/** @param {ReadonlyArray<readonly [string, string]>} list `[value, text]` pairs @param {string} [selected] */
+export const options = (list, selected) =>
+  list.map(([value, text]) => h("option", { value, selected: value === selected }, text));
+
+/** The terms and details of a `<dl class="facts">`. @param {Array<[string, Child | Child[]]>} rows */
+export const factRows = (rows) => rows.flatMap(([dt, dd]) => [h("dt", null, dt), h("dd", null, dd)]);
+/** @param {Array<[string, Child | Child[]]>} rows */
+export const factList = (rows) => h("dl", { class: "facts" }, factRows(rows));
+
+
 /**
- * A view: an optional back link, the title line (the `h1`, and `aside` next to it) and the content.
  * @param {{ back?: [href: string, text: string], title: string | HTMLElement, aside?: Child[] }} head
  * @param {...(Child | Child[])} content
  */
@@ -56,8 +63,7 @@ export function page({ back, title, aside = [] }, ...content) {
 }
 
 /**
- * A card: a section with its heading (focusable from script), an optional intro and content.
- * `aside` goes next to the title (a count, a button), `intro` is a muted paragraph under it.
+ * A card: a section with its heading (focusable from script), `aside` next to it, a muted `intro` and content.
  * @param {string | { title: string, aside?: Child | Child[], intro?: Child | Child[] }} opts
  * @param {...(Child | Child[])} children
  */
@@ -68,10 +74,8 @@ export function card(opts, ...children) {
 }
 
 /**
- * Tabs: a tab list and one panel per tab, only the selected one shown. ← → Home End move between the tabs and select
- * them (the selected tab is the only one in the Tab order). `select(key)` selects a tab without moving the focus;
- * `onSelect` runs when another tab was selected (not for the one selected at first). `setBadge(key, text)` shows a
- * count next to a tab's label (empty: none).
+ * Tabs, only the selected panel shown. ← → Home End move between the tabs and select them (the selected tab is the
+ * only one in the Tab order). `onSelect` runs when another tab was selected; `setBadge` shows a count by a label.
  * @param {{ label: string, tabs: Array<{ key: string, label: string, content: Child[] }>, selected: string,
  *   onSelect?: (key: string) => void }} o
  */
@@ -84,21 +88,17 @@ export function tabs({ label, tabs: defs, selected, onSelect }) {
     return { key: t.key, tab, panel, badge };
   });
   let current = "";
-  /** @param {string} key */
-  const select = (key) => {
+  const select = (/** @type {string} */ key) => {
     const at = items.find((t) => t.key === key) ?? items[0];
     for (const t of items) {
-      const on = t === at;
-      t.tab.setAttribute("aria-selected", String(on));
-      t.tab.tabIndex = on ? 0 : -1;
-      t.panel.hidden = !on;
+      t.tab.setAttribute("aria-selected", String(t === at));
+      t.tab.tabIndex = t === at ? 0 : -1;
+      t.panel.hidden = t !== at;
     }
     if (at.key === current) return;
-    const first = current === "";
+    if (current !== "") onSelect?.(at.key);
     current = at.key;
-    if (!first) onSelect?.(at.key);
   };
-  const tablist = h("div", { role: "tablist", class: "tabs", "aria-label": label }, items.map((t) => t.tab));
   for (const [i, t] of items.entries()) {
     t.tab.addEventListener("click", () => select(t.key));
     t.tab.addEventListener("keydown", (e) => {
@@ -108,15 +108,13 @@ export function tabs({ label, tabs: defs, selected, onSelect }) {
       const next = items[(to + items.length) % items.length];
       select(next.key);
       next.tab.focus();
-      // Keep the selected tab in view when the list scrolls sideways (phones).
-      next.tab.scrollIntoView({ block: "nearest", inline: "nearest" });
+      next.tab.scrollIntoView({ block: "nearest", inline: "nearest" }); // the list scrolls sideways on phones
     });
   }
   select(selected);
   return {
-    list: tablist,
+    list: h("div", { role: "tablist", class: "tabs", "aria-label": label }, items.map((t) => t.tab)),
     panels: items.map((t) => t.panel),
-    select,
     /** @param {string} key @param {string} text */
     setBadge(key, text) {
       const t = items.find((x) => x.key === key);
@@ -131,7 +129,7 @@ export function tabs({ label, tabs: defs, selected, onSelect }) {
 export const poster = (url, alt = "") => (url ? h("img", { class: "poster", src: url, alt, loading: "lazy" }) : h("div", { class: "poster empty", "aria-hidden": "true" }));
 
 /**
- * A chip's colour: none, a state, (`server`) a problem the server ran into, or (`live`) a channel, red as on the TV.
+ * A chip's colour: `server` a problem the server ran into, `live` a channel (red as on the TV).
  * @typedef {"ok" | "warn" | "info" | "server" | "live" | ""} Tone
  */
 
@@ -154,10 +152,7 @@ export function statusChip(device) {
   return device.online ? chip("Online", "ok") : chip("Offline");
 }
 
-/**
- * A progress bar (0–100): `label` names it for screen readers, `text` says the value in words. Null without a value.
- * @param {number | null} value @param {string} label @param {string} [text]
- */
+/** A 0–100 bar (null without a value). @param {number | null} value @param {string} label @param {string} [text] */
 export function progressBar(value, label, text) {
   if (value === null) return null;
   const bar = h("div", { class: "bar", role: "progressbar", "aria-label": label, "aria-valuemin": "0", "aria-valuemax": "100" }, h("span"));
@@ -177,25 +172,20 @@ export function setProgress(bar, value, text) {
 
 export const loading = () => h("p", { class: "muted loading" }, "Loading…");
 
-/**
- * What stands in for content that could not be loaded: the reason and, given `retry`, a Retry button.
- * @param {unknown} err @param {(() => Promise<unknown>) | null | undefined} retry @param {string} what
- */
+/** @param {unknown} err @param {(() => Promise<unknown>) | null | undefined} retry @param {string} what */
 export function loadError(err, retry, what) {
   const button = retry ? actionButton("Retry", null, () => retry()) : null;
   return h("div", { class: "callout error", role: "alert" }, h("p", null, h("strong", null, what), " ", errorText(err)), button);
 }
 
 /**
- * A region that a load fills: "Loading…" first, then its content (`show`, which keeps content that is already
- * exactly that). `fail` shows the error and Retry only before anything was shown; later failures keep the content,
- * the page's "Not updated since" note covers them.
+ * A region that a load fills: "Loading…", then its content (`show` keeps content that is already exactly that).
+ * `fail` shows the error and Retry only before anything was shown; the page's "Not updated since" covers the rest.
  */
 export function slot() {
   const element = h("div", null, loading());
   let shown = false;
-  /** @type {HTMLElement | null} */
-  let failure = null;
+  let failure = /** @type {HTMLElement | null} */ (null);
   return {
     element,
     /** @param {...Node} content */
@@ -225,10 +215,9 @@ export function slot() {
 const TOAST_MS = { ok: 4000, info: 6000, error: 8000 };
 
 /**
- * A short message at the bottom of the page: `role="status"` (errors: `role="alert"`), with a Dismiss button
- * (and Escape). At most four are shown. It waits while the pointer is over it or the focus in it.
- * @param {string} text
- * @param {"ok" | "error" | "info"} [kind]
+ * A short message at the bottom of the page (errors as alerts) with Dismiss (and Escape); at most four are shown. It
+ * waits while the pointer is over it or the focus in it.
+ * @param {string} text @param {"ok" | "error" | "info"} [kind]
  */
 export function toast(text, kind = "ok") {
   const box = document.getElementById("toasts");
@@ -238,12 +227,10 @@ export function toast(text, kind = "ok") {
   const t = h("div", { class: `toast ${kind}`, role: kind === "error" ? "alert" : "status" }, message, close);
   let left = TOAST_MS[kind];
   let startedAt = 0;
-  /** @type {ReturnType<typeof setTimeout> | undefined} */
-  let timer;
+  let timer = /** @type {ReturnType<typeof setTimeout> | undefined} */ (undefined);
   let hovered = false;
   let focused = false;
-  /** @type {EventTarget | null} */
-  let returnTo = null;
+  let returnTo = /** @type {EventTarget | null} */ (null);
   const hold = () => {
     if (timer === undefined) return;
     clearTimeout(timer);
@@ -297,8 +284,7 @@ function syncInert(b) {
 }
 
 /**
- * Runs `fn` with `button` busy (`aria-busy`). While it runs, further calls return at once, so a double click sends
- * one request.
+ * Runs `fn` with `button` busy; further calls meanwhile return at once, so a double click sends one request.
  * @param {HTMLElement} button @param {() => Promise<unknown>} fn
  */
 async function busy(button, fn) {
@@ -320,8 +306,8 @@ export function setOff(button, off) {
 }
 
 /**
- * Handles the submission of `form`. Nothing happens while its submit `button` is inert; else `prepare()` checks
- * what was typed (a toast says what is wrong) and returns the work to run with the button busy, or nothing.
+ * Handles the submission of `form` unless its `button` is inert: `prepare()` checks what was typed (a toast says what
+ * is wrong) and returns the work to run with the button busy, or nothing.
  * @param {HTMLFormElement} form @param {HTMLElement} button
  * @param {() => (() => Promise<unknown>) | null | void} prepare
  */
@@ -335,9 +321,8 @@ export function onSubmit(form, button, prepare) {
 }
 
 /**
- * A button whose action calls the server: busy while `action` runs, and inert while unavailable or busy.
  * @param {string} label @param {Record<string, any> | null} props
- * @param {(button: HTMLButtonElement) => Promise<unknown>} action
+ * @param {(button: HTMLButtonElement) => Promise<unknown>} action runs with the button busy
  */
 export function actionButton(label, props, action) {
   const b = h("button", { type: "button", ...props }, label);
@@ -357,9 +342,8 @@ function canFocus(el) {
 const FOCUSABLE = "button, a[href], input, select, textarea, [tabindex]";
 
 /**
- * Focuses `root` or the first control in it, preferably the one with `data-control` = `control` (the same kind of
- * button the owner was on). Whether it found one.
- * @param {HTMLElement} root @param {string} [control]
+ * Focuses `root` or its first control, preferably the one with `data-control` = `control` (the same kind of button
+ * the owner was on). Whether it found one. @param {HTMLElement} root @param {string} [control]
  */
 export function focusFirst(root, control) {
   const all = [root, ...root.querySelectorAll(FOCUSABLE)].filter((el) => el.matches(FOCUSABLE) && canFocus(el));
@@ -370,12 +354,10 @@ export function focusFirst(root, control) {
 }
 
 /**
- * Runs `update`, which may rebuild, move or remove part of the page, and puts the keyboard focus back where the
- * owner was: on the same element if it is still in the page, else on its rebuilt twin (the same `data-focus` key),
- * else on the first of `fallbacks` that can take it (elements or keys). Nothing moves when no element had the
- * focus, or when the owner moved it elsewhere meanwhile.
- * @param {() => unknown} update
- * @param {...(HTMLElement | string | null | undefined)} fallbacks
+ * Runs `update`, which may rebuild, move or remove part of the page, and puts the focus back where the owner was: on
+ * the same element if it is still in the page, else on its rebuilt twin (the same `data-focus` key), else on the
+ * first of `fallbacks` (elements or keys) that can take it. Nothing moves when the owner moved the focus meanwhile.
+ * @param {() => unknown} update @param {...(HTMLElement | string | null | undefined)} fallbacks
  */
 export async function keepFocus(update, ...fallbacks) {
   const before = document.activeElement;
@@ -397,16 +379,13 @@ export async function keepFocus(update, ...fallbacks) {
  * `data-control` kind (else its first control); with no row left, to `fallback`.
  * @template T
  * @template {{ element: HTMLElement, update(item: T, index: number, all: T[]): void }} R
- * @param {HTMLElement} parent only the rows live there
- * @param {(item: T) => string} keyOf
- * @param {(item: T) => R} create
+ * @param {HTMLElement} parent @param {(item: T) => string} keyOf @param {(item: T) => R} create
  * @param {() => HTMLElement | null} [fallback]
  */
 export function keyedRows(parent, keyOf, create, fallback) {
   /** @type {Map<string, R>} */
   const rows = new Map();
   return {
-    rows,
     /** @param {T[]} items */
     set(items) {
       const active = document.activeElement;
@@ -429,16 +408,16 @@ export function keyedRows(parent, keyOf, create, fallback) {
       // Moving an element drops its focus: give it back, or hand it to the neighbour of a row that went away.
       if (canFocus(active)) return active.focus({ preventScroll: true });
       const next = /** @type {HTMLElement | undefined} */ (parent.children[Math.min(holder, parent.children.length - 1)]);
+      const f = next ? null : fallback?.();
       if (next) focusFirst(next, active.dataset.control);
-      else {
-        const f = fallback?.();
-        if (f && canFocus(f)) f.focus({ preventScroll: true });
-      }
+      else if (f && canFocus(f)) f.focus({ preventScroll: true });
     },
   };
 }
 
-// --- shows --------------------------------------------------------------------------------------------------------
+/** A row's grow column: a bold title, a muted line. @param {Child | Child[]} title @param {Child | Child[]} [meta] */
+export const rowText = (title, meta) =>
+  h("div", { class: "grow" }, h("strong", null, title), meta ? h("div", { class: "muted" }, meta) : null);
 
 /**
  * A show in a list: its poster, title and a muted line, and `end` at the right. With `href` the whole row is a link.
@@ -446,7 +425,6 @@ export function keyedRows(parent, keyOf, create, fallback) {
  * @param {{ meta?: Child | Child[], href?: string, end?: Child | Child[] }} [o]
  */
 export function showRow(item, o = {}) {
-  /** @type {Array<Child | Child[]>} */
-  const body = [poster(item.posterUrl), h("div", { class: "grow" }, h("strong", null, item.title), o.meta ? h("div", { class: "muted" }, o.meta) : null), o.end];
+  const body = [poster(item.posterUrl), rowText(item.title, o.meta), o.end];
   return o.href ? h("a", { class: "row link", href: o.href }, ...body) : h("div", { class: "row" }, ...body);
 }

@@ -83,7 +83,7 @@ startRouter({
 // The skip link moves the focus to the view's heading; following its `#app` would re-run the router.
 document.querySelector(".skip")?.addEventListener("click", (e) => {
   e.preventDefault();
-  const target = /** @type {HTMLElement | null} */ (app.querySelector("h1")) ?? app;
+  const target = app.querySelector("h1") ?? app;
   target.tabIndex = -1;
   target.focus();
 });

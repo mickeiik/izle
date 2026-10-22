@@ -4,18 +4,13 @@
 
 import { ApiError, api, isUnauthorized } from "./api.js";
 import { catalogBrowser } from "./catalog-browser.js";
-import { actionButton, card, h, loadError, loading, page, showRow, slot, toast } from "./dom.js";
+import { actionButton, card, factList, h, loadError, loading, page, rowText, showRow, slot, toast } from "./dom.js";
 import { browseHash, buildSummary, catalogContents, errorText, formatRelative, groupEpisodeChanges, issueLine, parseBrowseHash, plural, shortId, showMeta } from "./lib.js";
 
 /** Builds listed before the rest fold away. */
 const BUILDS_SHOWN = 5;
 
-/**
- * What a build changed, for the detail under the build list: new and removed shows and episodes. A channel counts as
- * a show (it has no episodes).
- * @param {any} b the build (an entry of the catalog's `builds`)
- * @param {any} changes its changes (GET /admin/catalog/builds/<id>)
- */
+/** What a build changed: new and removed shows and episodes. @param {any} b @param {any} changes */
 function buildDetail(b, changes) {
   const head = h("h3", null, "Changes in build ", h("code", null, b.buildId));
   if (b.baseline) {
@@ -27,22 +22,19 @@ function buildDetail(b, changes) {
   const added = groupEpisodeChanges(changes.episodes.added);
   const episodeCount = new Map(added.map((g) => [g.itemId, g.episodes.length]));
   const groupLine = (/** @type {{ title: string, episodes: string[] }} */ g) => h("div", null, h("strong", null, g.title), ` — ${g.episodes.join(", ")}`);
+  const newShow = (/** @type {any} */ i) =>
+    h("div", null, h("strong", null, i.title), i.kind === "live" ? " · channel" : i.kind === "series" && episodeCount.has(i.id) ? ` · ${plural(episodeCount.get(i.id) ?? 0, "episode")}` : null);
   /** @type {Array<[string, HTMLElement[]]>} */
   const sections = [
     ["New episodes", added.filter((g) => !newShows.has(g.itemId)).map(groupLine)],
-    [
-      "New shows",
-      changes.items.added.map((/** @type {any} */ i) =>
-        h("div", null, h("strong", null, i.title), i.kind === "live" ? " · channel" : i.kind === "series" && episodeCount.has(i.id) ? ` · ${plural(episodeCount.get(i.id) ?? 0, "episode")}` : null),
-      ),
-    ],
+    ["New shows", changes.items.added.map(newShow)],
     ["Removed shows", changes.items.removed.map((/** @type {any} */ i) => h("div", null, h("strong", null, i.title ?? i.id)))],
     ["Removed episodes", groupEpisodeChanges(changes.episodes.removed).filter((g) => !goneShows.has(g.itemId)).map(groupLine)],
   ];
   const shown = sections.filter(([, lines]) => lines.length > 0);
   const cut = ["added", "removed"].some((k) => changes.items[k].length < b[k].items || changes.episodes[k].length < b[k].episodes);
   const list = shown.length
-    ? h("dl", { class: "facts" }, shown.flatMap(([title, lines]) => [h("dt", null, title), h("dd", null, lines)]))
+    ? factList(shown)
     : h("p", { class: "muted" }, "No show or episode was added or removed: this build changed something else, such as titles or sources.");
   return h("div", null, head, list, cut ? h("p", { class: "hint" }, "Long lists are cut short; the counts in the list above are exact.") : null);
 }
@@ -51,11 +43,9 @@ function buildDetail(b, changes) {
 export function catalogView(scope, query) {
   const infoSlot = slot();
   const buildsSlot = slot();
-  const facts = h("dl", { class: "facts" });
   const warnings = h("details", { hidden: true });
   const problem = h("div");
 
-  // Bundle ------------------------------------------------------------------------------------------------------
   const reload = actionButton("Reload from disk", null, async () => {
     problem.replaceChildren();
     try {
@@ -75,8 +65,7 @@ export function catalogView(scope, query) {
 
   /** @param {any} c the answer of GET /admin/catalog */
   const renderInfo = (c) => {
-    /** @type {Array<[string, import("./dom.js").Child | import("./dom.js").Child[]]>} */
-    const rows = [
+    const facts = factList([
       ["Name", c.name],
       ["Catalog id", h("code", null, c.id)],
       ["Build", [h("code", null, c.buildId), h("span", { class: "muted" }, ` built ${formatRelative(c.builtAt)}, loaded ${formatRelative(c.loadedAt)}`)]],
@@ -84,17 +73,15 @@ export function catalogView(scope, query) {
       ["Adapters", c.adapters.length ? c.adapters.join(", ") : "none"],
       ["Resolver module", c.resolver ? [`provides ${c.resolver.adapters.join(", ") || "nothing"}`, h("br"), h("code", { class: "hash" }, `sha256 ${c.resolver.sha256}`)] : "none configured"],
       ["Server", `izle-server ${c.server.version}`],
-    ];
-    facts.replaceChildren(...rows.flatMap(([dt, dd]) => [h("dt", null, dt), h("dd", null, dd)]));
+    ]);
     warnings.hidden = c.warnings.length === 0;
     warnings.replaceChildren(h("summary", null, plural(c.warnings.length, "warning")), h("ul", null, c.warnings.map((/** @type {any} */ w) => h("li", null, issueLine(w)))));
     infoSlot.show(facts, warnings, problem, h("div", { class: "actions" }, reload));
     renderBuilds(c);
   };
 
-  // Builds ------------------------------------------------------------------------------------------------------
-  // The history of the loaded catalog, newest first; below it what the selected build changed (by default the
-  // latest one after the first load, whose changes come with GET /catalog; older ones are fetched on demand).
+  // The build history, newest first; below it what the selected build changed (by default the latest one after the
+  // first load, whose changes come with GET /catalog; older ones are fetched on demand).
   /** @type {any[]} */
   let buildList = [];
   /** @type {Map<string, any>} changes fetched so far, by build id */
@@ -137,9 +124,9 @@ export function catalogView(scope, query) {
     const row = (/** @type {any} */ b) => {
       const button = h("button", { type: "button", "aria-pressed": "false", "aria-label": `What changed in build ${shortId(b.buildId)}`, onclick: () => void selectBuild(b.buildId) }, "What changed");
       const when = ` · built ${formatRelative(b.builtAt)} · loaded ${formatRelative(b.loadedAt)}`;
-      const meta = h("div", { class: "muted" }, h("code", null, shortId(b.buildId)), when);
-      const grow = h("div", { class: "grow" }, h("strong", null, buildSummary(b)), meta);
-      const li = h("li", null, h("div", { class: "row" }, grow, button));
+      const meta = [h("code", null, shortId(b.buildId)), when];
+      const li = h("li", null, h("div", { class: "row" }, rowText(buildSummary(b), meta), button));
+
       buildRows.set(b.buildId, { li, button });
       return li;
     };
@@ -160,7 +147,6 @@ export function catalogView(scope, query) {
     },
   );
 
-  // Shows -------------------------------------------------------------------------------------------------------
   // The filters go into the address without a new history entry (and without re-rendering the view).
   const shows = catalogBrowser(scope, {
     row: (/** @type {any} */ item) => ({ element: showRow(item, { meta: showMeta(item, { playable: true }), href: `#/catalog/items/${encodeURIComponent(item.id)}` }), update() {} }),
