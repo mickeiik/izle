@@ -1,10 +1,11 @@
 // @ts-check
-// Catalog: the loaded bundle (with "Reload from disk"), its build history with what each build changed, and every
-// show, searched as the owner types.
+// Catalog: the loaded bundle (with "Reload from disk"), its build history with what each build changed, and the
+// catalog browser, whose filters live in the address (`#/catalog?…`) so that Back from a show returns to the same list.
 
 import { ApiError, api, isUnauthorized } from "./api.js";
-import { actionButton, card, h, keyedRows, liveSearch, loadError, loading, page, showRow, slot, toast } from "./dom.js";
-import { buildSummary, catalogContents, catalogSearchPath, errorText, formatRelative, groupEpisodeChanges, issueLine, plural, searchSummary, shortId, showMeta } from "./lib.js";
+import { catalogBrowser } from "./catalog-browser.js";
+import { actionButton, card, h, loadError, loading, page, showRow, slot, toast } from "./dom.js";
+import { browseHash, buildSummary, catalogContents, errorText, formatRelative, groupEpisodeChanges, issueLine, parseBrowseHash, plural, shortId, showMeta } from "./lib.js";
 
 /** Builds listed before the rest fold away. */
 const BUILDS_SHOWN = 5;
@@ -46,8 +47,8 @@ function buildDetail(b, changes) {
   return h("div", null, head, list, cut ? h("p", { class: "hint" }, "Long lists are cut short; the counts in the list above are exact.") : null);
 }
 
-/** @param {import("./router.js").Scope} scope */
-export function catalogView(scope) {
+/** @param {import("./router.js").Scope} scope @param {URLSearchParams} [query] */
+export function catalogView(scope, query) {
   const infoSlot = slot();
   const buildsSlot = slot();
   const facts = h("dl", { class: "facts" });
@@ -61,7 +62,7 @@ export function catalogView(scope) {
       const r = await api("POST", "/catalog/reload");
       toast(`Catalog reloaded: build ${r.catalog.buildId}. Every TV refreshes its home screen.`);
       renderInfo(r.catalog);
-      await shows.run();
+      await shows.reload();
     } catch (err) {
       if (isUnauthorized(err)) return; // signed out
       if (!(err instanceof ApiError && err.code === "invalid_catalog")) return toast(errorText(err), "error");
@@ -161,32 +162,19 @@ export function catalogView(scope) {
   );
 
   // Shows -------------------------------------------------------------------------------------------------------
-  const search = h("input", { type: "search", placeholder: "Search titles", "aria-label": "Search the shows", autocomplete: "off", spellcheck: "false" });
-  const summary = h("p", { class: "summary muted", "aria-live": "polite" });
-  const list = h("div", { class: "list results" });
-  const showsSlot = slot();
-  const rows = keyedRows(list, (/** @type {any} */ i) => i.id, (/** @type {any} */ item) => ({
-    element: showRow(item, { meta: showMeta(item, { playable: true }), href: `#/catalog/items/${encodeURIComponent(item.id)}` }),
-    update() {},
-  }));
-  const shows = liveSearch(
-    scope,
-    search,
-    async (query) => (await scope.read(catalogSearchPath(query))).items,
-    (items, query) => {
-      summary.textContent = searchSummary(items.length, query);
-      rows.set(items);
-      showsSlot.show(list);
-    },
-    (err) => showsSlot.show(loadError(err, shows.run, "Could not search the catalog.")),
-  );
-  void shows.run();
+  // The filters go into the address without a new history entry (and without re-rendering the view).
+  const shows = catalogBrowser(scope, {
+    row: (/** @type {any} */ item) => ({ element: showRow(item, { meta: showMeta(item, { playable: true }), href: `#/catalog/items/${encodeURIComponent(item.id)}` }), update() {} }),
+    label: "Search the shows",
+    initial: parseBrowseHash(query ?? ""),
+    onFilters: (f) => history.replaceState(null, "", browseHash(f)),
+  });
 
   return page(
     { title: "Catalog" },
     scope.note,
     card("Bundle", infoSlot.element),
     card({ title: "Builds", intro: "Each build this server loaded, newest first, with what it added and removed compared with the build before it." }, buildsSlot.element),
-    card("Shows", search, summary, showsSlot.element),
+    card("Shows", shows.element),
   );
 }

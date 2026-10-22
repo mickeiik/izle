@@ -94,11 +94,11 @@ const ASSET_FILE = /^[0-9a-f]{64}\.(jpg|png|webp)$/;
 /** An item's image path in the bundle (`assets/<sha256>.<ext>`) as the URL GET /assets/:file serves it at. */
 const assetUrl = (rel: string | null | undefined): string | null => (rel ? `/assets/${path.posix.basename(rel)}` : null);
 
-/** How titles are ordered: the catalog search and the viewing history sort alike. */
+/** How titles are ordered: the catalog browser and the viewing history sort alike. */
 export const byTitle = (a: string, b: string): number => a.localeCompare(b);
 
-/** Case-, accent- and Turkish-dotless-i-insensitive form used for catalog search. */
-function fold(text: string): string {
+/** Case-, accent- and Turkish-dotless-i-insensitive form the catalog browser matches text and genres in. */
+export function fold(text: string): string {
   return text.normalize("NFD").replace(/\p{M}/gu, "").replace(/ı/g, "i").toLowerCase();
 }
 
@@ -236,11 +236,5 @@ export class CatalogService {
   assetPath(file: string): string | null {
     if (!ASSET_FILE.test(file)) return null;
     return path.join(this.current.dir, this.current.manifest.assetsDir, file);
-  }
-
-  search(query: string, limit: number): CatalogItem[] {
-    const q = fold(query.trim());
-    const matches = (i: CatalogItem) => q === "" || fold(i.title).includes(q) || (i.originalTitle && fold(i.originalTitle).includes(q)) || fold(i.id).includes(q);
-    return this.current.items.filter(matches).sort((a, b) => byTitle(a.title, b.title)).slice(0, limit);
   }
 }

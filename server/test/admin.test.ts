@@ -293,9 +293,12 @@ test("catalog: info, accent-insensitive search, item detail without upstream URL
   assert.match(info.json.server.version, /^\d+\.\d+\.\d+/);
   const search = await s.admin("GET", "/catalog/search?q=sov");
   assert.deepEqual(search.json.items.map((i: { id: string }) => i.id), ["show"]);
+  assert.deepEqual([search.json.total, search.json.offset], [1, 0]);
   assert.equal(search.json.items[0].playableCount, 4);
+  assert.deepEqual([search.json.items[0].firstSeenAt, search.json.items[0].newEpisodes], [null, 0], "the baseline was always there");
   assert.equal((await s.admin("GET", "/catalog/search?q=SHOW world")).json.items[0].id, "show", "matches originalTitle");
-  assert.equal((await s.admin("GET", "/catalog/search?limit=3")).json.items.length, 3);
+  const page = await s.admin("GET", "/catalog/search?limit=3");
+  assert.deepEqual([page.json.items.length, page.json.total], [3, 18]);
   const item = await s.admin("GET", "/catalog/items/show");
   assert.equal(item.json.item.episodes.length, 5);
   const e4 = item.json.item.episodes[3];
@@ -447,10 +450,80 @@ test("catalog builds: the baseline, then each reload's changes newest first; one
   assert.equal((await s.admin("GET", "/catalog/builds/fixture-1")).status, 200);
 });
 
+/** The fixture with genres and years to browse by: "Drama" and "DRAMA" are one genre. */
+const browsable = (items: Json[]) =>
+  items.map((i) => {
+    const extra: Json = { show: { year: 2024, genres: ["Drama", "Komedi"] }, film: { genres: ["DRAMA"] }, silent: { year: 2005, genres: ["Komedi"] }, "filler-01": { year: 2024 } }[i.id as string];
+    return extra ? { ...i, ...extra } : i;
+  });
+
+test("catalog browsing: facets, filters, orders, pages, not on a Home, new since a build", async (t) => {
+  const bundleDir = await writeBundle(await tempDir(), fixtureManifest(), { items: browsable(fixtureItems(12).items) });
+  const s = await startTestServer({ bundleDir });
+  t.after(() => s.close());
+  const search = async (query: string) => (await s.admin("GET", `/catalog/search?${query}`)).json;
+  const ids = async (query: string) => (await search(query)).items.map((i: { id: string }) => i.id);
+
+  const info = (await s.admin("GET", "/catalog")).json;
+  assert.deepEqual(info.facets, {
+    kinds: { movie: 15, series: 1, live: 2 }, genres: [{ name: "Drama", count: 2 }, { name: "Komedi", count: 2 }], years: { min: 1999, max: 2024 },
+  });
+
+  assert.deepEqual(await ids("kind=live"), ["news", "off-air"]);
+  assert.equal((await search("kind=movie,series")).total, 16);
+  assert.deepEqual(await ids("genre=komedi"), ["silent", "show"], "folded, any spelling");
+  assert.deepEqual(await ids("genre=drama"), ["film", "show"]);
+  assert.deepEqual(await ids("genre=DRAMA,belgesel"), ["film", "show"], "any of the genres");
+  assert.deepEqual(await ids("yearFrom=2000"), ["filler-01", "silent", "show"], "a range leaves out items without a year");
+  assert.deepEqual(await ids("yearTo=2000"), ["film"]);
+  assert.deepEqual(await ids("yearFrom=2005&yearTo=2005"), ["silent"]);
+  const playable = await search("playable=true");
+  assert.equal(playable.total, 16);
+  assert.ok(!playable.items.some((i: Json) => i.id === "locked" || i.id === "off-air"));
+  assert.deepEqual(await ids("sort=year&kind=movie,series&limit=5"), ["filler-01", "show", "silent", "film", "filler-10"], "newest year first, no year last");
+  const titles = ["filler-01", "filler-10", "filler-11", "filler-12", "filler-02", "filler-03", "filler-04", "filler-05", "filler-06", "filler-07", "filler-08", "filler-09", "film"];
+  assert.deepEqual(await ids("q=fil"), titles, "by title");
+  const page = await search("q=fil&limit=5&offset=10");
+  assert.deepEqual([page.items.map((i: Json) => i.id), page.total, page.offset], [titles.slice(10), 13, 10]);
+  const past = await search("q=fil&offset=20");
+  assert.deepEqual([past.items, past.total, past.offset], [[], 13, 20]);
+
+  for (const bad of ["kind=song", "sort=random", "since=yesterday", "offset=-1", `genre=${"x".repeat(101)}`, "yearFrom=-1", "playable=yes"]) {
+    const r = await s.admin("GET", `/catalog/search?${bad}`);
+    assert.deepEqual([r.status, r.json.error], [400, "invalid_request"], bad);
+  }
+
+  const tv = await s.pair("Salon");
+  await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["show", "news"] });
+  assert.deepEqual(await ids(`notOnDevice=${tv.deviceId}&kind=live,series`), ["off-air"]);
+  assert.equal((await search(`notOnDevice=${tv.deviceId}`)).total, 16);
+  const unknown = await s.admin("GET", "/catalog/search?notOnDevice=nope");
+  assert.deepEqual([unknown.status, unknown.json.error], [404, "unknown_device"]);
+
+  // Build 2 brings a new show and a new episode of "show".
+  s.clock.advance(3_600_000);
+  const silent = fixtureItems().items.find((i: Json) => i.id === "silent");
+  const fresh = { id: "fresh", kind: "series", title: "Fresh", poster: null, genres: ["Belgesel"], episodes: [{ ...silent.episodes[0], id: "fresh.e1" }] };
+  await publishBuild(s.bundleDir, "fixture-2", (items) =>
+    [...browsable(items), fresh].map((i) => (i.id === "show" ? { ...i, episodes: [...i.episodes, { ...i.episodes.at(-1), id: "show.e6", season: 3, number: 1 }] } : i)),
+  );
+  const reload = await s.admin("POST", "/catalog/reload");
+  assert.equal(reload.status, 200);
+  assert.deepEqual(reload.json.catalog.facets.genres, [{ name: "Drama", count: 2 }, { name: "Komedi", count: 2 }, { name: "Belgesel", count: 1 }], "the facets follow the reload");
+  assert.equal(reload.json.catalog.facets.kinds.series, 2);
+  const loadedAt: string = reload.json.catalog.builds[0].loadedAt;
+
+  const since = await search(`since=${loadedAt}`);
+  assert.deepEqual(since.items.map((i: Json) => [i.id, i.firstSeenAt, i.newEpisodes]), [["fresh", loadedAt, 1], ["show", null, 1]]);
+  assert.deepEqual(await ids(`since=${Date.parse(loadedAt) + 1}`), [], "epoch ms; later than the build");
+  assert.deepEqual(await ids("sort=newest&limit=3"), ["fresh", "show", "filler-01"], "the newest first, then by title");
+  assert.equal((await search("q=sov")).items[0].newEpisodes, 0, "no since, no new episodes");
+});
+
 test("channels on the admin side: search hits and item details, playable on the home rows, no cursor", async (t) => {
   const { s, tv } = await setup(t);
   const hit = (await s.admin("GET", "/catalog/search?q=haber")).json.items[0];
-  assert.deepEqual(hit, { id: "news", kind: "live", title: "Haber 24", year: null, posterUrl: hit.posterUrl, backdropUrl: null, episodeCount: null, playableCount: null, playable: true });
+  assert.deepEqual(hit, { id: "news", kind: "live", title: "Haber 24", year: null, posterUrl: hit.posterUrl, backdropUrl: null, episodeCount: null, playableCount: null, playable: true, firstSeenAt: null, newEpisodes: null });
   const playable = async (q: string) => (await s.admin("GET", `/catalog/search?q=${q}`)).json.items[0].playable;
   assert.deepEqual([await playable("off"), await playable("sov"), await playable("locked")], [false, true, false]);
 

@@ -7,6 +7,7 @@ import { SERVER, tvActor } from "./actor.ts";
 import { AppUpdateService, FIRST_CHECK_DELAY_MS } from "./app-updates.ts";
 import { loadAdminToken } from "./auth.ts";
 import { CatalogService } from "./catalog.ts";
+import { CatalogBrowser } from "./catalog-browse.ts";
 import { limiterKey } from "./clientip.ts";
 import { CommandService } from "./commands.ts";
 import { CompanionService } from "./companion.ts";
@@ -116,7 +117,8 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     deadlineMs: config.resolver?.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,
     budgetMs: config.resolver?.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
   });
-  const modules = { config, store, catalog, events, notifier, eventLog, resolver, sessions, problems, viewings, appUpdates, home, playing, proxy, log, now };
+  const browse = new CatalogBrowser({ catalog, store });
+  const modules = { config, store, catalog, browse, events, notifier, eventLog, resolver, sessions, problems, viewings, appUpdates, home, playing, proxy, log, now };
   const ctx: AppContext = {
     ...modules, tv: new TvService(modules), companion: new CompanionService(modules), pairing: new PairingService(modules, opts.pairing),
     devices: new DeviceService(modules), commands: new CommandService(modules), tokens: new TokenService(store, log, now),

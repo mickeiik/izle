@@ -309,6 +309,9 @@ function focusFirst(root, control) {
   return true;
 }
 
+/** Focuses the first control in `root`, preferably one of `data-control` = `control`; whether it found one. */
+export const focusInto = focusFirst;
+
 /**
  * Runs `update`, which may rebuild, move or remove part of the page, and puts the keyboard focus back where the
  * owner was: on the same element if it is still in the page, else on its rebuilt twin (the same `data-focus` key),
@@ -389,37 +392,4 @@ export function showRow(item, o = {}) {
   /** @type {Array<Child | Child[]>} */
   const body = [poster(item.posterUrl), h("div", { class: "grow" }, h("strong", null, item.title), o.meta ? h("div", { class: "muted" }, o.meta) : null), o.end];
   return o.href ? h("a", { class: "row link", href: o.href }, ...body) : h("div", { class: "row" }, ...body);
-}
-
-/**
- * Searches as the owner types: `search(query)` runs 200 ms after the last keystroke, and its answer is shown only
- * when no newer search started meanwhile. `run()` searches at once.
- * @template T
- * @param {import("./router.js").Scope} scope its end cancels a pending search
- * @param {HTMLInputElement} input
- * @param {(query: string) => Promise<T>} search
- * @param {(result: T, query: string) => void} show
- * @param {(err: unknown) => void} fail
- */
-export function liveSearch(scope, input, search, show, fail) {
-  let seq = 0;
-  /** @type {ReturnType<typeof setTimeout> | undefined} */
-  let timer;
-  const run = async () => {
-    clearTimeout(timer);
-    const mine = ++seq;
-    const query = input.value;
-    try {
-      const result = await search(query);
-      if (mine === seq && scope.alive()) show(result, query);
-    } catch (err) {
-      if (mine === seq && scope.alive()) fail(err);
-    }
-  };
-  input.addEventListener("input", () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => void run(), 200);
-  });
-  scope.onCleanup(() => clearTimeout(timer));
-  return { run };
 }

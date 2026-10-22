@@ -9,8 +9,6 @@ export const HOME_COLUMNS = [3, 4, 5, 6];
 export const HOME_ROWS = [1, 2, 3, 4];
 /** The TV resumes a saved position only from 30 s on (PlaybackPlan); earlier positions start over. */
 const RESUME_MIN_MS = 30_000;
-/** The most results the catalog search returns (the server's cap). */
-const SEARCH_MAX = 200;
 
 /** `1:02:03` or `12:34`; `–` when unknown. @param {number | null | undefined} ms */
 export function formatClock(ms) {
@@ -148,21 +146,168 @@ export function showMeta(item, o = {}) {
   return parts.join(" · ");
 }
 
+// --- The catalog browser -----------------------------------------------------------------------------------------
+
+/** Shows per page of the catalog browser ("Show more" loads the next). */
+export const BROWSE_PAGE = 50;
+/** The catalog browser's orders: the `sort` value and its label. */
+export const BROWSE_SORTS = /** @type {const} */ ([
+  ["title", "By title"],
+  ["year", "Newest year first"],
+  ["newest", "Newest in the catalog first"],
+]);
+const BROWSE_KINDS = ["movie", "series", "live"];
+/** The bundle schema's bounds of a show's year. */
+const YEAR_MIN = 1870;
+const YEAR_MAX = 2200;
+
 /**
- * What a catalog search found, for the line above the results: `3 shows match “pro”.`, `All 7 shows.`; at the
- * server's cap, a hint to type more.
- * @param {number} count @param {string} query
+ * The catalog browser's filters as the owner set them. Strings hold the raw input text (the years too); `since` is a
+ * build id ("": any time); `notOnHome` asks for the shows not on the Home of the TV the browser picks for.
  */
-export function searchSummary(count, query) {
-  const q = query.trim();
-  if (count === 0) return q ? `No show matches “${q}”.` : "The catalog has no shows.";
-  if (count >= SEARCH_MAX) return q ? `The first ${count} shows that match “${q}”; type more to narrow the list.` : `The first ${count} shows; type a title to narrow the list.`;
-  if (!q) return count === 1 ? "The catalog's only show." : `All ${count} shows.`;
-  return `${plural(count, "show")} ${count === 1 ? "matches" : "match"} “${q}”.`;
+export const DEFAULT_FILTERS = { q: "", kind: "", genre: "", yearFrom: "", yearTo: "", playable: false, notOnHome: false, since: "", sort: "title" };
+/** @typedef {typeof DEFAULT_FILTERS} BrowseFilters */
+/** @typedef {{ buildId: string, loadedAt: string, baseline: boolean }} BrowseBuild */
+
+/** A year box's value as a year (an integer the schema allows), or null. @param {string} text */
+export function yearValue(text) {
+  const t = text.trim();
+  if (!/^\d+$/.test(t)) return null;
+  const n = Number(t);
+  return n >= YEAR_MIN && n <= YEAR_MAX ? n : null;
 }
 
-/** @param {string} query */
-export const catalogSearchPath = (query) => `/catalog/search?limit=${SEARCH_MAX}&q=${encodeURIComponent(query.trim())}`;
+/**
+ * Whether any filter but the order narrows the list: a search text that is not only spaces, a year the server
+ * would apply, a kind, genre, "new since", or a ticked box.
+ * @param {BrowseFilters} f
+ */
+export function isFiltered(f) {
+  return f.q.trim() !== "" || f.kind !== "" || f.genre !== "" || yearValue(f.yearFrom) !== null || yearValue(f.yearTo) !== null || f.playable || f.notOnHome || f.since !== "";
+}
+
+/**
+ * The time a "new since" choice stands for: the `loadedAt` of that build, or null for "any time", the baseline (the
+ * first load: nothing in it is new) or a build no longer listed.
+ * @param {string} buildId @param {BrowseBuild[]} builds
+ */
+export function sinceAt(buildId, builds) {
+  if (buildId === "") return null;
+  const b = builds.find((x) => x.buildId === buildId);
+  return b && !b.baseline ? b.loadedAt : null;
+}
+
+/**
+ * The "New" select's options: any time, then one per build after the baseline, newest first (in the given order).
+ * @param {BrowseBuild[]} builds newest first, as `/catalog` lists them @param {number} [now]
+ * @returns {Array<[string, string]>}
+ */
+export function newSinceOptions(builds, now = Date.now()) {
+  /** @type {Array<[string, string]>} */
+  const options = [["", "Any time"]];
+  for (const b of builds) {
+    if (b.baseline) continue;
+    const when = formatRelative(b.loadedAt, now);
+    options.push([b.buildId, options.length === 1 ? `Since the latest build (${when})` : `Since build ${shortId(b.buildId)} (${when})`]);
+  }
+  return options;
+}
+
+/**
+ * The search request for one page of the browser, with only the parameters that are set.
+ * @param {BrowseFilters} f
+ * @param {{ offset: number, limit: number, sinceAt?: string | null, notOnDevice?: string | null }} o `sinceAt`: the
+ *   chosen build's `loadedAt` (see `sinceAt`); `notOnDevice`: the TV whose Home shows are left out
+ */
+export function browsePath(f, o) {
+  const p = new URLSearchParams();
+  const q = f.q.trim();
+  if (q) p.set("q", q);
+  if (f.kind) p.set("kind", f.kind);
+  if (f.genre) p.set("genre", f.genre);
+  const from = yearValue(f.yearFrom);
+  if (from !== null) p.set("yearFrom", String(from));
+  const to = yearValue(f.yearTo);
+  if (to !== null) p.set("yearTo", String(to));
+  if (f.playable) p.set("playable", "true");
+  if (o.sinceAt !== undefined && o.sinceAt !== null) p.set("since", o.sinceAt);
+  if (o.notOnDevice) p.set("notOnDevice", o.notOnDevice);
+  if (f.sort !== "title") p.set("sort", f.sort);
+  if (o.offset > 0) p.set("offset", String(o.offset));
+  p.set("limit", String(o.limit));
+  return `/catalog/search?${p}`;
+}
+
+/**
+ * The line above the browser's results: `All 7 shows.`, `Showing 50 of 1,234 shows that match “pro” (filtered).`
+ * @param {number} shown the results listed @param {number} total all that match @param {BrowseFilters} f
+ */
+export function browseSummary(shown, total, f) {
+  const filtered = isFiltered(f);
+  if (total === 0) return filtered ? "No show matches." : "The catalog has no shows.";
+  const q = f.q.trim();
+  const others = isFiltered({ ...f, q: "" }) ? " (filtered)" : "";
+  const n = (/** @type {number} */ x) => x.toLocaleString("en-US");
+  if (shown >= total && total === 1) {
+    if (!filtered) return "The catalog's only show.";
+    return `1 show${q ? ` that matches “${q}”` : ""}${others}.`;
+  }
+  const suffix = `${q ? ` that match “${q}”` : ""}${others}`;
+  if (shown >= total) return `All ${n(total)} shows${suffix}.`;
+  return `Showing ${n(shown)} of ${n(total)} shows${suffix}.`;
+}
+
+/**
+ * The browser's filters from the query of its hash (`#/catalog?q=pro&kind=series`), defaults for the rest; values
+ * the browser cannot show are dropped.
+ * @param {URLSearchParams | string} query the query, with or without its `?`, or the whole `#/catalog?…` hash
+ * @returns {BrowseFilters}
+ */
+export function parseBrowseHash(query) {
+  let p = query;
+  if (typeof p === "string") {
+    const text = p.startsWith("#") ? (p.includes("?") ? p.slice(p.indexOf("?") + 1) : "") : p;
+    p = new URLSearchParams(text);
+  }
+  const text = (/** @type {string} */ k) => p.get(k) ?? "";
+  const year = (/** @type {string} */ k) => {
+    const y = yearValue(text(k));
+    return y === null ? "" : String(y);
+  };
+  const kind = text("kind");
+  const sort = text("sort");
+  return {
+    q: text("q"),
+    kind: BROWSE_KINDS.includes(kind) ? kind : "",
+    genre: text("genre"),
+    yearFrom: year("yearFrom"),
+    yearTo: year("yearTo"),
+    playable: text("playable") === "1",
+    notOnHome: text("notOnHome") === "1",
+    since: text("since"),
+    sort: BROWSE_SORTS.some(([s]) => s === sort) ? sort : "title",
+  };
+}
+
+/**
+ * The hash that keeps the browser's filters (a reload or Back restores them): `#/catalog`, or `#/catalog?…` with
+ * the filters that differ from the defaults (ticked boxes as `1`; years only when they are years).
+ * @param {BrowseFilters} f
+ */
+export function browseHash(f) {
+  const p = new URLSearchParams();
+  for (const key of /** @type {Array<keyof BrowseFilters>} */ (Object.keys(DEFAULT_FILTERS))) {
+    const v = f[key];
+    if (v === DEFAULT_FILTERS[key]) continue;
+    if (typeof v === "boolean") p.set(key, "1");
+    else if (key === "yearFrom" || key === "yearTo") {
+      const y = yearValue(v);
+      if (y !== null) p.set(key, String(y));
+    } else p.set(key, v);
+  }
+  const query = p.toString();
+  return query ? `#/catalog?${query}` : "#/catalog";
+}
 
 /**
  * What a catalog holds, for the bundle's facts: `9 shows (7 films, 1 series, 1 channel) · 11 episodes, 11 playable ·
