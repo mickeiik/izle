@@ -148,23 +148,13 @@ export const progressBody = ajv.compile<ProgressInput>(
 );
 
 export const problemBody = ajv.compile<ProblemReportBody>(
-  object(
-    {
-      kind: { enum: TV_PROBLEM_KINDS },
-      code: CODE,
-      // How long ago it happened: a report queued while the server was unreachable keeps its time.
-      ageMs: { type: "integer", minimum: 0, maximum: 86_400_000 },
-      itemId: ID,
-      episodeId: ID,
-      sourceId: ID,
-      sessionId: { type: "string", maxLength: 64 },
-      positionMs: MS,
-      httpStatus: { type: "integer", minimum: 100, maximum: 599 },
-      detail: { type: "string", maxLength: 500 },
-      appVersion: { type: "string", maxLength: 40 },
-    },
-    ["kind", "code"],
-  ),
+  object({
+    kind: { enum: TV_PROBLEM_KINDS }, code: CODE,
+    // How long ago it happened: a report queued while the server was unreachable keeps its time.
+    ageMs: { type: "integer", minimum: 0, maximum: 86_400_000 },
+    itemId: ID, episodeId: ID, sourceId: ID, sessionId: { type: "string", maxLength: 64 }, positionMs: MS,
+    httpStatus: { type: "integer", minimum: 100, maximum: 599 }, detail: { type: "string", maxLength: 500 }, appVersion: { type: "string", maxLength: 40 },
+  }, ["kind", "code"]),
 );
 
 const OFFSET_MS = { type: "integer", minimum: -21_600_000, maximum: 21_600_000 };

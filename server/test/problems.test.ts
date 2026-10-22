@@ -6,16 +6,15 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { DEFAULT_API_KEY, startUpstream } from "../examples/resolver-example/upstream.js";
 import { noPlayableDetail, triedDetail } from "../src/problems.ts";
-import { fixtureItems, fixtureManifest, listen, publishBuild, startTestServer, tempDir, TEST_RESOLVER, writeBundle, type Json, type TestServer } from "./helpers.ts";
+import { fixtureItems, fixtureManifest, listen, publishBuild, tempDir, testServer, TEST_RESOLVER, writeBundle, type Json, type TestServerOptions } from "./helpers.ts";
 
 /** A made-up token-like run (40 base64url characters), never a real secret. */
 const RUN = "Zq3v9Kx2LmN8pQ4rT6uW1yA5bC7dE0fGhIjKlMnO"; // gitleaks:allow (made-up hostile fixture)
 const REFERER = "https://site.example.test/";
 const PROXY_URL = /^\/p\/([A-Za-z0-9_-]{43})\/(index\.m3u8|video\.mp4)$/;
 
-async function setup(t: { after(fn: () => unknown): void }, s?: TestServer) {
-  const server = s ?? (await startTestServer());
-  t.after(() => server.close());
+async function setup(t: { after(fn: () => unknown): void }, opts?: TestServerOptions) {
+  const server = await testServer(t, opts);
   const tv = await server.pair("Salon");
   const as = (method: string, route: string, body?: unknown) => server.call(method, `/api/v1/tv${route}`, { token: tv.token, body });
   const report = (body: Json) => as("POST", "/problems", body);
@@ -295,14 +294,13 @@ async function setupServerOrigin(t: { after(fn: () => unknown): void }) {
     channel("relay", [testSource("bad", { behavior: "throw" }), { id: "plain", type: "direct", languages: tr, media: { kind: "hls", url: "https://media.example.test/relay/live.m3u8" } }]),
   );
   const bundleDir = await writeBundle(path.join(await tempDir(), "bundle"), { ...fixtureManifest(), adapters: ["example", "test"] }, items);
-  const s = await startTestServer({
+  const env = await setup(t, {
     bundleDir,
     configFile: {
       resolver: { module: TEST_RESOLVER, config: { apiBase: up.url, apiKey: DEFAULT_API_KEY }, deadlineMs: 200, budgetMs: 5000 },
       proxy: { privateUpstreams: ["127.0.0.1"] }, // the test upstreams listen on loopback
     },
   });
-  const env = await setup(t, s);
   const rows = (code?: string) => env.s.srv.ctx.store.listProblems(env.tv.deviceId, 100).filter((p) => code === undefined || p.code === code);
   const get = (p: string) => fetch(`${env.s.base}${p}`);
   return { ...env, up, flaky, rows, get, advanceUpstream: (ms: number) => void (upNow += ms) };

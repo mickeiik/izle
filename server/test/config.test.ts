@@ -6,7 +6,7 @@ import { loadAdminToken, newId } from "../src/auth.ts";
 import { ConfigError, loadConfig, SAMPLE_CATALOG_DIR } from "../src/config.ts";
 import { isId } from "../src/validation.ts";
 import { createLogger } from "../src/log.ts";
-import { ADMIN_TOKEN, silentLogger, startTestServer, tempDir } from "./helpers.ts";
+import { ADMIN_TOKEN, silentLogger, testServer, tempDir } from "./helpers.ts";
 
 test("defaults without a config file", () => {
   const c = loadConfig({ cwd: "/srv/izle", env: {} });
@@ -123,8 +123,7 @@ test("a token file shadowed by IZLE_ADMIN_TOKEN is warned about at startup, and 
   const fileToken = "rotated-without-the-variable-0123456789";
   const tokenFile = path.join(dir, "admin.token");
   writeFileSync(tokenFile, `${fileToken}\n`, { mode: 0o600 });
-  const s = await startTestServer({ configFile: { admin: { tokenFile } } });
-  t.after(() => s.close());
+  const s = await testServer(t, { configFile: { admin: { tokenFile } } });
   const warned = s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg.startsWith("IZLE_ADMIN_TOKEN overrides the admin token file"));
   assert.deepEqual(warned.map((l) => [l.level, l.file]), [["warn", tokenFile]]);
   assert.equal((await s.call("GET", "/api/v1/admin/status", { token: fileToken })).status, 401);

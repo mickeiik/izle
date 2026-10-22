@@ -1,10 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { eventually, openEvents, startTestServer } from "./helpers.ts";
+import { eventually, openEvents, startTestServer, testServer } from "./helpers.ts";
 
 test("SSE: initial state, pings, state events on change, commands; no replay after the replay window", async (t) => {
-  const s = await startTestServer({ pingMs: 50 });
-  t.after(() => s.close());
+  const s = await testServer(t, { pingMs: 50 });
   const tv = await s.pair("TV");
   assert.equal((await s.call("GET", "/api/v1/tv/events")).status, 401);
 
@@ -48,8 +47,7 @@ test("SSE: initial state, pings, state events on change, commands; no replay aft
 });
 
 test("SSE: commands reach the TV with their payloads, and come again in order until acknowledged", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const tv = await s.pair("TV");
   const es = await openEvents(s.base, tv.token);
   t.after(() => es.close());
@@ -89,8 +87,7 @@ test("SSE: commands reach the TV with their payloads, and come again in order un
 });
 
 test("SSE: deleting a device ends its stream", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const tv = await s.pair("TV");
   const es = await openEvents(s.base, tv.token);
   t.after(() => es.close());
@@ -101,7 +98,7 @@ test("SSE: deleting a device ends its stream", async (t) => {
 });
 
 test("SSE: events only reach the addressed device; shutdown ends open streams", async (t) => {
-  const s = await startTestServer();
+  const s = await testServer(t);
   const a = await s.pair("A");
   const b = await s.pair("B");
   const esA = await openEvents(s.base, a.token);

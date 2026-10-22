@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 import { DEFAULT_API_KEY, DEFAULT_REFERER, junkBytes, liveWindow, startUpstream, syntheticMedia, syntheticTsSegment } from "../examples/resolver-example/upstream.js";
 import { REWRITE_LIMITS } from "../src/proxy.ts";
-import { eventually, fixtureManifest, listen, startTestServer, tempDir, TEST_RESOLVER, writeBundle, type Json, type TestServer } from "./helpers.ts";
+import { eventually, fixtureManifest, listen, logged, tempDir, testServer, TEST_RESOLVER, uris, writeBundle, type Json, type TestServer } from "./helpers.ts";
 import { seenSignals } from "./fixtures/test-resolver.js";
 
 const PROXY_URL = /^\/p\/([A-Za-z0-9_-]{43})\/(index\.m3u8|video\.mp4)$/;
@@ -67,7 +67,7 @@ async function setupProxy(t: { after(fn: () => unknown): void }, opts: SetupOpti
   t.after(() => up.close());
   const root = await tempDir();
   const bundleDir = await writeBundle(path.join(root, "bundle"), { ...fixtureManifest(), adapters: ["example", "test"] }, (opts.items ?? proxyItems)(up.url));
-  const s = await startTestServer({
+  const s = await testServer(t, {
     bundleDir,
     configFile: {
       resolver: { module: TEST_RESOLVER, config: { apiBase: up.url, apiKey: DEFAULT_API_KEY }, deadlineMs: 2000, budgetMs: 5000, ...opts.resolver },
@@ -76,7 +76,6 @@ async function setupProxy(t: { after(fn: () => unknown): void }, opts: SetupOpti
       proxy: { privateUpstreams: ["127.0.0.1"], ...opts.configFile?.proxy },
     },
   });
-  t.after(() => s.close());
   const tv = await s.pair();
   const resolve = (episodeId: string, extra: Json = {}) => s.call("POST", "/api/v1/tv/resolve", { token: tv.token, body: { episodeId, ...extra } });
   const resolveChannel = (itemId: string, extra: Json = {}) => s.call("POST", "/api/v1/tv/resolve", { token: tv.token, body: { itemId, ...extra } });
@@ -86,16 +85,6 @@ async function setupProxy(t: { after(fn: () => unknown): void }, opts: SetupOpti
     return { status: res.status, type: res.headers.get("content-type"), body: await res.text() };
   };
   return { s, up, tv, resolve, resolveChannel, get, text, advanceUpstream: (ms: number) => void (upNow += ms), upstreamNow: () => upNow };
-}
-
-/** URIs of a playlist: URI lines and URI="…" attributes. */
-function uris(playlist: string): string[] {
-  const out: string[] = [];
-  for (const line of playlist.split("\n")) {
-    if (line.startsWith("#")) for (const m of line.matchAll(/URI="([^"]*)"/g)) out.push(m[1]!);
-    else if (line.trim()) out.push(line.trim());
-  }
-  return out;
 }
 
 /** What the TV got and the server's logs name neither the upstream, nor its Referer, nor a signed upstream path. */
@@ -413,8 +402,8 @@ test("adapter failures reach the TV and the log only as {adapterId, code, name};
   assert.equal(again.json.sourceId, "works", "sources that failed server-side move last for 10 minutes");
   assert.deepEqual(again.json.alternatives, ["broken", "gone"]);
 
-  const logged = await resolve("logger.main");
-  assert.equal(logged.status, 200);
+  const withLog = await resolve("logger.main");
+  assert.equal(withLog.status, 200);
   const line = s.logs.map((l) => JSON.parse(l)).find((l) => l.component === "resolver" && l.msg.startsWith("resolving"));
   assert.equal(line.msg, "resolving <url signed.secret.example.test>");
   assert.equal(line.note, "<url signed.secret.example.test>");
@@ -422,7 +411,7 @@ test("adapter failures reach the TV and the log only as {adapterId, code, name};
 
   const all = s.logs.join("\n") + JSON.stringify(r.json);
   for (const leak of ["SuperSecret", "master.m3u8?token", "upstream 500", "bad ref", "behavior"]) assert.ok(!all.includes(leak), `leaked ${leak}`);
-  const failures = s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === "adapter failed");
+  const failures = logged(s, "adapter failed");
   assert.ok(failures.length >= 5);
   for (const f of failures) {
     const keys = ["adapterId", "code", "deviceId", "episodeId", "itemId", "ms", ...("name" in f ? ["name"] : []), "sourceId"];
@@ -503,10 +492,9 @@ test("MPEG-TS through the proxy: stream.ts streams through with Range forwarded 
       channel("plain", [direct("ts", { kind: "ts", url: "https://media.example.test/live.ts" })]),
     ],
   });
-  const { s, tv, get } = await setupProxy(t, { items, configFile: { proxy: { alignTsSegments: true } } });
-  const resolveItem = (itemId: string) => s.call("POST", "/api/v1/tv/resolve", { token: tv.token, body: { itemId } });
+  const { s, tv, get, resolveChannel } = await setupProxy(t, { items, configFile: { proxy: { alignTsSegments: true } } });
 
-  const r = await resolveItem("iptv");
+  const r = await resolveChannel("iptv");
   assert.equal(r.status, 200, JSON.stringify(r.json));
   assert.equal(r.json.media.kind, "ts");
   const [, token] = /^\/p\/([A-Za-z0-9_-]{43})\/stream\.ts$/.exec(r.json.media.url) ?? [];
@@ -522,7 +510,7 @@ test("MPEG-TS through the proxy: stream.ts streams through with Range forwarded 
   assert.equal((await get(`/p/${token}/video.mp4`)).status, 404, "an MPEG-TS session has no MP4 entry");
   assert.equal((await get(`/p/${token}/index.m3u8`)).status, 404, "nor a playlist");
 
-  const plain = await resolveItem("plain");
+  const plain = await resolveChannel("plain");
   assert.deepEqual(plain.json.media, { kind: "ts", url: "https://media.example.test/live.ts" }, "without headers the URL goes to the TV as it is");
 
   // An upstream refusal marks the session stale and is reported with what was requested: the stream.

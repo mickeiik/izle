@@ -24,8 +24,6 @@ async function readOr404(file: string): Promise<Uint8Array<ArrayBuffer>> {
   }
 }
 
-/** The content type an allow-list gives a file name (own entries only: `__proto__` is no file). */
-const allowedType = (list: Record<string, string>, file: string): string | undefined => (Object.hasOwn(list, file) ? list[file] : undefined);
 
 export function registerStatic(app: Hono<Env>, ctx: AppContext): void {
   const { catalog } = ctx;
@@ -46,22 +44,15 @@ export function registerStatic(app: Hono<Env>, ctx: AppContext): void {
     });
   });
 
-  const adminFile = async (c: Context, file: string, type: string) => {
+  const adminFile = async (c: Context, file: string, type: string | undefined) => {
+    if (!type) throw new HttpError(404, "not_found");
     const bytes = await readOr404(path.join(ctx.adminUiDir, file));
     return c.body(bytes, 200, { "Content-Type": type, "Cache-Control": "no-cache", "Content-Security-Policy": ADMIN_CSP });
   };
+  /** The content type an allow-list gives a file name (own entries only: `__proto__` is no file). */
+  const allowed = (list: Record<string, string>, file: string) => (Object.hasOwn(list, file) ? list[file] : undefined);
   app.get("/admin", (c) => c.redirect("/admin/"));
   app.get("/admin/", (c) => adminFile(c, "index.html", "text/html; charset=utf-8"));
-  app.get("/admin/:file", (c) => {
-    const file = c.req.param("file");
-    const type = allowedType(ADMIN_FILES, file);
-    if (!type) throw new HttpError(404, "not_found");
-    return adminFile(c, file, type);
-  });
-  app.get("/admin/vendor/:file", (c) => {
-    const file = c.req.param("file");
-    const type = allowedType(ADMIN_VENDOR_FILES, file);
-    if (!type) throw new HttpError(404, "not_found");
-    return adminFile(c, path.join("vendor", file), type);
-  });
+  app.get("/admin/:file", (c) => adminFile(c, c.req.param("file"), allowed(ADMIN_FILES, c.req.param("file"))));
+  app.get("/admin/vendor/:file", (c) => adminFile(c, path.join("vendor", c.req.param("file")), allowed(ADMIN_VENDOR_FILES, c.req.param("file"))));
 }

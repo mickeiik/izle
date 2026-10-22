@@ -17,20 +17,15 @@ export function registerAdminHome(app: Hono<Env>, ctx: AppContext): void {
   const answer = (c: Context<Env>, d: Device, version: number, extra: Record<string, unknown> = {}) =>
     c.json({ version, home: devices.home(d), sections: home.sections(d.id), ...extra });
 
-  /** The device and the item a `…/home/items/:itemId` route names; an id that cannot be on a list is not on it. */
-  const item = (c: Context<Env>) => {
+  /**
+   * The device and the item or section a `…/home/items/:itemId` or `…/home/sections/:sectionId` route names: an id
+   * that cannot be on a list is not on it (404 `code`).
+   */
+  const named = (c: Context<Env>, param: "itemId" | "sectionId", code: string) => {
     const d = requireDevice(store, c.req.param("id") ?? "");
-    const itemId = c.req.param("itemId") ?? "";
-    if (!isId(itemId)) throw new HttpError(404, "not_on_home");
-    return { d, itemId };
-  };
-
-  /** The device and the section a `…/home/sections/:sectionId` route names; an id that cannot be a section is none. */
-  const section = (c: Context<Env>) => {
-    const d = requireDevice(store, c.req.param("id") ?? "");
-    const sectionId = c.req.param("sectionId") ?? "";
-    if (!isId(sectionId)) throw new HttpError(404, "unknown_section");
-    return { d, sectionId };
+    const id = c.req.param(param) ?? "";
+    if (!isId(id)) throw new HttpError(404, code);
+    return { d, id };
   };
 
   app.put("/api/v1/admin/devices/:id/home", async (c) => {
@@ -49,13 +44,13 @@ export function registerAdminHome(app: Hono<Env>, ctx: AppContext): void {
   });
 
   app.patch("/api/v1/admin/devices/:id/home/items/:itemId", async (c) => {
-    const { d, itemId } = item(c);
+    const { d, id: itemId } = named(c, "itemId", "not_on_home");
     const body = await parseBody(c, homeMoveBody);
     return answer(c, d, home.move(d.id, itemId, body, c.get("actor")));
   });
 
   app.delete("/api/v1/admin/devices/:id/home/items/:itemId", (c) => {
-    const { d, itemId } = item(c);
+    const { d, id: itemId } = named(c, "itemId", "not_on_home");
     return answer(c, d, home.remove(d.id, itemId, c.get("actor")));
   });
 
@@ -67,13 +62,13 @@ export function registerAdminHome(app: Hono<Env>, ctx: AppContext): void {
   });
 
   app.patch("/api/v1/admin/devices/:id/home/sections/:sectionId", async (c) => {
-    const { d, sectionId } = section(c);
+    const { d, id: sectionId } = named(c, "sectionId", "unknown_section");
     const body = await parseBody(c, sectionPatchBody);
     return answer(c, d, home.updateSection(d.id, sectionId, body, c.get("actor")));
   });
 
   app.delete("/api/v1/admin/devices/:id/home/sections/:sectionId", (c) => {
-    const { d, sectionId } = section(c);
+    const { d, id: sectionId } = named(c, "sectionId", "unknown_section");
     return answer(c, d, home.deleteSection(d.id, sectionId, c.get("actor")));
   });
 }

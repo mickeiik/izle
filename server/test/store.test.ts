@@ -5,6 +5,19 @@ import path from "node:path";
 import { MIGRATIONS, SCHEMA_VERSION, Store } from "../src/store.ts";
 import { tempDir, untitled } from "./helpers.ts";
 
+/** A database left at schema version `version` with `sql` run on it, then opened (and so migrated) by the store. */
+async function migrateFrom(version: number, ...sql: string[]) {
+  const file = path.join(await tempDir(), "izle.db");
+  const raw = new DatabaseSync(file);
+  for (const m of MIGRATIONS.slice(0, version)) raw.exec(m);
+  raw.exec(`PRAGMA user_version = ${version}`);
+  for (const q of sql) raw.exec(q);
+  raw.close();
+  const s = new Store(file);
+  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  return { s, file };
+}
+
 test("migrations run once and record the schema version", async () => {
   const file = path.join(await tempDir(), "data", "izle.db");
   const a = new Store(file);
@@ -46,18 +59,8 @@ test("deleting a device cascades to its rows; transactions roll back on error", 
 });
 
 test("migration 2: now_playing gains its anchor and seq, companion links exist; old rows read as defaults", async () => {
-  const file = path.join(await tempDir(), "izle.db");
-  const raw = new DatabaseSync(file);
-  raw.exec(MIGRATIONS[0]!);
-  raw.exec("PRAGMA user_version = 1");
-  raw.exec("INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'TV', 'h', 1)");
-  raw.exec(
-    "INSERT INTO now_playing (device_id, catalog_id, item_id, episode_id, source_id, position_ms, duration_ms, state, updated_at) VALUES ('d1', 'c', 'i', 'e', NULL, 5, 10, 'paused', 2)",
-  );
-  raw.close();
-
-  const s = new Store(file);
-  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  const { s } = await migrateFrom(1, "INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'TV', 'h', 1)",
+    "INSERT INTO now_playing (device_id, catalog_id, item_id, episode_id, source_id, position_ms, duration_ms, state, updated_at) VALUES ('d1', 'c', 'i', 'e', NULL, 5, 10, 'paused', 2)");
   assert.deepEqual(s.getNowPlaying("d1"), {
     catalogId: "c", itemId: "i", episodeId: "e", sourceId: null, positionMs: 5, durationMs: 10, state: "paused", updatedAt: 2, playing: false,
     anchorAt: null, seq: 0,
@@ -82,16 +85,7 @@ test("migration 2: now_playing gains its anchor and seq, companion links exist; 
 });
 
 test("migration 3: devices gain autoplay (off), problems are kept per device, newest first, and go with the device", async () => {
-  const file = path.join(await tempDir(), "izle.db");
-  const raw = new DatabaseSync(file);
-  raw.exec(MIGRATIONS[0]!);
-  raw.exec(MIGRATIONS[1]!);
-  raw.exec("PRAGMA user_version = 2");
-  raw.exec("INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'TV', 'h', 1)");
-  raw.close();
-
-  const s = new Store(file);
-  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  const { s } = await migrateFrom(2, "INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'TV', 'h', 1)");
   assert.equal(s.getDevice("d1")?.autoplayOnStart, false);
   assert.equal(s.updateDevice("d1", { autoplayOnStart: true })?.autoplayOnStart, true);
   assert.equal(s.updateDevice("d1", { name: "Salon" })?.autoplayOnStart, true, "other patches leave it alone");
@@ -117,18 +111,10 @@ test("migration 3: devices gain autoplay (off), problems are kept per device, ne
 });
 
 test("migration 4: home entries keep the date they were added, cursors carry the wrap flag", async () => {
-  const file = path.join(await tempDir(), "izle.db");
-  const raw = new DatabaseSync(file);
-  for (const m of MIGRATIONS.slice(0, 3)) raw.exec(m);
-  raw.exec("PRAGMA user_version = 3");
-  raw.exec("INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'TV', 'h', 1)");
-  raw.exec("INSERT INTO home_entries (device_id, position, catalog_id, item_id) VALUES ('d1', 0, 'c', 'a'), ('d1', 1, 'c', 'b')");
-  raw.exec("INSERT INTO item_cursor (device_id, catalog_id, item_id, episode_id, updated_at) VALUES ('d1', 'c', 'a', 'a.2', 5)");
-  raw.close();
-
   const before = Date.now();
-  const s = new Store(file);
-  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  const { s } = await migrateFrom(3, "INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'TV', 'h', 1)",
+    "INSERT INTO home_entries (device_id, position, catalog_id, item_id) VALUES ('d1', 0, 'c', 'a'), ('d1', 1, 'c', 'b')",
+    "INSERT INTO item_cursor (device_id, catalog_id, item_id, episode_id, updated_at) VALUES ('d1', 'c', 'a', 'a.2', 5)");
   const backfilled = s.getHomeEntries("d1", "c");
   const at = backfilled[0]!.addedAt!;
   assert.ok(at >= Math.floor(before / 1000) * 1000 && at <= Date.now(), "existing rows are backfilled to the migration time");
@@ -159,18 +145,10 @@ test("migration 4: home entries keep the date they were added, cursors carry the
 });
 
 test("migration 5: saved positions become imported viewings; access tokens and events have rows; hooks run after commit only", async () => {
-  const file = path.join(await tempDir(), "izle.db");
-  const raw = new DatabaseSync(file);
-  for (const m of MIGRATIONS.slice(0, 4)) raw.exec(m);
-  raw.exec("PRAGMA user_version = 4");
-  raw.exec("INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'Salon', 'h', 1), ('d2', 'Kitchen', 'h2', 1)");
-  raw.exec(`INSERT INTO progress (device_id, catalog_id, episode_id, item_id, position_ms, duration_ms, status, updated_at) VALUES
-    ('d1', 'c', 'a.1', 'a', 1200000, 1200000, 'finished', 20), ('d1', 'c', 'a.2', 'a', 300000, NULL, 'watching', 30), ('d2', 'c', 'f.main', 'f', 100, 5000, 'watching', 10)`);
-  raw.exec("INSERT INTO commands (device_id, type, payload_json, created_at) VALUES ('d1', 'stop', '{}', 5)");
-  raw.close();
-
-  const s = new Store(file);
-  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  const { s, file } = await migrateFrom(4, "INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'Salon', 'h', 1), ('d2', 'Kitchen', 'h2', 1)",
+    `INSERT INTO progress (device_id, catalog_id, episode_id, item_id, position_ms, duration_ms, status, updated_at) VALUES
+    ('d1', 'c', 'a.1', 'a', 1200000, 1200000, 'finished', 20), ('d1', 'c', 'a.2', 'a', 300000, NULL, 'watching', 30), ('d2', 'c', 'f.main', 'f', 100, 5000, 'watching', 10)`,
+    "INSERT INTO commands (device_id, type, payload_json, created_at) VALUES ('d1', 'stop', '{}', 5)");
   const db = new DatabaseSync(file);
   const viewings = db.prepare("SELECT * FROM viewings ORDER BY id").all();
   assert.deepEqual(viewings.map((v) => [v.device_id, v.device_name, v.episode_id, v.item_id, v.started_at, v.ended_at, v.end_position_ms, v.duration_ms, v.end_reason, v.seen]), [
@@ -224,15 +202,7 @@ test("migration 5: saved positions become imported viewings; access tokens and e
 });
 
 test("migration 6: devices from before read no app version; one APK row at most", async () => {
-  const file = path.join(await tempDir(), "izle.db");
-  const raw = new DatabaseSync(file);
-  for (const m of MIGRATIONS.slice(0, 5)) raw.exec(m);
-  raw.exec("PRAGMA user_version = 5");
-  raw.exec("INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'Salon', 'h', 1)");
-  raw.close();
-
-  const s = new Store(file);
-  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  const { s, file } = await migrateFrom(5, "INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'Salon', 'h', 1)");
   const d = s.getDevice("d1")!;
   assert.deepEqual([d.appVersion, d.appVersionCode, d.androidSdk, d.updateCapability, d.appReportedAt], [null, null, null, null, null]);
   s.setDeviceApp("d1", { version: "0.2.0", versionCode: 200, androidSdk: 25, capability: "guided" }, 7);
@@ -255,17 +225,9 @@ test("migration 6: devices from before read no app version; one APK row at most"
 });
 
 test("migration 7: pairing codes from before have no client; cancelling one unbinds and removes its uncollected device", async () => {
-  const file = path.join(await tempDir(), "izle.db");
-  const raw = new DatabaseSync(file);
-  for (const m of MIGRATIONS.slice(0, 6)) raw.exec(m);
-  raw.exec("PRAGMA user_version = 6");
-  raw.exec("INSERT INTO devices (id, name, token_hash, created_at) VALUES ('new', 'TV', NULL, 1), ('old', 'Salon', 'h', 1)");
-  raw.exec(`INSERT INTO pair_codes (code, pair_token_hash, device_id, created_at, expires_at, approved_at) VALUES
+  const { s } = await migrateFrom(6, "INSERT INTO devices (id, name, token_hash, created_at) VALUES ('new', 'TV', NULL, 1), ('old', 'Salon', 'h', 1)",
+    `INSERT INTO pair_codes (code, pair_token_hash, device_id, created_at, expires_at, approved_at) VALUES
     ('111111', 'p1', 'new', 1, 100, 2), ('222222', 'p2', 'old', 1, 100, 2), ('333333', 'p3', NULL, 1, 100, NULL)`);
-  raw.close();
-
-  const s = new Store(file);
-  assert.equal(s.schemaVersion, SCHEMA_VERSION);
   assert.equal(s.getPairCode("333333")!.clientHash, null);
   s.insertPairCode({ code: "444444", pairTokenHash: "p4", clientHash: "c".repeat(64), createdAt: 3, expiresAt: 100 });
   assert.equal(s.getPairCode("444444")!.clientHash, "c".repeat(64));
@@ -279,15 +241,7 @@ test("migration 7: pairing codes from before have no client; cancelling one unbi
 });
 
 test("migration 8: devices from before get the 4 × 2 home grid; a patch sets either alone and bumps the version", async () => {
-  const file = path.join(await tempDir(), "izle.db");
-  const raw = new DatabaseSync(file);
-  for (const m of MIGRATIONS.slice(0, 7)) raw.exec(m);
-  raw.exec("PRAGMA user_version = 7");
-  raw.exec("INSERT INTO devices (id, name, token_hash, created_at, autoplay_on_start) VALUES ('d1', 'Salon', 'h', 1, 1)");
-  raw.close();
-
-  const s = new Store(file);
-  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  const { s } = await migrateFrom(7, "INSERT INTO devices (id, name, token_hash, created_at, autoplay_on_start) VALUES ('d1', 'Salon', 'h', 1, 1)");
   const d = s.getDevice("d1")!;
   assert.deepEqual([d.homeColumns, d.homeRows, d.autoplayOnStart], [4, 2, true]);
   const wide = s.updateDevice("d1", { homeColumns: 6 })!;
@@ -344,24 +298,17 @@ test("catalog history rows: episodes seen after a date, removal and return, buil
 });
 
 test("migration 9: now playing and viewings may name a channel; rows, ranges and the viewing id sequence survive the rebuild", async () => {
-  const file = path.join(await tempDir(), "izle.db");
-  const raw = new DatabaseSync(file);
-  for (const m of MIGRATIONS.slice(0, 8)) raw.exec(m);
-  raw.exec("PRAGMA user_version = 8");
-  raw.exec("INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'Salon', 'h', 1)");
-  raw.exec(`INSERT INTO now_playing (device_id, catalog_id, item_id, episode_id, source_id, position_ms, duration_ms, state, updated_at, playing, anchor_at, seq)
-    VALUES ('d1', 'c', 'i', 'e', 's', 5, 10, 'paused', 2, 1, 1, 3)`);
   const actor = '{"type":"tv","deviceId":"d1"}';
-  raw.exec(`INSERT INTO viewings (id, device_id, device_name, catalog_id, item_id, item_kind, item_title, episode_id, started_at, ended_at, end_position_ms, duration_ms, watched_ms, end_reason, seen, trigger, actor_json)
+  const { s, file } = await migrateFrom(8, "INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'Salon', 'h', 1)",
+    `INSERT INTO now_playing (device_id, catalog_id, item_id, episode_id, source_id, position_ms, duration_ms, state, updated_at, playing, anchor_at, seq)
+    VALUES ('d1', 'c', 'i', 'e', 's', 5, 10, 'paused', 2, 1, 1, 3)`,
+    `INSERT INTO viewings (id, device_id, device_name, catalog_id, item_id, item_kind, item_title, episode_id, started_at, ended_at, end_position_ms, duration_ms, watched_ms, end_reason, seen, trigger, actor_json)
     VALUES (1, 'd1', 'Salon', 'c', 'i', 'series', 'Show', 'e1', 10, 20, 100, 1000, 90, 'stopped', 0, 'viewer', '${actor}'),
            (2, 'd1', 'Salon', 'c', 'i', 'series', 'Show', 'e2', 30, 40, 1000, 1000, 900, 'finished', 1, 'viewer', '${actor}'),
-           (3, 'd1', 'Salon', 'c', 'i', 'series', 'Show', 'e3', 50, 60, 10, 1000, 5, 'stopped', 0, 'viewer', '${actor}')`);
-  raw.exec("INSERT INTO viewing_ranges (viewing_id, from_ms, to_ms) VALUES (1, 0, 100), (2, 0, 1000)");
-  raw.exec("DELETE FROM viewings WHERE id = 3"); // the sequence stands at 3
-  raw.close();
-
-  const s = new Store(file);
-  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+           (3, 'd1', 'Salon', 'c', 'i', 'series', 'Show', 'e3', 50, 60, 10, 1000, 5, 'stopped', 0, 'viewer', '${actor}')`,
+    "INSERT INTO viewing_ranges (viewing_id, from_ms, to_ms) VALUES (1, 0, 100), (2, 0, 1000)",
+    "DELETE FROM viewings WHERE id = 3", // the sequence stands at 3
+  );
   assert.deepEqual(s.getNowPlaying("d1"), { catalogId: "c", itemId: "i", episodeId: "e", sourceId: "s", positionMs: 5, durationMs: 10, state: "paused", updatedAt: 2, playing: true, anchorAt: 1, seq: 3 });
   assert.deepEqual(s.listViewings({ catalogId: "c", limit: 10 }).map((v) => [v.id, v.episodeId, v.seen, v.actor]), [[2, "e2", true, { type: "tv", deviceId: "d1" }], [1, "e1", false, { type: "tv", deviceId: "d1" }]]);
   assert.deepEqual([s.viewingRanges(1), s.viewingRanges(2)], [[[0, 100]], [[0, 1000]]]);
@@ -412,17 +359,9 @@ test("catalog history rows for channels: seen by item id, removal and return", a
 });
 
 test("migration 10: every Home from before is the untitled section alone, with its items in order; sections go with their device", async () => {
-  const file = path.join(await tempDir(), "izle.db");
-  const raw = new DatabaseSync(file);
-  for (const m of MIGRATIONS.slice(0, 9)) raw.exec(m);
-  raw.exec("PRAGMA user_version = 9");
-  raw.exec("INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'Salon', 'h1', 1), ('d2', 'Mutfak', 'h2', 1)");
-  raw.exec(`INSERT INTO home_entries (device_id, position, catalog_id, item_id, added_at) VALUES
+  const { s, file } = await migrateFrom(9, "INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'Salon', 'h1', 1), ('d2', 'Mutfak', 'h2', 1)",
+    `INSERT INTO home_entries (device_id, position, catalog_id, item_id, added_at) VALUES
     ('d1', 0, 'c', 'b', 10), ('d1', 1, 'c', 'a', 11), ('d1', 2, 'other', 'z', 12), ('d1', 3, 'c', 'c', 13)`);
-  raw.close();
-
-  const s = new Store(file);
-  assert.equal(s.schemaVersion, SCHEMA_VERSION);
   const untitledGrid = { id: "untitled", title: null, layout: "grid" };
   assert.deepEqual(s.getHomeSections("d1"), [untitledGrid]);
   assert.deepEqual(s.getHomeEntries("d1", "c"), [

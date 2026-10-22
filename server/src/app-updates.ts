@@ -16,6 +16,7 @@ import type { EventLog } from "./eventlog.ts";
 import type { EventHub } from "./events.ts";
 import type { Logger } from "./log.ts";
 import { iso } from "./presenters.ts";
+import { readText } from "./proxy.ts";
 import type { Store, StoredApk, TvAppInfo } from "./store.ts";
 import { VERSION } from "./version.ts";
 
@@ -386,29 +387,17 @@ export class AppUpdateService {
     throw new CheckFailed(reason);
   }
 
-  /** The whole body, or `reason` once it is longer than `max` bytes. */
-  private static async readCapped(res: Response, max: number, reason: string): Promise<Buffer> {
+  /** The whole body as text, or `reason` once it is longer than `max` bytes. */
+  private static async readCapped(res: Response, max: number, reason: string): Promise<string> {
     if (Number(res.headers.get("content-length")) > max) AppUpdateService.failStatus(res, reason);
-    if (!res.body) return Buffer.alloc(0);
-    const reader = res.body.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
+    let text: string | null;
     try {
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > max) {
-          void reader.cancel().catch(() => {});
-          throw new CheckFailed(reason);
-        }
-        chunks.push(value);
-      }
-    } catch (err) {
-      if (err instanceof CheckFailed) throw err;
+      text = await readText(res, max);
+    } catch {
       throw new CheckFailed("network");
     }
-    return Buffer.concat(chunks);
+    if (text === null) throw new CheckFailed(reason);
+    return text;
   }
 
   private async checkLatest(actor: Actor): Promise<CheckOutcome> {
@@ -420,7 +409,7 @@ export class AppUpdateService {
     if (!res.ok) AppUpdateService.failStatus(res);
     let release: Record<string, unknown>;
     try {
-      const parsed: unknown = JSON.parse((await AppUpdateService.readCapped(res, RELEASE_MAX_BYTES, "bad_release")).toString("utf8"));
+      const parsed: unknown = JSON.parse(await AppUpdateService.readCapped(res, RELEASE_MAX_BYTES, "bad_release"));
       if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) throw new CheckFailed("bad_release");
       release = parsed as Record<string, unknown>;
     } catch (err) {
@@ -447,7 +436,7 @@ export class AppUpdateService {
 
     const sumsRes = await this.get(sumsAsset.href, this.apiMs);
     if (!sumsRes.ok) AppUpdateService.failStatus(sumsRes);
-    const sums = (await AppUpdateService.readCapped(sumsRes, CHECKSUMS_MAX_BYTES, "checksums_too_large")).toString("utf8");
+    const sums = await AppUpdateService.readCapped(sumsRes, CHECKSUMS_MAX_BYTES, "checksums_too_large");
     const expected = checksumFor(sums, assetName);
     if (!expected) throw new CheckFailed("checksum_missing");
 

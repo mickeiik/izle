@@ -7,19 +7,12 @@ import path from "node:path";
 import { APK_MEDIA_TYPE, ApkRejected, checksumFor, parseApkName, parseTvUserAgent, versionCodeOf } from "../src/app-updates.ts";
 import { OWNER, SERVER } from "../src/actor.ts";
 import { VERSION } from "../src/version.ts";
-import { ADMIN_TOKEN, eventually, listen, openEvents, startTestServer, type Json, type TestServer, type TestServerOptions } from "./helpers.ts";
+import { ADMIN_TOKEN, createToken, eventually, listen, logged, openEvents, startTestServer, testServer, type Json, type TestServer, type TestServerOptions } from "./helpers.ts";
 
 const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 /** Bytes that pass for an APK on the server: the zip magic, then noise. */
 const fakeApk = (size = 100 * 1024) => Buffer.concat([Buffer.from("PK\x03\x04", "latin1"), randomBytes(size - 4)]);
-const logged = (s: TestServer, msg: string): Json[] => s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === msg);
 const UA = (version: string, sdk: number, code: number, cap: string) => `izle-tv/${version} (Android ${sdk}; ${code}; ${cap})`;
-
-async function server(t: { after(fn: () => unknown): void }, opts: TestServerOptions = {}) {
-  const s = await startTestServer(opts);
-  t.after(() => s.close());
-  return s;
-}
 
 /** PUT /admin/app/apk with the owner token (or `token`), the APK media type and the name in the header. */
 async function upload(s: TestServer, body: Buffer | ReadableStream<Uint8Array> | null, name: string | null, o: { token?: string; type?: string; query?: string; headers?: Record<string, string> } = {}) {
@@ -35,12 +28,6 @@ async function upload(s: TestServer, body: Buffer | ReadableStream<Uint8Array> |
 const appDir = (s: TestServer) => path.join(s.config.dataDir, "app");
 const appFiles = (s: TestServer) => (existsSync(appDir(s)) ? readdirSync(appDir(s)).sort() : []);
 const appEvents = async (s: TestServer) => (await s.admin("GET", "/events?after=0&types=app.,device.app_version&limit=500")).json.events as Json[];
-
-async function createToken(s: TestServer, name: string, scope: string): Promise<string> {
-  const r = await s.admin("POST", "/tokens", { name, scope });
-  assert.equal(r.status, 201);
-  return r.json.secret;
-}
 
 test("versions: versionCode as the app's Gradle build has it; file names and User-Agents parsed strictly", () => {
   assert.equal(versionCodeOf("0.3.0"), 300);
@@ -63,7 +50,7 @@ test("versions: versionCode as the app's Gradle build has it; file names and Use
 });
 
 test("upload: stored by its content address, offered to the TVs, replaced and removed; a large body passes on this route only", async (t) => {
-  const s = await server(t);
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   const before = await s.admin("GET", "/app");
   assert.deepEqual(before.json, {
@@ -132,7 +119,7 @@ test("upload: stored by its content address, offered to the TVs, replaced and re
 });
 
 test("upload: refused names, media types and bodies; the cap, also for a streamed body, leaves no file behind", async (t) => {
-  const s = await server(t, { appUpdates: { maxBytes: 4096 } });
+  const s = await testServer(t, { appUpdates: { maxBytes: 4096 } });
   const apk = fakeApk(1000);
   for (const name of ["x.apk", "izle-tv-0.3.apk", "../izle-tv-0.3.0.apk", `izle-tv-0.3.0-${"a".repeat(280)}.apk`, "izle-tv-0.3.0-debug.apk/../x", ""]) {
     const r = await upload(s, apk, name);
@@ -188,11 +175,11 @@ const trickle = (first: Buffer, n: number, size: number) => {
 };
 
 test("upload: a streamed body refused part-way still gets its answer, not a dropped connection", async (t) => {
-  const s = await server(t);
+  const s = await testServer(t);
   const notApk = await upload(s, trickle(Buffer.from("MZ\x90\x00 not a zip"), 10, 30 * 1024), "izle-tv-0.3.0.apk");
   assert.deepEqual([notApk.status, notApk.json.error], [400, "not_an_apk"]);
 
-  const small = await server(t, { appUpdates: { maxBytes: 64 * 1024 } });
+  const small = await testServer(t, { appUpdates: { maxBytes: 64 * 1024 } });
   const over = await upload(small, trickle(fakeApk(10 * 1024), 9, 10 * 1024), "izle-tv-0.3.0.apk");
   assert.deepEqual([over.status, over.json], [413, { error: "apk_too_large", message: over.json.message, maxBytes: 64 * 1024 }]);
   for (const x of [s, small]) {
@@ -202,7 +189,7 @@ test("upload: a streamed body refused part-way still gets its answer, not a drop
 });
 
 test("store and remove: concurrent commits never leave the current APK without its file", async (t) => {
-  const s = await server(t);
+  const s = await testServer(t);
   const svc = s.srv.ctx.appUpdates;
   const body = (b: Buffer) => new ReadableStream<Uint8Array>({ start: (c) => (c.enqueue(new Uint8Array(b)), c.close()) });
   const p = fakeApk(20 * 1024);
@@ -230,10 +217,10 @@ test("store and remove: concurrent commits never leave the current APK without i
 });
 
 test("upload scopes: reading needs read, uploading, removing and checking need manage", async (t) => {
-  const s = await server(t);
-  const read = await createToken(s, "r", "read");
-  const control = await createToken(s, "c", "control");
-  const manage = await createToken(s, "m", "manage");
+  const s = await testServer(t);
+  const { secret: read } = await createToken(s, "r", "read");
+  const { secret: control } = await createToken(s, "c", "control");
+  const { secret: manage } = await createToken(s, "m", "manage");
   for (const token of [read, control]) {
     assert.deepEqual((await upload(s, fakeApk(1000), "izle-tv-0.3.0.apk", { token })).json, { error: "insufficient_scope", required: "manage", message: "this route needs the manage scope" });
     assert.equal((await s.call("DELETE", "/api/v1/admin/app/apk", { token })).status, 403);
@@ -253,7 +240,7 @@ test("upload scopes: reading needs read, uploading, removing and checking need m
 });
 
 test("SSE: event app reaches every open TV stream when an APK is stored, and comes on connect after state", async (t) => {
-  const s = await server(t);
+  const s = await testServer(t);
   const a = await s.pair("A");
   const b = await s.pair("B");
   const esA = await openEvents(s.base, a.token);
@@ -292,7 +279,7 @@ test("SSE: event app reaches every open TV stream when an APK is stored, and com
 });
 
 test("User-Agent: the TV's app version is recorded once per change; anything else is ignored", async (t) => {
-  const s = await server(t);
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   const other = await s.pair("Kitchen");
   const state = (ua: string, token = tv.token) => s.call("GET", "/api/v1/tv/state", { token, headers: { "User-Agent": ua } });
@@ -330,7 +317,7 @@ test("User-Agent: the TV's app version is recorded once per change; anything els
 });
 
 test("User-Agent: with automatic updates off, a silent TV behind the APK needs an install too", async (t) => {
-  const s = await server(t, { configFile: { appUpdates: { source: "manual", auto: false } } });
+  const s = await testServer(t, { configFile: { appUpdates: { source: "manual", auto: false } } });
   const tv = await s.pair("Salon");
   await s.call("GET", "/api/v1/tv/state", { token: tv.token, headers: { "User-Agent": UA("0.2.0", 33, 200, "silent") } });
   assert.equal((await upload(s, fakeApk(1000), "izle-tv-0.3.0.apk")).status, 200);
@@ -340,7 +327,7 @@ test("User-Agent: with automatic updates off, a silent TV behind the APK needs a
 });
 
 test("update command: needs a stored APK, carries its versionCode, reaches the TV and takes the TV's results", async (t) => {
-  const s = await server(t);
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   const send = (body: unknown) => s.admin("POST", `/devices/${tv.deviceId}/commands`, body);
   const none = await send({ type: "update" });
@@ -352,7 +339,7 @@ test("update command: needs a stored APK, carries its versionCode, reaches the T
   const es = await openEvents(s.base, tv.token);
   t.after(() => es.close());
   await es.next((m) => m.event === "app");
-  const control = await createToken(s, "c", "control");
+  const { secret: control } = await createToken(s, "c", "control");
   const r = await s.call("POST", `/api/v1/admin/devices/${tv.deviceId}/commands`, { token: control, body: { type: "update" } });
   assert.equal(r.status, 202);
   const ev = await es.next((m) => m.event === "command");
@@ -376,7 +363,7 @@ test("update command: needs a stored APK, carries its versionCode, reaches the T
 });
 
 test("reconcile: an APK whose file is gone is forgotten; leftovers of interrupted stores are deleted", async (t) => {
-  const s = await server(t);
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   const bytes = fakeApk(1000);
   assert.equal((await upload(s, bytes, "izle-tv-0.3.0.apk")).status, 200);
@@ -480,7 +467,7 @@ test("GitHub: the latest release's APK is fetched, verified and offered; a secon
   const gh = await fakeGithub(t);
   const apk = fakeApk(80 * 1024);
   gh.publish("0.3.0", apk);
-  const s = await server(t, github(gh));
+  const s = await testServer(t, github(gh));
   const tv = await s.pair("Salon");
   const es = await openEvents(s.base, tv.token);
   t.after(() => es.close());
@@ -527,7 +514,7 @@ test("GitHub: the latest release's APK is fetched, verified and offered; a secon
 test("GitHub: the owner's upload of the release's version is kept; a re-published release asset is fetched again", async (t) => {
   const gh = await fakeGithub(t);
   gh.publish("0.3.0");
-  const s = await server(t, github(gh));
+  const s = await testServer(t, github(gh));
   assert.equal((await s.admin("POST", "/app/check")).json.result, "fetched");
 
   // Same version, other bytes: a fetched APK is replaced.
@@ -554,48 +541,23 @@ test("GitHub: hostile releases fail with a reason and leave the stored APK untou
   const gh = await fakeGithub(t);
   const good = fakeApk(10 * 1024);
   gh.publish("0.3.0", good);
-  const s = await server(t, github(gh, { appUpdates: { maxBytes: 64 * 1024, timeouts: { apiMs: 300, downloadMs: 300 } } }));
+  const s = await testServer(t, github(gh, { appUpdates: { maxBytes: 64 * 1024, timeouts: { apiMs: 300, downloadMs: 300 } } }));
   assert.equal((await s.admin("POST", "/app/check")).json.result, "fetched");
 
-  const cases: Array<[string, () => void]> = [
+  // Each case changes release 0.3.1 as published, or publishes it otherwise.
+  const assets = (keep: (a: Json) => boolean) => (gh.state.release.assets = gh.state.release.assets.filter(keep));
+  const cases: Array<[string, () => unknown]> = [
     ["checksum_mismatch", () => gh.publish("0.3.1", fakeApk(1000), fakeApk(1000))],
-    ["no_apk_asset", () => {
-      gh.publish("0.3.1");
-      gh.state.release.assets = gh.state.release.assets.filter((a: Json) => a.name !== "izle-tv-0.3.1.apk");
-    }],
-    ["no_apk_asset", () => {
-      // Only the debug build: never taken instead.
-      gh.publish("0.3.1");
-      gh.state.release.assets = gh.state.release.assets.filter((a: Json) => a.name === "izle-tv-0.3.1-debug.apk" || a.name === "SHA256SUMS");
-    }],
-    ["no_apk_asset", () => {
-      gh.publish("0.3.1");
-      gh.state.release.assets[1].browser_download_url = "file:///etc/passwd";
-    }],
-    ["no_checksums", () => {
-      gh.publish("0.3.1");
-      gh.state.release.assets = gh.state.release.assets.filter((a: Json) => a.name !== "SHA256SUMS");
-    }],
-    ["checksum_missing", () => {
-      gh.publish("0.3.1");
-      gh.state.sums = `${"0".repeat(64)}  izle-tv-0.3.1-debug.apk\n`;
-    }],
-    ["checksums_too_large", () => {
-      gh.publish("0.3.1");
-      gh.state.sums = `${"0".repeat(64)}  x\n`.repeat(300);
-    }],
-    ["prerelease", () => {
-      gh.publish("0.3.1");
-      gh.state.release.prerelease = true;
-    }],
-    ["bad_tag", () => {
-      gh.publish("0.3.1");
-      gh.state.release.tag_name = "../../x";
-    }],
-    ["bad_tag", () => {
-      gh.publish("0.3.1");
-      gh.state.release.tag_name = "v0.3.1-rc.1";
-    }],
+    ["no_apk_asset", () => assets((a) => a.name !== "izle-tv-0.3.1.apk")],
+    // Only the debug build: never taken instead.
+    ["no_apk_asset", () => assets((a) => a.name === "izle-tv-0.3.1-debug.apk" || a.name === "SHA256SUMS")],
+    ["no_apk_asset", () => (gh.state.release.assets[1].browser_download_url = "file:///etc/passwd")],
+    ["no_checksums", () => assets((a) => a.name !== "SHA256SUMS")],
+    ["checksum_missing", () => (gh.state.sums = `${"0".repeat(64)}  izle-tv-0.3.1-debug.apk\n`)],
+    ["checksums_too_large", () => (gh.state.sums = `${"0".repeat(64)}  x\n`.repeat(300))],
+    ["prerelease", () => (gh.state.release.prerelease = true)],
+    ["bad_tag", () => (gh.state.release.tag_name = "../../x")],
+    ["bad_tag", () => (gh.state.release.tag_name = "v0.3.1-rc.1")],
     ["too_large", () => gh.publish("0.3.1", fakeApk(64 * 1024 + 1))],
     ["too_large", () => {
       // The asset's size understates it: the download's cap still holds.
@@ -603,33 +565,15 @@ test("GitHub: hostile releases fail with a reason and leave the stored APK untou
       gh.state.release.assets[1].size = 10;
     }],
     ["not_an_apk", () => gh.publish("0.3.1", Buffer.from("<html>not a zip</html>"))],
-    ["http_500", () => {
-      gh.publish("0.3.1");
-      gh.state.status = 500;
-    }],
-    ["rate_limited", () => {
-      gh.publish("0.3.1");
-      gh.state.status = 403;
-      gh.state.headers = { "x-ratelimit-remaining": "0" };
-    }],
-    ["rate_limited", () => {
-      gh.publish("0.3.1");
-      gh.state.status = 429;
-    }],
-    ["no_release", () => {
-      gh.publish("0.3.1");
-      gh.state.status = 404;
-    }],
-    ["bad_release", () => {
-      gh.publish("0.3.1");
-      gh.state.release = "{ not json";
-    }],
-    ["network", () => {
-      gh.publish("0.3.1");
-      gh.state.hang = true;
-    }],
+    ["http_500", () => (gh.state.status = 500)],
+    ["rate_limited", () => Object.assign(gh.state, { status: 403, headers: { "x-ratelimit-remaining": "0" } })],
+    ["rate_limited", () => (gh.state.status = 429)],
+    ["no_release", () => (gh.state.status = 404)],
+    ["bad_release", () => (gh.state.release = "{ not json")],
+    ["network", () => (gh.state.hang = true)],
   ];
   for (const [reason, arrange] of cases) {
+    gh.publish("0.3.1");
     arrange();
     const r = await s.admin("POST", "/app/check");
     assert.equal(r.status, 200);
@@ -651,7 +595,7 @@ test("GitHub: one check at a time; checks need manage; a stopping server ends a 
   const s = await startTestServer(github(gh, { appUpdates: { timeouts: { apiMs: 60_000 } } }));
   let closed = false;
   t.after(() => (closed ? undefined : s.close()));
-  const control = await createToken(s, "c", "control");
+  const { secret: control } = await createToken(s, "c", "control");
   assert.equal((await s.call("POST", "/api/v1/admin/app/check", { token: control })).status, 403);
 
   const first = s.admin("POST", "/app/check").catch(() => null);
@@ -669,7 +613,7 @@ test("GitHub: one check at a time; checks need manage; a stopping server ends a 
 test("GitHub: the scheduled check runs by itself after the first delay, as the server", async (t) => {
   const gh = await fakeGithub(t);
   gh.publish("0.3.0");
-  const s = await server(t, github(gh, { appUpdates: { firstCheckDelayMs: 20 } }));
+  const s = await testServer(t, github(gh, { appUpdates: { firstCheckDelayMs: 20 } }));
   await eventually(() => gh.count("/dl/izle-tv-0.3.0.apk") === 1);
   await eventually(() => s.logs.some((l) => l.includes('"apk stored"')));
   const ev = (await appEvents(s)).find((e) => e.type === "app.fetched");
@@ -681,7 +625,7 @@ test("GitHub: the scheduled check runs by itself after the first delay, as the s
 test("GitHub: with the manual source nothing is ever requested", async (t) => {
   const gh = await fakeGithub(t);
   gh.publish("0.3.0");
-  const s = await server(t, { githubApiBase: gh.url, appUpdates: { firstCheckDelayMs: 10 } });
+  const s = await testServer(t, { githubApiBase: gh.url, appUpdates: { firstCheckDelayMs: 10 } });
   await new Promise((r) => setTimeout(r, 150));
   const r = await s.admin("POST", "/app/check");
   assert.deepEqual([r.status, r.json.error], [409, "github_disabled"]);

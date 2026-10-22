@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EVENT_REPLAY_MAX } from "../src/eventlog.ts";
 import { frameWriter, MAX_ADMIN_STREAMS } from "../src/http/routes/admin-events.ts";
-import { ADMIN_TOKEN, eventually, openEvents, publishBuild, startTestServer, type Json, type TestServer } from "./helpers.ts";
+import { ADMIN_TOKEN, eventually, openEvents, publishBuild, testServer, type Json, type TestServer } from "./helpers.ts";
 
 const types = (events: Json[]) => events.map((e) => e.type);
 const admin = (s: TestServer, query: string) => s.admin("GET", `/events${query}`);
@@ -11,8 +11,7 @@ const openAdminStream = (s: TestServer, query = "", lastEventId?: number) =>
   openEvents(s.base, ADMIN_TOKEN, `/api/v1/admin/events/stream${query}`, lastEventId === undefined ? {} : { "Last-Event-ID": String(lastEventId) });
 
 test("events: every change appends one, in order, with its actor and data; nothing secret in them", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   const token = (await s.admin("POST", "/tokens", { name: "agent", scope: "manage" })).json;
   const asAgent = (method: string, route: string, body?: unknown) => s.call(method, `/api/v1/admin${route}`, { token: token.secret, body });
@@ -68,8 +67,7 @@ test("events: every change appends one, in order, with its actor and data; nothi
 });
 
 test("long-poll: after/limit/last, device and type filters (prefixes), gap after a purge, and waking on a new event", async (t) => {
-  const s = await startTestServer({ configFile: { events: { retentionDays: 1 } } });
-  t.after(() => s.close());
+  const s = await testServer(t, { configFile: { events: { retentionDays: 1 } } });
   const a = await s.pair("A");
   const b = await s.pair("B");
   await s.admin("PUT", `/devices/${a.deviceId}/home`, { itemIds: ["show"] });
@@ -123,8 +121,7 @@ test("long-poll: after/limit/last, device and type filters (prefixes), gap after
 });
 
 test("stream: retry, replay from after or Last-Event-ID (gap first), then live events in order; filters; pings", async (t) => {
-  const s = await startTestServer({ pingMs: 50 });
-  t.after(() => s.close());
+  const s = await testServer(t, { pingMs: 50 });
   const a = await s.pair("A");
   await s.admin("PUT", `/devices/${a.deviceId}/home`, { itemIds: ["show"] });
   assert.equal((await s.call("GET", "/api/v1/admin/events/stream")).status, 401);
@@ -173,8 +170,7 @@ test("stream: retry, replay from after or Last-Event-ID (gap first), then live e
 });
 
 test("stream: a replay sends at most the newest 500 events, after a gap naming where it starts", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const { store } = s.srv.ctx;
   store.transaction(() => {
     for (let i = 0; i < 3 * EVENT_REPLAY_MAX; i++) store.insertEvent({ at: s.clock.now(), type: "device.updated", deviceId: null, actor: { type: "server" }, data: { fields: ["name"] } });
@@ -220,8 +216,7 @@ test("stream: a writer closes the stream once more frames wait than it may queue
 });
 
 test("stream: at most 10 open per access token and per client address for the owner token", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const token = (await s.admin("POST", "/tokens", { name: "agent", scope: "read" })).json;
   const route = "/api/v1/admin/events/stream";
   const streams = [];
@@ -257,8 +252,7 @@ test("stream: at most 10 open per access token and per client address for the ow
 });
 
 test("online: a TV is online while a stream is open and for the grace period after; a reconnect does not flap; events say so", async (t) => {
-  const s = await startTestServer({ offlineGraceMs: 200 });
-  t.after(() => s.close());
+  const s = await testServer(t, { offlineGraceMs: 200 });
   const tv = await s.pair("TV");
   const online = () => s.srv.ctx.events.isOnline(tv.deviceId);
   const onlineEvents = async () => types((await admin(s, "?after=0&types=device.online,device.offline")).json.events);
@@ -297,8 +291,7 @@ test("online: a TV is online while a stream is open and for the grace period aft
 });
 
 test("status: every active TV in one call with lastEventId read first; nowPlaying while a viewing runs, with its id", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   await s.call("POST", "/api/v1/pair/start");
   const approvedOnly = await s.call("POST", "/api/v1/pair/start");

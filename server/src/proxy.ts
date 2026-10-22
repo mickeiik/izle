@@ -74,13 +74,7 @@ export type ProxyTarget = { type: "index" } | { type: "video" } | { type: "strea
  * `upstream_unreachable` (network error or no answer in time), `not_a_playlist`, `playlist_too_large`,
  * `egress_denied` (a URL or redirect named a loopback, private or other non-public address, see egress.ts).
  */
-export type ProxyProblemCode =
-  | `upstream_${401 | 403 | 410}`
-  | "upstream_error"
-  | "upstream_unreachable"
-  | "not_a_playlist"
-  | "playlist_too_large"
-  | "egress_denied";
+export type ProxyProblemCode = `upstream_${401 | 403 | 410}` | "upstream_error" | "upstream_unreachable" | "not_a_playlist" | "playlist_too_large" | "egress_denied";
 
 /** An upstream request of a session that failed in a way the owner should hear about. */
 export interface ProxyProblem {

@@ -3,14 +3,13 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ADMIN_TOKEN, fixtureItems, fixtureManifest, openEvents, publishBuild, startTestServer, writeBundle, type Json, type TestServer, type TestServerOptions } from "./helpers.ts";
+import { ADMIN_TOKEN, fixtureItems, fixtureManifest, openEvents, publishBuild, testServer, writeBundle, type Json, type TestServer, type TestServerOptions } from "./helpers.ts";
 
 const MIN = 60_000;
 const RUN = "Zq3v9Kx2LmN8pQ4rT6uW1yA5bC7dE0fGhIjKlMnO"; // gitleaks:allow (made-up hostile fixture)
 
 async function setup(t: { after(fn: () => unknown): void }, opts: TestServerOptions = {}, name = "Salon") {
-  const s = await startTestServer(opts);
-  t.after(() => s.close());
+  const s = await testServer(t, opts);
   const h = helpers(s, await s.pair(name));
   return { s, ...h };
 }
@@ -514,8 +513,7 @@ test("hostile fixture: titles and names with URLs and tokens never reach the log
   const items = fixtureItems();
   items.items[0].title = `Şov https://evil.example.test/show?sig=${RUN}`;
   items.items[0].episodes[0].title = `Pilot ${RUN}`;
-  const s = await startTestServer({ bundleDir: await writeBundle(`${await (await import("./helpers.ts")).tempDir()}/bundle`, fixtureManifest(), items) });
-  t.after(() => s.close());
+  const s = await testServer(t, { bundleDir: await writeBundle(`${await (await import("./helpers.ts")).tempDir()}/bundle`, fixtureManifest(), items) });
   const h = helpers(s, await s.pair(`TV https://evil.example.test/tv?t=${RUN.slice(0, 24)}`));
   const from = s.logs.length;
   await h.resolve("show.e1");

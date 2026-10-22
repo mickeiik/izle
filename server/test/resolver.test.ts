@@ -10,7 +10,7 @@ import { BundleValidationError, type Adapter } from "@izle/contract";
 import { DEFAULT_API_KEY, startUpstream } from "../examples/resolver-example/upstream.js";
 import { createLogger } from "../src/log.ts";
 import { healthcheckAll, loadResolver, ResolverLoadError, runAdapter } from "../src/resolver.ts";
-import { fixtureItems, fixtureManifest, silentLogger, startTestServer, tempDir, TEST_RESOLVER, writeBundle, type Json } from "./helpers.ts";
+import { fixtureItems, fixtureManifest, silentLogger, startTestServer, testServer, tempDir, TEST_RESOLVER, writeBundle, type Json } from "./helpers.ts";
 
 const BIN = fileURLToPath(new URL("../bin/izle-server.js", import.meta.url));
 const EXAMPLE = fileURLToPath(new URL("../examples/resolver-example/index.js", import.meta.url));
@@ -105,8 +105,7 @@ test("startup refuses a catalog that needs adapters the module does not provide;
   );
 
   const ok = await writeBundle(path.join(root, "ok"), { ...fixtureManifest(), adapters: ["example"] }, fixtureItems());
-  const s = await startTestServer({ bundleDir: ok, configFile: { resolver: { module: TEST_RESOLVER, config: { apiBase: "http://127.0.0.1:1/", apiKey: "k" } } } });
-  t.after(() => s.close());
+  const s = await testServer(t, { bundleDir: ok, configFile: { resolver: { module: TEST_RESOLVER, config: { apiBase: "http://127.0.0.1:1/", apiKey: "k" } } } });
   await writeFile(path.join(ok, "bundle.json"), JSON.stringify({ ...fixtureManifest(), buildId: "next", adapters: ["example", "other"] }));
   const reload = await s.admin("POST", "/catalog/reload");
   assert.equal(reload.status, 422);
