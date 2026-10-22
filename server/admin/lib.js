@@ -671,6 +671,27 @@ export function tvScroll(L, s, r, offset) {
 }
 
 /**
+ * What the screen shows after any redraw (a move of the focus, or an edit that moved the selected card, changed a
+ * section or the grid): every scrolling line within its ends for the cards it has now; the selected card (section
+ * `s`, card `i`, null: none) in view, its line moved by `tvRowFirst` as a focus move would and the screen scrolled to
+ * its line; or, with `chosen` (a section's index, -1: none), the screen scrolled to that section's first line.
+ * @param {HomeLayout} L @param {Record<string, number>} firsts @param {{ s: number, i: number } | null} at
+ * @param {number} chosen @param {number} offset
+ * @returns {{ firsts: Record<string, number>, offset: number }}
+ */
+export function tvView(L, firsts, at, chosen, offset) {
+  const cols = L.grid.columns;
+  /** @type {Record<string, number>} */
+  const next = {};
+  for (const box of L.sections) if (box.row) next[box.id] = Math.min(firsts[box.id] ?? 0, Math.max(0, box.count - cols));
+  const box = at ? L.sections[at.s] : undefined;
+  if (at && box?.row) next[box.id] = tvRowFirst(next[box.id] ?? 0, at.i, cols, box.count);
+  if (chosen >= 0 && chosen < L.sections.length) return { firsts: next, offset: tvScroll(L, chosen, 0, offset) };
+  if (at && box) return { firsts: next, offset: tvScroll(L, at.s, tvLineOf(L, at.s, at.i), offset) };
+  return { firsts: next, offset: Math.max(0, Math.min(offset, L.contentHeight - L.viewport.height)) };
+}
+
+/**
  * Where the focus goes from card `i` of section `s` with an arrow key, as on the TV: ← → along the line, stopping at
  * its ends; ↑ ↓ to the previous or next line, across sections (an empty one has no card), onto the card whose left
  * edge is nearest (in a scrolling line, among the cards in view). Null: it stays.

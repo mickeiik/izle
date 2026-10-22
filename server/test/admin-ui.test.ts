@@ -14,7 +14,7 @@ import {
   titleLine, titleStatusLabel, tokenFromHash, triggerLabel, tvPositionAt, viewingEnd, viewingSpan,
   onTv, tvCard, tvGrid,
   SECTION_HEADER, UNTITLED, cardPlace, deleteSectionText, sectionCount, sectionName, tvCardX, tvHomeLayout, tvLineOf, tvMove, tvRowFirst, tvScroll,
-  tvScrollBar,
+  tvScrollBar, tvView,
 } from "../admin/lib.js";
 import { ADMIN_FILES, ADMIN_VENDOR_FILES } from "../src/admin-files.ts";
 import { HOME_COLUMNS as SERVER_COLUMNS, HOME_MAX_ITEMS, HOME_ROWS as SERVER_ROWS } from "../src/home.ts";
@@ -379,6 +379,19 @@ test("admin helpers: Home with sections, laid out as the TV app does", () => {
     [tvMove(L, {}, 2, 5, "ArrowRight"), null, "and stops at its end"],
     [tvMove(L, {}, 0, 0, "Enter"), null],
     [[tvLineOf(L, 0, 5), tvLineOf(L, 2, 5)], [1, 0]],
+  ]);
+
+  // Every redraw brings the selected card into view by the focus rule, also when an edit moved it there: here the
+  // owner's Section select put it at the end of Films, a scrolling line of 5 cards at 4 columns, seen from its start.
+  const rowFilms = section("films", "Films", ["Tears of Steel", "Bunny", "Sintel", "Charade", "Elephants Dream"], "row");
+  const R = tvHomeLayout(4, 2, [untitled, rowFilms], wraps);
+  cases([
+    [tvView(R, { films: 0 }, { s: 1, i: 4 }, -1, 0), { firsts: { films: 1 }, offset: tvScroll(R, 1, 0, 0) }, "the line slides, the screen scrolls"],
+    [tvView(R, { films: 0 }, { s: 1, i: 4 }, -1, 0).offset > 0, true],
+    [tvView(R, { films: 1 }, { s: 1, i: 0 }, -1, 0).firsts, { films: 0 }, "moved to the first place: back to the start"],
+    [tvView(R, { films: 1 }, { s: 0, i: 0 }, -1, 999), { firsts: { films: 1 }, offset: 0 }, "a line keeps its place when the selection is elsewhere"],
+    [tvView(R, { films: 3 }, null, -1, 999), { firsts: { films: 1 }, offset: R.contentHeight - R.viewport.height }, "within its ends for the cards it has now"],
+    [tvView(R, {}, { s: 0, i: 0 }, 1, 0).offset, tvScroll(R, 1, 0, 0), "a section chosen in the list wins"],
   ]);
 
   // An empty titled section is drawn where it is (one row: its band), and has no card to move to. The cards keep the

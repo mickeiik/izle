@@ -12,7 +12,7 @@ import { actionButton, card, chip, h, keepFocus, keyedRows, loadError, loading, 
 import {
   HOME_COLUMNS, HOME_MAX, HOME_ROWS, TV_W, UNTITLED, cardPlace, continueText, deleteSectionText, episodeName, episodeStateLabel, episodeStates,
   formatClock, gridSummary, onTv, percent, plural, resumes, sectionCount, sectionName, showMeta, tvCard, tvHomeLayout, tvLineOf, tvMove,
-  tvRowFirst, tvScroll, tvScrollBar,
+  tvScrollBar, tvView,
 } from "./lib.js";
 
 /** @typedef {{ id: string, title: string | null, layout: string, itemIds: string[] }} Section */
@@ -47,7 +47,7 @@ export function homeCard(ctx) {
   let selected = /** @type {string | null} */ (null);
   /** Each scrolling line's first card in view, by section id: it keeps its place when the selection leaves it. */
   /** @type {Record<string, number>} */
-  const firsts = {};
+  let firsts = {};
   /** The screen's vertical scroll, in dp. */
   let offset = 0;
   /** The section chosen in the Sections list, which the screen scrolls to; null: the screen follows the selected card. */
@@ -277,8 +277,6 @@ export function homeCard(ctx) {
       v.band.hidden = !box.empty;
       if (box.empty) setBox(v.band, L.x0, /** @type {number} */ (box.rowTops[0]), L.contentWidth, grid.cellHeight);
       const cards = shownIn.get(box.id) ?? [];
-      // A line keeps its place, within its ends for the cards it has now.
-      if (box.row) firsts[box.id] = Math.min(firsts[box.id] ?? 0, Math.max(0, cards.length - cols));
       cards.forEach((e, j) => {
         let t = tiles.get(e.itemId);
         if (!t) tiles.set(e.itemId, (t = tile(e.itemId)));
@@ -300,14 +298,10 @@ export function homeCard(ctx) {
       tiles.delete(id);
     }
 
-    // The selected card's line in view, as the TV moves its focus there (or the section chosen in the list).
+    // On every redraw (a move of the selection, or an edit that moved the selected card), the selected card is
+    // brought into view as the TV brings its focus: its line slides, the screen scrolls (or to the chosen section).
     const at = locate(selected);
-    const atBox = at ? L.sections[at.s] : undefined;
-    if (at && atBox?.row) firsts[atBox.id] = tvRowFirst(firsts[atBox.id] ?? 0, at.i, cols, atBox.count);
-    const chosen = anchor === null ? -1 : L.sections.findIndex((b) => b.id === anchor);
-    if (chosen >= 0) offset = tvScroll(L, chosen, 0, offset);
-    else if (at) offset = tvScroll(L, at.s, tvLineOf(L, at.s, at.i), offset);
-    else offset = Math.max(0, Math.min(offset, L.contentHeight - viewport.height));
+    ({ firsts, offset } = tvView(L, firsts, at, anchor === null ? -1 : L.sections.findIndex((b) => b.id === anchor), offset));
     content.style.transform = `translateY(${-offset}px)`;
     L.sections.forEach((box, k) => {
       const v = /** @type {NonNullable<ReturnType<typeof sectionViews.get>>} */ (sectionViews.get(box.id));
