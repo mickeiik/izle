@@ -6,6 +6,12 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 
 ## [Unreleased]
 
+### Added
+
+- **The validator is a stable interface for catalog producers:** `izle-validate` and `izle-server validate-catalog`,
+  their exit status and their `--json` report are documented in the
+  [catalog bundle spec](docs/spec/catalog-bundle-v1.md#json-report); within v1 the report only gains fields.
+
 ## [0.5.0] - 2026-10-23
 
 ### Added

@@ -135,17 +135,48 @@ for the adapter). The server passes `ref` to the adapter at play time and never 
 
 ## Validation
 
-`npx izle-validate <bundleDir>` (package `@izle/contract`) checks the JSON Schema and the semantic rules:
-unique item and episode ids (bundle-wide) and source ids (per episode or channel), one episode per movie,
-`playbackAllowed: false` when `sources` is empty, adapter ids declared in the manifest, poster and backdrop files
-present with matching SHA-256 and image type, a valid calendar date in `builtAt`, parseable http(s) URLs. Warnings
-(non-fatal): unused declared adapters, movies and series without any playable episode, channels with
-`playbackAllowed: false`, unreferenced or oversized assets. `--probe` also range-GETs every direct media and
-subtitle URL (`Range: bytes=0-0`, redirects followed) and reports anything other than 200/206; `--json` prints a
-machine-readable report. Exit status 0 = valid, 1 = invalid or unreachable, 2 = usage error. Programmatic use:
+The validator checks the JSON Schema and the semantic rules: unique item and episode ids (bundle-wide) and source
+ids (per episode or channel), one episode per movie, `playbackAllowed: false` when `sources` is empty, adapter ids
+declared in the manifest, poster and backdrop files present with matching SHA-256 and image type, a valid calendar
+date in `builtAt`, parseable http(s) URLs. Warnings (non-fatal): unused declared adapters, movies and series without
+any playable episode, channels with `playbackAllowed: false`, unreferenced or oversized assets. Programmatic use:
 `validateBundle(dir)` returns `{ok, issues, bundle?, stats?}`; `loadBundle(dir)` returns `{bundle, warnings, stats}`
-or throws `BundleValidationError`; `stats` counts items, movies, series, live channels, episodes, playable episodes,
-sources, posters and backdrops.
+or throws `BundleValidationError`.
+
+### Running the validator
+
+Two commands, equivalent (the same arguments, report and exit status; the usage text names `izle-validate` in both):
+
+- `izle-validate <bundleDir> [--probe] [--json]`, the bin of the contract package (`npx izle-validate` in a checkout);
+- `izle-server validate-catalog <bundleDir> [--probe] [--json]`, the installed server; in an unpacked release tarball
+  `izle-server-X.Y.Z.tgz`, `node package/bin/izle-server.js validate-catalog …`, with nothing to install.
+
+They take no other option (`-h`/`--help` prints the usage; `--config` or anything else is a usage error). `--probe`
+also range-GETs every direct media and subtitle URL (`Range: bytes=0-0`, redirects followed; adapter sources are
+skipped) and counts anything other than 200/206 as unreachable. Exit status 0 = valid, 1 = invalid or unreachable,
+2 = usage error (the usage on stderr, no report). Producers SHOULD validate with the izle release their server runs
+(that release's tarball, or the installed server's `validate-catalog`), not a development checkout.
+
+### JSON report
+
+`--json` prints one JSON object on stdout (without it the output is for people and is not an interface):
+
+```ts
+{ ok: boolean, issues: Issue[], stats: BundleStats | null, probes?: Probe[] }
+Issue = { severity: "error" | "warning", file: string, path: string, message: string }
+BundleStats = { items, movies, series, live, episodes, playableEpisodes, sources, posters, backdrops: number }
+Probe = { itemId: string, episodeId: string | null, sourceId: string, what: "media" | "subtitle", host: string,
+          ok: boolean, status: number | null, error: string | null, ms: number }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `ok` | No issue of severity `error` and, with `--probe`, every probe `ok`: exit status 0. Warnings do not count. |
+| `issues` | In the order found; every field is always present. `file` is relative to the bundle directory (`.` for the directory itself); `path` is a JSON pointer into `file`, `""` for the file as a whole (missing, not JSON, an asset's content), `"/"` for a schema error on its top-level object. `message` is English text for people, not a code to match on. |
+| `stats` | Counts as in `validateBundle` (`items` = movies + series + live channels); `null` when `bundle.json` or `items.json` is missing, not JSON or fails the schema, present otherwise (also with other errors). |
+| `probes` | Only with `--probe` and when there is no error. One per direct media or subtitle URL; `episodeId` is `null` for a channel's own sources; `host` is the URL's host only (no URL, no headers); `status` is the HTTP status, `null` without a response; `error` is the error's class name (`TypeError`, `TimeoutError`, …), `null` with a response; `ms` is the request's duration. |
+
+Within v1 the report only gains fields: none is removed or changes meaning. Consumers MUST ignore unknown keys.
 
 ## Versioning
 
@@ -161,3 +192,5 @@ first deployment the owner may change v1 in place, marked **breaking (pre-releas
 - **v1, before the first deployment (2026-10-19 to 2026-10-21)** — `CatalogItem.backdrop` and `BundleStats.backdrops`
   (additive); live items (`kind: "live"`), [Rules](#rules) 7, source ids unique per episode or channel,
   `BundleStats.live` and media kind `ts` (breaking (pre-release), changed in place).
+- **v1 (2026-10-23)** — the validator's two commands and its `--json` report are documented as a stable interface
+  ([Running the validator](#running-the-validator), [JSON report](#json-report)) (additive).
