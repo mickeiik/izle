@@ -7,6 +7,13 @@ contract share one version number. How to update (back up, update the server, th
 
 ## [Unreleased]
 
+### Fixed
+
+- **TV app: CH+/CH− on a dead channel.** When a channel ends on "Can't play right now" (Try again / Home with its
+  countdown), CH+/CH− and |◀◀ ▶▶| now switch to the next / previous channel on Home as they do while a channel
+  plays; before, they did nothing until the viewer pressed a button. The owner's `next` and `previous` commands do
+  the same from that screen.
+
 ## [0.4.0] - 2026-10-21
 
 ### Added

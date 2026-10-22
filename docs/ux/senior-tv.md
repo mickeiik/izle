@@ -84,7 +84,8 @@ remotely from the admin page (`/admin/` on the server) or, on the TV itself, beh
 - A channel never ends and never shows Up next or "The end": when its stream ends or the player falls behind the
   live window, the same source is resolved again once and plays from the live edge; if that fails, the source-error
   ladder follows (Live channels under [Playback rules](#playback-rules)), ending on "Can't play right now", whose
-  **Try again** restarts the channel at the live edge.
+  **Try again** restarts the channel at the live edge. **CH+ / CH−** still change channels from there: a dead channel
+  is left the way any channel is.
 - Subtitles (off unless the owner chose a language) are drawn large, white on a dark box, above the bottom edge,
   and just above the information while it shows.
 - **CH+ / CH−** (and the remote's **|◀◀ / ▶▶|** keys) switch to the next / previous episode of the show, like
@@ -162,7 +163,7 @@ buttons. Back steps back one level and closes it.
 | Play/Pause, Play, Pause | — | pause / resume | nothing | — | — |
 | Rewind / Fast forward | — | like ← / → | nothing | — | — |
 | Stop | — | save, Home | Home | — | — |
-| CH+ / CH−, ▶▶\| / \|◀◀ | nothing | next / previous episode (first press only; the ends: information only) | next / previous channel (first press only; the ends: information only) | nothing | nothing |
+| CH+ / CH−, ▶▶\| / \|◀◀ | nothing | next / previous episode (first press only; the ends: information only) | next / previous channel (first press only; the ends: information only) | a channel's error overlay: next / previous channel; else nothing | nothing |
 | Back | nothing | save, Home | Home | Home (also from the update screen) | one level up / close |
 | HOME (system) | leaves the app; it reopens on Home | saves the position, releases the player | releases the player | | |
 
@@ -183,7 +184,7 @@ izle.
 | Countdowns | auto-next and autoplay on start 10 s, error screen 30 s, update "press OK" 60 s, "Could not update" 15 s, each with a bar that runs down a step a second; "The end" 8 s, then Home; "Updating…" at most 2 min |
 | Source errors | try the server's next alternative from the same position (a channel: from the live edge); HTTP 403/410 after more than 5 min of playback re-resolves the same source first (an expired signed URL) |
 | Stream refresh | when a resolve answer's `expiresAt` is ≥ 90 s away (measured on the server's clock): resolve the same source again at `expiresAt` − 60 s, playing or paused; new media only when the URL changed, at the same position; at most one refresh per 60 s; a network or server failure is retried once after 30 s while the URL is still valid, else the 403/410 rule above applies |
-| Channel keys (CH+/CH−, ▶▶\|/\|◀◀, next/previous commands) | while a show plays: the nearest `playbackAllowed` episode after / before the current one in play order; while a channel plays: the next / previous channel on this TV's Home, in Home order; no wrap-around; the current one is reported like Back (stopped, or finished within the end threshold) |
+| Channel keys (CH+/CH−, ▶▶\|/\|◀◀, next/previous commands) | while a show plays: the nearest `playbackAllowed` episode after / before the current one in play order; while a channel plays, loads or shows "Can't play right now": the next / previous channel on this TV's Home, in Home order; no wrap-around; the current one is reported like Back (stopped, or finished within the end threshold) |
 | Live channels | no resume, end threshold or pause; starts at the live edge; heartbeat every 15 s while playing, without a position, plus stall, recovery and stop (Back, Stop, HOME or a channel key); the end of the stream or falling behind the live window: one re-resolve of the same source at the live edge, then the source-error ladder; a stream refresh (at `expiresAt` − 60 s) that brings new media restarts at the live edge |
 | Owner's message | up to 200 characters, 3–120 s (the server's default: 15 s); a new one replaces the current one |
 | Problem reports (to the owner) | one attempt in the background, never retried, failures ignored: player errors (Media3 error code, HTTP status, exception class names — never messages or URLs), failed resolves (the server's error code or `network`), "Can't play right now" (`gave_up`), the server unreachable for ≥ 5 min (`server_unreachable`, sent once it answers again), a self-update that failed (`update_…`: the download or archive check without a command, the install once the command's result went out — its session write or status —, `update_needs_user_action`) |

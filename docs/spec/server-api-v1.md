@@ -177,7 +177,7 @@ the TV gets `{"id", "type", "payload"}`. What a command does is the TV's busines
 | `stop` | | `{}` | saves and goes home |
 | `pause` / `resume` | | `{}` | pauses / plays on; on a channel ignored (reason `live`): a channel is never paused |
 | `seek` | exactly one of `deltaMs` (integer −3 600 000…3 600 000) and `positionMs` (integer 0…10¹²) | `{"deltaMs"}` or `{"positionMs"}` | jumps by `deltaMs` (negative: back), or to `positionMs`; on a channel ignored (reason `live`) |
-| `next` / `previous` | | `{}` | switches to the nearest `playbackAllowed` episode after / before the current one in play order, if any; while a channel plays, to the channel after / before it on the TV's home list, in Home order without wrap-around (ignored, reason `no_channel`, at the ends) |
+| `next` / `previous` | | `{}` | switches to the nearest `playbackAllowed` episode after / before the current one in play order, if any; while a channel plays, loads or shows its error screen, to the channel after / before it on the TV's home list, in Home order without wrap-around (ignored, reason `no_channel`, at the ends) |
 | `message` | `text` (1–200 characters with a non-space; trimmed), `durationSec`? (integer 3–120, default 15) | `{"text", "durationSec"}` (default applied by the server) | shows `text` as a large banner, on Home and in the player, for `durationSec` seconds |
 | `update` | | `{"versionCode"}` (the stored APK's; `409 no_apk` when none is stored) | installs the stored TV app APK now, guided on the screen when the TV cannot install silently, see [TV app updates](#tv-app-updates) |
 
@@ -930,10 +930,10 @@ know all of this:
   "playing"?, "ageMs"?}`, no position or duration. [`POST /tv/problems`](#post-apiv1tvproblems) names a channel by
   `itemId`.
 - The `play` payload has `episodeId: null` for a channel. `pause`, `resume` and `seek` while a channel plays report
-  `ignored` with reason `live`. `next` and `previous` while a channel plays, like CH+/CH−, zap to the channel after /
-  before it among Home's channels, in Home order without wrap-around (the TV works this out from its own home state;
-  the server has no notion of a next channel), and report `ignored` with `no_channel` when there is none. The viewing
-  gets trigger `next` (CH+/CH−) or `command`.
+  `ignored` with reason `live`. `next` and `previous` while a channel plays, loads or shows its error screen, like
+  CH+/CH−, zap to the channel after / before it among Home's channels, in Home order without wrap-around (the TV
+  works this out from its own home state; the server has no notion of a next channel), and report `ignored` with
+  `no_channel` when there is none. The viewing gets trigger `next` (CH+/CH−) or `command`.
 - Media kind `ts` (progressive MPEG-TS over HTTP, played as `video/mp2t`), direct or as `/p/<token>/stream.ts`. A
   channel whose proxy session answers `410` is resolved again, the same source first.
 

@@ -320,6 +320,31 @@ class PlaybackControllerTest {
     }
 
     @Test
+    fun aChannelsErrorScreenStillZapsAnEpisodesDoesNot() = runTest(StandardTestDispatcher()) {
+        createController()
+        // A channel whose only source fails before a first frame: "Can't play right now", with CH+/CH− still live.
+        answer(resolved(live = true, kind = "ts"))
+        play(live = true)
+        await("the channel") { engine.loads.size == 1 }
+        assertEquals("show", controller.zappableChannelId)
+        engine.fail()
+        await("the error screen") { controller.ui.value.phase is PlayerPhase.Failed }
+        assertTrue(controller.ui.value.live)
+        assertEquals("show", controller.zappableChannelId)
+        advance(PlaybackPlan.FAILED_AUTO_HOME_SEC * 1_000L)
+        assertEquals(PlayerPhase.Idle, controller.ui.value.phase)
+        assertNull("nothing to zap from on Home", controller.zappableChannelId)
+
+        // An episode's error screen offers Try again and Home only.
+        answer(resolved())
+        play()
+        await("the episode") { engine.loads.size == 2 }
+        engine.fail()
+        await("its error screen") { controller.ui.value.phase is PlayerPhase.Failed }
+        assertNull(controller.zappableChannelId)
+    }
+
+    @Test
     fun expiryRefreshPinsTheSourceSwapsOnlyChangedMediaAndReanchorsEachSession() = runTest(StandardTestDispatcher()) {
         createController()
         answer(resolved(expiresAt = "2026-10-21T12:02:00Z"), DATE)

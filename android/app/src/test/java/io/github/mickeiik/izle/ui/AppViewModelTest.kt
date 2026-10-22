@@ -836,6 +836,43 @@ class AppViewModelTest {
     }
 
     @Test
+    fun channelKeysStillZapFromAChannelsErrorScreen() {
+        paired()
+        home = listOf("tv1", "c", "tv2", "tv3")
+        val vm = startTvOnHome()
+        vm.onTileClicked(vm.state.value!!.home[0])
+        waitUntil("the first resolve") { count("/api/v1/tv/resolve") == 1 }
+        // Nothing plays here: channel 1 ends on "Can't play right now".
+        waitUntil("the error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
+        assertTrue(vm.player.ui.value.live)
+        assertEquals(Screen.Player, vm.screen.value)
+        // CH+ there: channel 2, as from a playing channel; the error screen is gone while it loads.
+        vm.onChannelKey(1)
+        assertEquals(PlayerPhase.Loading, vm.player.ui.value.phase)
+        assertEquals("Channel 2", vm.player.ui.value.item?.title)
+        assertEquals("tv2", vm.homeFocusItemId)
+        waitUntil("the second resolve") { count("/api/v1/tv/resolve") == 2 }
+        assertEquals("""{"itemId":"tv2","trigger":"next"}""", resolveBodies().last())
+        // The owner's next from channel 2's error screen does the same.
+        waitUntil("channel 2's error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
+        val next = command("next")
+        assertEquals("""{"result":"done"}""", awaitResult(next))
+        waitUntil("the third resolve") { count("/api/v1/tv/resolve") == 3 }
+        assertEquals("""{"itemId":"tv3","trigger":"command","commandId":$next}""", resolveBodies().last())
+        // The last channel's error screen: CH+ only shows the information, CH− goes back.
+        waitUntil("channel 3's error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
+        vm.onChannelKey(1)
+        settle()
+        assertEquals(3, count("/api/v1/tv/resolve"))
+        assertTrue(vm.player.ui.value.phase is PlayerPhase.Failed)
+        vm.onChannelKey(-1)
+        waitUntil("the fourth resolve") { count("/api/v1/tv/resolve") == 4 }
+        assertEquals("Channel 2", vm.player.ui.value.item?.title)
+        vm.onBack()
+        assertEquals(Screen.Home, vm.screen.value)
+    }
+
+    @Test
     fun aPlayCommandWithoutAnEpisodePlaysTheChannelWhichIsNeverPaused() {
         paired()
         home = listOf("a", "tv1", "c", "tv2")

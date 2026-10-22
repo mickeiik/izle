@@ -12,7 +12,8 @@ import io.github.mickeiik.izle.player.PlayerPhase
  * `pause` makes sure closing it later does not resume, `seek` happens under it.
  *
  * On a channel (loading or playing) `pause`, `resume` and `seek` do nothing (`ignored`, `live`): a channel is never
- * paused. `next` and `previous` zap to the channel after / before it on Home, as CH+/CH− do ([Action.Zap]).
+ * paused. `next` and `previous` zap to the channel after / before it on Home, as CH+/CH− do ([Action.Zap]), also from
+ * the channel's error screen.
  *
  * Every command ends in exactly one result for the server: a [Action.Report] last when it is known at once, else
  * [Action.Play] (reports once its playback runs or fails), [Action.Step] or [Action.Zap] (report whether they
@@ -65,6 +66,8 @@ object CommandPlan {
         val video = screen == Screen.Player && phase == PlayerPhase.Playing
         // A channel zaps on while the next one loads, as CH+/CH− do.
         val channel = live && screen == Screen.Player && (phase == PlayerPhase.Playing || phase == PlayerPhase.Loading)
+        // And from its error screen, where no other transport command applies (no video showing).
+        val zaps = channel || (live && screen == Screen.Player && phase is PlayerPhase.Failed)
         val notInPlayer = listOf(Action.Report(CommandResult.ignored(CommandResult.NOT_IN_PLAYER)))
         val noPause = listOf(Action.Report(CommandResult.ignored(CommandResult.LIVE)))
         fun closingMenu(resume: Boolean) = if (menuOpen) listOf(Action.CloseMenu(resume)) else emptyList()
@@ -75,12 +78,12 @@ object CommandPlan {
             RemoteCommand.Resume -> if (channel) noPause else if (video) closingMenu(resume = false) + Action.Resume + done else notInPlayer
             is RemoteCommand.Seek -> if (channel) noPause else if (video) listOf(Action.Seek(command), done) else notInPlayer
             RemoteCommand.Next -> when {
-                channel -> closingMenu(resume = true) + Action.Zap(1)
+                zaps -> closingMenu(resume = true) + Action.Zap(1)
                 video -> closingMenu(resume = true) + Action.Step(1)
                 else -> notInPlayer
             }
             RemoteCommand.Previous -> when {
-                channel -> closingMenu(resume = true) + Action.Zap(-1)
+                zaps -> closingMenu(resume = true) + Action.Zap(-1)
                 video -> closingMenu(resume = true) + Action.Step(-1)
                 else -> notInPlayer
             }

@@ -152,10 +152,14 @@ class PlaybackController(
     /** A player visit is on (loading, playing or one of its end screens). */
     val inUse: Boolean get() = _ui.value.phase != PlayerPhase.Idle
 
-    /** The channel loading or playing, which CH+/CH− zap from; null otherwise (an episode, an end screen, nothing). */
+    /**
+     * The channel loading, playing or on its error screen, which CH+/CH− zap from (a dead channel is left like any
+     * other, by changing channels); null otherwise (an episode, Idle, nothing).
+     */
     val zappableChannelId: String?
-        get() = (target as? PlayableRef.Channel)?.itemId
-            ?.takeIf { _ui.value.phase == PlayerPhase.Playing || _ui.value.phase == PlayerPhase.Loading }
+        get() = (target as? PlayableRef.Channel)?.itemId?.takeIf {
+            _ui.value.phase.let { it == PlayerPhase.Playing || it == PlayerPhase.Loading || it is PlayerPhase.Failed }
+        }
 
     /**
      * Plays [ref]: an episode from [startAtMs], or from the server's saved position under the resume rules when null;
