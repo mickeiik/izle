@@ -121,6 +121,10 @@ Everything the home screen needs:
       "continue": null,
       "newEpisodes": 0
     }
+  ],
+  "homeSections": [
+    { "id": "untitled", "title": null, "layout": "grid", "itemIds": ["caminandes"] },
+    { "id": "Hq7cP2xd", "title": "Channels", "layout": "row", "itemIds": ["news-24"] }
   ]
 }
 ```
@@ -136,7 +140,8 @@ Everything the home screen needs:
 - `device.homeColumns` (3–6, default 4) and `device.homeRows` (1–4, default 2), owner settings: Home is a grid of
   16:9 cards, `homeColumns` per row and `homeRows` rows per screen; the rest of the list scrolls.
 - `home`: the owner's list in the owner's order (≤ 200, a safety limit), without items that left the catalog or cannot
-  be played (no `playbackAllowed` episode; a channel with `playbackAllowed: false`). `posterUrl` and `backdropUrl`
+  be played (no `playbackAllowed` episode; a channel with `playbackAllowed: false`). With
+  [sections](#home-sections) it is the sections' items, section after section: Home order. `posterUrl` and `backdropUrl`
   (the catalog's optional landscape image) are relative to the server's base URL, each null without its image;
   without a backdrop the TV crops the poster to a landscape band.
 - `continue`: what OK plays, the item's cursor episode ([Play order](#play-order-and-the-cursor)). `status`: `new`
@@ -147,6 +152,12 @@ Everything the home screen needs:
   them) after the later of the TV's last progress report on this item and the moment the item was put on this home
   list. Episodes present when the server first loaded this catalog never count. Back to 0 as soon as the TV reports
   progress on any episode of the item. Always 0 for a channel.
+- `homeSections`: how `home` is cut into [sections](#home-sections), in display order, each with `id`, `title`
+  (null for the untitled section), `layout` (`grid`: rows of `homeColumns` cards; `row`: one line of cards that
+  scrolls sideways) and `itemIds`, the ids of its entries in `home`, in order. Only sections with at least one entry
+  in `home` are listed, so `homeSections` is empty when `home` is, and the `itemIds` of all sections, one after
+  another, are exactly the ids of `home` in its order. A TV that ignores `homeSections` shows `home` as one grid.
+  Clients MUST treat an unknown `layout` as `grid`.
 
 ### `GET /api/v1/tv/events`
 
@@ -436,10 +447,10 @@ last allowed episode) marks the item as watched to the end. When a later catalog
 | Route | Body | Response |
 |---|---|---|
 | `GET /api/v1/admin/devices` | | `{"devices": [Device & {"homeCount"}]}` |
-| `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "backdropUrl", "missing", "playable", "continue", "newEpisodes"}], "homeMax": 200}`; `playable` (boolean): the item has a `playbackAllowed` episode, or is a channel with `playbackAllowed: true` (false for a missing item); `continue` and `newEpisodes` as in [`GET /tv/state`](#get-apiv1tvstate) (`null` and 0 for a missing item and for a channel) |
+| `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "backdropUrl", "missing", "playable", "continue", "newEpisodes"}], "homeMax": 200, "sections": [Section], "sectionsMax": 20}` (`home` in Home order, see [Home sections](#home-sections)); `playable` (boolean): the item has a `playbackAllowed` episode, or is a channel with `playbackAllowed: true` (false for a missing item); `continue` and `newEpisodes` as in [`GET /tv/state`](#get-apiv1tvstate) (`null` and 0 for a missing item and for a channel) |
 | `PATCH /api/v1/admin/devices/:id` | any of `name`, `uiLanguage` (`"tr"`/`"en"`/null), `preferredAudioLanguage` (tag/null), `subtitlesLanguage` (tag/null = off), `autoplayOnStart` (boolean), `homeColumns` (integer 3–6), `homeRows` (integer 1–4) | `{"device": Device}` |
 | `DELETE /api/v1/admin/devices/:id` | | `204`; the TV must pair again |
-| `PUT /api/v1/admin/devices/:id/home` | `{"itemIds": [...]}` (≤ 200, in display order) | `{"version", "home"}` |
+| `PUT /api/v1/admin/devices/:id/home` | `{"itemIds": [...]}` (≤ 200, in display order) or `{"sections": [...]}`, see [Home sections](#home-sections) | `{"version", "home", "sections"}` |
 | `PUT /api/v1/admin/devices/:id/cursor` | `{"itemId", "episodeId"}` | `{"version"}` |
 | `GET /api/v1/admin/devices/:id/progress` | | `{"cursors": [...], "progress": [...]}` with `itemTitle`, `kind`, `season`, `number`, `episodeTitle` (or `missing: true`); channels have neither and are never listed |
 | `GET /api/v1/admin/devices/:id/now?seq=&wait=` | | `{"online", "serverNowMs", "seq", "nowPlaying": {itemId, itemKind, episodeId, sourceId, itemTitle, episodeTitle, positionMs, durationMs, state, updatedAt, playing, viewingId} \| null, "anchor": {positionMs, atMs, playing, rate} \| null}`; for a channel (`itemKind: "live"`) `episodeId`, `episodeTitle`, `positionMs` and `durationMs` are null, `state` is `starting`, `playing` or `stopped`, and `anchor` is null; with `seq` equal to the current `seq` and `wait` (0–25 s, default 0) the answer waits for the next resolve or progress report (long-poll), see [Listen along](#listen-along) |
@@ -635,7 +646,7 @@ In one place: [access tokens](#access-tokens) with scopes, and the `Actor` behin
 [`GET /admin/status`](#status); a stored [event log](#events) with a stream and a long-poll; the permanent
 [viewing history](#viewing-history); `play` by item and at a position, and
 [command results](#remote-play-and-command-results); [single home list changes](#home-list-changes);
-[replacing a TV](#replacing-a-tv). [What changes for the TV](#what-changes-for-the-tv) lists the TV side.
+[home sections](#home-sections); [replacing a TV](#replacing-a-tv). [What changes for the TV](#what-changes-for-the-tv) lists the TV side.
 
 ### Access tokens
 
@@ -646,7 +657,7 @@ an app, each with one scope, and revokes them at any time:
 |---|---|
 | `read` | every `GET` admin route except `GET /admin/tokens`: devices, catalog, problems, Listen along candidates, the pending pairing codes, [status](#status), [events](#events) and [history](#viewing-history) |
 | `control` | `read`, plus [`POST …/commands`](#commands) (`update` included) |
-| `manage` | `control`, plus the home list (`PUT …/home` and the [single changes](#home-list-changes)), `PUT …/cursor`, `PATCH /admin/devices/:id`, [history marks](#viewing-history), `DELETE …/problems`, `POST /admin/catalog/reload` and the [TV app](#tv-app) (`PUT`/`DELETE /admin/app/apk`, `POST /admin/app/check`) |
+| `manage` | `control`, plus the home list (`PUT …/home`, the [single changes](#home-list-changes) and the [sections](#home-sections)), `PUT …/cursor`, `PATCH /admin/devices/:id`, [history marks](#viewing-history), `DELETE …/problems`, `POST /admin/catalog/reload` and the [TV app](#tv-app) (`PUT`/`DELETE /admin/app/apk`, `POST /admin/app/check`) |
 
 Every other route needs the owner token: pairing approval and clearing a code, deleting a TV, deleting and adopting history,
 [diagnostics](#diagnostics), [Listen along](#listen-along) resolves and links, and the access tokens themselves (every
@@ -737,7 +748,7 @@ Events carry no URLs, headers, refs, tokens, message texts or problem details.
 | `episode.seen` | `{"viewingId", "itemId", "episodeId", "firstTime", "itemFinished"}`: a viewing ended [seen](#viewing-history) (never a channel's); `firstTime`: the episode was not seen before (by any TV, or a mark); `itemFinished`: every playable episode of the item in the current catalog is now seen (false when the item left it) |
 | `command.sent` / `command.delivered` | `{"commandId", "type", "online"}` / `{"commandId"}` (the TV acknowledged it) |
 | `command.result` | `{"commandId", "type", "result", "reason"}`, see [Remote play and command results](#remote-play-and-command-results) |
-| `home.changed` | `{"itemIds", "added", "removed"}` (the ids that came and went; a reorder has both empty) |
+| `home.changed` | `{"itemIds", "added", "removed"}` (`itemIds` in Home order; the ids that came and went; a reorder, a move to another section and a change of [sections](#home-sections) alone have both empty) |
 | `cursor.changed` | `{"itemId", "episodeId"}`: set through `PUT …/cursor` (not the moves that come from watching) |
 | `problem.recorded` | `{"problemId", "origin", "kind", "code", "itemId", "episodeId"}` |
 | `catalog.reloaded` / `catalog.reload_failed` | `{"buildId", "added", "removed"}` (`{"items", "episodes"}` counts as in [`Build`](#catalog-history), 0 when the build was the one already loaded) on every successful reload, not at start / `{"issues"}` (their number) |
@@ -882,13 +893,57 @@ Single changes, so that two editors (the owner, an agent) do not overwrite each 
 
 | Route | Body | Response |
 |---|---|---|
-| `POST /api/v1/admin/devices/:id/home/items` | `{"itemId", "position"?}` (0-based, default and upper bound: the end) | `{"version", "home"}` |
-| `PATCH /api/v1/admin/devices/:id/home/items/:itemId` | `{"position"}` (0-based, clamped to the end) | `{"version", "home"}` |
-| `DELETE /api/v1/admin/devices/:id/home/items/:itemId` | | `{"version", "home"}` |
+| `POST /api/v1/admin/devices/:id/home/items` | `{"itemId", "sectionId"?, "position"?}` (`sectionId` default `untitled`; `position` 0-based within the section, default and upper bound: its end) | `{"version", "home", "sections"}` |
+| `PATCH /api/v1/admin/devices/:id/home/items/:itemId` | `{"position"?, "sectionId"?}`, at least one (`sectionId`: move it to that section; `position` 0-based within the section it ends up in, clamped to its end; default the end when the section changes) | `{"version", "home", "sections"}` |
+| `DELETE /api/v1/admin/devices/:id/home/items/:itemId` | | `{"version", "home", "sections"}` |
 
 Errors as for `PUT …/home` (`400 too_many_items`, `duplicate_item`, `unknown_item`, `not_playable`, also for a channel
-with `playbackAllowed: false`), plus `404 not_on_home`. `PUT …/home` gains an optional `expected` (the `itemIds` the
-caller saw): `409 home_changed` (with the current `itemIds`) when the list is no longer that. Every change emits
+with `playbackAllowed: false`), plus `404 not_on_home` and `404 unknown_section`. `PUT …/home` gains an optional
+`expected` (what the caller saw, in the shape of the body: the `itemIds`, or the `sections`): `409 home_changed`
+(with the current `itemIds` and `sections`) when the list is no longer that. Every change emits `home.changed`.
+
+### Home sections
+
+Status: **draft, not implemented** (specified 2026-10-22; the server, admin page and TV app follow). Additive within
+v1: a TV that does not know sections shows the Home list as one grid, in Home order.
+
+A TV's Home list is cut into **sections**, in an order the owner sets. Every item on the list is in exactly one
+section. `Section` = `{"id", "title", "layout", "itemIds"}`:
+
+- `id`: 8 alphanumeric characters, made by the server; `untitled` for the untitled section.
+- `title`: 1–40 characters with a non-space, trimmed; titles need not be unique. The TV shows it above the section.
+- `layout`: `grid` (the default: the cards wrap in rows of `homeColumns`) or `row` (one line of cards that scrolls
+  sideways). New layouts may be added within v1.
+- `itemIds`: the section's items in display order, those gone from the catalog or unplayable included (the TV's
+  [state](#get-apiv1tvstate) leaves them out, and with them the sections left empty).
+
+There is always exactly one **untitled section** (`"id": "untitled"`, `"title": null`). It holds what was put on Home
+without a section: it cannot be titled or deleted, and it is moved and given a layout like any other. A new TV, and
+every Home from before sections, has only the untitled section (layout `grid`); a new section goes after the existing
+ones. Besides the untitled section a Home has at most 20 (`sectionsMax`). **Home order** is the sections in order,
+each with its items in order: the order of `home` in the TV's state and on the admin page, of `itemIds` in
+`home.changed`, and of CH+/CH− among channels.
+
+| Route | Body | Response |
+|---|---|---|
+| `POST /api/v1/admin/devices/:id/home/sections` | `{"title", "layout"?, "position"?}` (`position` 0-based among the sections, default and upper bound: the end) | `{"version", "home", "sections", "sectionId"}` (the new section's) |
+| `PATCH /api/v1/admin/devices/:id/home/sections/:sectionId` | any of `title`, `layout`, `position` (clamped to the end) | `{"version", "home", "sections"}` |
+| `DELETE /api/v1/admin/devices/:id/home/sections/:sectionId` | | `{"version", "home", "sections"}`; its items move to the end of the untitled section, in their order: deleting a section takes nothing off Home |
+
+`PUT …/home` takes either form:
+
+- `{"itemIds"}` sets which items are on Home and their order, and keeps the sections: an item already on Home stays in
+  its section, a new one goes to the untitled section, and within each section the items follow their order in
+  `itemIds`. The answer's `home` is in Home order, which can differ from the body's.
+- `{"sections": [{"id"?, "title", "layout"?, "itemIds"}]}` replaces the whole Home, sections in display order. A section
+  without `id` is new; a titled section left out is deleted, and its items leave Home unless another section lists
+  them. Without `layout` a section keeps its own (`grid` for a new one). The untitled section (`"id": "untitled"`,
+  `title` null or absent) is listed exactly once.
+
+Errors: `400 too_many_sections` (`max`), `404 unknown_section` (`sectionId`, also an `id` in `PUT …/home` that is not
+this Home's), `400 untitled_section` (a title for the untitled section, deleting it, or a `PUT` that does not list it
+exactly once), `400 duplicate_section` (an `id` twice in one `PUT`), `400 invalid_request` (a blank or too long title,
+an unknown layout); `duplicate_item` covers the item in two sections. Every change bumps the state version and emits
 `home.changed`.
 
 ### Replacing a TV
@@ -938,6 +993,12 @@ know all of this:
   `no_channel` when there is none. The viewing gets trigger `next` (CH+/CH−) or `command`.
 - Media kind `ts` (progressive MPEG-TS over HTTP, played as `video/mp2t`), direct or as `/p/<token>/stream.ts`. A
   channel whose proxy session answers `410` is resolved again, the same source first.
+
+**Home sections** (additive; not implemented yet): [`GET /tv/state`](#get-apiv1tvstate) carries `homeSections`, and
+Home draws them as the [Senior TV experience](../ux/senior-tv.md#sections) describes (titles, the line between two
+sections, `row` sections that scroll sideways). Nothing else changes for the TV: `home` stays the one list in Home
+order, which is what autoplay's first tile and CH+/CH− among channels go by, and a TV that ignores `homeSections`
+shows one grid.
 
 ## Static routes
 
@@ -1069,3 +1130,9 @@ in `./data` (`izle.db`, `admin.token`). Deployment (systemd, Caddy, Docker): [se
 - **v1, catalog browsing (2026-10-22)** — additive: [catalog](#catalog) search takes `kind`, `genre`, `yearFrom`,
   `yearTo`, `playable`, `since`, `notOnDevice`, `sort` and `offset`, and answers `total` and `offset`; its hits carry
   `firstSeenAt` and `newEpisodes`; `GET /admin/catalog` (and the reload's answer) carries `facets`.
+- **v1, home sections (2026-10-22)** — additive, specified ahead of the implementation: a Home list is cut into
+  [sections](#home-sections) with a title and a layout (`grid` or `row`), always with one untitled section. The TV
+  state's `homeSections`; `sections` and `sectionsMax` on `GET /admin/devices/:id` and in the answers of every home
+  list change; the routes `…/home/sections`; `sectionId` on the single item changes; `PUT …/home` takes `sections`,
+  and its `itemIds` form keeps each item's section; `expected` takes the body's shape. Errors `too_many_sections`,
+  `unknown_section`, `untitled_section`, `duplicate_section`.

@@ -6,7 +6,7 @@ remotely from the admin page (`/admin/` on the server) or, on the TV itself, beh
 
 ## Principles
 
-1. **Home → OK → plays.** One grid of show and channel cards. OK on a card plays the right episode at the right
+1. **Home → OK → plays.** One screen of show and channel cards, which the owner may group in titled sections. OK on a card plays the right episode at the right
    place: the next unwatched episode, or the half-watched one where it was left; or a channel at its live edge.
 2. **Back always goes home**, and Back on Home does nothing: the viewer cannot fall out of the app. (The remote's
    HOME button belongs to the system; when it is pressed the app saves the position and comes back on Home.)
@@ -15,7 +15,7 @@ remotely from the admin page (`/admin/` on the server) or, on the TV itself, beh
    short words in solid colours); high contrast; one focused element with a thick white border, everything else
    dimmed; nothing that matters outside the 5 % safe margins (48 dp left and right, 27 dp top and bottom), where
    many TVs crop the picture.
-5. **Owner-controlled.** Which shows and channels appear, their order, how many fit on one screen, "continue from
+5. **Owner-controlled.** Which shows and channels appear, their order and sections, how many fit on one screen, "continue from
    episode X", UI language, audio and subtitle languages, autoplay on start, play/stop/pause/resume/seek/next/previous
    and short messages all come from the server and apply live. When something goes wrong the TV tells the owner (problem
    reports), not the viewer.
@@ -24,11 +24,12 @@ remotely from the admin page (`/admin/` on the server) or, on the TV itself, beh
 
 ### Home
 
-- A grid of wide 16:9 cards fills the safe area, with nothing above or below it (no clock, no hint). The owner sets
-  how many columns (3–6) and rows (1–4) one screen shows, per TV, from the admin page (default 4 × 2); the cards are
-  sized to fill the screen and the change applies live. Exactly that many rows show: when there are more shows,
-  moving down from the last visible row scrolls the grid by one row (up from the first scrolls back), and a thin
-  scroll bar in the right margin shows where the screen is in the list. Left and right stop at a row's ends.
+- Wide 16:9 cards fill the safe area, with nothing above or below them (no clock, no hint). The owner sets how many
+  columns (3–6) and rows (1–4) one screen shows, per TV, from the admin page (default 4 × 2); the cards are sized to
+  fill the screen and the change applies live. Without [sections](#sections) Home is one grid and exactly that many
+  rows show: when there are more shows, moving down from the last visible row scrolls the grid by one row (up from
+  the first scrolls back), and a thin scroll bar in the right margin shows where the screen is in the list. Left and
+  right stop at a row's ends.
 - The focused card scales to 110 % with a 4 dp white border, its name clear of the grown card; the others are dimmed.
 - Under the card: the show's name (24 sp bold), on two lines when that leaves the card as large as one line would,
   else on one, cut with "…" only when it is longer than that.
@@ -44,8 +45,8 @@ remotely from the admin page (`/admin/` on the server) or, on the TV itself, beh
   chip at the card's top right counts them ("2 new", read out as "2 new episodes"; the server's `newEpisodes`).
   Quieter than the bottom chip, it only informs: it takes no focus, never changes what OK plays, and goes away once
   an episode of the show has been played.
-- The tile played last gets the focus back; when the owner reorders Home while it shows, the focus stays on the same
-  card.
+- The tile played last gets the focus back; when the owner reorders Home while it shows (or moves the card to another
+  section), the focus stays on the same card.
 - No shows: "Nothing here yet" in large type.
 - Server unreachable: the last home screen stays (cached), a solid red "No connection" chip with dark text appears
   over the grid at the top left, the TV retries every 10 s, and OK shows "No connection · Trying again…" for 5 s
@@ -64,6 +65,35 @@ remotely from the admin page (`/admin/` on the server) or, on the TV itself, beh
   on yellow, up to 3 lines, no focus, no buttons) for the time the owner chose, on Home and over the playing video
   (playback goes on); other screens ignore them. On Home, as over the video, the hidden menu or the autoplay
   countdown, it is drawn across the top; the cards under it do not move.
+
+#### Sections
+
+The owner may cut Home into sections ([Home sections](../spec/server-api-v1.md#home-sections) in the server API),
+shown one under the other in the owner's order. They change how the cards are laid out, never what OK does.
+
+- A **titled section** starts with its title: 30 sp bold on one line (cut with "…"), aligned with the cards' left
+  edge, white while the focus is in the section and dimmed like the cards otherwise. It takes no focus.
+- The **untitled section** holds the shows put on Home without a section and has no title. It comes first unless the
+  owner moved it; a Home with only the untitled section looks exactly as Home without sections.
+- **Grid** (the default layout): the section's cards wrap in rows of the owner's columns, as above.
+- **Row**: the section is one line of cards that scrolls sideways. ← and → move along it; once the focus reaches the
+  last card in view, the line slides by one card under it (and back the same way). In the side margins the edge of
+  the next card (and of the previous one, once the line has moved) shows, so the line visibly goes on. The line keeps
+  its place when the focus leaves it. ← and → stop at its ends.
+- **Between two sections** a thin line (2 dp, white at 18 %) runs across the width of the cards. The boundary takes
+  exactly the height of the step between two rows of one section: the next section (its title, else its cards)
+  starts where a next row would, and the line lies in the middle of the empty space above it, which is the gap
+  between rows plus the second title line when no card of the last row uses it. The line is what keeps the untitled
+  section apart from a titled grid above it, without a word on screen.
+- **One card size** for the whole Home, from the owner's columns × rows. When Home shows a titled section, the height
+  of one title is set aside first, so one screen holds a title and that many rows.
+- **Moving:** ↑ and ↓ go line by line (a row of a grid, or a scrolling line) and across sections, to the card nearest
+  the one left, side to side (in a scrolling line, among the cards in view). The screen moves as little as possible to
+  show the focused line whole, with its section's title when it is the section's first line; on Home's first line it
+  is at the top. The scroll bar in the right margin shows where the screen is in all of Home.
+- A section with nothing the TV can play is not shown. **Home order** is the sections in order, each with its cards in
+  order: autoplay's first tile is the first in it, and CH+ / CH− go through the channels in it, across sections. The
+  offline home screen keeps its sections.
 
 ### Player
 

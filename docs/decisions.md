@@ -393,3 +393,19 @@ The server side of the specification above, in one change (the admin page and th
   the mirror won because it shows the owner exactly what the viewer sees.
 - The grid size moved from Settings to this tab, previewed before it is saved. Enter on a card does not play it:
   a stray key would start something on someone's TV; Play is a button of the selected card.
+
+## Home sections: specification (2026-10-22)
+
+- How to keep the untitled section apart from a titled grid above it was prototyped four ways: titles only (the
+  untitled shows read as part of the section above), a line between sections, a lighter panel under each titled
+  section, and a "More" heading the TV adds. The owner chose the line, and asked for its boundary to take exactly the
+  step between two rows: a wider gap read as a hole in the screen.
+- `homeSections` sits beside the flat `home` rather than replacing it, so a TV without sections shows one grid in Home
+  order, and Home order (autoplay's first tile, CH+/CH− among channels) stays one list the TV already uses.
+- `PUT …/home {"itemIds"}` keeps each item's section instead of dropping the sections: an agent or script written
+  before sections cannot wipe the owner's titles by reordering. Deleting a section moves its shows to the untitled
+  section for the same reason: nothing leaves Home unless it is removed.
+- The untitled section has a fixed id (`untitled`) so the item routes can name it, and a layout like the others; it
+  can be moved, since the owner may want a titled section such as "Channels" first.
+- `layout` is an enum (`grid`, `row`) rather than a boolean, so a later layout is additive; the TV treats an unknown
+  one as `grid`.
