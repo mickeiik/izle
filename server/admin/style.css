@@ -116,13 +116,10 @@ input[type="search"] ~ * > .callout:first-child { margin-top: var(--space-3); }
 .callout.error { background: var(--danger-bg); color: var(--danger); }
 .callout.info { background: var(--info-bg); color: var(--text); }
 .callout.warn { background: var(--warn-bg); color: var(--text); }
-.callout.warn > p { margin: 0 0 var(--space-2); }
-.callout.info p { margin: 0 0 var(--space-2); }
-.callout.info p:last-child { margin: 0; }
+.callout p { margin: 0 0 var(--space-2); }
+.callout p:last-child { margin: 0; }
 .secret .row { flex-wrap: wrap; margin: var(--space-2) 0; }
 .secret-value { flex: 1 1 16rem; padding: var(--space-2) var(--space-3); background: var(--surface); border-radius: var(--radius-sm); user-select: all; }
-.callout.error p { margin: 0 0 var(--space-2); }
-.callout.error p:last-child { margin: 0; }
 .callout ul { margin: var(--space-2) 0 0; padding-left: var(--space-5); }
 
 /* --- sticky tabs (a TV's page) -------------------------------------------------------------------------------- */
@@ -197,7 +194,6 @@ input[type="checkbox"] { width: 1.25rem; height: 1.25rem; min-height: 0; padding
 .list > * { border-top: 1px solid var(--line); padding-block: var(--space-3); }
 .list > :first-child { border-top: none; padding-top: 0; }
 .list > :last-child { padding-bottom: 0; }
-.list[aria-busy="true"] { cursor: progress; }
 .row { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
 .row.top-align { align-items: flex-start; }
 .grow { flex: 1; min-width: 0; }
@@ -214,7 +210,6 @@ input[type="checkbox"] { width: 1.25rem; height: 1.25rem; min-height: 0; padding
 .chips { display: flex; gap: var(--space-1); flex-wrap: wrap; justify-content: flex-end; }
 .end { display: flex; align-items: center; flex: none; }
 
-.art { flex: none; display: flex; }
 .poster { display: block; width: var(--poster-w); aspect-ratio: 2 / 3; height: auto; object-fit: cover; border-radius: var(--radius-sm); flex: none; background: var(--line); }
 .show-head .poster { width: 8rem; }
 
@@ -252,18 +247,15 @@ input[type="checkbox"] { width: 1.25rem; height: 1.25rem; min-height: 0; padding
 .grid-size select { width: auto; }
 .grid-size label + select + label { margin-left: var(--space-2); }
 .grid-size button:first-of-type { margin-left: var(--space-2); }
-.tv { max-width: 48rem; margin: var(--space-3) auto 0; }
 /* The screen with the Sections list beside it; under it on a narrow page. */
 .home-bench { display: grid; grid-template-columns: minmax(0, 1fr) 17rem; gap: var(--space-4); align-items: start; margin-top: var(--space-3); }
-.home-bench .tv { margin: 0; max-width: none; }
 @media (max-width: 54rem) {
   .home-bench { grid-template-columns: minmax(0, 1fr); }
   .home-bench .tv { max-width: 48rem; margin: 0 auto; width: 100%; }
 }
 .sections-panel h3 { margin: 0 0 var(--space-1); }
-.sections-panel .hint { font-size: var(--text-sm); margin-bottom: var(--space-2); }
+.sections-panel .hint { margin-bottom: var(--space-2); }
 .sections > li { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-2); padding-block: var(--space-2); }
-.sections > :first-child { padding-top: 0; }
 .sections .order { display: flex; flex-direction: column; gap: var(--space-1); }
 .sections .order button { min-height: 1.75rem; min-width: 2rem; padding: 0 var(--space-1); }
 .sections input[type="text"] { min-height: 2.25rem; padding: var(--space-1) var(--space-2); font-weight: 600; }
@@ -343,6 +335,7 @@ p.add-section { font-size: var(--text-sm); }
 
 .hidden-on-tv .list > * { padding-block: var(--space-2); }
 .hidden-on-tv .grow > .chip { margin-left: var(--space-2); }
+.hidden-on-tv .grow > .muted { font-size: var(--text-sm); }
 .inspector { margin-top: var(--space-4); padding: var(--space-3) var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg); }
 .inspector .where { margin: 0 0 var(--space-1); font-size: var(--text-sm); }
 .inspector h3 { margin: 0 0 var(--space-1); font-size: var(--text-lg); }
@@ -350,12 +343,10 @@ p.add-section { font-size: var(--text-sm); }
 .inspector .moves > .muted { margin-right: var(--space-1); }
 .inspector .moves label { margin: 0 0 0 var(--space-2); font-weight: 500; }
 .inspector .moves select { width: auto; max-width: 14rem; }
-.hidden-on-tv .grow > .muted { font-size: var(--text-sm); }
 .picker { margin: var(--space-3) 0 0; padding: var(--space-2) var(--space-3); background: var(--surface); border-radius: var(--radius-md); }
 .picker > p { font-size: var(--text-sm); margin: 0 0 var(--space-2); }
 .episodes { list-style: none; padding: 0; margin: 0; }
 .episodes li { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) 0; flex-wrap: wrap; }
-.episodes li + li { border-top: 1px solid var(--line); }
 .episodes li.current .grow { font-weight: 600; }
 
 .play-on { justify-content: flex-start; }
@@ -363,13 +354,12 @@ p.add-section { font-size: var(--text-sm); }
 .filters select { width: auto; }
 .episodes-history li { padding-block: var(--space-2); }
 .pair select { width: auto; max-width: 100%; }
-.search-hint { display: flex; align-items: center; gap: var(--space-2) var(--space-3); flex-wrap: wrap; margin-top: var(--space-3); }
 .summary { font-size: var(--text-sm); margin: var(--space-3) 0; }
 .summary:empty { margin: 0; }
 
 /* The catalog browser: search, a wrapping filter bar, the results and "Show more". */
 .browser .filters { margin-top: var(--space-3); align-items: center; }
-.browser .filters .check { margin: 0; font-weight: inherit; gap: var(--space-2); }
+.browser .filters .check { font-weight: inherit; gap: var(--space-2); }
 .browser .years { display: inline-flex; gap: var(--space-2); }
 .browser input.year { width: 7.5rem; }
 .browser .more { margin-top: var(--space-4); }
@@ -406,12 +396,11 @@ summary { cursor: pointer; }
 
 .show-head .grow > p:first-child { margin-bottom: var(--space-2); }
 .sources { list-style: none; padding: 0; margin: var(--space-1) 0 0; font-size: var(--text-sm); color: var(--muted); }
-.diag { list-style: none; padding: var(--space-2) var(--space-3); margin: var(--space-2) 0 0; background: var(--bg); border-radius: var(--radius-md); font-size: var(--text-sm); }
+.diag { list-style: none; padding: var(--space-2) var(--space-3); margin: 0; background: var(--bg); border-radius: var(--radius-md); font-size: var(--text-sm); }
 .diag li { padding: var(--space-2) 0; }
-.diag li + li { border-top: 1px solid var(--line); }
+.episodes li + li, .diag li + li { border-top: 1px solid var(--line); }
 .diag li.ok > strong { color: var(--ok); }
 .diag li.bad > strong { color: var(--danger); }
-.summary + .diag { margin-top: 0; }
 
 /* --- toasts ---------------------------------------------------------------------------------------------------- */
 #toasts {

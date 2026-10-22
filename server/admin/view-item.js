@@ -3,8 +3,8 @@
 // every source of an episode or a channel through the server's resolve path and shows what came back (no URLs: hosts
 // and header names only).
 
-import { ApiError, api, attempt, devicePath } from "./api.js";
-import { actionButton, card, h, page, poster, setTitle, slot, srOnly, toast } from "./dom.js";
+import { ApiError, api, attempt, sendCommand } from "./api.js";
+import { actionButton, card, h, page, poster, setTitle, slot, srOnly } from "./dom.js";
 import { episodeName, errorText, formatClock, mediaKindLabel, plural, showMeta, sourceReport } from "./lib.js";
 
 /** @param {any} report the answer of POST /admin/diagnostics/resolve */
@@ -61,10 +61,7 @@ function playOnCard(item, devices) {
   const active = devices.filter((d) => d.status === "active");
   if (active.length === 0 || (item.kind === "live" && !item.playbackAllowed)) return null;
   const button = (/** @type {any} */ d) =>
-    actionButton(d.name, { "aria-label": `Play on ${d.name}` }, async () => {
-      const r = await attempt(() => api("POST", `${devicePath(d.id)}/commands`, { type: "play", itemId }));
-      if (r.ok) toast(r.value.online ? `Play sent to ${d.name}.` : `Play queued: ${d.name} is offline and gets it if it connects within 2 minutes.`, r.value.online ? "ok" : "info");
-    });
+    actionButton(d.name, { "aria-label": `Play on ${d.name}` }, () => sendCommand(d.id, { type: "play", itemId }, "Play", d.name));
   const intro = item.kind === "live"
     ? "The TV plays this channel live, whether it is on its home screen or not."
     : "The TV plays the episode OK would play for this show, whether it is on its home screen or not.";

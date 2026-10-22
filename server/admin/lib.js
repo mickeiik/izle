@@ -117,19 +117,6 @@ export function percent(position, duration) {
 }
 
 /**
- * A copy of `list` with the element at `index` moved by `delta` (clamped).
- * @template T @param {readonly T[]} list @param {number} index @param {number} delta @returns {T[]}
- */
-export function moveItem(list, index, delta) {
-  const out = [...list];
-  const to = Math.min(out.length - 1, Math.max(0, index + delta));
-  if (index < 0 || index >= out.length || to === index) return out;
-  const [item] = out.splice(index, 1);
-  out.splice(to, 0, /** @type {T} */ (item));
-  return out;
-}
-
-/**
  * The muted line under a show's title: Film or Series (with its episode count), the year, and with `playable` how
  * many of its episodes may be played when that is not all of them. A channel is "Channel", with `playable` marked
  * when the catalog does not allow it (its `playable` is false).
@@ -353,7 +340,7 @@ export function playbackState(n, online, now = Date.now()) {
 }
 
 /** `14:05`: a time of day, in the browser's time zone. @param {string} iso */
-export const clockTime = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const clockTime = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 /**
  * The line under what a TV plays: `1:02 / 10:00 · source tr-dub`. A channel has no position or duration: when its
@@ -509,11 +496,10 @@ export function tvGrid(columns, rows, height = TV_H - 2 * TV_SAFE_Y) {
   const gap = 20;
   const padding = 14;
   const titleGap = 10;
-  const titleLine = 32;
   const cols = Math.min(HOME_COLUMNS[HOME_COLUMNS.length - 1], Math.max(HOME_COLUMNS[0], columns));
   const rowsShown = Math.min(HOME_ROWS[HOME_ROWS.length - 1], Math.max(HOME_ROWS[0], rows));
   const widthBound = (width - 2 * padding - (cols - 1) * gap) / cols;
-  const titleHeight = (/** @type {number} */ lines) => titleGap + titleLine * lines;
+  const titleHeight = (/** @type {number} */ lines) => titleGap + TITLE_LINE * lines;
   const heightBound = (/** @type {number} */ lines) => (((height - 2 * padding - (rowsShown - 1) * gap) / rowsShown - titleHeight(lines)) * 16) / 9;
   const widthFor = (/** @type {number} */ lines) => Math.max(1, Math.floor(Math.min(widthBound, heightBound(lines))));
   const titleLines = widthFor(2) < widthFor(1) ? 1 : 2;
@@ -531,9 +517,9 @@ export function tvGrid(columns, rows, height = TV_H - 2 * TV_SAFE_Y) {
 
 /** The TV's screen and safe margins, in dp. */
 export const TV_W = 960;
-export const TV_H = 540;
-export const TV_SAFE_X = 48;
-export const TV_SAFE_Y = 27;
+const TV_H = 540;
+const TV_SAFE_X = 48;
+const TV_SAFE_Y = 27;
 /** A section title's block: one 30 sp line (38 dp) and 6 dp under it. Set aside once when Home shows a titled section. */
 export const SECTION_HEADER = 44;
 /** The untitled section's fixed id. */

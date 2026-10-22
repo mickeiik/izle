@@ -102,12 +102,17 @@ export function historyItemView(scope, itemId) {
     return h("li", null, h("div", { class: "row" }, seenChip, h("div", { class: "grow" }, h("strong", null, name), h("div", { class: "muted" }, episodeHistoryLine(e))), buttons));
   };
 
+  /** The card above the list: the title's facts, its catalog link, then `more`. @param {any} t @param {Array<string | null>} facts @param {string} link @param {...HTMLElement} more */
+  const showHead = (t, facts, link, ...more) => {
+    const line = [titleLine(t), t.firstWatchedAt ? `first watched ${formatRelative(t.firstWatchedAt)}` : null, ...facts].filter(Boolean).join(" · ");
+    const catalogLink = t.inCatalog ? h("p", null, h("a", { href: `#/catalog/items/${encodeURIComponent(itemId)}` }, link)) : null;
+    head.replaceChildren(h("div", null, h("p", { class: "muted" }, line), catalogLink, ...more));
+    return h("section", { class: "card" }, h("div", { class: "row top-align" }, head));
+  };
+
   /** A channel: its latest viewings, one line each (no marks: a channel is never seen). @param {any} t */
   const loadChannel = async (t) => {
     const { viewings } = await scope.read(`/history/viewings?item=${encodeURIComponent(itemId)}&limit=${CHANNEL_VIEWINGS}`);
-    const facts = [titleLine(t), t.firstWatchedAt ? `first watched ${formatRelative(t.firstWatchedAt)}` : null].filter(Boolean).join(" · ");
-    const catalogLink = t.inCatalog ? h("a", { href: `#/catalog/items/${encodeURIComponent(itemId)}` }, "Channel in the catalog") : null;
-    head.replaceChildren(h("div", null, h("p", { class: "muted" }, facts), catalogLink ? h("p", null, catalogLink) : null));
     const day = (/** @type {string} */ iso) => new Date(iso).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
     const row = (/** @type {any} */ v) => {
       const by = triggerLabel(v);
@@ -120,7 +125,7 @@ export function historyItemView(scope, itemId) {
     const intro = viewings.length >= CHANNEL_VIEWINGS
       ? `The last ${CHANNEL_VIEWINGS} viewings, the latest first: when the channel was on and how long the picture ran.`
       : "Its viewings, the latest first: when the channel was on and how long the picture ran.";
-    body.show(h("section", { class: "card" }, h("div", { class: "row top-align" }, head)), card({ title: "Viewings", intro }, list));
+    body.show(showHead(t, [], "Channel in the catalog"), card({ title: "Viewings", intro }, list));
   };
 
   const load = async () => {
@@ -130,18 +135,14 @@ export function historyItemView(scope, itemId) {
     const s = titleStatusLabel(t.status);
     setChip(statusChip, s.label, s.tone);
     if (t.kind === "live") return loadChannel(t);
-    const facts = [titleLine(t), t.firstWatchedAt ? `first watched ${formatRelative(t.firstWatchedAt)}` : null, t.rewatches > 0 ? plural(t.rewatches, "rewatch") : null,
-      t.shortViewings > 0 ? `${plural(t.shortViewings, "short viewing")} (gave up early)` : null].filter(Boolean).join(" · ");
     const ids = detail.episodes.map((/** @type {any} */ e) => e.episodeId);
     const allSeen = actionButton("Mark all seen", { "data-focus": "all-seen" }, () => mark(ids, true, "All episodes marked seen."));
     const clearMarks = actionButton("Clear marks", { "data-focus": "clear-marks" }, () => mark(ids, null, "Marks removed: what the TVs reported counts again."));
     const anyMark = detail.episodes.some((/** @type {any} */ e) => e.mark !== null);
-    const catalogLink = t.inCatalog ? h("a", { href: `#/catalog/items/${encodeURIComponent(itemId)}` }, "Show in the catalog") : null;
-    head.replaceChildren(h("div", null, h("p", { class: "muted" }, facts), catalogLink ? h("p", null, catalogLink) : null,
-      h("div", { class: "actions" }, allSeen, anyMark ? clearMarks : null)));
+    const facts = [t.rewatches > 0 ? plural(t.rewatches, "rewatch") : null, t.shortViewings > 0 ? `${plural(t.shortViewings, "short viewing")} (gave up early)` : null];
     episodesList.replaceChildren(...detail.episodes.map(episodeRow));
     body.show(
-      h("section", { class: "card" }, h("div", { class: "row top-align" }, head)),
+      showHead(t, facts, "Show in the catalog", h("div", { class: "actions" }, allSeen, anyMark ? clearMarks : null)),
       card({ title: t.kind === "movie" ? "The film" : "Episodes", intro: "A mark is the owner's word and wins over what the TVs reported; it changes nothing on the TVs." },
         h("div", { class: "table-wrap", role: "region", "aria-label": "Episodes" }, episodesList)),
     );

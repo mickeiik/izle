@@ -3,7 +3,7 @@
 // uploaded, and every TV with its installed version and "Install now". Refreshed every 15 s and on the app's
 // events; a server without TV app updates (404) says so and offers nothing.
 
-import { ApiError, api, attempt, devicePath, upload } from "./api.js";
+import { ApiError, api, attempt, sendCommand, upload } from "./api.js";
 import { actionButton, card, chip, h, keyedRows, onSubmit, page, setChip, setOff, slot, toast, uid } from "./dom.js";
 import { watchEvents } from "./events.js";
 import {
@@ -18,7 +18,6 @@ export function appView(scope) {
   let unsupported = false;
   /** Device names by id, for the command result toasts. @type {Map<string, string>} */
   const names = new Map();
-  const hasApk = () => Boolean(app?.apk);
 
   // Stored app --------------------------------------------------------------------------------------------------
   const storedSlot = slot();
@@ -143,11 +142,9 @@ export function appView(scope) {
     const why = h("span", { class: "visually-hidden", id: whyId });
     /** @type {any} */
     let current = d;
-    const install = actionButton("Install now", { "data-control": "install", "aria-describedby": whyId }, async () => {
-      const r = await attempt(() => api("POST", `${devicePath(current.id)}/commands`, { type: "update" }));
-      if (!r.ok) return;
+    const install = actionButton("Install now", { "data-control": "install", "aria-describedby": whyId }, () => {
       const guided = current.app?.capability === "guided" ? " Someone at the TV has to press OK when the screen appears." : "";
-      toast(r.value.online ? `Install now sent to “${current.name}”.${guided}` : `Install now queued: “${current.name}” is offline and gets it if it connects within 2 minutes.`, r.value.online ? "ok" : "info");
+      return sendCommand(current.id, { type: "update" }, "Install now", `“${current.name}”`, guided);
     });
     const guided = h("p", { class: "hint" }, "Someone at the TV has to press OK when the screen appears.");
     const element = h("div", null, h("div", { class: "row" }, h("div", { class: "grow" }, h("strong", null, link), meta), state, install, why), guided);
@@ -165,7 +162,7 @@ export function appView(scope) {
         meta.textContent = parts.join(" · ");
         const c = appUpdateChip(a);
         setChip(state, c.text, c.tone);
-        const blocked = unsupported ? "This server has no TV app updates." : installNowBlocked(next, hasApk());
+        const blocked = unsupported ? "This server has no TV app updates." : installNowBlocked(next, Boolean(app?.apk));
         setOff(install, blocked !== null);
         why.textContent = blocked ?? "";
         guided.hidden = a?.capability !== "guided";

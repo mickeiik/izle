@@ -2,7 +2,7 @@
 // DOM building blocks of the admin page. It runs under a strict Content-Security-Policy: elements are built with `h`
 // (no HTML parsing), text from the server only ever goes in as text, and widths are set through CSSOM.
 
-import { errorText, plural } from "./lib.js";
+import { errorText } from "./lib.js";
 
 /** @typedef {Node | string | number | null | undefined | false} Child */
 
