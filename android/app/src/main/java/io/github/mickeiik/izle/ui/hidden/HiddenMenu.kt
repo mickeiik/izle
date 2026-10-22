@@ -23,7 +23,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,7 +45,6 @@ import io.github.mickeiik.izle.ui.common.CheckIcon
 import io.github.mickeiik.izle.ui.common.ErrorText
 import io.github.mickeiik.izle.ui.common.PlayIcon
 import io.github.mickeiik.izle.ui.common.Spinner
-import io.github.mickeiik.izle.ui.common.currentLocale
 import io.github.mickeiik.izle.ui.common.episodeNameText
 import io.github.mickeiik.izle.ui.common.languageLabel
 import io.github.mickeiik.izle.ui.common.languageName
@@ -101,24 +100,21 @@ fun HiddenMenu(
                     is MenuPage.Episodes -> EpisodesPage(menu, page, actions)
                     is MenuPage.Audio -> TrackPage(page, page.options, automatic = R.string.audio_automatic, onChoose = actions.onAudio)
                     is MenuPage.Subtitles -> TrackPage(page, page.options, automatic = R.string.subtitles_off, onChoose = actions.onSubtitles)
-                    MenuPage.Settings -> MenuList(page, initial = 0) { focus ->
-                        item(key = "server") {
-                            MenuRow(stringResource(R.string.settings_server), about.server, modifier = focus(0)) { actions.onSettings(SettingsEntry.ServerAddress) }
-                        }
-                        item(key = "language") {
-                            val current = uiLanguageOverride?.let { languageLabel(it) }
-                                ?: stringResource(R.string.settings_language_auto, languageLabel(uiLanguage))
-                            MenuRow(stringResource(R.string.settings_language), current, modifier = focus(1)) { actions.onSettings(SettingsEntry.Language) }
-                        }
-                        item(key = "pair") {
-                            MenuRow(stringResource(R.string.settings_pair_again), modifier = focus(2)) { actions.onSettings(SettingsEntry.PairAgain) }
-                        }
-                        // Only while the server offers a newer version, not over the player; last, so the focus never
-                        // starts on it.
-                        MenuPlan.installUpdateVersion(about.updateVersion, menu.fromPlayer)?.let { version ->
-                            item(key = "update") {
-                                MenuRow(stringResource(R.string.settings_install_update), version, modifier = focus(3)) {
-                                    actions.onSettings(SettingsEntry.InstallUpdate)
+                    MenuPage.Settings -> {
+                        val language = uiLanguageOverride?.let { languageLabel(it) }
+                            ?: stringResource(R.string.settings_language_auto, languageLabel(uiLanguage))
+                        val rows = listOfNotNull(
+                            Triple(SettingsEntry.ServerAddress, R.string.settings_server, about.server),
+                            Triple(SettingsEntry.Language, R.string.settings_language, language),
+                            Triple(SettingsEntry.PairAgain, R.string.settings_pair_again, null),
+                            // Last, so the focus never starts on it.
+                            MenuPlan.installUpdateVersion(about.updateVersion, menu.fromPlayer)
+                                ?.let { Triple(SettingsEntry.InstallUpdate, R.string.settings_install_update, it) },
+                        )
+                        MenuList(page, initial = 0) { focus ->
+                            rows.forEachIndexed { i, (entry, label, value) ->
+                                item(key = entry.name) {
+                                    MenuRow(stringResource(label), value, modifier = focus(i)) { actions.onSettings(entry) }
                                 }
                             }
                         }
@@ -135,12 +131,8 @@ fun HiddenMenu(
                             item(key = label) { MenuRow(stringResource(label), value ?: "–", modifier = focus(i)) {} }
                         }
                         item(key = "update") {
-                            val version = about.updateVersion
-                            if (version != null) {
-                                MenuRow(stringResource(R.string.about_update_available), version, modifier = focus(rows.size)) {}
-                            } else {
-                                MenuRow(stringResource(R.string.about_up_to_date), modifier = focus(rows.size)) {}
-                            }
+                            val label = if (about.updateVersion != null) R.string.about_update_available else R.string.about_up_to_date
+                            MenuRow(stringResource(label), about.updateVersion, modifier = focus(rows.size)) {}
                         }
                     }
                 }
@@ -184,10 +176,7 @@ private fun MenuList(page: Any, initial: Int, content: LazyListScope.(focus: (In
     }
 }
 
-/**
- * A row of the menu, without a fill of its own. Focused: the white border of the tiles and buttons on a lighter
- * fill, the text staying white. Not scaled: the panel ends at the safe margin.
- */
+/** No fill of its own; focused, the tiles' white border on a lighter fill. Not scaled: the panel ends at the safe margin. */
 @Composable
 private fun MenuRow(
     headline: String,
@@ -275,7 +264,7 @@ private fun EpisodesPage(menu: MenuUi, page: MenuPage.Episodes, actions: MenuAct
 
 @Composable
 private fun TrackPage(page: MenuPage, options: List<TrackOption>, automatic: Int, onChoose: (TrackOption?) -> Unit) {
-    val locale = LocalContext.current.currentLocale()
+    val locale = LocalConfiguration.current.locales[0]
     val unknown = stringResource(R.string.track_unknown)
     val selectedIndex = options.indexOfFirst { it.selected }
     MenuList(page, initial = if (page is MenuPage.Subtitles && selectedIndex >= 0) selectedIndex + 1 else 0) { focus ->

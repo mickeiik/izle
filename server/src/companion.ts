@@ -1,7 +1,6 @@
-// "Listen along": the owner's phone plays a second source of the episode the TV is playing, in sync with the
-// picture (docs/spec/server-api-v1.md, "Listen along"). This service lists the candidate sources of what is
-// playing, keeps the owner's timing links (offset, speed, audio language) and resolves the companion stream under
-// its own proxy scope so the TV's sessions are never disturbed.
+// "Listen along" (docs/spec/server-api-v1.md): the owner's phone plays a second source of the episode the TV is
+// playing, in sync with the picture. The companion stream resolves under its own proxy scope, so the TV's sessions
+// are never disturbed.
 
 import type { CatalogService } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
@@ -11,14 +10,7 @@ import { iso } from "./presenters.ts";
 import type { ResolveService } from "./resolve.ts";
 import type { CompanionLink, Device, Store } from "./store.ts";
 
-export interface LinkInput {
-  /** Companion position when the TV is at 0. */
-  offsetMs: number;
-  /** Companion seconds per TV second. */
-  rate: number;
-  /** Audio language to pick inside the companion stream; null = the player's default. */
-  language?: string | null;
-}
+export type LinkInput = Pick<CompanionLink, "offsetMs" | "rate"> & { language?: string | null };
 
 export interface CompanionResolveInput {
   episodeId: string;
@@ -33,7 +25,6 @@ interface CompanionDeps {
   store: Store;
   catalog: CatalogService;
   resolver: ResolveService;
-  /** What the TV plays: the candidates are its sources. */
   playing: PlayingService;
   now: () => number;
 }
@@ -49,10 +40,7 @@ export class CompanionService {
     return linkJson(this.s.store.getCompanionLink(this.s.catalog.catalogId, episodeId, sourceId));
   }
 
-  /**
-   * Stores the owner's timing for a companion source of an episode. Links belong to the media (two releases of
-   * the same episode), not to a TV, so they are keyed by catalog, episode and source only.
-   */
+  /** Links belong to the media (two releases of the same episode), not to a TV: keyed by episode and source only. */
   putLink(episodeId: string, sourceId: string, input: LinkInput) {
     const { ref } = requireEpisodeSource(this.s.catalog, episodeId, sourceId);
     const { offsetMs, rate, language = null } = input;
@@ -74,10 +62,7 @@ export class CompanionService {
     return { updated: episodeIds.length, episodeIds };
   }
 
-  /**
-   * The sources of the episode the TV is playing, as companion candidates, with their stored links. A channel has
-   * no timeline to follow: it is named, with no candidates.
-   */
+  /** The sources of the episode the TV is playing, with their stored links; a channel has none (no timeline). */
   candidates(device: Device) {
     const n = this.s.playing.current(device.id);
     const about = n && this.s.catalog.describe(n);
@@ -102,10 +87,7 @@ export class CompanionService {
     };
   }
 
-  /**
-   * Resolves a companion source for the phone: the forced source, under the companion proxy scope, always
-   * proxied, without touching the TV's now-playing row or playback session.
-   */
+  /** The forced source, always proxied, without touching the TV's now-playing row or playback session. */
   async resolve(device: Device, input: CompanionResolveInput, signal?: AbortSignal) {
     const { ref } = requireEpisodeSource(this.s.catalog, input.episodeId, input.sourceId);
     const episodeId = ref.episode.id;

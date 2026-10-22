@@ -4,10 +4,7 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 object ServerUrls {
-    /**
-     * Turns what the owner typed into a server base URL: `http://` is assumed when no scheme is given, query and
-     * fragment are dropped, and the path always ends with `/` so the server can live under a path prefix.
-     */
+    /** What the owner typed, `http://` by default, without query or fragment and with a path ending in `/`. */
     fun parse(input: String): HttpUrl? {
         val text = input.trim()
         if (text.isEmpty() || text.any { it.isWhitespace() }) return null
@@ -19,11 +16,7 @@ object ServerUrls {
         return builder.build()
     }
 
-    /**
-     * Resolves a URL the server handed out. Server-relative references (`/assets/…`, `/p/…`) are resolved below
-     * the base URL's path, so a server behind a reverse proxy at `https://host/izle/` keeps working; absolute URLs
-     * are returned as they are.
-     */
+    /** Server-relative references (`/assets/…`) are resolved below the base path (a reverse proxy at `/izle/`). */
     fun resolve(base: HttpUrl, reference: String): HttpUrl? {
         val ref = reference.trim()
         if (ref.isEmpty()) return null
@@ -31,7 +24,7 @@ object ServerUrls {
         return base.resolve(ref)
     }
 
-    /** A short form for screens: scheme, host and port only. */
+    /** For screens: scheme, host, port (unless the default) and path, without the trailing slash. */
     fun display(url: HttpUrl): String {
         val defaultPort = HttpUrl.defaultPort(url.scheme)
         val port = if (url.port == defaultPort) "" else ":${url.port}"
@@ -39,6 +32,6 @@ object ServerUrls {
         return "${url.scheme}://${url.host}$port$path"
     }
 
-    /** The server's admin page, as the owner would type it on a phone (the server redirects to the trailing slash). */
+    /** As the owner would type it on a phone (the server redirects to the trailing slash). */
     fun adminPage(url: HttpUrl): String = "${display(url)}/admin"
 }

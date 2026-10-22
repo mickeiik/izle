@@ -1,5 +1,5 @@
-// The Home list of a TV, driven directly (no HTTP): its entries as data, new episodes after a wrap, and the owner's
-// operations on it with their refusals.
+// The Home list of a TV, driven directly (no HTTP): its entries as data, and what the owner's operations do beyond
+// what admin.test.ts checks through the routes (new episodes and wraps: tv.test.ts).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -9,10 +9,9 @@ import { OWNER } from "../src/actor.ts";
 import { CatalogService } from "../src/catalog.ts";
 import { EventLog } from "../src/eventlog.ts";
 import { EventHub, Notifier } from "../src/events.ts";
-import { CatalogHistory } from "../src/history.ts";
-import { HOME_MAX_SECTIONS, HomeService, type ExpectedSection, type HomeEntry, type Section, type SectionInput } from "../src/home.ts";
+import { HOME_MAX_SECTIONS, HomeService, type ExpectedSection, type Section, type SectionInput } from "../src/home.ts";
 import { Store } from "../src/store.ts";
-import { fakeClock, fixtureItems, publishBuild, silentLogger, tempDir, untitled, writeBundle, type Json } from "./helpers.ts";
+import { fakeClock, silentLogger, tempDir, untitled, writeBundle, type Json } from "./helpers.ts";
 
 const CATALOG = "fixture";
 
@@ -21,18 +20,13 @@ async function setup(t: { after(fn: () => unknown): void }) {
   const store = new Store(path.join(root, "izle.db"));
   t.after(() => store.close());
   const clock = fakeClock();
-  const history = new CatalogHistory(store, silentLogger);
-  const bundleDir = await writeBundle(path.join(root, "bundle"));
-  const catalog = new CatalogService(bundleDir, silentLogger, clock.now, null, { onLoaded: (next, previous) => void history.record(next, previous) });
+  const catalog = new CatalogService(await writeBundle(path.join(root, "bundle")), silentLogger, clock.now);
   await catalog.load();
   const eventLog = new EventLog(store, silentLogger, clock.now, 30);
   const home = new HomeService({ store, catalog, eventLog, notifier: new Notifier(store, new EventHub()), now: clock.now });
   const device = store.createDevice({ id: "tv1", name: "Salon", tokenHash: null, now: clock.now() });
   return {
-    store, clock, catalog, home, device,
-    publish: publishBuild.bind(null, bundleDir),
-    /** The entries as `[itemId, missing, playable, continue's episode, newEpisodes]`. */
-    rows: () => home.list(device.id).map((e: HomeEntry) => [e.itemId, e.missing, e.playable, e.continue?.episodeId ?? null, e.newEpisodes]),
+    store, catalog, home, device,
     version: () => store.getDevice(device.id)!.stateVersion,
     events: (type: string) => store.listEvents({ after: 0, limit: 100, types: [type] }).map((e) => e.data),
   };
@@ -43,75 +37,31 @@ function refuses(fn: () => unknown, status: number, code: string) {
   assert.throws(fn, (err: Json) => err.status === status && err.code === code, `${status} ${code}`);
 }
 
+/** The sections as `[id, title, layout, itemIds]`. */
+const shape = (sections: Section[]) => sections.map((s) => [s.id, s.title, s.layout, s.itemIds]);
+
 test("list: every entry in order, a missing item and unplayable ones flagged, a channel without continue or new episodes", async (t) => {
-  const { store, home, device, rows } = await setup(t);
+  const { store, home, device } = await setup(t);
   // Written past the owner's checks, as a catalog reload leaves a list: an item gone, items no longer playable.
   store.setHome(device.id, CATALOG, untitled(["show", "gone", "locked", "news", "off-air"]), 1);
-  assert.deepEqual(rows(), [
+  const list = home.list(device.id);
+  assert.deepEqual(list.map((e) => [e.itemId, e.missing, e.playable, e.continue?.episodeId ?? null, e.newEpisodes]), [
     ["show", false, true, "show.e1", 0],
     ["gone", true, false, null, 0],
     ["locked", false, false, null, 0],
     ["news", false, true, null, 0],
     ["off-air", false, false, null, 0],
   ]);
-  const [show, gone] = home.list(device.id);
-  assert.equal(show?.item?.id, "show");
-  assert.deepEqual(show?.continue, { episodeId: "show.e1", season: 1, number: 1, title: "Pilot", label: null, index: 0, count: 5, positionMs: 0, durationMs: 1_200_000, status: "new" });
-  assert.deepEqual(gone, { itemId: "gone", item: null, missing: true, playable: false, continue: null, newEpisodes: 0, addedAt: 1, sectionId: "untitled" });
+  assert.equal(list[0]?.item?.id, "show");
+  assert.deepEqual(list[0]?.continue, { episodeId: "show.e1", season: 1, number: 1, title: "Pilot", label: null, index: 0, count: 5, positionMs: 0, durationMs: 1_200_000, status: "new" });
+  assert.deepEqual(list[1], { itemId: "gone", item: null, missing: true, playable: false, continue: null, newEpisodes: 0, addedAt: 1, sectionId: "untitled" });
   assert.deepEqual(home.ids(device.id), ["show", "gone", "locked", "news", "off-air"]);
 });
 
-test("new episodes after a wrap: a finished item continues at the episode a reload added; the first load never counts", async (t) => {
-  const { store, clock, catalog, home, device, publish, rows } = await setup(t);
-  // On the list since the epoch: only the baseline's own "first seen" (0) could count, and it does not.
-  store.setHome(device.id, CATALOG, untitled(["show"]), 0);
-  assert.deepEqual(rows(), [["show", false, true, "show.e1", 0]], "the first load is the baseline");
-
-  clock.advance(60_000);
-  const t1 = clock.now();
-  store.upsertProgress(device.id, { catalogId: CATALOG, itemId: "show", episodeId: "show.e5", positionMs: 1000, durationMs: 1000, status: "finished", updatedAt: t1 });
-  store.setCursor(device.id, { catalogId: CATALOG, itemId: "show", episodeId: "show.e1", updatedAt: t1, wrapped: true });
-  assert.deepEqual(rows(), [["show", false, true, "show.e1", 0]], "watched to the end: OK starts it again");
-
-  clock.advance(60_000);
-  const e6 = { ...fixtureItems().items[0].episodes.at(-1), id: "show.e6", season: 3, number: 1 };
-  await publish("fixture-2", (items: Json[]) => items.map((i) => (i.id === "show" ? { ...i, episodes: [...i.episodes, e6] } : i)));
-  assert.equal((await catalog.reload()).ok, true);
-  assert.deepEqual(rows(), [["show", false, true, "show.e6", 1]]);
-  const cont = home.continueFor(device.id, catalog.item("show") as EpisodicItem);
-  assert.deepEqual([cont?.episodeId, cont?.index, cont?.count, cont?.status], ["show.e6", 5, 6, "new"]);
-});
-
-test("set, add, move, remove: the expected-list check, the refusals, clamping, each a new state version and a home.changed", async (t) => {
-  const { home, device, version, events } = await setup(t);
-  const v0 = version();
-  assert.equal(home.set(device.id, ["show", "film"], OWNER), v0 + 1);
-  refuses(() => home.set(device.id, ["film"], OWNER, ["show"]), 409, "home_changed");
-  assert.equal(home.set(device.id, ["film"], OWNER, ["show", "film"]), v0 + 2);
-
-  refuses(() => home.add(device.id, "nope", {}, OWNER), 400, "unknown_item");
-  refuses(() => home.add(device.id, "locked", {}, OWNER), 400, "not_playable");
-  refuses(() => home.add(device.id, "off-air", {}, OWNER), 400, "not_playable");
-  refuses(() => home.add(device.id, "film", {}, OWNER), 400, "duplicate_item");
-  home.add(device.id, "show", { position: 0 }, OWNER);
-  home.add(device.id, "news", { position: 99 }, OWNER);
-  assert.deepEqual(home.ids(device.id), ["show", "film", "news"], "a position past the end is the end");
-
-  home.move(device.id, "show", { position: 99 }, OWNER);
-  assert.deepEqual(home.ids(device.id), ["film", "news", "show"], "moves clamp to the end");
-  refuses(() => home.move(device.id, "silent", { position: 0 }, OWNER), 404, "not_on_home");
-
-  refuses(() => home.remove(device.id, "silent", OWNER), 404, "not_on_home");
-  assert.equal(home.remove(device.id, "news", OWNER), version());
-  assert.deepEqual(home.ids(device.id), ["film", "show"]);
-  assert.equal(version(), v0 + 6, "refusals bump nothing");
-  assert.deepEqual(events("home.changed").at(-1), { itemIds: ["film", "show"], added: [], removed: ["news"] });
-});
-
-test("a list holding missing or unplayable items still takes edits: only items new to it are checked", async (t) => {
-  const { store, home, device } = await setup(t);
-  // As a catalog reload leaves a list: an item gone, items no longer playable.
+test("a list holding missing or unplayable items still takes edits: only items new to it are checked; refusals bump nothing", async (t) => {
+  const { store, home, device, version } = await setup(t);
   store.setHome(device.id, CATALOG, untitled(["show", "gone", "locked", "off-air"]), 1);
+  const v0 = version();
   home.remove(device.id, "show", OWNER);
   home.move(device.id, "gone", { position: 2 }, OWNER);
   home.add(device.id, "film", { position: 0 }, OWNER);
@@ -122,83 +72,24 @@ test("a list holding missing or unplayable items still takes edits: only items n
   refuses(() => home.add(device.id, "locked", {}, OWNER), 400, "duplicate_item");
   home.remove(device.id, "locked", OWNER);
   refuses(() => home.add(device.id, "locked", {}, OWNER), 400, "not_playable");
+  home.remove(device.id, "off-air", OWNER);
+  refuses(() => home.add(device.id, "off-air", {}, OWNER), 400, "not_playable");
+  assert.equal(version(), v0 + 7);
 });
 
 test("setCursor: forgets the episode's saved position and bumps the version; a channel has no cursor", async (t) => {
-  const { store, catalog, home, device, version, events } = await setup(t);
+  const { store, catalog, home, device, version } = await setup(t);
   store.upsertProgress(device.id, { catalogId: CATALOG, itemId: "show", episodeId: "show.e4", positionMs: 30_000, durationMs: 60_000, status: "watching", updatedAt: 1 });
   const v0 = version();
   assert.equal(home.setCursor(device.id, "show", "show.e4", OWNER), v0 + 1);
   assert.equal(store.getProgress(device.id, CATALOG, "show.e4"), null);
   const cont = home.continueFor(device.id, catalog.item("show") as EpisodicItem);
   assert.deepEqual([cont?.episodeId, cont?.positionMs, cont?.status], ["show.e4", 0, "new"], "starts over");
-  assert.deepEqual(events("cursor.changed"), [{ itemId: "show", episodeId: "show.e4" }]);
-
   refuses(() => home.setCursor(device.id, "news", "news", OWNER), 400, "unknown_episode");
   refuses(() => home.setCursor(device.id, "show", "film.main", OWNER), 400, "unknown_episode");
-  refuses(() => home.setCursor(device.id, "show", "show.e3", OWNER), 400, "not_allowed");
   refuses(() => home.setCursor(device.id, "nope", "x", OWNER), 404, "unknown_item");
+  refuses(() => home.setCursor(device.id, "show", "show.e3", OWNER), 400, "not_allowed");
   assert.equal(version(), v0 + 1);
-});
-
-/** The sections as `[id, title, layout, itemIds]`. */
-const shape = (sections: Section[]) => sections.map((s) => [s.id, s.title, s.layout, s.itemIds]);
-
-test("sections: a new Home is the untitled section alone; sections created, retitled, laid out, moved and deleted", async (t) => {
-  const { home, device, version, events } = await setup(t);
-  assert.deepEqual(shape(home.sections(device.id)), [["untitled", null, "grid", []]], "a new TV has only the untitled section");
-  home.set(device.id, ["show", "film", "news"], OWNER);
-  const v0 = version();
-
-  const kids = home.createSection(device.id, "  Kids  ", undefined, undefined, OWNER);
-  assert.match(kids.sectionId, /^[A-Za-z0-9]{8}$/);
-  assert.equal(kids.version, v0 + 1);
-  const channels = home.createSection(device.id, "Channels", "row", 0, OWNER).sectionId;
-  assert.deepEqual(shape(home.sections(device.id)), [
-    [channels, "Channels", "row", []],
-    ["untitled", null, "grid", ["show", "film", "news"]],
-    [kids.sectionId, "Kids", "grid", []],
-  ], "titles trimmed; a new section goes at its position, by default after the others");
-
-  home.move(device.id, "news", { sectionId: channels }, OWNER);
-  home.move(device.id, "show", { sectionId: kids.sectionId }, OWNER);
-  home.add(device.id, "silent", { sectionId: kids.sectionId, position: 0 }, OWNER);
-  assert.deepEqual(home.ids(device.id), ["news", "film", "silent", "show"], "Home order: the sections in order, each with its items");
-
-  home.updateSection(device.id, "untitled", { position: 99, layout: "row" }, OWNER);
-  home.updateSection(device.id, kids.sectionId, { title: "Çocuklar", position: 0 }, OWNER);
-  assert.deepEqual(shape(home.sections(device.id)), [
-    [kids.sectionId, "Çocuklar", "grid", ["silent", "show"]],
-    [channels, "Channels", "row", ["news"]],
-    ["untitled", null, "row", ["film"]],
-  ]);
-  const before = version();
-  refuses(() => home.updateSection(device.id, "untitled", { title: "More" }, OWNER), 400, "untitled_section");
-  refuses(() => home.deleteSection(device.id, "untitled", OWNER), 400, "untitled_section");
-  refuses(() => home.updateSection(device.id, "nope1234", { layout: "grid" }, OWNER), 404, "unknown_section");
-  refuses(() => home.deleteSection(device.id, "nope1234", OWNER), 404, "unknown_section");
-  refuses(() => home.add(device.id, "filler-01", { sectionId: "nope1234" }, OWNER), 404, "unknown_section");
-  refuses(() => home.move(device.id, "film", { sectionId: "nope1234" }, OWNER), 404, "unknown_section");
-  refuses(() => home.add(device.id, "film", { sectionId: channels }, OWNER), 400, "duplicate_item");
-
-  home.deleteSection(device.id, kids.sectionId, OWNER);
-  assert.deepEqual(shape(home.sections(device.id)), [[channels, "Channels", "row", ["news"]], ["untitled", null, "row", ["film", "silent", "show"]]],
-    "a deleted section's items go to the end of the untitled section, in their order");
-  assert.equal(version(), before + 1, "refusals bump nothing");
-  const changed = events("home.changed");
-  assert.deepEqual(changed.at(-1), { itemIds: ["news", "film", "silent", "show"], added: [], removed: [] }, "nothing leaves Home");
-  assert.deepEqual(changed[1], { itemIds: ["show", "film", "news"], added: [], removed: [] }, "a section created: a change with nothing added or removed");
-});
-
-test("sections: at most 20 besides the untitled one", async (t) => {
-  const { home, device } = await setup(t);
-  for (let i = 0; i < HOME_MAX_SECTIONS; i++) home.createSection(device.id, `S${i}`, undefined, undefined, OWNER);
-  assert.equal(home.sections(device.id).length, HOME_MAX_SECTIONS + 1);
-  assert.throws(() => home.createSection(device.id, "One more", undefined, undefined, OWNER), (err: Json) => err.code === "too_many_sections" && err.extra.max === 20);
-  const sections = home.sections(device.id).map(({ id, title, itemIds }) => ({ id, title, itemIds }));
-  refuses(() => home.setSections(device.id, [...sections, { title: "One more", itemIds: [] }], OWNER), 400, "too_many_sections");
-  home.setSections(device.id, sections, OWNER);
-  assert.equal(home.sections(device.id).length, HOME_MAX_SECTIONS + 1);
 });
 
 test("PUT {itemIds} keeps the sections: an item stays in its section, a new one goes to the untitled one", async (t) => {
@@ -223,7 +114,7 @@ test("PUT {itemIds} keeps the sections: an item stays in its section, a new one 
   assert.deepEqual(home.sections(device.id).map((s) => s.id), [top, "untitled", empty], "an empty Home keeps its sections");
 });
 
-test("PUT {sections} replaces the whole Home: new, kept and left-out sections, the untitled one once, expected in its shape", async (t) => {
+test("PUT {sections} replaces the whole Home: new, kept and left-out sections, expected compared in its shape", async (t) => {
   const { home, device, events } = await setup(t);
   const a = home.createSection(device.id, "A", "row", undefined, OWNER).sectionId;
   const b = home.createSection(device.id, "B", undefined, undefined, OWNER).sectionId;
@@ -257,17 +148,18 @@ test("PUT {sections} replaces the whole Home: new, kept and left-out sections, t
   // Title and layout are compared only when given.
   home.setSections(device.id, now as SectionInput[], OWNER, now.map(({ id, itemIds }) => ({ id, itemIds })));
 
+  const many = Array.from({ length: HOME_MAX_SECTIONS + 1 }, (_, i) => ({ title: `S${i}`, itemIds: [] }));
   const refusals: Array<[object[], number, string]> = [
-    [[{ title: "X", itemIds: [] }], 400, "untitled_section"],
     [[{ id: "untitled", itemIds: [] }, { id: "untitled", itemIds: [] }], 400, "untitled_section"],
     [[{ id: "untitled", title: "More", itemIds: [] }], 400, "untitled_section"],
-    [[{ id: "untitled", itemIds: [] }, { id: fresh, title: "A", itemIds: [] }, { id: fresh, title: "A", itemIds: [] }], 400, "duplicate_section"],
+    [[{ id: "untitled", itemIds: [] }, { id: fresh, title: "A", itemIds: [] }, { id: fresh, title: "A", itemIds: [] }],
+      400, "duplicate_section"],
     [[{ id: "untitled", itemIds: [] }, { id: b, title: "B", itemIds: [] }], 404, "unknown_section"],
     [[{ id: "untitled", itemIds: [] }, { title: null, itemIds: [] }], 400, "invalid_request"],
     [[{ id: "untitled", itemIds: [] }, { id: fresh, itemIds: [] }], 400, "invalid_request"],
-    [[{ id: "untitled", itemIds: ["show"] }, { id: fresh, title: "A", itemIds: ["show"] }], 400, "duplicate_item"],
     [[{ id: "untitled", itemIds: ["locked"] }], 400, "not_playable"],
     [[{ id: "untitled", itemIds: ["ghost"] }], 400, "unknown_item"],
+    [[{ id: "untitled", itemIds: [] }, ...many], 400, "too_many_sections"],
   ];
   for (const [body, status, code] of refusals) refuses(() => home.setSections(device.id, body as never, OWNER), status, code);
   assert.deepEqual(shape(home.sections(device.id)), shape(now), "refusals change nothing");

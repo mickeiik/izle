@@ -29,10 +29,7 @@ class PlayerErrorStatusTest {
     fun theStatusComesFromTheHttpAnswerInTheCauseChain() {
         assertEquals(403, playerError(httpAnswer(403)).httpStatus())
         assertEquals(410, playerError(IOException("wrapped", httpAnswer(410))).httpStatus())
-    }
-
-    @Test
-    fun anErrorWithoutAnHttpAnswerHasNoStatus() {
+        // Without an HTTP answer: no status.
         assertNull(playerError(IOException("timeout")).httpStatus())
         assertNull(playerError(null).httpStatus())
     }

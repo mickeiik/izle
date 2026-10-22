@@ -8,7 +8,6 @@ import { iso } from "./presenters.ts";
 import type { EventFilter, Store, StoredEvent } from "./store.ts";
 import { Waiters } from "./waiters.ts";
 
-/** An event as the admin API shows it. */
 export interface Event {
   id: number;
   at: string;
@@ -18,16 +17,13 @@ export interface Event {
   data: Record<string, unknown>;
 }
 
-/** What `GET /admin/events` answers: events oldest first, where to continue, and whether some were lost. */
+/** `last`: the id of the last event returned, else `after`; `gap`: events after `after` were purged. */
 export interface EventPage {
   events: Event[];
-  /** The id of the last event returned, else `after`. */
   last: number;
-  /** `after` was older than the oldest kept event: the events in between are gone. */
   gap: boolean;
 }
 
-/** Longest a long-poll waits for an event. */
 export const MAX_EVENT_WAIT_MS = 25_000;
 export const EVENT_LIST_DEFAULT = 100;
 export const EVENT_LIST_MAX = 500;
@@ -73,7 +69,7 @@ export class EventLog {
     return e.id;
   }
 
-  /** Live events, as they are committed, unfiltered; the stream route filters. */
+  /** Live events, as they are committed, unfiltered. */
   subscribe(fn: (e: Event) => void): () => void {
     this.subscribers.add(fn);
     return () => void this.subscribers.delete(fn);
@@ -83,15 +79,6 @@ export class EventLog {
     return this.store.lastEventId();
   }
 
-  /** The oldest kept event's id, or null when none is kept. */
-  oldestId(): number | null {
-    return this.store.oldestEventId();
-  }
-
-  /**
-   * The events after `f.after` (at most `f.limit`), with `gap: true` when some between `after` and the oldest kept
-   * one are gone: the kept events then start from the oldest.
-   */
   list(f: EventFilter): EventPage {
     const events = this.store.listEvents(f).map(eventJson);
     return { events, last: events.at(-1)?.id ?? f.after, gap: this.lost(f.after) };
@@ -108,7 +95,6 @@ export class EventLog {
     return { events, gap: skipped || this.lost(f.after), oldest: skipped ? events[0]!.id : this.store.oldestEventId() };
   }
 
-  /** Whether events after `after` were purged: `after` is older than the oldest kept event. */
   private lost(after: number): boolean {
     const oldest = this.store.oldestEventId();
     return oldest === null ? after < this.store.lastEventId() : after < oldest - 1;
@@ -125,7 +111,6 @@ export class EventLog {
     }
   }
 
-  /** Housekeeping: drops events older than the retention period. */
   purge(): void {
     const deleted = this.store.purgeEvents(this.now() - this.retentionMs);
     if (deleted > 0) this.log.debug("events purged", { deleted });

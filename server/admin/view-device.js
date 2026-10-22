@@ -1,12 +1,12 @@
 // @ts-check
 // A TV's page under sticky tabs, the tab kept in the address (`#/devices/<id>/<tab>`). The view loads the TV once,
-// then polls every tab, shown or not: what it plays every 5 s, the rest every 15 s. Controls are built once and only
-// enabled, disabled and relabelled, so polling never takes the keyboard focus away.
+// then polls every tab, shown or not. Controls are built once and only enabled, disabled and relabelled, so polling
+// never takes the keyboard focus away.
 
-import { ApiError, api, attempt, devicePath } from "./api.js";
+import { ApiError, api, attempt, devicePath, sendCommand } from "./api.js";
 import { companionCard } from "./companion.js";
 import { homeCard } from "./device-home.js";
-import { actionButton, card, chip, h, keepFocus, onSubmit, page, progressBar, setChip, setOff, setProgress, setTitle, slot, statusChip, tabs, toast } from "./dom.js";
+import { actionButton, card, chip, factList, h, keepFocus, onSubmit, options, page, progressBar, setChip, setOff, setProgress, setTitle, slot, statusChip, tabs, toast } from "./dom.js";
 import { watchEvents } from "./events.js";
 import {
   LANGUAGES, androidText, appUpdateChip, capabilityText, commandResultText, episodeName, errorText,
@@ -15,18 +15,14 @@ import {
 } from "./lib.js";
 
 /**
- * What the sections of a TV's page share: the TV's `id` and API `path`; `send` sends a command and resolves with whether the server took it,
+ * What the sections of a TV's page share: `send` sends a command and resolves with whether the server took it,
  * `reload` re-reads the TV and its home screen and shows them.
  * @typedef {{ id: string, path: string, scope: import("./router.js").Scope, send: (body: any, what: string) => Promise<boolean>,
  *   reload: () => Promise<void> }} DeviceContext
  */
 
-/**
- * A section that the page polls: `refresh` re-reads and shows its data, `fail` shows a first load that failed.
- * @typedef {{ element: HTMLElement, refresh: () => Promise<void>, fail: import("./router.js").OnError }} Section
- */
+/** @typedef {{ element: HTMLElement, refresh: () => Promise<void>, fail: import("./router.js").OnError }} Section */
 
-/** The tabs of a TV's page, in order: the key in the address and the label. */
 const TABS = /** @type {const} */ ([["now", "Now playing"], ["home", "Home screen"], ["listen", "Listen along"], ["history", "History"],
   ["settings", "Settings"], ["problems", "Problems"]]);
 
@@ -38,19 +34,8 @@ export function deviceView(scope, id, tab) {
   const seen = h("span", { class: "muted" });
   /** @type {any} */
   let device = null;
-
   /** @type {DeviceContext} */
-  const ctx = {
-    id,
-    path,
-    scope,
-    async send(body, what) {
-      const r = await attempt(() => api("POST", `${path}/commands`, body));
-      if (r.ok) toast(r.value.online ? `${what} sent to the TV.` : `${what} queued: the TV is offline and gets it if it connects within 2 minutes.`, r.value.online ? "ok" : "info");
-      return r.ok;
-    },
-    reload: () => loadDevice(),
-  };
+  const ctx = { id, path, scope, send: (body, what) => sendCommand(id, body, what), reload: () => loadDevice() };
 
   const now = nowPlayingCard(ctx);
   const home = homeCard(ctx);
@@ -62,12 +47,8 @@ export function deviceView(scope, id, tab) {
   const problems = problemsCard(ctx, (count) => tabBar.setBadge("problems", count));
   /** @type {Record<typeof TABS[number][0], HTMLElement[]>} */
   const content = {
-    now: [now.element],
-    home: [home.element],
-    listen: [listenAlong.element],
-    history: [viewings.element],
-    settings: [tvApp.element, settings.element, removeCard(ctx, () => device)],
-    problems: [problems.element],
+    now: [now.element], home: [home.element], listen: [listenAlong.element], history: [viewings.element],
+    settings: [tvApp.element, settings.element, removeCard(ctx, () => device)], problems: [problems.element],
   };
   // The tab is kept in the address without a navigation (which would render the page again); Back leaves the page.
   // Scrolled down past the tabs, a new tab starts at its top.
@@ -86,16 +67,13 @@ export function deviceView(scope, id, tab) {
   const body = slot();
 
   const loadDevice = async () => {
-    let d;
-    try {
-      d = await scope.read(path);
-    } catch (err) {
+    const d = await scope.read(path).catch((err) => {
       if (err instanceof ApiError && err.code === "unknown_device" && scope.alive()) {
         toast(errorText(err), "info");
         scope.go("#/devices");
       }
       throw err;
-    }
+    });
     device = d.device;
     setTitle(title, device.name);
     chipBox.replaceChildren(statusChip(device));
@@ -105,7 +83,7 @@ export function deviceView(scope, id, tab) {
     home.update(d, device);
   };
 
-  // The TV first; once it is there, the tabs and their polls.
+  // The TV first; once it is there, the tabs and their polls (what it plays every 5 s, the rest every 15 s).
   let started = false;
   scope.load(
     async () => {
@@ -121,14 +99,14 @@ export function deviceView(scope, id, tab) {
       const historyJob = scope.poll(viewings.refresh, 15000, viewings.fail);
       const problemsJob = scope.poll(problems.refresh, 15000, problems.fail);
       scope.poll(tvApp.refresh, 30_000, tvApp.fail);
-      // The polls stay as the fallback; the event stream makes the page follow the TV as things happen.
       watchEvents(scope, { devices: [id] }, (e) => {
         const type = /** @type {string} */ (e.type);
-        if (type === "gap" || type.startsWith("device.") || type.startsWith("catalog.")) void deviceJob.now();
-        if (type === "gap" || type.startsWith("playback.") || type.startsWith("command.")) void nowJob.now();
+        const gap = type === "gap";
+        if (gap || type.startsWith("device.") || type.startsWith("catalog.")) void deviceJob.now();
         if (type === "home.changed" || type === "cursor.changed") void deviceJob.now();
-        if (type === "gap" || type.startsWith("playback.") || type === "episode.seen" || type === "history.changed") void historyJob.now();
-        if (type === "gap" || type === "problem.recorded") void problemsJob.now();
+        if (gap || /^(playback|command)\./.test(type)) void nowJob.now();
+        if (gap || type.startsWith("playback.") || type === "episode.seen" || type === "history.changed") void historyJob.now();
+        if (gap || type === "problem.recorded") void problemsJob.now();
         if (type === "command.result") toast(commandResultText(e.data), e.data.result === "done" ? "ok" : "info");
       });
     },
@@ -153,13 +131,7 @@ const REMOTE = [
   { label: "Next episode", liveLabel: "Next channel", command: { type: "next" } },
 ];
 
-/**
- * What the TV plays, the remote control and the message box. The poll only fills in text and enables or disables
- * the buttons, so a half-typed message and the focus survive it. A channel shows "Live" and when its viewing
- * started instead of a position.
- * @param {DeviceContext} ctx
- * @returns {Section & { setDevice(device: any): void }}
- */
+/** @param {DeviceContext} ctx @returns {Section & { setDevice(device: any): void }} */
 function nowPlayingCard(ctx) {
   const state = chip("");
   const when = h("span", { class: "muted" });
@@ -171,7 +143,7 @@ function nowPlayingCard(ctx) {
   const nothing = h("p", { class: "muted" }, "Nothing played yet.");
   const shown = slot();
 
-  /** Sends a command; the TV reports its new state right away, so the card looks again 1.5 s later. */
+  // The TV reports its new state right away, so the card looks again 1.5 s later.
   const command = async (/** @type {any} */ body, /** @type {string} */ what) => {
     if (await ctx.send(body, what)) ctx.scope.later(() => void refresh().catch(() => {}), 1500);
   };
@@ -182,7 +154,7 @@ function nowPlayingCard(ctx) {
   const liveHint = h("p", { class: "hint", id: "remote-live-hint", hidden: true }, "A channel plays live: it cannot be paused or seeked. Previous and Next switch to the channel before or after it on the TV's home screen.");
   const controls = h("div", { class: "buttons remote", role: "group", "aria-label": "Remote control", hidden: true }, remote, stop);
   for (const b of [...remote, stop]) setOff(b, true);
-  /** When the running viewing started, read once per viewing (a channel's line shows it); null when unknown. */
+  /** When the running viewing started, read once per viewing (a channel's line shows it). */
   let started = /** @type {{ viewingId: number, startedAt: string } | null} */ (null);
   const startOf = async (/** @type {number | null} */ viewingId) => {
     if (viewingId === null || viewingId === undefined) return null;
@@ -230,11 +202,10 @@ function nowPlayingCard(ctx) {
     const pct = live ? null : percent(n.positionMs, n.durationMs);
     bar.hidden = pct === null;
     if (pct !== null) setProgress(bar, pct, `${formatClock(n.positionMs)} of ${formatClock(n.durationMs)}`);
-    // The remote control applies while the TV's last report says it is in the player, playing or paused; a channel
-    // is never paused or seeked.
+    // The remote applies while the TV's last report says it is in the player; a channel is never paused or seeked.
     const inPlayer = n.state === "playing" || n.state === "paused";
     REMOTE.forEach((def, i) => {
-      const b = /** @type {HTMLButtonElement} */ (remote[i]);
+      const b = remote[i];
       const label = live && def.liveLabel ? def.liveLabel : def.label;
       if (b.textContent !== label) b.textContent = label;
       setOff(b, !inPlayer || (live && Boolean(def.episodic)));
@@ -255,10 +226,8 @@ function nowPlayingCard(ctx) {
 }
 
 /**
- * Name, languages and subtitles (saved together with "Save settings") and autoplay (saved on its own, at once). The
- * form is filled when the page loads and after a save, never by the poll, so edits in progress stay. The home grid's
- * size is set on the Home screen tab, next to its preview.
- * @param {DeviceContext} ctx
+ * Name, languages and subtitles (saved together) and autoplay (saved at once). The form is filled when the page loads
+ * and after a save, never by the poll, so edits in progress stay. @param {DeviceContext} ctx
  */
 function settingsCard(ctx) {
   /** @type {any} */
@@ -270,10 +239,10 @@ function settingsCard(ctx) {
   const save = h("button", { class: "primary", type: "submit" }, "Save settings");
   const autoplay = h("input", { type: "checkbox", id: "s-autoplay", "aria-describedby": "s-autoplay-hint" });
 
-  /** @param {HTMLSelectElement} select @param {Array<[string, string]>} options @param {string | null} current */
-  const fillSelect = (select, options, current) => {
-    if (current && !options.some(([v]) => v === current)) options.push([current, current]);
-    select.replaceChildren(...options.map(([v, text]) => h("option", { value: v, selected: v === (current ?? "") }, text)));
+  /** @param {HTMLSelectElement} select @param {Array<[string, string]>} list @param {string | null} current */
+  const fillSelect = (select, list, current) => {
+    if (current && !list.some(([v]) => v === current)) list.push([current, current]);
+    select.replaceChildren(...options(list, current ?? ""));
   };
   const langs = /** @type {Array<[string, string]>} */ (LANGUAGES.map(([t, n]) => [t, `${n} (${t})`]));
 
@@ -289,12 +258,9 @@ function settingsCard(ctx) {
     autoplay.checked = Boolean(s.autoplayOnStart);
   };
 
-  // Autoplay is saved at once. A second click while the first is saving is undone: one request at a time.
+  // A second click while the first is saving is undone: one request at a time.
   autoplay.addEventListener("change", () => {
-    if (autoplay.getAttribute("aria-busy") === "true") {
-      autoplay.checked = !autoplay.checked;
-      return;
-    }
+    if (autoplay.getAttribute("aria-busy") === "true") return (autoplay.checked = !autoplay.checked);
     const on = autoplay.checked;
     autoplay.setAttribute("aria-busy", "true");
     const done = on ? "Autoplay is on: it starts the next time the app opens on the TV." : "Autoplay is off.";
@@ -309,7 +275,7 @@ function settingsCard(ctx) {
   const audioHint = h("p", { class: "hint", id: "s-audio-hint" }, "Sources with this audio language are tried first, and the player picks it when a stream has several.");
   const form = h("form", { class: "form" }, field(name, "Name"), field(ui, "Menu language"), field(audio, "Preferred audio language"), audioHint, field(subs, "Subtitles"),
     h("div", { class: "actions" }, save));
-  // "Save settings": what differs from the TV's settings is saved in one request.
+  // What differs from the TV's settings is saved in one request.
   onSubmit(form, save, () => {
     if (!device) return;
     /** @type {Record<string, string | null>} */
@@ -317,8 +283,7 @@ function settingsCard(ctx) {
     const typed = name.value.trim();
     if (typed && typed !== device.name) patch.name = typed;
     for (const [key, select] of /** @type {const} */ ([["uiLanguage", ui], ["preferredAudioLanguage", audio], ["subtitlesLanguage", subs]])) {
-      const value = select.value || null;
-      if (value !== device.settings[key]) patch[key] = value;
+      if ((select.value || null) !== device.settings[key]) patch[key] = select.value || null;
     }
     if (Object.keys(patch).length === 0) return toast("Nothing changed.", "info");
     return async () => {
@@ -334,10 +299,9 @@ function settingsCard(ctx) {
 }
 
 /**
- * The TV's app: its installed version, its Android version, how it takes updates, and "Install now" (the same rules
- * as on the TV app page). It reads whether the server stores an APK on its own poll; the TV comes with the page's.
- * @param {DeviceContext} ctx
- * @returns {Section & { setDevice(device: any): void }}
+ * The TV's app and "Install now" (the same rules as on the TV app page). Whether the server stores an APK is read on
+ * its own poll; the TV comes with the page's.
+ * @param {DeviceContext} ctx @returns {Section & { setDevice(device: any): void }}
  */
 function appCard(ctx) {
   /** @type {any} */
@@ -346,9 +310,7 @@ function appCard(ctx) {
   let stored = /** @type {boolean | null | "unsupported"} */ (null);
   /** The server's `appUpdates.auto`; on until it was read. */
   let auto = true;
-  const version = h("dd");
-  const android = h("dd");
-  const how = h("dd");
+  const [version, android, how] = [h("dd"), h("dd"), h("dd")];
   const state = chip("");
   const facts = h("dl", { class: "facts" }, h("dt", null, "Installed"), version, h("dt", null, "Android"), android,
     h("dt", null, "Updates"), how, h("dt", null, "State"), h("dd", null, state));
@@ -396,35 +358,28 @@ function appCard(ctx) {
   };
 }
 
-/**
- * The TV's viewings: what it played, who started it, how much was watched and how each ended. A channel's viewing
- * has no episode or position: it ends with when it ran.
- * @param {DeviceContext} ctx @returns {Section}
- */
+/** The TV's viewings: who started each, how much was watched, how it ended. @param {DeviceContext} ctx @returns {Section} */
 function historyCard(ctx) {
   const shown = slot();
   const list = rebuiltOnChange();
   const refresh = async () => {
-    const id = ctx.path.slice("/devices/".length);
-    const { viewings } = await ctx.scope.read(`/history/viewings?device=${id}&limit=30`);
-    const content = list.content(viewings, (time) => {
+    const { viewings } = await ctx.scope.read(`/history/viewings?device=${encodeURIComponent(ctx.id)}&limit=30`);
+    shown.show(list.content(viewings, (time) => {
       if (viewings.length === 0) return h("p", { class: "muted" }, "Nothing watched yet.");
       const tr = (/** @type {any} */ v) => {
         const live = v.itemKind === "live";
         const episode = v.itemKind === "movie" || live ? "" : episodeName({ season: v.season, number: v.number, title: v.episodeTitle }, v.itemKind);
         const ended = live ? `${viewingSpan(v)} · ${viewingEnd(v)}` : viewingEnd(v);
-        const cells = [v.itemTitle ?? v.itemId, episode, v.imported ? "–" : formatDuration(v.watchedMs), ended, triggerLabel(v)].map((c) => h("td", null, c));
+        const cells = [v.itemTitle, episode, formatDuration(v.watchedMs), ended, triggerLabel(v)].map((c) => h("td", null, c));
         return h("tr", null, time(h("td", { class: "muted" }), () => formatRelative(v.startedAt)), cells);
       };
       const caption = h("caption", null, "The last 30 viewings on this TV, the latest first; every viewing is kept in the history.");
       const head = h("thead", null, h("tr", null, ["Started", "Show", "Episode", "Watched", "Ended", "Started by"].map((t) => h("th", { scope: "col" }, t))));
       const table = h("table", null, caption, head, h("tbody", null, viewings.map(tr)));
       return h("div", { class: "table-wrap", tabindex: "0", role: "region", "aria-label": "History" }, table);
-    });
-    shown.show(content);
+    }));
   };
-  const all = h("a", { href: "#/history" }, "All history");
-  const element = card({ title: "History", aside: all }, shown.element);
+  const element = card({ title: "History", aside: h("a", { href: "#/history" }, "All history") }, shown.element);
   return { element, refresh, fail: (err, retry) => shown.fail(err, retry, "Could not load the history.") };
 }
 
@@ -432,8 +387,7 @@ function historyCard(ctx) {
 const PROBLEMS_SHOWN = 50;
 
 /**
- * @param {DeviceContext} ctx @param {(count: string) => void} counted runs after each read with the count for the tab
- *   ("3", "50+" when the read was full, "" for none)
+ * @param {DeviceContext} ctx @param {(count: string) => void} counted the count for the tab ("3", "50+", "" for none)
  * @returns {Section}
  */
 function problemsCard(ctx, counted) {
@@ -448,7 +402,7 @@ function problemsCard(ctx, counted) {
     const { problems } = await ctx.scope.read(`${ctx.path}/problems?limit=${PROBLEMS_SHOWN}`);
     clear.hidden = problems.length === 0;
     counted(problems.length >= PROBLEMS_SHOWN ? `${PROBLEMS_SHOWN}+` : problems.length > 0 ? String(problems.length) : "");
-    const content = list.content(problems, (time) => {
+    shown.show(list.content(problems, (time) => {
       if (problems.length === 0) return h("p", { class: "muted" }, "No problems recorded.");
       const li = (/** @type {any} */ p) => {
         const context = problemContext(p);
@@ -459,8 +413,7 @@ function problemsCard(ctx, counted) {
         return h("li", null, row, context ? h("div", null, context) : null, p.detail ? h("div", { class: "muted detail" }, p.detail) : null);
       };
       return h("ul", { class: "list problems" }, problems.map(li));
-    });
-    shown.show(content);
+    }));
   };
   const element = card(
     { title: "Problems", aside: clear, intro: "What went wrong on this TV: its own reports, and what the server ran into while finding or relaying its streams." },
@@ -470,14 +423,13 @@ function problemsCard(ctx, counted) {
 }
 
 /**
- * A list rebuilt only when its data changed. `content(data, build)` returns the content built for equal data again,
- * as it is (nothing in it loses the focus), with only its relative times ("5 min ago") moved on; otherwise `build`
- * makes it anew, registering each element that shows a relative time with `time(el, text)`.
+ * A list rebuilt only when its data changed. For equal data `content(data, build)` returns the content as it is
+ * (nothing in it loses the focus), with only its relative times ("5 min ago", each registered by `build` with
+ * `time(el, text)`) moved on.
  */
 function rebuiltOnChange() {
   let key = "";
-  /** @type {HTMLElement | null} */
-  let content = null;
+  let content = /** @type {HTMLElement | null} */ (null);
   /** @type {Array<[HTMLElement, () => string]>} */
   let times = [];
   /** @template {HTMLElement} E @param {E} el @param {() => string} text @returns {E} */
@@ -490,16 +442,16 @@ function rebuiltOnChange() {
     /** @param {unknown} data @param {(t: typeof time) => HTMLElement} build */
     content(data, build) {
       const k = JSON.stringify(data);
-      if (content && k === key) {
-        for (const [el, text] of times) {
-          const t = text();
-          if (el.textContent !== t) el.textContent = t;
-        }
-        return content;
+      if (!content || k !== key) {
+        key = k;
+        times = [];
+        return (content = build(time));
       }
-      key = k;
-      times = [];
-      return (content = build(time));
+      for (const [el, text] of times) {
+        const t = text();
+        if (el.textContent !== t) el.textContent = t;
+      }
+      return content;
     },
   };
 }

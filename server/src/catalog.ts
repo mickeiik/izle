@@ -2,12 +2,10 @@ import path from "node:path";
 import { BundleValidationError, formatIssue, isLiveItem, loadBundle, type BundleManifest, type BundleStats, type CatalogItem, type Episode, type EpisodicItem, type LiveItem, type Playable, type ValidationIssue } from "@izle/contract";
 import type { Logger } from "./log.ts";
 
-/** An episode of a movie or series, in its item. */
 export interface EpisodeRef {
   kind: "episode";
   item: EpisodicItem;
   episode: Episode;
-  /** Position in the item's play order. */
   index: number;
 }
 
@@ -17,33 +15,25 @@ export interface LiveRef {
   item: LiveItem;
 }
 
-/**
- * What the TV API plays: an episode (named by its episode id) or a channel (named by its item id). The two id
- * spaces are separate, so a ref always says which kind it is.
- */
+/** An episode (named by its episode id) or a channel (by its item id): the id spaces are separate. */
 export type PlayableRef = EpisodeRef | LiveRef;
 
-/** The approval and sources a ref names: the episode's, or the channel's own. */
 export const playableOf = (ref: PlayableRef): Playable => (ref.kind === "episode" ? ref.episode : ref.item);
 
-/** The episode id a ref names, null for a channel (what stored rows and adapter requests carry). */
 export const episodeIdOf = (ref: PlayableRef): string | null => (ref.kind === "episode" ? ref.episode.id : null);
 
-/** A ref for a channel; `item` must be a live item. */
 export const liveRef = (item: LiveItem): LiveRef => ({ kind: "live", item });
 
 /**
  * What a stored row, a session or a report plays: an episode of an item, or (`episodeId` null) a channel. Stored
- * rows outlive catalogs, so `CatalogService.playing` looks a key up leniently (undefined when gone); a request body
- * names what to play with a `PlayableId` instead, looked up strictly by `requirePlayableRef` (lookup.ts), which
- * answers the request with an error.
+ * rows outlive catalogs, so `CatalogService.playing` looks a key up leniently; a request body names what to play with
+ * a `PlayableId`, looked up strictly by `requirePlayableRef` (lookup.ts).
  */
 export interface PlayingKey {
   itemId: string;
   episodeId: string | null;
 }
 
-/** The key of what a ref plays. */
 export const playingKey = (ref: PlayableRef): PlayingKey => ({ itemId: ref.item.id, episodeId: episodeIdOf(ref) });
 
 /** The one equality: both fields, because an episode id may equal an item id (a recorded bug). */
@@ -61,11 +51,8 @@ export interface PlayingDescription {
   missing: boolean;
 }
 
-/**
- * The description of a ref itself, with no lookup: a viewing records the titles of what was resolved, not what the
- * catalog says by the time the adapter answered (a reload may have happened in between).
- */
-export function describePlayable(ref: PlayableRef): PlayingDescription {
+/** With no lookup: a viewing records the titles of what was resolved, even if a reload happened since. */
+export function describePlayable(ref: PlayableRef): PlayingDescription & { itemKind: string; itemTitle: string } {
   const episode = ref.kind === "episode" ? ref.episode : null;
   return {
     itemId: ref.item.id, itemKind: ref.item.kind, itemTitle: ref.item.title,
@@ -86,15 +73,15 @@ export interface LoadedCatalog {
 
 export type ReloadResult = { ok: true; catalog: LoadedCatalog } | { ok: false; issues: ValidationIssue[] };
 
-/** Called after every successful load with the catalog now active and the one it replaced (null at start). */
+/** Called after every successful load with the active catalog and the one it replaced (null at start). */
 type CatalogLoadedHook = (next: LoadedCatalog, previous: LoadedCatalog | null) => void;
 
 const ASSET_FILE = /^[0-9a-f]{64}\.(jpg|png|webp)$/;
 
-/** An item's image path in the bundle (`assets/<sha256>.<ext>`) as the URL GET /assets/:file serves it at. */
+/** An image path in the bundle (`assets/<sha256>.<ext>`) as the URL GET /assets/:file serves it at. */
 const assetUrl = (rel: string | null | undefined): string | null => (rel ? `/assets/${path.posix.basename(rel)}` : null);
 
-/** How titles are ordered: the catalog browser and the viewing history sort alike. */
+/** The catalog browser and the viewing history sort titles alike. */
 export const byTitle = (a: string, b: string): number => a.localeCompare(b);
 
 /** Case-, accent- and Turkish-dotless-i-insensitive form the catalog browser matches text and genres in. */
@@ -102,16 +89,13 @@ export function fold(text: string): string {
   return text.normalize("NFD").replace(/\p{M}/gu, "").replace(/ı/g, "i").toLowerCase();
 }
 
-/** Loads the catalog bundle from a local directory and keeps it in memory; reloads replace it atomically. */
+/** The bundle from a local directory, in memory; reloads replace it atomically. */
 export class CatalogService {
   private loaded: LoadedCatalog | null = null;
   readonly dir: string;
   private readonly log: Logger;
   private readonly now: () => number;
-  /**
-   * Adapter ids the resolver module provides; null = no resolver configured. With a module, a bundle that names
-   * an adapter the module does not provide is refused (at start and on reload).
-   */
+  /** The resolver module's adapter ids (null: none configured); a bundle naming another is refused. */
   private readonly adapters: ReadonlySet<string> | null;
   private readonly onLoaded: CatalogLoadedHook | undefined;
 
@@ -153,7 +137,6 @@ export class CatalogService {
     }
   }
 
-  /** Makes `c` the active catalog and tells the hook. */
   private activate(c: LoadedCatalog, msg: string): void {
     const previous = this.loaded;
     this.loaded = c;
@@ -167,12 +150,10 @@ export class CatalogService {
     }
   }
 
-  /** Initial load; throws BundleValidationError when the bundle is invalid. */
   async load(): Promise<void> {
     this.activate(await this.read(), "catalog loaded");
   }
 
-  /** Reloads from disk. On failure the previous catalog stays active. */
   async reload(): Promise<ReloadResult> {
     let c: LoadedCatalog;
     try {
@@ -203,7 +184,6 @@ export class CatalogService {
     return this.current.episodesById.get(id);
   }
 
-  /** Lenient lookup: the episode (by its id) or the channel (by its item id) a key names, undefined when gone. */
   playing(key: PlayingKey): PlayableRef | undefined {
     if (key.episodeId !== null) return this.episode(key.episodeId);
     const item = this.item(key.itemId);
@@ -211,9 +191,8 @@ export class CatalogService {
   }
 
   /**
-   * How the admin API names what plays: titles from the current catalog, `missing` when it is gone. An episode's
-   * item still gives its title after the episode left; a channel is missing only when its item is gone (an item
-   * that became a series is still named by it).
+   * How the admin API names what plays, `missing` when it is gone. An episode's item still gives its title after the
+   * episode left; a channel is missing only when its item is gone (an item that became a series still names it).
    */
   describe(key: PlayingKey): PlayingDescription {
     const ref = this.playing(key);
@@ -222,17 +201,14 @@ export class CatalogService {
     return { itemId: item?.id ?? key.itemId, itemKind: item?.kind ?? null, itemTitle: item?.title ?? null, episodeId: key.episodeId, episodeTitle: null, season: null, number: null, missing: key.episodeId !== null || !item };
   }
 
-  /** Relative URL of an item's poster, served by GET /assets/:file. */
   posterUrl(item: CatalogItem): string | null {
     return assetUrl(item.poster);
   }
 
-  /** Relative URL of an item's backdrop (its landscape image), served by GET /assets/:file. */
   backdropUrl(item: CatalogItem): string | null {
     return assetUrl(item.backdrop);
   }
 
-  /** Absolute path of a poster or backdrop file, or null when the name is not a content-addressed asset of this catalog. */
   assetPath(file: string): string | null {
     if (!ASSET_FILE.test(file)) return null;
     return path.join(this.current.dir, this.current.manifest.assetsDir, file);

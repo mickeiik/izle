@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import path from "node:path";
-import { fixtureItems, fixtureManifest, listen, publishBuild, startTestServer, tempDir, writeBundle, type Json } from "./helpers.ts";
+import { fixtureItems, fixtureManifest, listen, logged, publishBuild, tempDir, testServer, writeBundle, type Json } from "./helpers.ts";
 
 const PROXY_MP4 = /^\/p\/([A-Za-z0-9_-]{43})\/video\.mp4$/;
 const PROXY_HLS = /^\/p\/([A-Za-z0-9_-]{43})\/index\.m3u8$/;
@@ -32,38 +32,18 @@ async function setup(t: { after(fn: () => unknown): void }) {
   const items = fixtureItems();
   // A series whose first episode has a TV source (Referer-bound HLS), a plain MP4 in another language and a DASH
   // source; its third has the same TV source and a Referer-bound MPEG-TS one.
+  const tvHls = direct("tv-hls", ["tr"], { kind: "hls", url: `${up.url}/ref/master.m3u8`, headers: { Referer: REFERER } });
+  const frMp4 = direct("fr-mp4", ["fr"], { kind: "mp4", url: `${up.url}/plain/video.mp4` });
   items.items.push({
-    id: "dual",
-    kind: "series",
-    title: "Dual",
-    poster: null,
+    id: "dual", kind: "series", title: "Dual", poster: null,
     episodes: [
-      {
-        id: "dual.e1",
-        number: 1,
-        durationMs: 600_000,
-        playbackAllowed: true,
-        sources: [
-          direct("tv-hls", ["tr"], { kind: "hls", url: `${up.url}/ref/master.m3u8`, headers: { Referer: REFERER } }),
-          direct("fr-mp4", ["fr"], { kind: "mp4", url: `${up.url}/plain/video.mp4` }),
-          direct("dash-only", ["de"], { kind: "dash", url: "https://dash.example.test/m.mpd" }),
-        ],
-      },
-      { id: "dual.e2", number: 2, playbackAllowed: false, sources: [direct("fr-mp4", ["fr"], { kind: "mp4", url: `${up.url}/plain/video.mp4` })] },
-      {
-        id: "dual.e3",
-        number: 3,
-        playbackAllowed: true,
-        sources: [
-          direct("tv-hls", ["tr"], { kind: "hls", url: `${up.url}/ref/master.m3u8`, headers: { Referer: REFERER } }),
-          direct("tr-ts", ["tr"], { kind: "ts", url: `${up.url}/ref/live.ts`, headers: { Referer: REFERER } }),
-        ],
-      },
+      { id: "dual.e1", number: 1, durationMs: 600_000, playbackAllowed: true, sources: [tvHls, frMp4, direct("dash-only", ["de"], { kind: "dash", url: "https://dash.example.test/m.mpd" })] },
+      { id: "dual.e2", number: 2, playbackAllowed: false, sources: [frMp4] },
+      { id: "dual.e3", number: 3, playbackAllowed: true, sources: [tvHls, direct("tr-ts", ["tr"], { kind: "ts", url: `${up.url}/ref/live.ts`, headers: { Referer: REFERER } })] },
     ],
   });
   const bundleDir = await writeBundle(path.join(await tempDir(), "bundle"), fixtureManifest(), items);
-  const s = await startTestServer({ bundleDir, configFile: { proxy: { privateUpstreams: ["127.0.0.1"] } } }); // a loopback upstream
-  t.after(() => s.close());
+  const s = await testServer(t, { bundleDir, configFile: { proxy: { privateUpstreams: ["127.0.0.1"] } } }); // a loopback upstream
   const tv = await s.pair("Salon");
   const as = (method: string, route: string, body?: unknown) => s.call(method, `/api/v1/tv${route}`, { token: tv.token, body });
   const progress = (body: Json) => as("POST", "/progress", body);
@@ -79,37 +59,31 @@ test("progress reports anchor the TV's position: playing flag, sample age, seque
 
   const r = await as("POST", "/resolve", { episodeId: "dual.e1", sourceId: "tv-hls" });
   assert.equal(r.status, 200, JSON.stringify(r.json));
-  const started = await now();
-  assert.equal(started.json.seq, 1);
-  assert.equal(started.json.nowPlaying.state, "starting");
-  assert.equal(started.json.nowPlaying.playing, false);
-  assert.deepEqual(started.json.anchor, { positionMs: 0, atMs: s.clock.now(), playing: false, rate: 1 });
+  const started = (await now()).json;
+  assert.deepEqual([started.seq, started.nowPlaying.state, started.nowPlaying.playing], [1, "starting", false]);
+  assert.deepEqual(started.anchor, { positionMs: 0, atMs: s.clock.now(), playing: false, rate: 1 });
 
   s.clock.advance(5_000);
   const t0 = s.clock.now();
   const hb = await progress({ sessionId: r.json.sessionId, episodeId: "dual.e1", positionMs: 42_000, durationMs: 600_000, status: "playing" });
   assert.equal(hb.status, 200, JSON.stringify(hb.json));
   let n = await now();
-  assert.equal(n.json.seq, 2);
-  assert.equal(n.json.serverNowMs, t0);
-  assert.equal(n.json.nowPlaying.playing, true, "without the field, playing follows the status");
+  assert.deepEqual([n.json.seq, n.json.serverNowMs, n.json.nowPlaying.playing], [2, t0, true], "without the field, playing follows the status");
   assert.deepEqual(n.json.anchor, { positionMs: 42_000, atMs: t0, playing: true, rate: 1 });
 
   // A rebuffer stall: the status stays "playing", the player is not advancing, and the sample is 700 ms old.
   s.clock.advance(3_000);
   await progress({ episodeId: "dual.e1", positionMs: 45_000, durationMs: 600_000, status: "playing", playing: false, ageMs: 700 });
   n = await now();
-  assert.equal(n.json.seq, 3);
-  assert.equal(n.json.nowPlaying.state, "playing");
-  assert.equal(n.json.nowPlaying.updatedAt, new Date(s.clock.now()).toISOString());
+  assert.deepEqual([n.json.seq, n.json.nowPlaying.state, n.json.nowPlaying.updatedAt], [3, "playing", new Date(s.clock.now()).toISOString()]);
   assert.deepEqual(n.json.anchor, { positionMs: 45_000, atMs: s.clock.now() - 700, playing: false, rate: 1 });
 
   await progress({ episodeId: "dual.e1", positionMs: 45_000, status: "paused", playing: false });
   assert.equal((await now()).json.anchor.playing, false);
 
-  assert.equal((await progress({ episodeId: "dual.e1", positionMs: 1, status: "playing", ageMs: 60_001 })).status, 400);
-  assert.equal((await progress({ episodeId: "dual.e1", positionMs: 1, status: "playing", ageMs: -1 })).status, 400);
-  assert.equal((await progress({ episodeId: "dual.e1", positionMs: 1, status: "playing", playing: "yes" })).status, 400);
+  for (const bad of [{ ageMs: 60_001 }, { ageMs: -1 }, { playing: "yes" }]) {
+    assert.equal((await progress({ episodeId: "dual.e1", positionMs: 1, status: "playing", ...bad })).status, 400, JSON.stringify(bad));
+  }
 });
 
 test("GET /now long-polls on the sequence number", async (t) => {
@@ -138,9 +112,7 @@ test("GET /now long-polls on the sequence number", async (t) => {
   assert.equal((await now("?wait=5")).json.seq, seq + 1);
   assert.ok(Date.now() - t2 < 1_000);
 
-  assert.equal((await now("?seq=1&wait=30")).status, 400);
-  assert.equal((await now("?seq=-1")).status, 400);
-  assert.equal((await now("?seq=abc")).status, 400);
+  for (const bad of ["?seq=1&wait=30", "?seq=-1", "?seq=abc"]) assert.equal((await now(bad)).status, 400, bad);
 });
 
 test("companion links: validation, storage per episode and source, copy to the item's other episodes", async (t) => {
@@ -150,12 +122,9 @@ test("companion links: validation, storage per episode and source, copy to the i
   for (const body of [...bad, { offsetMs: 0, rate: 1, language: "not a tag" }]) {
     assert.equal((await put("show.e2", "main", body)).status, 400, JSON.stringify(body));
   }
-  assert.equal((await put("show.e2", "nope", { offsetMs: 0, rate: 1 })).status, 404);
-  assert.equal((await put("nope", "main", { offsetMs: 0, rate: 1 })).status, 404);
-  assert.equal((await put("bad id!", "main", { offsetMs: 0, rate: 1 })).status, 404);
+  for (const [e, src] of [["show.e2", "nope"], ["nope", "main"], ["bad id!", "main"]]) assert.equal((await put(e!, src!, { offsetMs: 0, rate: 1 })).status, 404);
   const noLink = await s.admin("POST", "/companion/links/show.e2/main/copy-to-item");
-  assert.equal(noLink.status, 404);
-  assert.equal(noLink.json.error, "no_link");
+  assert.deepEqual([noLink.status, noLink.json.error], [404, "no_link"]);
 
   const saved = await put("show.e2", "main", { offsetMs: -1_250, rate: 1.0427, language: "fr" });
   assert.equal(saved.status, 200, JSON.stringify(saved.json));
@@ -166,18 +135,14 @@ test("companion links: validation, storage per episode and source, copy to the i
   // The candidates of what the TV plays carry the stored links.
   assert.equal((await as("POST", "/resolve", { episodeId: "show.e2" })).status, 200);
   const c = await s.admin("GET", `/devices/${tv.deviceId}/companion`);
-  assert.equal(c.json.nowPlaying.episodeId, "show.e2");
-  assert.equal(c.json.nowPlaying.itemKind, "series");
-  assert.equal(c.json.nowPlaying.sourceId, "main");
+  assert.deepEqual([c.json.nowPlaying.episodeId, c.json.nowPlaying.itemKind, c.json.nowPlaying.sourceId], ["show.e2", "series", "main"]);
   assert.deepEqual(
     c.json.candidates.map((x: Json) => [x.sourceId, x.type, x.kind, x.current, x.supported, x.link.offsetMs, x.link.rate, x.link.language]),
     [["main", "direct", "hls", true, true, -1250, 1.0427, "fr"]],
   );
 
   // "Apply to all episodes": show.e5 has a "main" source, show.e1 does not.
-  const copied = await s.admin("POST", "/companion/links/show.e2/main/copy-to-item");
-  assert.equal(copied.status, 200);
-  assert.deepEqual(copied.json, { updated: 1, episodeIds: ["show.e5"] });
+  assert.deepEqual((await s.admin("POST", "/companion/links/show.e2/main/copy-to-item")).json, { updated: 1, episodeIds: ["show.e5"] });
   await as("POST", "/resolve", { episodeId: "show.e5" });
   const e5 = await s.admin("GET", `/devices/${tv.deviceId}/companion`);
   assert.deepEqual(e5.json.candidates[0].link, link);
@@ -198,15 +163,12 @@ test("companion resolve: forced source, always proxied, own session scope, DASH 
   const c1 = await companion({ episodeId: "dual.e1", sourceId: "fr-mp4", language: "fr" });
   assert.equal(c1.status, 200, JSON.stringify(c1.json));
   assert.match(c1.json.media.url, PROXY_MP4, "a plain MP4 is proxied for the phone although proxy.always is off");
-  assert.equal(c1.json.media.kind, "mp4");
-  assert.equal(c1.json.sourceId, "fr-mp4");
-  assert.equal(c1.json.episodeId, "dual.e1");
-  assert.deepEqual(c1.json.languages, { audio: ["fr"], subtitles: [] });
-  assert.deepEqual(c1.json.link, { offsetMs: 0, rate: 1, language: null, updatedAt: null });
+  const { media, sourceId, episodeId, languages, link } = c1.json;
+  assert.deepEqual([media.kind, sourceId, episodeId, languages], ["mp4", "fr-mp4", "dual.e1", { audio: ["fr"], subtitles: [] }]);
+  assert.deepEqual(link, { offsetMs: 0, rate: 1, language: null, updatedAt: null });
   assert.ok(!JSON.stringify(c1.json).includes(up.url), "no upstream URL reaches the phone");
   const body = await get(c1.json.media.url);
-  assert.equal(body.status, 200);
-  assert.equal((await body.arrayBuffer()).byteLength, 4096);
+  assert.deepEqual([body.status, (await body.arrayBuffer()).byteLength], [200, 4096]);
 
   // The TV's now-playing row is untouched.
   assert.deepEqual((await now()).json, before);
@@ -222,14 +184,18 @@ test("companion resolve: forced source, always proxied, own session scope, DASH 
   const same = await companion({ episodeId: "dual.e1", sourceId: "tv-hls" });
   assert.match(same.json.media.url, PROXY_HLS);
   assert.notEqual(same.json.media.url, tvStream.json.media.url);
-  const dash = await companion({ episodeId: "dual.e1", sourceId: "dash-only" });
-  assert.equal(dash.status, 400);
-  assert.equal(dash.json.error, "unsupported_media");
-  assert.equal((await companion({ episodeId: "dual.e1", sourceId: "nope" })).json.error, "unknown_source");
-  assert.equal((await companion({ episodeId: "nope", sourceId: "fr-mp4" })).json.error, "unknown_episode");
-  assert.equal((await companion({ episodeId: "dual.e2", sourceId: "fr-mp4" })).json.error, "not_allowed");
-  assert.equal((await companion({ episodeId: "dual.e1", sourceId: "fr-mp4", language: "bad tag" })).status, 400);
-  assert.equal((await companion({ episodeId: "dual.e1" })).status, 400);
+  const refused: Array<[Json, number, string]> = [
+    [{ episodeId: "dual.e1", sourceId: "dash-only" }, 400, "unsupported_media"],
+    [{ episodeId: "dual.e1", sourceId: "nope" }, 404, "unknown_source"],
+    [{ episodeId: "nope", sourceId: "fr-mp4" }, 404, "unknown_episode"],
+    [{ episodeId: "dual.e2", sourceId: "fr-mp4" }, 403, "not_allowed"],
+    [{ episodeId: "dual.e1", sourceId: "fr-mp4", language: "bad tag" }, 400, "invalid_request"],
+    [{ episodeId: "dual.e1" }, 400, "invalid_request"],
+  ];
+  for (const [body, status, error] of refused) {
+    const r = await companion(body);
+    assert.deepEqual([r.status, r.json.error], [status, error], JSON.stringify(body));
+  }
 
   // Candidates mark the DASH source as unsupported and expose no URLs.
   const cand = await s.admin("GET", `/devices/${tv.deviceId}/companion`);
@@ -242,7 +208,7 @@ test("companion resolve: forced source, always proxied, own session scope, DASH 
   // Nothing secret in the log; companion resolves are marked.
   const logs = s.logs.join("\n");
   for (const leak of [tvToken, PROXY_MP4.exec(c3.json.media.url)![1]!, "http://", "https://", REFERER]) assert.ok(!logs.includes(leak), `log leaked ${leak}`);
-  const resolved = s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === "resolved");
+  const resolved = logged(s, "resolved");
   assert.ok(resolved.some((l) => l.companion === true && l.delivery === "proxy" && l.sourceId === "fr-mp4"));
   assert.ok(resolved.some((l) => l.companion === undefined && l.sourceId === "tv-hls"));
 

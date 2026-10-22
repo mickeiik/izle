@@ -51,10 +51,7 @@ import io.github.mickeiik.izle.ui.theme.IzleSpacing
 /** Where the information panel's shade goes from clear to dark, above its text. */
 private val InfoFade = 48.dp
 
-/**
- * Video only; information appears for a few seconds after a key press, or as a large panel at the end. A channel's
- * information is its name and "Live": no position, no times, no pause symbol.
- */
+/** Video only; information appears for a few seconds after a key press, or as a large panel at the end. */
 @Composable
 fun PlayerScreen(ui: PlayerUi, player: Player?, onPlayNext: () -> Unit, onHome: () -> Unit, onRetry: () -> Unit) {
     val view = LocalView.current
@@ -84,7 +81,7 @@ fun PlayerScreen(ui: PlayerUi, player: Player?, onPlayNext: () -> Unit, onHome: 
                 // Subtitles sit just above the information panel while it shows.
                 Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                     ui.cues?.let { Captions(it, Modifier.padding(bottom = if (ui.showInfo) IzleSpacing.Small else IzleSpacing.SafeVertical + IzleSpacing.Large)) }
-                    if (ui.showInfo) if (ui.live) ChannelInfoPanel(ui) else InfoPanel(ui)
+                    if (ui.showInfo) InfoPanel(ui)
                 }
             }
             is PlayerPhase.UpNext -> {
@@ -158,37 +155,34 @@ private fun Modifier.infoShade(): Modifier = fillMaxWidth()
     }
     .padding(start = IzleSpacing.SafeHorizontal, end = IzleSpacing.SafeHorizontal, top = InfoFade + IzleSpacing.Small, bottom = IzleSpacing.SafeVertical)
 
-/** A channel: its name and "Live", on the same shade; nothing about time (no position, times or clock). */
-@Composable
-private fun ChannelInfoPanel(ui: PlayerUi) {
-    Column(Modifier.infoShade()) {
-        Text(ui.item?.title.orEmpty(), style = MaterialTheme.typography.headlineMedium, color = IzleColors.OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(stringResource(R.string.badge_live), style = MaterialTheme.typography.titleLarge, color = IzleColors.Accent, maxLines = 1)
-    }
-}
-
-/** Title, episode, position: over the bottom of the video, its text on the dark part of the shade. */
+/** Title, episode, position, on the dark part of the shade; a channel only its name and "Live" (nothing about time). */
 @Composable
 private fun InfoPanel(ui: PlayerUi) {
     val duration = ui.durationMs ?: 0
     val position = ui.seekPreviewMs ?: ui.positionMs
+    val paused = !ui.playWhenReady && !ui.live
     Column(Modifier.infoShade()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (ui.playWhenReady) PlayIcon(Modifier.size(44.dp)) else PauseIcon(Modifier.size(44.dp))
-            Spacer(Modifier.width(IzleSpacing.XLarge))
+            if (!ui.live) {
+                if (paused) PauseIcon(Modifier.size(44.dp)) else PlayIcon(Modifier.size(44.dp))
+                Spacer(Modifier.width(IzleSpacing.XLarge))
+            }
             Column {
                 Text(ui.item?.title.orEmpty(), style = MaterialTheme.typography.headlineMedium, color = IzleColors.OnSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 episodeLine(ui)?.let { Text(it, style = MaterialTheme.typography.titleLarge, color = IzleColors.Accent, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                if (!ui.playWhenReady) Text(stringResource(R.string.paused), style = MaterialTheme.typography.titleLarge, color = IzleColors.Dim)
+                if (paused) Text(stringResource(R.string.paused), style = MaterialTheme.typography.titleLarge, color = IzleColors.Dim)
             }
         }
-        Spacer(Modifier.height(IzleSpacing.XLarge))
-        ProgressBar(if (duration > 0) position.toFloat() / duration else 0f, height = 10.dp)
-        Spacer(Modifier.height(IzleSpacing.Small))
-        Row(Modifier.fillMaxWidth()) {
-            Text(formatTime(position), style = MaterialTheme.typography.titleLarge, color = if (ui.seekPreviewMs != null) IzleColors.Accent else IzleColors.OnSurface)
-            Spacer(Modifier.weight(1f))
-            if (duration > 0) Text(formatTime(duration), style = MaterialTheme.typography.titleLarge, color = IzleColors.Dim)
+        if (!ui.live) {
+            Spacer(Modifier.height(IzleSpacing.XLarge))
+            ProgressBar(if (duration > 0) position.toFloat() / duration else 0f, height = 10.dp)
+            Spacer(Modifier.height(IzleSpacing.Small))
+            Row(Modifier.fillMaxWidth()) {
+                val color = if (ui.seekPreviewMs != null) IzleColors.Accent else IzleColors.OnSurface
+                Text(formatTime(position), style = MaterialTheme.typography.titleLarge, color = color)
+                Spacer(Modifier.weight(1f))
+                if (duration > 0) Text(formatTime(duration), style = MaterialTheme.typography.titleLarge, color = IzleColors.Dim)
+            }
         }
     }
 }

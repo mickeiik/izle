@@ -15,7 +15,6 @@ export type Scope = (typeof SCOPES)[number];
 /** Lets secret scanners recognize the secret, and the server tell it from the owner token. */
 export const ACCESS_TOKEN_PREFIX = "izat_";
 
-/** `lastUsedAt` is written at most this often. */
 const LAST_USED_WRITE_INTERVAL_MS = 60_000;
 
 export function accessTokenJson(t: AccessToken) {
@@ -35,12 +34,12 @@ export class TokenService {
     this.now = now;
   }
 
-  /** Creates a token; the secret is returned here and nowhere else. 409 `duplicate_name` for a name in use. */
+  /** Creates a token; the secret is returned here and nowhere else. */
   create(name: string, scope: Scope): { token: AccessToken; secret: string } {
     const trimmed = name.trim();
     const secret = `${ACCESS_TOKEN_PREFIX}${newToken()}`;
     const token = this.store.transaction(() => {
-      if (this.store.getAccessTokenByName(trimmed)) throw new HttpError(409, "duplicate_name", "an access token with this name exists");
+      if (this.store.getAccessTokenBy("name", trimmed)) throw new HttpError(409, "duplicate_name", "an access token with this name exists");
       return this.store.insertAccessToken({ id: newId(), name: trimmed, scope, secretHash: sha256(secret), createdAt: this.now(), lastUsedAt: null });
     });
     // The token's id is its actor id in the access log; a field named after the token would be dropped by the log's
@@ -53,10 +52,7 @@ export class TokenService {
     return this.store.listAccessTokens();
   }
 
-  /**
-   * Revokes a token: requests with it answer 401 from now on, and what it has open (event streams) is closed at once.
-   * 404 `unknown_token` when there is none with the id.
-   */
+  /** Revokes a token: requests with it answer 401 from now on, and its open event streams close at once. */
   revoke(id: string): void {
     if (!this.store.deleteAccessToken(id)) throw new HttpError(404, "unknown_token");
     const closers = this.closers.get(id);
@@ -65,7 +61,7 @@ export class TokenService {
     this.log.info("access token revoked", { actorId: id });
   }
 
-  /** Calls `close` when the token is revoked (for a connection opened with it); returns the unregistration. */
+  /** Calls `close` when the token is revoked; returns the unregistration. */
   onRevoke(id: string, close: () => void): () => void {
     let closers = this.closers.get(id);
     if (!closers) this.closers.set(id, (closers = new Set()));
@@ -76,14 +72,13 @@ export class TokenService {
     };
   }
 
-  /** Whether the token with the id still exists (not revoked). */
   exists(id: string): boolean {
-    return this.store.getAccessToken(id) !== null;
+    return this.store.getAccessTokenBy("id", id) !== null;
   }
 
   /** The token a presented secret belongs to, or null; records its use at most once a minute. */
   authenticate(secret: string): AccessToken | null {
-    const token = this.store.getAccessTokenByHash(sha256(secret));
+    const token = this.store.getAccessTokenBy("secret_hash", sha256(secret));
     if (!token) return null;
     const t = this.now();
     if (token.lastUsedAt === null || t - token.lastUsedAt >= LAST_USED_WRITE_INTERVAL_MS) {

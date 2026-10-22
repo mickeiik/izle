@@ -50,18 +50,14 @@ import java.util.Locale
 /** The single screen stack: no navigation library, so Back and focus stay fully under control. */
 sealed interface Screen {
     data object Starting : Screen
-
-    /** Server address entry (first run, or "Server address" from the hidden menu). */
     data class Setup(val canGoBack: Boolean) : Screen
     data object Pairing : Screen
     data object Home : Screen
     data object Player : Screen
-
-    /** A new version of the app: "press OK", "Updating…" or "Could not update" (docs/ux/senior-tv.md, "Update"). */
     data class Update(val ui: UpdateUi) : Screen
 }
 
-/** The update screen's moment: the guided "press OK" (counting down to Home), the install under way, or its failure. */
+/** The update screen (docs/ux/senior-tv.md, "Update"): the guided "press OK" counting down to Home, "Updating…", or its failure. */
 sealed interface UpdatePhase {
     data class Prompt(val secondsLeft: Int) : UpdatePhase
     data object Installing : UpdatePhase
@@ -76,7 +72,6 @@ data class SetupUi(val address: String = "", val busy: Boolean = false, val erro
 
 enum class HomeMessage { NoConnection }
 
-/** [updateVersion]: the newer version the server offers, if any. */
 data class AboutInfo(
     val appVersion: String,
     val server: String?,
@@ -112,7 +107,6 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     private val _autoplay = MutableStateFlow<AutoplayUi?>(null)
     val autoplay: StateFlow<AutoplayUi?> = _autoplay.asStateFlow()
 
-    /** The owner's message banner (Home and player). */
     private val banners = TimedValue<String>(viewModelScope)
     val banner: StateFlow<String?> = banners.value
 
@@ -154,10 +148,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     private var autoplayJob: Job? = null
     private var resumeAfterMenu = false
 
-    /**
-     * Autoplay on start is armed when the app comes to the foreground on Home (or starts): the first state fetched
-     * from the server afterwards decides. Anything the viewer does first — a key, the menu, playing — disarms it.
-     */
+    /** Armed on coming to the front on Home: the first state fetched then decides; anything the viewer does disarms it. */
     private var autoplayArmed = false
 
     /** Key presses so far, to notice one that happens while autoplay reads the last played show. */
@@ -166,31 +157,25 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     /** The last key press, coming to the front or end of playback (uptime ms): how long the TV has been idle. */
     private var lastActivityAt = SystemClock.uptimeMillis()
 
-    /** The guided "press OK" showing, with the command it answers (null: the hidden menu's "Install update"). */
+    /** The guided "press OK" showing, and the update being downloaded or installed. */
     private var prompt: UpdateRequest? = null
-
-    /** The update being downloaded or installed, if any. */
     private var updateRun: UpdateRequest? = null
     private var updateRunJob: Job? = null
 
     /** The update screen's countdown, or its "Updating…" time limit. */
     private var updateScreenJob: Job? = null
 
-    /**
-     * The system's Install dialog of a guided update was started and has not answered yet: it covers the app (which
-     * stops), and leaving "Updating…" for Home then would undo what the viewer is in the middle of.
-     */
+    /** The system's Install dialog covers the app (which stops): leaving "Updating…" then would undo the viewer's answer. */
     private var confirming = false
     private var autoUpdateJob: Job? = null
 
     private val _launchIntents = Channel<Intent>(Channel.BUFFERED)
 
-    /** Activities to start (the system's Install dialog of a guided update); the activity collects them. */
+    /** The system's Install dialog of a guided update, for the activity to start. */
     val launchIntents: Flow<Intent> = _launchIntents.receiveAsFlow()
 
-    /** An update and whom to tell what became of it. */
+    /** An update and whom to tell what became of it; [committing]: the result went out, no backing out. */
     private class UpdateRequest(val update: AvailableUpdate, val commandId: Long?, val api: ApiClient?, val report: (CommandResult) -> Unit) {
-        /** The command's result went out and the session is about to be (or was) committed: no backing out. */
         var committing = false
     }
 
@@ -224,8 +209,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         // The "install unknown apps" grant may have changed while the app was away.
         updater.refreshCapability()
         startAutoUpdates()
-        // Autoplay on start: the app starts, or comes back from the launcher / standby, on Home (not from the
-        // system's Install dialog).
+        // Not when back from the system's Install dialog.
         autoplayArmed = !confirming && (_screen.value == Screen.Home || _screen.value == Screen.Starting)
         when (_screen.value) {
             // On the server address screen too: Back from there returns to a live Home.
@@ -235,10 +219,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
-    /**
-     * HOME was pressed or the TV went to standby: save progress, release the player; we come back on Home. Not while
-     * the system's Install dialog is over the app: "Updating…" waits for its answer.
-     */
+    /** HOME or standby: the player is released, the app comes back on Home (but "Updating…" waits for the Install dialog). */
     fun onBackground() {
         foreground = false
         autoUpdateJob?.cancel()
@@ -271,21 +252,13 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         autoplayArmed = false
     }
 
-    /**
-     * CH+/CH− and |◀◀ ▶▶|: switch episodes while video is showing, or channels while one plays, loads or shows its
-     * error screen; everywhere else they do nothing (but are consumed).
-     */
+    /** CH+/CH− and |◀◀ ▶▶| switch episodes or channels in the player; elsewhere they are consumed. */
     fun onChannelKey(direction: Int) {
         if (_screen.value != Screen.Player || _menu.value != null) return
         if (player.ui.value.live) zap(direction, PlaybackOrigin.Next) else player.stepEpisode(direction, PlaybackOrigin.Next)
     }
 
-    /**
-     * To the channel after (+1) or before (−1) the one playing, among the channels of the latest home state, in Home
-     * order ([ChannelZap]): it starts in the same player at its live edge (the one left is reported stopped), its name
-     * showing while it loads. At the first or last channel only the information shows. The result is an owner's
-     * `next`/`previous` command's.
-     */
+    /** To Home's next (+1) or previous (−1) channel ([ChannelZap]), at its live edge; at the ends only the information shows. */
     private fun zap(direction: Int, origin: PlaybackOrigin): CommandResult {
         val current = player.zappableChannelId ?: return CommandResult.ignored(CommandResult.NOT_IN_PLAYER)
         val next = ChannelZap.neighbour(state.value?.home.orEmpty(), current, direction) ?: run {
@@ -302,11 +275,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         autoplayArmed = false
         if (_autoplay.value != null) return cancelAutoplay()
         val menu = _menu.value
-        if (menu != null) {
-            val back = menu.pop()
-            if (back != null) _menu.value = back else closeMenu(resume = true)
-            return
-        }
+        if (menu != null) return menu.pop().let { if (it != null) _menu.value = it else closeMenu(resume = true) }
         when (val screen = _screen.value) {
             Screen.Player -> player.exit()
             Screen.Pairing -> {
@@ -364,7 +333,6 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         if (token != null) showHome() else showPairing()
     }
 
-    /** The server address screen; [canGoBack] to a working Home when the hidden menu opened it. */
     private fun showSetup(canGoBack: Boolean) {
         clearAutoplay()
         _setup.update { it.copy(busy = false, error = null) }
@@ -385,7 +353,6 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         startPairing()
     }
 
-    /** Shows a code until the owner approves this TV (see [PairingLoop]), then Home. */
     private fun startPairing() {
         pairingJob?.cancel()
         val url = serverUrl ?: return
@@ -414,10 +381,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     fun onTileClicked(entry: HomeEntry) = playTile(entry, PlaybackOrigin.Viewer)
 
-    /**
-     * OK on a tile, or autoplay on start: the show's `continue` episode under the normal resume rules, or the channel
-     * at its live edge (resolved by its item id).
-     */
+    /** OK on a tile, or autoplay on start: the show's `continue` episode, or the channel at its live edge. */
     private fun playTile(entry: HomeEntry, origin: PlaybackOrigin) {
         if (!online.value) {
             homeMessages.show(HomeMessage.NoConnection, forMs = 5_000)
@@ -429,7 +393,6 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         startPlayback(ref, origin, startAtMs = null, hint = entry.item)
     }
 
-    /** The show or channel [itemId] on Home in the latest state, if it is there. */
     private fun homeEntry(itemId: String?): HomeEntry? = state.value?.home?.firstOrNull { it.item.id == itemId }
 
     private fun focusedEntry(): HomeEntry? = homeEntry(homeFocusItemId) ?: state.value?.home?.firstOrNull()
@@ -465,10 +428,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
-    /**
-     * "Play now", or the end of the countdown: the show's `continue` episode under the normal resume rules, or the
-     * channel at its live edge. Both are autoplay's playback (the viewer only confirmed what autoplay offered).
-     */
+    /** "Play now", or the end of the countdown: autoplay's playback (the viewer only confirmed what it offered). */
     fun onAutoplayPlayNow() {
         val itemId = endAutoplay() ?: return
         playTile(homeEntry(itemId) ?: return, PlaybackOrigin.Autoplay)
@@ -479,7 +439,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         homeFocusItemId = endAutoplay() ?: return
     }
 
-    /** Stops the countdown that is showing and takes it away: the offered show's id, or null when none shows. */
+    /** Takes the countdown away: the offered show's id, or null when none shows. */
     private fun endAutoplay(): String? {
         val shown = _autoplay.value ?: return null
         autoplayJob?.cancel()
@@ -517,9 +477,9 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         val origin = PlaybackOrigin.command(command.id)
         for (action in actions) {
             when (action) {
-                is CommandPlan.Action.Play -> {
-                    action.itemId?.let { homeFocusItemId = it }
-                    startPlayback(action.ref, origin, action.positionMs, homeEntry(action.itemId)?.item, playCommand = true)
+                is CommandPlan.Action.Play -> with(action.command) {
+                    itemId?.let { homeFocusItemId = it }
+                    startPlayback(ref, origin, positionMs, homeEntry(itemId)?.item, playCommand = true)
                 }
                 CommandPlan.Action.Exit -> player.exit()
                 CommandPlan.Action.Pause -> player.pause()
@@ -536,10 +496,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
-    /**
-     * The owner's `update` ([commandId]), or the hidden menu's "Install update" (null): what the server offers now,
-     * installed silently or behind the guided "press OK" ([UpdatePlan.onCommand]).
-     */
+    /** The owner's `update` ([commandId]), or the hidden menu's "Install update" (null), as [UpdatePlan.onCommand] says. */
     private fun onUpdate(versionCode: Long?, commandId: Long?, api: ApiClient?, report: (CommandResult) -> Unit) {
         if (api == null) return report(CommandResult.ignored(CommandResult.NOT_READY))
         viewModelScope.launch {
@@ -559,18 +516,18 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     private fun updateContext(): UpdatePlan.Context {
         updater.refreshCapability()
         return UpdatePlan.Context(
-        capability = updater.capability.value,
-        installedVersionCode = updater.installedVersionCode,
-        screen = _screen.value,
-        menuOpen = _menu.value != null,
-        autoplayShowing = _autoplay.value != null,
-        playerInUse = player.inUse,
-        online = online.value,
-        idleMs = SystemClock.uptimeMillis() - lastActivityAt,
-        lastFailureAt = updater.lastFailureAt,
-        now = System.currentTimeMillis(),
-        busy = updater.busy,
-    )
+            capability = updater.capability.value,
+            installedVersionCode = updater.installedVersionCode,
+            screen = _screen.value,
+            menuOpen = _menu.value != null,
+            autoplayShowing = _autoplay.value != null,
+            playerInUse = player.inUse,
+            online = online.value,
+            idleMs = SystemClock.uptimeMillis() - lastActivityAt,
+            lastFailureAt = updater.lastFailureAt,
+            now = System.currentTimeMillis(),
+            busy = updater.busy,
+        )
     }
 
     /** While in front: every 30 s, whether a silent TV installs the offered version by itself ([UpdatePlan.autoInstall]). */
@@ -592,20 +549,32 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         closeMenu(resume = false)
         clearAutoplay()
         prompt = request
+        val versionName = request.update.versionName
+        val gone = { if (prompt === request) endPrompt() }
+        updateCountdown(versionName, UpdatePlan.GUIDED_TIMEOUT_SEC, { UpdatePhase.Prompt(it) }, onGone = gone) {
+            endPrompt(CommandResult.TIMEOUT)
+            if (_screen.value is Screen.Update) showHome()
+        }
+    }
+
+    /** Shows [phase] counting down from [seconds], then [onEnd]; when something else takes the screen meanwhile, it stays. */
+    private fun updateCountdown(
+        versionName: String,
+        seconds: Int,
+        phase: (Int) -> UpdatePhase,
+        onGone: () -> Unit = {},
+        onEnd: () -> Unit,
+    ) {
         updateScreenJob?.cancel()
         updateScreenJob = viewModelScope.launch {
-            countDown(UpdatePlan.GUIDED_TIMEOUT_SEC) { left ->
-                // Something else took the screen meanwhile: it stays.
-                if (left < UpdatePlan.GUIDED_TIMEOUT_SEC && _screen.value !is Screen.Update) {
-                    if (prompt === request) {
-                        prompt = null
-                        request.report(CommandResult.ignored(CommandResult.DECLINED))
-                    }
+            countDown(seconds) { left ->
+                if (left < seconds && _screen.value !is Screen.Update) {
+                    onGone()
                     return@launch
                 }
-                _screen.value = Screen.Update(UpdateUi(request.update.versionName, UpdatePhase.Prompt(left)))
+                _screen.value = Screen.Update(UpdateUi(versionName, phase(left)))
             }
-            endPrompt(CommandResult.TIMEOUT)
+            onEnd()
         }
     }
 
@@ -620,30 +589,16 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     /** Not now on the "press OK" screen, or Home on "Could not update": as Back. */
     fun onUpdateHome() = leaveUpdateScreen()
 
-    private fun endPrompt(reason: String) {
-        val request = prompt ?: return
-        prompt = null
-        updateScreenJob?.cancel()
-        request.report(CommandResult.ignored(reason))
-        if (_screen.value is Screen.Update) showHome()
-    }
-
-    /**
-     * Back (or the app going to the background) on the update screen: Home. The "press OK" is `declined`, and so is
-     * a guided install still downloading; one already handed to the system goes on.
-     */
+    /** Back or the background on the update screen: Home ([endUpdateScreen]). */
     private fun leaveUpdateScreen() {
         endUpdateScreen()
         if (_screen.value is Screen.Update) showHome()
     }
 
-    /** What the update screen was doing ends as [leaveUpdateScreen] ends it, for a screen that takes its place. */
+    /** The "press OK" is `declined`, and so is a guided install still downloading; one handed to the system goes on. */
     private fun endUpdateScreen() {
         updateScreenJob?.cancel()
-        prompt?.let { request ->
-            prompt = null
-            request.report(CommandResult.ignored(CommandResult.DECLINED))
-        }
+        endPrompt()
         val run = updateRun
         if (run != null && !run.committing && updateRunJob?.isActive == true && _screen.value is Screen.Update) {
             updateRunJob?.cancel()
@@ -652,13 +607,15 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
-    private fun showUpdatePhase(versionName: String, phase: UpdatePhase) {
-        _screen.value = Screen.Update(UpdateUi(versionName, phase))
+    private fun endPrompt(reason: String = CommandResult.DECLINED) {
+        val request = prompt ?: return
+        prompt = null
+        request.report(CommandResult.ignored(reason))
     }
 
     private fun showInstalling(versionName: String) {
         updateScreenJob?.cancel()
-        showUpdatePhase(versionName, UpdatePhase.Installing)
+        _screen.value = Screen.Update(UpdateUi(versionName, UpdatePhase.Installing))
     }
 
     /** Once committed, "Updating…" stays until the system answers (the app usually restarts as the new version), at most 2 min. */
@@ -672,23 +629,15 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     /** "Could not update", then Home by itself. */
-    private fun showUpdateFailed(versionName: String) {
-        updateScreenJob?.cancel()
-        updateScreenJob = viewModelScope.launch {
-            countDown(UpdatePlan.FAILED_HOME_SEC) { left ->
-                // Something else took the screen meanwhile: it stays.
-                if (left < UpdatePlan.FAILED_HOME_SEC && _screen.value !is Screen.Update) return@launch
-                showUpdatePhase(versionName, UpdatePhase.Failed(left))
-            }
+    private fun showUpdateFailed(versionName: String) =
+        updateCountdown(versionName, UpdatePlan.FAILED_HOME_SEC, { UpdatePhase.Failed(it) }) {
             if (_screen.value is Screen.Update) showHome()
         }
-    }
 
     /**
-     * Downloads, checks and installs [request]'s update. Silent: Home stays usable meanwhile, "Updating…" only comes
-     * once the archive checked out, and only if nothing started meanwhile ([auto]: the TV is still idle). Guided:
-     * "Updating…" from OK on, then the system's Install dialog. The command's result goes out (and is waited for)
-     * right before the session is committed: a successful install ends this process.
+     * Downloads, checks and installs [request]'s update. Silent: "Updating…" only once the archive checked out, if
+     * nothing started meanwhile ([auto]: the TV is still idle). Guided: "Updating…" from OK on, then the system's
+     * Install dialog. The command's result goes out right before the session is committed: success ends this process.
      */
     private fun runUpdate(request: UpdateRequest, silent: Boolean, auto: Boolean) {
         val api = request.api ?: return request.report(CommandResult.ignored(CommandResult.NOT_READY))
@@ -749,8 +698,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     /** The system's Install dialog could not be opened. */
     fun onLaunchFailed() {
         confirming = false
-        val showing = (_screen.value as? Screen.Update)?.ui ?: return
-        showUpdateFailed(showing.versionName)
+        (_screen.value as? Screen.Update)?.let { showUpdateFailed(it.ui.versionName) }
     }
 
     fun openMenu() {

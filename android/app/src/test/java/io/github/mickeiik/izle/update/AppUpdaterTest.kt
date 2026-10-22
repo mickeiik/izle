@@ -6,14 +6,17 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import io.github.mickeiik.izle.data.ProblemReporter
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.CommandResult
+import io.github.mickeiik.izle.installStatus
+import io.github.mickeiik.izle.json
 import io.github.mickeiik.izle.settings.DeviceStore
-import io.github.mickeiik.izle.ui.Screen
+import io.github.mickeiik.izle.sha256
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -39,7 +42,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
-import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 
@@ -62,7 +64,12 @@ class AppUpdaterTest {
     private val installer = FakeInstaller()
 
     /** What `GET /tv/app/apk` answers. */
-    @Volatile private var apk: () -> MockResponse = { MockResponse.Builder().body(Buffer().write(bytes)).build() }
+    @Volatile private var apk: () -> MockResponse = { apkBody().build() }
+
+    private fun apkBody() = MockResponse.Builder().body(Buffer().write(bytes))
+
+    /** A slow body: the read is under way for a while. */
+    private val slowApk = { apkBody().throttleBody(1_024, 20, TimeUnit.MILLISECONDS).build() }
 
     private lateinit var storeScope: CoroutineScope
     private lateinit var store: DeviceStore
@@ -97,31 +104,28 @@ class AppUpdaterTest {
     }
 
     @Test
-    fun anInstallFailureAfterTheCommandsResultWentOutIsReportedAsAProblem() = runBlocking {
+    fun anInstallFailureWithoutTheCommandsOwnResultIsRememberedAndReportedAsAProblem() = runBlocking {
         val updater = updater()
         // Before the result went out, the command's own `failed` tells the owner: no problem report.
         installer.verifyFailure = UpdateException(CommandResult.BAD_ARCHIVE)
-        assertEquals(UpdateRun.Failed(CommandResult.BAD_ARCHIVE), updater.run(api, update, silent = true, commandId = 5) { true })
+        assertEquals(UpdateRun.Failed(CommandResult.BAD_ARCHIVE), updater.runSilent(commandId = 5))
         settle()
         assertTrue(problems().isEmpty())
 
         // After it (`done installing` is out, a second result would be refused): a problem report.
         installer.verifyFailure = null
         installer.installFailure = UpdateException(PackageInstallerAppInstaller.INSTALL_WRITE)
-        assertEquals(UpdateRun.Failed(PackageInstallerAppInstaller.INSTALL_WRITE), updater.run(api, update, silent = true, commandId = 6) { true })
+        assertEquals(UpdateRun.Failed(PackageInstallerAppInstaller.INSTALL_WRITE), updater.runSilent(commandId = 6))
         awaitProblem("update_install_write")
-        assertFalse("nothing kept", File(cacheDir, ApkDownloader.FILE_NAME).exists())
-    }
+        assertFalse("nothing kept", apkFile.exists())
 
-    @Test
-    fun anythingUnexpectedFromTheInstallerIsAnInternalFailureNotACrash() = runBlocking {
-        val updater = updater()
+        // Without a command, and anything unexpected from the installer is an internal failure, not a crash.
         installer.installFailure = RuntimeException("installation services unavailable")
-        assertEquals(UpdateRun.Failed(CommandResult.INTERNAL), updater.run(api, update, silent = true, commandId = null) { true })
+        assertEquals(UpdateRun.Failed(CommandResult.INTERNAL), updater.runSilent())
         awaitProblem("update_internal")
         assertNotNull("remembered", updater.lastFailureAt)
         assertFalse(updater.busy)
-        assertFalse("nothing kept", File(cacheDir, ApkDownloader.FILE_NAME).exists())
+        assertFalse("nothing kept", apkFile.exists())
     }
 
     @Test
@@ -129,12 +133,12 @@ class AppUpdaterTest {
         val updater = updater()
         awaitLoaded(updater)
         assertEquals(update, updater.check(api))
-        assertTrue(UpdatePlan.autoInstall(updater.available.value, idleOnHome()))
+        assertTrue(UpdatePlan.autoInstall(updater.available.value, idleOnHome))
         apk = { json(404, """{"error":"no_apk"}""") }
-        assertEquals(UpdateRun.Ignored(CommandResult.UP_TO_DATE), updater.run(api, update, silent = true, commandId = null) { true })
+        assertEquals(UpdateRun.Ignored(CommandResult.UP_TO_DATE), updater.runSilent())
         assertNull(updater.available.value)
         assertNull(updater.newer())
-        assertFalse("the next tick installs nothing", UpdatePlan.autoInstall(updater.available.value, idleOnHome()))
+        assertFalse("the next tick installs nothing", UpdatePlan.autoInstall(updater.available.value, idleOnHome))
         assertNull("not a failure", updater.lastFailureAt)
     }
 
@@ -142,17 +146,17 @@ class AppUpdaterTest {
     fun aCancelledDownloadIsNoFailure() = runBlocking {
         val updater = updater()
         awaitLoaded(updater)
-        // A slow body: the read is under way when Back cancels the run.
-        apk = { MockResponse.Builder().body(Buffer().write(bytes)).throttleBody(1_024, 20, TimeUnit.MILLISECONDS).build() }
+        // Back cancels the run while the read is under way.
+        apk = slowApk
         val run = launch { updater.run(api, update, silent = false, commandId = null) { true } }
-        withTimeout(5_000) { while (!File(cacheDir, ApkDownloader.FILE_NAME).exists()) delay(5) }
+        awaitDownloadStarted()
         delay(100)
         run.cancelAndJoin()
         settle()
         assertNull("nothing remembered", updater.lastFailureAt)
         assertNull(store.current().lastUpdateFailureAt)
         assertTrue("nothing reported", problems().isEmpty())
-        assertFalse("nothing kept", File(cacheDir, ApkDownloader.FILE_NAME).exists())
+        assertFalse("nothing kept", apkFile.exists())
         assertFalse(updater.busy)
         assertTrue(installer.installs.isEmpty())
     }
@@ -161,39 +165,36 @@ class AppUpdaterTest {
     fun onlyOurSessionsOrANewProcessSeeASuccess() = runBlocking {
         val updater = updater()
         awaitLoaded(updater)
-        val statuses = CopyOnWriteArrayList<InstallStatus>()
-        val collector = launch(start = CoroutineStart.UNDISPATCHED) { updater.installStatus.collect { statuses += it } }
+        val statuses = statusesOf(updater)
 
         // Another app's success intent while a download is under way: nothing changes.
-        apk = { MockResponse.Builder().body(Buffer().write(bytes)).throttleBody(1_024, 20, TimeUnit.MILLISECONDS).build() }
-        val run = launch { updater.run(api, update, silent = true, commandId = null) { true } }
-        withTimeout(5_000) { while (!File(cacheDir, ApkDownloader.FILE_NAME).exists()) delay(5) }
+        apk = slowApk
+        val run = launch { updater.runSilent() }
+        awaitDownloadStarted()
         assertTrue(updater.busy)
-        updater.onInstallStatus(status(PackageInstaller.STATUS_SUCCESS, sessionId = 42))
+        updater.onInstallStatus(installStatus(PackageInstaller.STATUS_SUCCESS, sessionId = 42))
         yield()
         assertTrue(statuses.isEmpty())
-        assertTrue("the download goes on", File(cacheDir, ApkDownloader.FILE_NAME).exists())
+        assertTrue("the download goes on", apkFile.exists())
         run.cancelAndJoin()
 
         // Committed session 7: another session's success does not count, its own does.
-        apk = { MockResponse.Builder().body(Buffer().write(bytes)).build() }
-        assertEquals(UpdateRun.Committed, updater.run(api, update, silent = true, commandId = null) { true })
-        updater.onInstallStatus(status(PackageInstaller.STATUS_SUCCESS, sessionId = 42))
+        apk = { apkBody().build() }
+        assertEquals(UpdateRun.Committed, updater.runSilent())
+        updater.onInstallStatus(installStatus(PackageInstaller.STATUS_SUCCESS, sessionId = 42))
         yield()
         assertTrue(statuses.isEmpty())
-        updater.onInstallStatus(status(PackageInstaller.STATUS_SUCCESS, sessionId = 7))
+        updater.onInstallStatus(installStatus(PackageInstaller.STATUS_SUCCESS, sessionId = 7))
         yield()
         assertEquals(listOf<InstallStatus>(InstallStatus.Succeeded), statuses)
 
         // The new version's process: nothing committed and nothing under way, so the intent that started it counts.
         val fresh = updater()
-        val freshStatuses = CopyOnWriteArrayList<InstallStatus>()
-        val freshCollector = launch(start = CoroutineStart.UNDISPATCHED) { fresh.installStatus.collect { freshStatuses += it } }
-        fresh.onInstallStatus(status(PackageInstaller.STATUS_SUCCESS, sessionId = 7))
+        val freshStatuses = statusesOf(fresh)
+        fresh.onInstallStatus(installStatus(PackageInstaller.STATUS_SUCCESS, sessionId = 7))
         yield()
         assertEquals(listOf<InstallStatus>(InstallStatus.Succeeded), freshStatuses)
-        collector.cancel()
-        freshCollector.cancel()
+        coroutineContext.cancelChildren()
     }
 
     @Test
@@ -234,24 +235,20 @@ class AppUpdaterTest {
         wallClock = { 1_000_000L },
     )
 
+    private val apkFile get() = File(cacheDir, ApkDownloader.FILE_NAME)
+
+    private val idleOnHome = idleHome(now = 1_000_000L)
+
+    private suspend fun AppUpdater.runSilent(commandId: Long? = null) = run(api, update, silent = true, commandId = commandId) { true }
+
     private suspend fun awaitLoaded(updater: AppUpdater) = withTimeout(5_000) { while (updater.userAgent == null) delay(5) }
 
-    private fun idleOnHome() = UpdatePlan.Context(
-        capability = UpdateCapability.Silent,
-        installedVersionCode = 200,
-        screen = Screen.Home,
-        menuOpen = false,
-        autoplayShowing = false,
-        playerInUse = false,
-        online = true,
-        idleMs = UpdatePlan.IDLE_MS,
-        lastFailureAt = null,
-        now = 1_000_000L,
-    )
+    private suspend fun awaitDownloadStarted() = withTimeout(5_000) { while (!apkFile.exists()) delay(5) }
 
-    private fun status(status: Int, sessionId: Int) = Intent(AppInstaller.ACTION_INSTALL_STATUS)
-        .putExtra(PackageInstaller.EXTRA_STATUS, status)
-        .putExtra(PackageInstaller.EXTRA_SESSION_ID, sessionId)
+    /** What [updater] says about installs from now on (until this test's children are cancelled). */
+    private fun CoroutineScope.statusesOf(updater: AppUpdater) = CopyOnWriteArrayList<InstallStatus>().also { statuses ->
+        launch(start = CoroutineStart.UNDISPATCHED) { updater.installStatus.collect { statuses += it } }
+    }
 
     private fun problems() = requests.filter { it.url.encodedPath == "/api/v1/tv/problems" }.map { it.body?.utf8().orEmpty() }
 
@@ -262,22 +259,15 @@ class AppUpdaterTest {
     /** Gives a request that should not come the time to arrive anyway. */
     private suspend fun settle() = delay(200)
 
-    private fun json(code: Int, body: String) =
-        MockResponse.Builder().code(code).addHeader("Content-Type", "application/json").body(body).build()
-
-    private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-
     /** Checks and installs nothing; fails as told. */
     private class FakeInstaller : AppInstaller {
         @Volatile var verifyFailure: Exception? = null
         @Volatile var installFailure: Exception? = null
         val installs = CopyOnWriteArrayList<Boolean>()
 
-        override suspend fun verifyArchive(file: File, expectedVersionCode: Long) {
-            verifyFailure?.let { throw it }
-        }
+        override suspend fun verifyArchive(file: File, expectedVersionCode: Long) = verifyFailure?.let { throw it } ?: Unit
 
-        override suspend fun install(file: File, silent: Boolean, commandId: Long?): Int {
+        override suspend fun install(file: File, silent: Boolean): Int {
             installFailure?.let { throw it }
             installs += silent
             return 7

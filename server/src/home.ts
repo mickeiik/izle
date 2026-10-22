@@ -1,8 +1,7 @@
 // The Home list of each TV, bound to the catalog: its entries as data (what OK would play on each, the new episodes,
-// whether the item left the catalog or cannot play), its sections, and the owner's operations on it (the whole
-// list, one item added, moved or removed, a section created, changed or deleted, the "continue from" override). The
-// TV's state (tv.ts) and the admin page (devices.ts) are two projections of `list` and `sections`: the TV drops what
-// it cannot play (and the sections left empty), the admin page flags it.
+// whether the item left the catalog or cannot play), its sections, and the owner's operations on them. The TV's state
+// (tv.ts) and the admin page (devices.ts) are two projections of `list` and `sections`: the TV drops what it cannot
+// play (and the sections left empty), the admin page flags it.
 
 import { isLiveItem, type CatalogItem, type EpisodicItem } from "@izle/contract";
 import type { Actor } from "./actor.ts";
@@ -20,21 +19,17 @@ export { UNTITLED_SECTION } from "./store.ts";
 
 /** A technical safety limit on every device's home list, not a product rule: Home scrolls past one screen. */
 export const HOME_MAX_ITEMS = 200;
-
-/** Sections a Home may have besides the untitled one (`sectionsMax`). */
+/** Sections a Home may have besides the untitled one. */
 export const HOME_MAX_SECTIONS = 20;
-
 /** How a section lays out its cards: rows of `homeColumns`, or one line that scrolls sideways. */
 export const SECTION_LAYOUTS = ["grid", "row"] as const;
 export type SectionLayout = (typeof SECTION_LAYOUTS)[number];
-
-/** A section title's length, in characters (trimmed, with a non-space). */
 export const SECTION_TITLE_MAX = 40;
+/** Per-TV home grid: cards per row and rows per screen (the defaults are the schema's). */
+export const HOME_COLUMNS = { min: 3, max: 6, default: 4 } as const;
+export const HOME_ROWS = { min: 1, max: 4, default: 2 } as const;
 
-/**
- * A section of a TV's Home with its items in display order, those gone from the catalog or unplayable included.
- * `title` is null for the untitled section.
- */
+/** A section of a TV's Home with its items in display order, those gone from the catalog or unplayable included. */
 export type Section = HomeSectionWrite;
 
 /** A section of `PUT …/home {"sections"}`: without `id` a new one; without `layout` it keeps its own. */
@@ -45,21 +40,14 @@ export interface SectionInput {
   itemIds: string[];
 }
 
-/** A section as the caller of `PUT …/home {"sections"}` saw it (`expected`): title and layout compared when given. */
-export interface ExpectedSection {
-  id: string;
-  title?: string | null;
-  layout?: SectionLayout;
-  itemIds: string[];
-}
+/** A section as the caller of `PUT …/home {"sections"}` saw it: title and layout compared when given. */
+export type ExpectedSection = SectionInput & { id: string };
 
-/** What a single item change does: the section it goes to and its position there. */
 export interface ItemMove {
   sectionId?: string;
   position?: number;
 }
 
-/** What a section change sets. */
 export interface SectionPatch {
   title?: string;
   layout?: SectionLayout;
@@ -71,8 +59,8 @@ const flat = (sections: readonly Section[]) => sections.flatMap((s) => s.itemIds
 const copy = (sections: readonly Section[]): Section[] => sections.map((s) => ({ ...s, itemIds: [...s.itemIds] }));
 const unknownSection = (sectionId: string) => new HttpError(404, "unknown_section", "no such section on this TV's Home", { sectionId });
 const notOnHome = () => new HttpError(404, "not_on_home", "the item is not on this TV's home list");
+const untitledError = (message: string) => new HttpError(400, "untitled_section", message);
 
-/** The section of `sections` with this id; 404 `unknown_section` otherwise. */
 function sectionIn(sections: Section[], sectionId: string): Section {
   const found = sections.find((s) => s.id === sectionId);
   if (!found) throw unknownSection(sectionId);
@@ -83,10 +71,6 @@ function sectionIn(sections: Section[], sectionId: string): Section {
 function insertAt<T>(list: T[], position: number | undefined, value: T): void {
   list.splice(Math.min(position ?? list.length, list.length), 0, value);
 }
-
-/** Per-TV home grid: cards per row and rows per screen (the owner's setting; the defaults are migration 8's). */
-export const HOME_COLUMNS = { min: 3, max: 6, default: 4 } as const;
-export const HOME_ROWS = { min: 1, max: 4, default: 2 } as const;
 
 /** What the device saved about one item: positions by episode, the play cursor, and the episodes new since a time. */
 interface ItemFacts {
@@ -106,18 +90,16 @@ export interface Continue extends ReturnType<typeof episodeSummary> {
   status: Progress["status"] | "new";
 }
 
-/** One entry of a TV's home list, as data: what OK would play and whether it can. */
 export interface HomeEntry {
   itemId: string;
-  /** The catalog item; null when it left the catalog (`missing`). */
+  /** Null when it left the catalog (`missing`). */
   item: CatalogItem | null;
   missing: boolean;
   playable: boolean;
-  /** What OK plays and where it starts; null for a channel or when nothing is playable. */
+  /** Null for a channel or when nothing is playable. */
   continue: Continue | null;
   newEpisodes: number;
-  addedAt: number | null;
-  /** The section it is in. */
+  addedAt: number;
   sectionId: string;
 }
 
@@ -136,10 +118,7 @@ export class HomeService {
     this.s = deps;
   }
 
-  /**
-   * The device's home list in Home order, every entry: items gone after a catalog reload are `missing`, items
-   * nothing of which may play are not `playable`. A channel has no `continue` and no new episodes.
-   */
+  /** The device's home list in Home order, every entry, those a catalog reload left missing or unplayable included. */
   list(deviceId: string): HomeEntry[] {
     const { store, catalog } = this.s;
     const factsFor = this.homeFacts(deviceId);
@@ -169,7 +148,6 @@ export class HomeService {
     return this.s.store.getHomeEntries(deviceId, this.s.catalog.catalogId).map((e) => e.itemId);
   }
 
-  /** The device's sections in display order, always with the untitled one, each with all its items. */
   sections(deviceId: string): Section[] {
     return this.sectionsOf(deviceId, this.s.store.getHomeEntries(deviceId, this.s.catalog.catalogId));
   }
@@ -182,10 +160,9 @@ export class HomeService {
   }
 
   /**
-   * Sets which items are on Home and their order (`PUT …/home {"itemIds"}`), keeping the sections: an item already
-   * on Home stays in its section, a new one goes to the untitled section, and each section's items follow their order
-   * in `itemIds`. With `expected` (the list the caller saw, in Home order), answers 409 `home_changed` when the list
-   * is no longer that, so two editors do not overwrite each other. Returns the new state version.
+   * `PUT …/home {"itemIds"}`: an item already on Home stays in its section, a new one goes to the untitled section,
+   * and each section's items follow their order in `itemIds`. With `expected` (the list the caller saw, in Home
+   * order), 409 `home_changed` when the list is no longer that, so two editors do not overwrite each other.
    */
   set(deviceId: string, itemIds: string[], actor: Actor, expected?: string[]): number {
     return this.change(deviceId, actor, (before) => {
@@ -196,10 +173,8 @@ export class HomeService {
   }
 
   /**
-   * Replaces the whole Home (`PUT …/home {"sections"}`), sections in display order. A section without `id` is new; a
-   * titled section left out is deleted, and its items leave Home unless another section lists them. The untitled
-   * section is listed exactly once (400 `untitled_section`). With `expected` (the sections the caller saw), 409
-   * `home_changed` when the Home is no longer that.
+   * `PUT …/home {"sections"}`: a section without `id` is new; a titled section left out is deleted, and its items
+   * leave Home unless another section lists them. The untitled section is listed exactly once.
    */
   setSections(deviceId: string, sections: SectionInput[], actor: Actor, expected?: ExpectedSection[]): number {
     return this.change(deviceId, actor, (before) => {
@@ -210,7 +185,7 @@ export class HomeService {
       const next = sections.map((s): Section => {
         if (s.id === UNTITLED_SECTION) {
           untitled++;
-          if (typeof s.title === "string") throw new HttpError(400, "untitled_section", "the untitled section has no title");
+          if (typeof s.title === "string") throw untitledError("the untitled section has no title");
           return { id: UNTITLED_SECTION, title: null, layout: s.layout ?? existing.get(UNTITLED_SECTION)!.layout, itemIds: s.itemIds };
         }
         if (s.id !== undefined) {
@@ -223,12 +198,12 @@ export class HomeService {
         if (s.id === undefined) existing.set(id, { id, title: null, layout: "grid", itemIds: [] });
         return { id, title: s.title.trim(), layout: s.layout ?? existing.get(id)!.layout, itemIds: s.itemIds };
       });
-      if (untitled !== 1) throw new HttpError(400, "untitled_section", "the untitled section must be listed exactly once");
+      if (untitled !== 1) throw untitledError("the untitled section must be listed exactly once");
       return next;
     });
   }
 
-  /** Puts the item in a section (default the untitled one) at `position` (0-based; default and upper bound: its end). */
+  /** Puts the item in a section (default the untitled one) at `position` (default and upper bound: its end). */
   add(deviceId: string, itemId: string, to: ItemMove, actor: Actor): number {
     return this.change(deviceId, actor, (before) => {
       const next = copy(before);
@@ -237,10 +212,7 @@ export class HomeService {
     });
   }
 
-  /**
-   * Moves an item of the list to another section and/or position (0-based within the section it ends up in, clamped
-   * to its end; the end by default when the section changes, else where it is).
-   */
+  /** Moves an item to another section and/or position (by default the end of a new section, else where it is). */
   move(deviceId: string, itemId: string, to: ItemMove, actor: Actor): number {
     return this.change(deviceId, actor, (before) => {
       const next = copy(before);
@@ -279,7 +251,7 @@ export class HomeService {
       const next = copy(before);
       const section = sectionIn(next, sectionId);
       if (patch.title !== undefined) {
-        if (section.id === UNTITLED_SECTION) throw new HttpError(400, "untitled_section", "the untitled section has no title");
+        if (section.id === UNTITLED_SECTION) throw untitledError("the untitled section has no title");
         section.title = patch.title.trim();
       }
       if (patch.layout !== undefined) section.layout = patch.layout;
@@ -295,18 +267,16 @@ export class HomeService {
     return this.change(deviceId, actor, (before) => {
       const next = copy(before);
       const section = sectionIn(next, sectionId);
-      if (section.id === UNTITLED_SECTION) throw new HttpError(400, "untitled_section", "the untitled section cannot be deleted");
+      if (section.id === UNTITLED_SECTION) throw untitledError("the untitled section cannot be deleted");
       sectionIn(next, UNTITLED_SECTION).itemIds.push(...section.itemIds);
       return next.filter((s) => s !== section);
     });
   }
 
   /**
-   * Every change to a Home, in one transaction: `edit` turns the sections as they are into what they become, which
-   * must hold at most HOME_MAX_ITEMS items, each once, and at most HOME_MAX_SECTIONS sections besides the untitled
-   * one. Only items new to the list must be in the catalog and playable: one a catalog reload left missing or
-   * unplayable may stay (the TV hides it), so the list can still be reordered or shortened. Emits `home.changed`
-   * (`itemIds` in Home order) and returns the new state version.
+   * Every change to a Home, in one transaction: `edit` turns the sections into what they become, checked against the
+   * limits. Only items new to the list must be in the catalog and playable: one a catalog reload left missing or
+   * unplayable may stay (the TV hides it), so the list can still be reordered or shortened. Returns the new version.
    */
   private change(deviceId: string, actor: Actor, edit: (before: Section[]) => Section[]): number {
     this.s.store.transaction(() => {
@@ -316,11 +286,8 @@ export class HomeService {
       if (itemIds.length > HOME_MAX_ITEMS) {
         throw new HttpError(400, "too_many_items", `a home list holds at most ${HOME_MAX_ITEMS} items`, { max: HOME_MAX_ITEMS });
       }
-      const seen = new Set<string>();
-      for (const id of itemIds) {
-        if (seen.has(id)) throw new HttpError(400, "duplicate_item", "an item appears twice", { itemId: id });
-        seen.add(id);
-      }
+      const duplicate = itemIds.find((id, i) => itemIds.indexOf(id) !== i);
+      if (duplicate !== undefined) throw new HttpError(400, "duplicate_item", "an item appears twice", { itemId: duplicate });
       if (next.filter((s) => s.id !== UNTITLED_SECTION).length > HOME_MAX_SECTIONS) {
         throw new HttpError(400, "too_many_sections", `a Home has at most ${HOME_MAX_SECTIONS} sections besides the untitled one`, { max: HOME_MAX_SECTIONS });
       }
@@ -332,12 +299,12 @@ export class HomeService {
         if (!isPlayable(item)) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed, or is a channel whose playback is not allowed", { itemId: id });
       }
       this.s.store.setHome(deviceId, this.s.catalog.catalogId, next, this.s.now());
-      this.s.eventLog.append("home.changed", deviceId, actor, { itemIds, added: itemIds.filter((id) => !was.has(id)), removed: [...was].filter((id) => !seen.has(id)) });
+      const removed = [...was].filter((id) => !itemIds.includes(id));
+      this.s.eventLog.append("home.changed", deviceId, actor, { itemIds, added: itemIds.filter((id) => !was.has(id)), removed });
     });
     return this.s.notifier.bump(deviceId);
   }
 
-  /** 409 `home_changed`, with the Home as it is now. */
   private changed(before: Section[]): HttpError {
     return new HttpError(409, "home_changed", "the home list changed in the meantime", { itemIds: flat(before), sections: before });
   }
@@ -377,7 +344,6 @@ export class HomeService {
     return this.s.notifier.bump(deviceId);
   }
 
-  /** What the device saved about one item, a few queries. */
   private itemFacts(deviceId: string, itemId: string): ItemFacts {
     const { store, catalog } = this.s;
     const catalogId = catalog.catalogId;
@@ -388,17 +354,13 @@ export class HomeService {
     };
   }
 
-  /**
-   * The same facts for every item of a device's home list (up to HOME_MAX_ITEMS), read in three queries rather than
-   * a few per item.
-   */
+  /** The same facts for every item of a device's home list, read in three queries rather than a few per item. */
   private homeFacts(deviceId: string): (itemId: string) => ItemFacts {
     const { store, catalog } = this.s;
     const catalogId = catalog.catalogId;
     const progress = new Map<string, Map<string, Progress>>();
     for (const p of store.listProgress(deviceId, catalogId)) {
-      const byEpisode = progress.get(p.itemId) ?? new Map<string, Progress>();
-      progress.set(p.itemId, byEpisode.set(p.episodeId, p));
+      progress.set(p.itemId, (progress.get(p.itemId) ?? new Map<string, Progress>()).set(p.episodeId, p));
     }
     const cursors = new Map(store.listCursors(deviceId, catalogId).map((c) => [c.itemId, c]));
     const seen = store.listSeen(catalogId);
@@ -409,10 +371,7 @@ export class HomeService {
     });
   }
 
-  /**
-   * The episode OK would play for this item and where it would start. Null when nothing is playable. After the
-   * item was watched to the end (a wrapped cursor), episodes the catalog gained since then come first.
-   */
+  /** After the item was watched to the end (a wrapped cursor), episodes the catalog gained since then come first. */
   private continueWith(item: EpisodicItem, facts: ItemFacts): Continue | null {
     const { progress, cursor } = facts;
     const appended = cursor?.wrapped ? new Set(facts.seenAfter(cursor.updatedAt)) : undefined;
@@ -428,12 +387,11 @@ export class HomeService {
 
   /**
    * How many episodes of the item with playbackAllowed entered the catalog after both the device's last progress
-   * report on the item and the moment the item went on its home list (`addedAt`). Episodes of the first load of
-   * the catalog (the history's baseline) never count.
+   * report on the item and the moment the item went on its home list. The history's baseline never counts.
    */
-  private newEpisodesWith(item: EpisodicItem, addedAt: number | null, facts: ItemFacts): number {
+  private newEpisodesWith(item: EpisodicItem, addedAt: number, facts: ItemFacts): number {
     const lastProgressAt = Math.max(0, ...[...facts.progress.values()].map((p) => p.updatedAt));
-    const added = facts.seenAfter(Math.max(lastProgressAt, addedAt ?? 0));
+    const added = facts.seenAfter(Math.max(lastProgressAt, addedAt));
     const allowed = new Set(item.episodes.filter((e) => e.playbackAllowed).map((e) => e.id));
     return added.filter((id) => allowed.has(id)).length;
   }

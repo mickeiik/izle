@@ -12,6 +12,7 @@ import io.github.mickeiik.izle.data.api.EpisodeDetails
 import io.github.mickeiik.izle.data.api.EpisodeRef
 import io.github.mickeiik.izle.data.api.ItemCard
 import io.github.mickeiik.izle.data.api.NextEpisode
+import io.github.mickeiik.izle.data.api.ProgressReport
 import io.github.mickeiik.izle.data.api.ProgressStatus
 import io.github.mickeiik.izle.data.api.ResolveResponse
 import io.github.mickeiik.izle.data.api.orNullOnFailure
@@ -49,7 +50,7 @@ sealed interface PlayerPhase {
     /** "The end", then Home. */
     data object Finished : PlayerPhase
 
-    /** "Can't play right now" with Try again / Home, then Home on its own after [secondsLeft]. */
+    /** "Can't play right now", then Home on its own after [secondsLeft]. */
     data class Failed(val secondsLeft: Int) : PlayerPhase
 }
 
@@ -66,19 +67,15 @@ data class PlayerUi(
     val durationMs: Long? = null,
     val seekPreviewMs: Long? = null,
     val cues: String? = null,
-    /**
-     * A channel: its name and "Live" instead of the episode, position and times; no pause. Decided by the item's kind
-     * (the home tile's, then the resolve answer's), never by the stream's format.
-     */
+    /** A channel (decided by the item's kind, never by the stream's format): its name and "Live", no pause. */
     val live: Boolean = false,
 )
 
 /**
- * Plays one episode or channel at a time: resolve → play → heartbeat → auto-next, with source fallback on errors, a
- * refresh of expiring stream URLs and CH+/CH− episode steps. A channel (docs/ux/senior-tv.md, "Live channels") starts
- * at its live edge, is never paused, sought or finished, and when its stream ends or fails it is resolved again and
- * restarted at the live edge before the source fallback. All methods run on the main thread. Progress reports go
- * through one ordered queue in [reportScope], which outlives the screen.
+ * Plays one episode or channel at a time: resolve → play → heartbeat → auto-next, with source fallback, a refresh of
+ * expiring stream URLs and CH+/CH− episode steps. A channel is never paused, sought or finished: when its stream ends
+ * or fails it is resolved again at the live edge before the source fallback (docs/ux/senior-tv.md, "Live channels").
+ * Main thread; progress reports go through one ordered queue in [reportScope], which outlives the screen.
  */
 class PlaybackController(
     private val engine: MediaEngine,
@@ -86,11 +83,9 @@ class PlaybackController(
     reportScope: CoroutineScope,
     private val repository: ServerRepository,
     private val problems: ProblemReporter,
-    /** The owner's `play` commands report once their playback runs or fails. */
     private val commandResults: CommandResultReporter,
     private val appVersion: String,
     private val onExit: () -> Unit,
-    /** A playback reached its first frame. */
     private val onPlaybackStarted: (ItemCard) -> Unit,
     private val clock: () -> Long = SystemClock::elapsedRealtime,
 ) {
@@ -100,32 +95,28 @@ class PlaybackController(
     private val _player = MutableStateFlow<Player?>(null)
     val player: StateFlow<Player?> = _player.asStateFlow()
 
-    /** Loaded for this visit, independently of whether the engine has a renderable surface. */
+    /** Loaded for this visit, whether or not the engine has a renderable surface. */
     private var activeEngine: MediaEngine? = null
 
     private class Session(val api: ApiClient, val resolved: ResolveResponse) {
-        /** A channel's session: its reports name the item and carry no position. */
         val live: Boolean get() = resolved.item.isLive
     }
 
-    /** An owner command [id] from [api]'s server, waiting for its result. */
     private class PendingCommand(val api: ApiClient, val id: Long)
 
     private var session: Session? = null
-
-    /** The episode or channel this player visit plays (loading, playing or on its end screens). */
     private var target: PlayableRef? = null
 
-    /** Who started this playback: every resolve made for it (fallback, expiry refresh, Try again) says so. */
+    /** Goes with every resolve made for this playback (fallback, expiry refresh, Try again). */
     private var origin = PlaybackOrigin.Viewer
 
-    /** The owner's `play` command this playback answers once it runs or fails; null when none, or answered. */
+    /** The owner's `play` command this playback answers once it runs or fails. */
     private var playCommand: PendingCommand? = null
     private val attempts = SourceAttempts()
     private var readyAt: Long? = null
     private var reported = false
 
-    /** Where Try again restarts; null = from the server's saved position under the resume rules (a channel: always). */
+    /** Where Try again restarts; null = under the resume rules (a channel: always). */
     private var lastPositionMs: Long? = null
     private val seek = SeekAccumulator()
 
@@ -136,37 +127,26 @@ class PlaybackController(
     private var expiryJob: Job? = null
     private var stepJob: Job? = null
 
-    /** When this playback last re-resolved its stream ahead of the expiry on [clock], for the 60 s spacing. */
+    /** For the 60 s spacing of refreshes ahead of the expiry. */
     private var lastRefreshAt: Long? = null
 
-    /** CH+/CH−: the items' episode lists, fetched on first use and kept for this player visit. */
+    /** CH+/CH−: the items' episode lists, kept for this player visit. */
     private val episodeLists = mutableMapOf<String, List<EpisodeDetails>>()
 
-    private val reporter = ProgressReporter(
-        reportScope,
-        send = { api, report -> api.progress(report) },
-        onFinalDelivered = repository::refreshSoon,
-        clock = clock,
-    )
+    private val reporter = ProgressReporter(reportScope, { api, report -> api.progress(report) }, repository::refreshSoon, clock)
 
-    /** A player visit is on (loading, playing or one of its end screens). */
     val inUse: Boolean get() = _ui.value.phase != PlayerPhase.Idle
 
-    /**
-     * The channel loading, playing or on its error screen, which CH+/CH− zap from (a dead channel is left like any
-     * other, by changing channels); null otherwise (an episode, Idle, nothing).
-     */
+    /** The channel CH+/CH− zap from: loading, playing or on its error screen (a dead channel is left by zapping). */
     val zappableChannelId: String?
         get() = (target as? PlayableRef.Channel)?.itemId?.takeIf {
             _ui.value.phase.let { it == PlayerPhase.Playing || it == PlayerPhase.Loading || it is PlayerPhase.Failed }
         }
 
     /**
-     * Plays [ref]: an episode from [startAtMs], or from the server's saved position under the resume rules when null;
-     * a channel at its live edge ([startAtMs] does not apply). [hint] (the home tile's item) and [episodeHint] are
-     * shown while the stream is being resolved. [origin] goes with every resolve of this playback; with [playCommand],
-     * it is the owner's `play` command whose result this playback reports: `done` at its first frame, `failed` on
-     * "Can't play right now", `ignored` when left or replaced first.
+     * Plays [ref]: an episode from [startAtMs] (null: under the resume rules), a channel at its live edge. [hint] and
+     * [episodeHint] show while resolving. With [playCommand], [origin]'s command gets this playback's result: `done`
+     * at its first frame, `failed` on "Can't play right now", `ignored` when left or replaced first.
      */
     fun play(
         ref: PlayableRef,
@@ -207,7 +187,7 @@ class PlaybackController(
         resolveJob = scope.launch { resolveAndStart(api, ref, origin, sourceId = null, startAtMs = start) }
     }
 
-    /** Leaves the player: reports where the viewer stopped, releases the decoder, goes Home. */
+    /** Reports where the viewer stopped, releases the decoder, goes Home. */
     fun exit() {
         stop()
         onExit()
@@ -220,10 +200,8 @@ class PlaybackController(
         stepJob?.cancel()
         cancelOverlays()
         endSession()
-        activeEngine?.let {
-            it.setListener(null)
-            it.release()
-        }
+        activeEngine?.setListener(null)
+        activeEngine?.release()
         activeEngine = null
         _player.value = null
         target = null
@@ -231,10 +209,7 @@ class PlaybackController(
         _ui.value = PlayerUi()
     }
 
-    /**
-     * Try again: continues the failed playback, with its origin (a `play` command's result was already sent); a channel
-     * restarts at its live edge.
-     */
+    /** Try again, with the same origin (a `play` command's result was already sent). */
     fun retry() {
         val ref = target ?: return exit()
         play(ref, origin, startAtMs = lastPositionMs)
@@ -245,22 +220,18 @@ class PlaybackController(
         play(PlayableRef.Episode(phase.next.episodeId), PlaybackOrigin.Next)
     }
 
-    /** OK while an episode plays. A channel has no pause: see [showChannelInfo]. */
+    /** OK while an episode plays (a channel has [showChannelInfo]). */
     fun togglePause() {
         val p = activeEngine ?: return
         if (_ui.value.phase == PlayerPhase.Playing) setPlaying(!p.playWhenReady)
     }
 
-    /** Never on a channel. */
     fun pause() = setPlaying(false)
 
-    /** Plays on; on a channel only a pause the system made (lost audio focus) has anything to undo. */
+    /** On a channel only a pause the system made (lost audio focus) has anything to undo. */
     fun resume() = setPlaying(true)
 
-    /**
-     * OK on a channel: the information (its name and "Live"), and the picture goes on if the system paused it (a
-     * channel has no pause the viewer could undo otherwise).
-     */
+    /** OK on a channel: the information, and the picture goes on if the system paused it. */
     fun showChannelInfo() {
         resume()
         showInfo()
@@ -274,7 +245,7 @@ class PlaybackController(
         showInfo()
     }
 
-    /** Start over (the hidden menu, never over a channel). */
+    /** The hidden menu's Start over, never over a channel. */
     fun startOver() {
         val p = activeEngine ?: return
         if (_ui.value.live) return
@@ -285,10 +256,12 @@ class PlaybackController(
         showInfo()
     }
 
-    /** Left/Right DOWN (first press or key repeat); a channel is not sought. */
+    /** The engine while an episode (never a channel) plays and can be sought. */
+    private fun seekable(): MediaEngine? = activeEngine?.takeIf { _ui.value.phase == PlayerPhase.Playing && !_ui.value.live }
+
+    /** Left/Right DOWN (first press or key repeat). */
     fun onSeekKeyDown(direction: Int, eventTimeMs: Long, downTimeMs: Long, repeatCount: Int) {
-        val p = activeEngine ?: return
-        if (_ui.value.phase != PlayerPhase.Playing || _ui.value.live) return
+        val p = seekable() ?: return
         val preview = seek.onKeyDown(direction, eventTimeMs, downTimeMs, repeatCount, p.positionMs, p.durationMs) ?: return
         _ui.update { it.copy(seekPreviewMs = preview) }
         showInfo()
@@ -299,10 +272,9 @@ class PlaybackController(
         seekNow(p, seek.commit() ?: return)
     }
 
-    /** The owner's seek command, shown like a key press (never on a channel). */
+    /** The owner's seek command, shown like a key press. */
     fun seekRemote(command: RemoteCommand.Seek) {
-        val p = activeEngine ?: return
-        if (_ui.value.phase != PlayerPhase.Playing || _ui.value.live) return
+        val p = seekable() ?: return
         seek.cancel()
         seekNow(p, command.targetMs(p.positionMs.coerceAtLeast(0), p.durationMs ?: _ui.value.durationMs))
     }
@@ -315,10 +287,9 @@ class PlaybackController(
     }
 
     /**
-     * CH+/CH− (also |◀◀ ▶▶| and the owner's next/previous): ends the episode as Back does and plays the nearest
-     * playable one after ([direction] > 0) or before it, under the normal resume rules, as [origin]. At either end only
-     * the info overlay appears. Presses while the episode list is being fetched are ignored. [onResult] says, once
-     * and maybe later, whether it stepped (`done`) or why not: an owner command's result.
+     * CH+/CH− (also |◀◀ ▶▶| and the owner's next/previous): ends the episode as Back does and plays the nearest playable
+     * one after ([direction] > 0) or before it, as [origin]; at either end only the info overlay appears. Presses while
+     * the episode list is being fetched are ignored. [onResult] gets, maybe later, `done` or why not.
      */
     fun stepEpisode(direction: Int, origin: PlaybackOrigin, onResult: (CommandResult) -> Unit = {}) {
         val notInPlayer = CommandResult.ignored(CommandResult.NOT_IN_PLAYER)
@@ -352,7 +323,6 @@ class PlaybackController(
         }
     }
 
-    /** Plays the neighbour of [current] in [direction] (`done`); without one, shows the info overlay (`no_episode`). */
     private fun stepTo(episodes: List<EpisodeDetails>, current: String, direction: Int, item: ItemCard, origin: PlaybackOrigin): CommandResult {
         val next = EpisodeSteps.neighbour(episodes, current, direction) ?: run {
             showInfo()
@@ -372,15 +342,13 @@ class PlaybackController(
 
     /** null = subtitles off. */
     fun selectText(option: TrackOption?) {
-        val p = activeEngine ?: return
-        p.selectText(option)
+        activeEngine?.selectText(option) ?: return
         if (option == null) _ui.update { it.copy(cues = null) }
     }
 
     /**
-     * Resolves and starts playback: an episode at [startAtMs] (null: under the resume rules), a channel at its live
-     * edge. [sourceId] pins one source (re-resolving an expired URL, or a channel's stream that ended or failed); when
-     * that fails the remaining alternatives are tried unpinned.
+     * [sourceId] pins one source (an expired URL, or a channel's stream that broke off); when that fails the remaining
+     * alternatives are tried unpinned.
      */
     private suspend fun resolveAndStart(
         api: ApiClient,
@@ -410,7 +378,6 @@ class PlaybackController(
         if (!live && episode == null) return showFailed(reason = "then the answer named no episode")
         val media = mediaSpecFor(api, resolved) ?: return showFailed(reason = "then the media address was unusable")
         val resume = resolved.resume
-        // A channel: no position, the live edge.
         val start = if (live) null else startAtMs ?: PlaybackPlan.resumePositionMs(resume?.positionMs, resume?.durationMs ?: episode?.durationMs)
         session = Session(api, resolved)
         readyAt = null
@@ -447,23 +414,17 @@ class PlaybackController(
         if (e is ApiException && e.status == 401) repository.refreshSoon() // the next state fetch notices the removal
     }
 
-    /** The engine's media specification, with server-relative addresses made absolute. */
+    /** With server-relative addresses made absolute. */
     private fun mediaSpecFor(api: ApiClient, resolved: ResolveResponse): MediaSpec? {
         val mediaUrl = api.resolve(resolved.media.url) ?: return null
         val subtitles = resolved.subtitleTracks.mapNotNull { track ->
-            val url = api.resolve(track.url) ?: return@mapNotNull null
-            SubtitleSpec(url.toString(), track.language, track.format, track.label)
+            api.resolve(track.url)?.let { SubtitleSpec(it.toString(), track.language, track.format, track.label) }
         }
-        return MediaSpec(
-            mediaUrl.toString(), resolved.media.kind, subtitles, resolved.episode?.id ?: resolved.item.id,
-            live = resolved.item.isLive,
-        )
+        val mediaId = resolved.episode?.id ?: resolved.item.id
+        return MediaSpec(mediaUrl.toString(), resolved.media.kind, subtitles, mediaId, live = resolved.item.isLive)
     }
 
-    /**
-     * Re-resolves the playing source shortly before its URL expires (see [ExpiryPlan]), again after each refresh.
-     * One loop per resolved session: a new resolve, an episode change, the end or leaving cancels it.
-     */
+    /** Re-resolves the playing source shortly before its URL expires (see [ExpiryPlan]); one loop per session. */
     private fun watchExpiry(api: ApiClient, resolved: ResolveResponse, receivedAt: Long) {
         expiryJob?.cancel()
         val first = expiryDeadline(resolved, receivedAt) ?: return
@@ -478,14 +439,12 @@ class PlaybackController(
         }
     }
 
-    /** When the answer's stream expires, on [clock]; null without (a readable) `expiresAt`. */
     private fun expiryDeadline(resolved: ResolveResponse, receivedAt: Long): Long? =
         ExpiryPlan.validForMs(resolved.expiresAt, resolved.serverDateMs, System.currentTimeMillis())?.let { receivedAt + it }
 
     /**
-     * Resolves the same source again (pinned, no `exclude`) while playing or paused, with one retry 30 s after a
-     * network or server failure. Returns the new stream's expiry, or null to stop (the session changed, no expiry, or
-     * it failed for good: the 403/410 path takes over when the URL expires).
+     * Resolves the same source again (pinned) while playing or paused, with one retry after a network or server
+     * failure. Returns the new expiry, or null to stop: the 403/410 path takes over when the URL expires.
      */
     private suspend fun refreshBeforeExpiry(api: ApiClient, deadline: Long): Long? {
         var retried = false
@@ -515,8 +474,7 @@ class PlaybackController(
 
     /**
      * Progress goes to the re-resolved session; the media is swapped only when its URL changed, `playWhenReady`
-     * untouched: at the current position, or for a channel at the live edge. The last unpinned resolve's fallback order
-     * stays.
+     * untouched. The last unpinned resolve's fallback order stays.
      */
     private fun adoptRefreshed(api: ApiClient, old: Session, resolved: ResolveResponse) {
         session = Session(api, resolved)
@@ -547,34 +505,19 @@ class PlaybackController(
 
         override fun onEnded() { activeEngine?.let(this@PlaybackController::onEnded) }
 
-        override fun onPlayWhenReadyChanged(playWhenReady: Boolean) {
-            activeEngine?.let(::syncFlags)
-        }
+        // A stall, its end, a pause or a resume: "Listen along" follows this anchor (a stall is "playing", playing=false).
+        override fun onIsPlayingChanged(isPlaying: Boolean) { activeEngine?.let(::reportLive) }
 
-        // A rebuffer stall, its end, a pause or a resume: the phone's "Listen along" follows this anchor, so report
-        // at once (a stall is status "playing" with playing=false).
-        override fun onIsPlayingChanged(isPlaying: Boolean) {
-            activeEngine?.let(::reportLive)
-        }
-
-        override fun onStateChanged() {
-            activeEngine?.let(::syncFlags)
-        }
+        override fun onStateChanged() { activeEngine?.let(::syncFlags) }
 
         override fun onError(error: MediaError) = this@PlaybackController.onError(error)
 
-        override fun onCues(text: String?) {
-            _ui.update { it.copy(cues = text) }
-        }
+        override fun onCues(text: String?) = _ui.update { it.copy(cues = text) }
     }
 
     private fun syncFlags(p: MediaEngine) = _ui.update {
-        it.copy(
-            playWhenReady = p.playWhenReady,
-            buffering = p.buffering,
-            // A live stream's duration is its window, nothing to show.
-            durationMs = if (it.live) null else p.durationMs ?: it.durationMs,
-        )
+        // A live stream's duration is its window, nothing to show.
+        it.copy(playWhenReady = p.playWhenReady, buffering = p.buffering, durationMs = if (it.live) null else p.durationMs ?: it.durationMs)
     }
 
     private fun onEnded(p: MediaEngine) {
@@ -605,26 +548,20 @@ class PlaybackController(
     }
 
     private fun onError(error: MediaError) {
-        val p = activeEngine
         val s = session
-        val live = _ui.value.live
-        val position = p?.positionMs?.coerceAtLeast(0) ?: lastPositionMs ?: 0
-        val httpStatus = error.httpStatus
-        problems.send(
-            Problems.playbackError(
-                error.cause, error.codeName, httpStatus, target, s?.resolved?.sourceId, s?.resolved?.sessionId,
-                position.takeIf { !live }, appVersion,
-            ),
-            api = s?.api,
+        val position = activeEngine?.positionMs?.coerceAtLeast(0) ?: lastPositionMs ?: 0
+        val problem = Problems.playbackError(
+            error.cause, error.codeName, error.httpStatus, target, s?.resolved?.sourceId, s?.resolved?.sessionId,
+            position.takeIf { !_ui.value.live }, appVersion,
         )
+        problems.send(problem, api = s?.api)
         if (s == null || target == null) return showFailed()
-        recover(s, httpStatus, position)
+        recover(s, error.httpStatus, position)
     }
 
     /**
-     * The playing source failed (a channel: or its stream ended or fell behind the live window): the same source
-     * again, the next alternative or "Can't play right now" ([SourceAttempts.afterPlaybackError]). An episode goes on
-     * at [positionMs]; a channel restarts at its live edge.
+     * The playing source failed (a channel: or its stream ended): the same source again, the next alternative or "Can't
+     * play right now" ([SourceAttempts.afterPlaybackError]). An episode goes on at [positionMs], a channel at its live edge.
      */
     private fun recover(s: Session, httpStatus: Int?, positionMs: Long) {
         val ref = target ?: return showFailed()
@@ -643,10 +580,7 @@ class PlaybackController(
         }
     }
 
-    /**
-     * Re-resolves silently (the last frame or the spinner stays) and goes on at [positionMs], paused if it was; a
-     * channel (no position) starts again at its live edge.
-     */
+    /** Re-resolves silently (the last frame or the spinner stays), paused if it was. */
     private fun relaunch(api: ApiClient, ref: PlayableRef, sourceId: String?, positionMs: Long?) {
         val playWhenReady = activeEngine?.playWhenReady ?: true
         resolveJob?.cancel()
@@ -673,7 +607,7 @@ class PlaybackController(
         }
     }
 
-    /** The information for a few seconds (as after a key press); at the first or last channel or episode, only this. */
+    /** The information for a few seconds (as after a key press). */
     fun showInfo() {
         _ui.update { it.copy(showInfo = true, positionMs = activeEngine?.positionMs ?: it.positionMs) }
         infoJob?.cancel()
@@ -710,10 +644,7 @@ class PlaybackController(
         report(s, status, p.positionMs, p.durationMs ?: _ui.value.durationMs, playing = p.isPlaying)
     }
 
-    /**
-     * Reports where the viewer left the current episode (stopped, or finished within the end threshold), or that the
-     * channel was left (stopped).
-     */
+    /** Reports where the viewer left the episode (stopped, or finished within the end threshold), or the channel. */
     private fun endSession() {
         val s = session
         val p = activeEngine
@@ -729,21 +660,21 @@ class PlaybackController(
         seek.cancel()
     }
 
-    /** Sends the waiting `play` command's [result], if any; a command gets one result. */
+    /** A command gets one result. */
     private fun answerPlayCommand(result: CommandResult) {
         val command = playCommand ?: return
         playCommand = null
         commandResults.report(command.api, command.id, result)
     }
 
-    /** An episode's report carries [positionMs] and [durationMs]; a channel's only its item and [status]. */
     private fun report(s: Session, status: ProgressStatus, positionMs: Long, durationMs: Long?, playing: Boolean) {
         val episode = s.resolved.episode
-        if (s.live || episode == null) {
-            reporter.reportChannel(s.api, s.resolved.sessionId, s.resolved.item.id, status, playing)
+        val report = if (s.live || episode == null) {
+            ProgressReport.channel(s.resolved.sessionId, s.resolved.item.id, status, playing)
         } else {
-            reporter.report(s.api, s.resolved.sessionId, episode.id, status, positionMs, durationMs, playing)
+            ProgressReport.episode(s.resolved.sessionId, episode.id, status, positionMs, durationMs, playing)
         }
+        reporter.enqueue(s.api, report)
     }
 
     /** Up next's countdown, "The end"'s pause or the error screen's countdown, replacing the one before. */
@@ -752,7 +683,6 @@ class PlaybackController(
         overlayJob = scope.launch(block = block)
     }
 
-    /** The heartbeat and the refresh before the stream expires belong to one resolved session. */
     private fun stopSessionLoops() {
         heartbeatJob?.cancel()
         expiryJob?.cancel()

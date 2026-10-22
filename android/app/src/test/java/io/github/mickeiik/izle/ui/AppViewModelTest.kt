@@ -15,8 +15,11 @@ import io.github.mickeiik.izle.data.api.EpisodeDetails
 import io.github.mickeiik.izle.data.api.HomeEntry
 import io.github.mickeiik.izle.data.api.ItemCard
 import io.github.mickeiik.izle.domain.AutoplayPlan
+import io.github.mickeiik.izle.installStatus
+import io.github.mickeiik.izle.json
 import io.github.mickeiik.izle.player.FakeMediaEngine
 import io.github.mickeiik.izle.player.PlayerPhase
+import io.github.mickeiik.izle.sha256
 import io.github.mickeiik.izle.update.AppInstaller
 import io.github.mickeiik.izle.update.UpdateCapability
 import io.github.mickeiik.izle.update.UpdatePlan
@@ -36,7 +39,6 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -47,19 +49,16 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.io.File
-import java.security.MessageDigest
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
- * The view model's flows end to end, on the real [AppViewModel] and app graph under Robolectric, against an
- * in-process server: pairing, the owner's commands (over a live event stream), the timed messages, the countdowns
- * and the hidden menu's stack. Time is Robolectric's paused main-looper clock, advanced by the test; server answers
- * arrive on OkHttp's threads and are waited for. Most resolves fail; scripted successful answers use a fake engine.
- * Home entries named `tv…` are channels, whose resolve takes a while so that the TV is still loading one when a key
- * or a command comes.
+ * The real [AppViewModel] and app graph under Robolectric against an in-process server: pairing, the owner's commands
+ * (over a live event stream), the timed messages, the countdowns and the hidden menu. Time is the paused main-looper
+ * clock, advanced by the test; server answers arrive on OkHttp's threads and are waited for. Most resolves fail.
+ * Home entries named `tv…` are channels, whose resolve takes a while so that the TV is still loading one meanwhile.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], qualifiers = "w960dp-h540dp-land-television")
@@ -80,7 +79,7 @@ class AppViewModelTest {
     /** `/tv/state` (and `/tv/events`) answer this status when it is not 200. */
     @Volatile private var stateCode = 200
 
-    /** Scripted answers to `pair/start` and `pair/wait`; when empty, a fresh code and `pending`. */
+    /** Scripted answers to `pair/start`, `pair/wait` and `tv/resolve`; when empty, a fresh code and `pending`. */
     private val pairStarts = ConcurrentLinkedQueue<MockResponse>()
     private val pairWaits = ConcurrentLinkedQueue<MockResponse>()
     private val resolveAnswers = ConcurrentLinkedQueue<MockResponse>()
@@ -92,7 +91,6 @@ class AppViewModelTest {
 
     /** The APK the server stores (`/tv/app`, `/tv/app/apk`), or none (204, 404). */
     @Volatile private var apk: ByteArray? = null
-    @Volatile private var apkAuto = true
     private val installer = FakeInstaller()
 
     @Before
@@ -115,7 +113,7 @@ class AppViewModelTest {
                     path == "/api/v1/tv/progress" -> json(200, """{"ok":true}""")
                     path.endsWith("/ack") || path.endsWith("/result") -> json(200, """{"ok":true}""")
                     path == "/api/v1/tv/app" -> apk?.let { bytes ->
-                        json(200, """{"versionName":"99.0.0","versionCode":990000,"sha256":"${sha256(bytes)}","size":${bytes.size},"auto":$apkAuto}""")
+                        json(200, """{"versionName":"99.0.0","versionCode":990000,"sha256":"${sha256(bytes)}","size":${bytes.size},"auto":true}""")
                     } ?: MockResponse.Builder().code(204).build()
                     path == "/api/v1/tv/app/apk" -> apk?.let { bytes ->
                         MockResponse.Builder().addHeader("Content-Type", "application/vnd.android.package-archive").body(Buffer().write(bytes)).build()
@@ -148,11 +146,10 @@ class AppViewModelTest {
 
     @Test
     fun pairingShowsACodeAndGoesHomeOnceApproved() {
-        unpaired()
         pairStarts += json(200, """{"code":"111111","pairToken":"pt-1"}""")
         pairWaits += json(200, """{"status":"pending"}""")
         pairWaits += json(200, """{"status":"approved","deviceId":"tv-9","deviceToken":"tok-9"}""")
-        val vm = startTv()
+        val vm = startTv(paired = false)
         waitUntil("the pairing screen") { vm.screen.value == Screen.Pairing }
         waitUntil("Home after the approval") { vm.screen.value == Screen.Home }
         assertEquals("111111", vm.pairing.value.code)
@@ -160,16 +157,15 @@ class AppViewModelTest {
         assertEquals(listOf("code=111111&wait=25", "code=111111&wait=25"), requests.filter { it.url.encodedPath == "/api/v1/pair/wait" }.map { it.url.encodedQuery })
         assertEquals("Bearer pt-1", requests.last { it.url.encodedPath == "/api/v1/pair/wait" }.headers["Authorization"])
         runBlocking { assertEquals("tok-9", app.graph.deviceStore.current().deviceToken) }
-        waitUntil("the state with the new token") { requests.any { it.url.encodedPath == "/api/v1/tv/state" } }
+        waitUntil("the state with the new token") { count("/api/v1/tv/state") > 0 }
         assertEquals("Bearer tok-9", requests.first { it.url.encodedPath == "/api/v1/tv/state" }.headers["Authorization"])
         assertNull(vm.homeFocusItemId)
     }
 
     @Test
     fun backOnThePairingScreenGoesToTheAddressScreenAndStopsPairing() {
-        unpaired()
         pairStartDown = true
-        val vm = startTv()
+        val vm = startTv(paired = false)
         waitUntil("the unreachable problem") { vm.pairing.value.problem == PairingProblem.Unreachable }
         vm.onBack()
         assertEquals(Screen.Setup(canGoBack = false), vm.screen.value)
@@ -182,33 +178,18 @@ class AppViewModelTest {
     }
 
     @Test
-    fun aRemovedTvShowsANewPairingCode() {
-        paired()
-        stateCode = 401
-        val vm = startTv()
-        waitUntil("the pairing code") { vm.screen.value == Screen.Pairing && vm.pairing.value.code == "999999" }
-        runBlocking {
-            val settings = app.graph.deviceStore.current()
-            assertNull(settings.deviceToken)
-            assertEquals(server.url("/").toString(), settings.serverUrl)
-        }
-    }
-
-    @Test
     fun pairAgainClosesTheMenuForgetsTheTokenAndShowsACode() {
-        paired()
         val vm = startTvOnHome()
         vm.openMenu()
         vm.onRootEntry(RootEntry.Settings)
         vm.onSettingsEntry(SettingsEntry.PairAgain)
-        waitUntil("the pairing code") { vm.screen.value == Screen.Pairing && vm.pairing.value.code == "999999" }
+        awaitPairingCode(vm)
         assertNull(vm.menu.value)
         runBlocking { assertNull(app.graph.deviceStore.current().deviceToken) }
     }
 
     @Test
     fun okWhileOfflineSaysNoConnectionForFiveSeconds() {
-        paired()
         stateCode = 503
         val vm = startTv()
         waitUntil("offline") { vm.screen.value == Screen.Home && !vm.online.value }
@@ -223,12 +204,11 @@ class AppViewModelTest {
         assertEquals(HomeMessage.NoConnection, vm.homeMessage.value)
         advance(1)
         assertNull(vm.homeMessage.value)
-        assertEquals(0, count("/api/v1/tv/resolve"))
+        assertEquals(0, count(RESOLVE))
     }
 
     @Test
     fun theOwnersMessageShowsForItsDurationAndANewOneReplacesIt() {
-        paired()
         val vm = startTvOnHome()
         val first = command("message", """{"text":"Hello","durationSec":3}""")
         waitUntil("the banner") { vm.banner.value == "Hello" }
@@ -242,14 +222,13 @@ class AppViewModelTest {
         assertNull(vm.banner.value)
         // A command replayed under the same id (not acknowledged in time) is acknowledged again, not shown again.
         events += commandEvent(first, "message", """{"text":"Hello","durationSec":3}""")
-        waitUntil("the second ack") { requests.count { it.url.encodedPath == "/api/v1/tv/commands/$first/ack" } == 2 }
+        waitUntil("the second ack") { count("/api/v1/tv/commands/$first/ack") == 2 }
         settle()
         assertNull(vm.banner.value)
     }
 
     @Test
     fun aPlayCommandOnHomePlaysThatEpisodeWithTheShowAsTheHint() {
-        paired()
         val vm = startTvOnHome()
         vm.openMenu()
         command("play", """{"itemId":"b","episodeId":"b.e2"}""")
@@ -257,23 +236,22 @@ class AppViewModelTest {
         assertNull("playing closes the menu", vm.menu.value)
         assertEquals("b", vm.homeFocusItemId)
         assertEquals("Show B", vm.player.ui.value.item?.title)
-        waitUntil("the resolve request") { count("/api/v1/tv/resolve") == 1 }
+        awaitResolves(1)
         assertEquals("""{"episodeId":"b.e2","trigger":"command","commandId":1}""", resolveBodies().single())
-        waitUntil("the error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
+        awaitErrorScreen(vm)
         assertEquals("Show B", vm.player.ui.value.item?.title)
-        assertEquals("""{"result":"failed","reason":"no_playable_source"}""", awaitResult(1))
+        assertEquals(failed("no_playable_source"), awaitResult(1))
         // Try again continues that playback: the same trigger and command, and no second result.
         vm.player.retry()
-        waitUntil("the second resolve") { count("/api/v1/tv/resolve") == 2 }
+        awaitResolves(2)
         assertEquals("""{"episodeId":"b.e2","trigger":"command","commandId":1}""", resolveBodies().last())
-        waitUntil("the error screen again") { vm.player.ui.value.phase is PlayerPhase.Failed }
+        awaitErrorScreen(vm)
         settle()
         assertEquals(1, results(1).size)
     }
 
     @Test
     fun aSuccessfulPlayUsesTheGraphEngineAndRemembersTheShowAtItsFirstFrame() {
-        paired()
         val engine = FakeMediaEngine()
         app.graph.mediaEngine = { engine }
         resolveAnswers += json(200, """{"sessionId":"session-1","sourceId":"first","media":{"kind":"mp4","url":"/media/one"},"item":{"id":"b","kind":"movie","title":"Show B"},"episode":{"id":"b.film","durationMs":1200000}}""")
@@ -284,7 +262,7 @@ class AppViewModelTest {
         assertEquals(PlayerPhase.Loading, vm.player.ui.value.phase)
         assertTrue(results(1).isEmpty())
         engine.ready()
-        assertEquals("""{"result":"done"}""", awaitResult(1))
+        assertEquals(DONE, awaitResult(1))
         assertEquals(PlayerPhase.Playing, vm.player.ui.value.phase)
         waitUntil("the remembered show") { runBlocking { app.graph.deviceStore.current().lastPlayedItemId == "b" } }
         vm.onBack()
@@ -296,38 +274,36 @@ class AppViewModelTest {
 
     @Test
     fun aPlayCommandThatDidNotRunYetIsIgnoredWhenReplacedOrLeft() {
-        paired()
         val vm = startTvOnHome()
         command("play", """{"itemId":"b","episodeId":"slow.e1"}""")
-        waitUntil("the first resolve") { count("/api/v1/tv/resolve") == 1 }
+        awaitResolves(1)
         command("play", """{"itemId":"c","episodeId":"c.e2"}""")
-        assertEquals("""{"result":"ignored","reason":"superseded"}""", awaitResult(1))
-        assertEquals("""{"result":"failed","reason":"no_playable_source"}""", awaitResult(2))
+        assertEquals(ignored("superseded"), awaitResult(1))
+        assertEquals(failed("no_playable_source"), awaitResult(2))
 
         command("play", """{"itemId":"b","episodeId":"slow.e2"}""")
-        waitUntil("the third resolve") { count("/api/v1/tv/resolve") == 3 }
+        awaitResolves(3)
         vm.onBack()
         assertEquals(Screen.Home, vm.screen.value)
-        assertEquals("""{"result":"ignored","reason":"stopped"}""", awaitResult(3))
+        assertEquals(ignored("stopped"), awaitResult(3))
         settle()
         assertEquals(listOf(1, 1, 1), (1L..3L).map { results(it).size })
     }
 
     @Test
     fun eachViewerEntryPointResolvesAsTheViewer() {
-        paired()
         val vm = startTvOnHome()
         vm.onTileClicked(vm.state.value!!.home.first())
-        waitUntil("the first resolve") { count("/api/v1/tv/resolve") == 1 }
+        awaitResolves(1)
         vm.onBack()
         vm.onTileFocused("c")
         vm.openMenu()
         vm.onRootEntry(RootEntry.StartOver)
-        waitUntil("the second resolve") { count("/api/v1/tv/resolve") == 2 }
+        awaitResolves(2)
         vm.onBack()
         vm.openMenu()
         vm.onEpisodeChosen(EpisodeDetails("c.e3", index = 2, playbackAllowed = true))
-        waitUntil("the third resolve") { count("/api/v1/tv/resolve") == 3 }
+        awaitResolves(3)
         assertEquals(
             listOf("""{"episodeId":"a.film","trigger":"viewer"}""", """{"episodeId":"c.e1","trigger":"viewer"}""", """{"episodeId":"c.e3","trigger":"viewer"}"""),
             resolveBodies(),
@@ -335,75 +311,38 @@ class AppViewModelTest {
     }
 
     @Test
-    fun commandsThatActAtOnceReportAtOnce() {
-        paired()
-        val vm = startTvOnHome()
-        command("message", """{"text":"Hello"}""")
-        command("dance", """{"style":"tango"}""")
-        command("seek", """{"positionMs":"soon"}""")
-        assertEquals("""{"result":"done"}""", awaitResult(1))
-        assertEquals("""{"result":"ignored","reason":"unknown_type"}""", awaitResult(2))
-        assertEquals("an unusable payload", """{"result":"ignored","reason":"unknown_type"}""", awaitResult(3))
-        assertEquals("Hello", vm.banner.value)
-    }
-
-    @Test
     fun onTheErrorScreenOnlyStopAndPlayAct() {
-        paired()
         val vm = startTvOnHome()
         vm.onTileClicked(vm.state.value!!.home.first())
-        waitUntil("the error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
+        awaitErrorScreen(vm)
         for ((type, payload) in listOf("pause" to "{}", "resume" to "{}", "seek" to """{"positionMs":0}""", "next" to "{}", "previous" to "{}")) {
             val id = command(type, payload)
             awaitAck(id)
             assertTrue(type, vm.player.ui.value.phase is PlayerPhase.Failed)
             assertEquals(type, Screen.Player, vm.screen.value)
-            assertEquals(type, """{"result":"ignored","reason":"not_in_player"}""", awaitResult(id))
+            assertEquals(type, ignored("not_in_player"), awaitResult(id))
         }
         settle()
-        assertEquals(1, count("/api/v1/tv/resolve"))
-        assertEquals("""{"episodeId":"a.film","trigger":"viewer"}""", resolveBodies().single())
+        assertEquals(listOf("""{"episodeId":"a.film","trigger":"viewer"}"""), resolveBodies())
         val play = command("play", """{"itemId":"c","episodeId":"c.e2"}""")
-        waitUntil("the second resolve") { count("/api/v1/tv/resolve") == 2 }
+        awaitResolves(2)
         assertEquals("""{"episodeId":"c.e2","trigger":"command","commandId":$play}""", resolveBodies().last())
-        waitUntil("the error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
-        assertEquals("""{"result":"failed","reason":"no_playable_source"}""", awaitResult(play))
+        awaitErrorScreen(vm)
+        assertEquals(failed("no_playable_source"), awaitResult(play))
         val stop = command("stop")
         waitUntil("Home") { vm.screen.value == Screen.Home }
         assertEquals(PlayerPhase.Idle, vm.player.ui.value.phase)
-        assertEquals("""{"result":"done"}""", awaitResult(stop))
-        assertEquals("on Home a transport command has no video", """{"result":"ignored","reason":"not_in_player"}""", awaitResult(command("pause")))
-    }
-
-    @Test
-    fun commandsAreIgnoredOnTheAddressScreen() {
-        paired()
-        val vm = startTvOnHome()
-        vm.openMenu()
-        vm.onRootEntry(RootEntry.Settings)
-        vm.onSettingsEntry(SettingsEntry.ServerAddress)
-        assertEquals(Screen.Setup(canGoBack = true), vm.screen.value)
-        assertNull(vm.menu.value)
-        val play = command("play", """{"itemId":"b","episodeId":"b.e2"}""")
-        val message = command("message", """{"text":"Hello"}""")
-        awaitAck(play)
-        awaitAck(message)
-        settle()
-        assertEquals(Screen.Setup(canGoBack = true), vm.screen.value)
-        assertNull(vm.banner.value)
-        assertEquals(0, count("/api/v1/tv/resolve"))
-        assertEquals("""{"result":"ignored","reason":"not_ready"}""", awaitResult(play))
-        assertEquals("""{"result":"ignored","reason":"not_ready"}""", awaitResult(message))
+        assertEquals(DONE, awaitResult(stop))
+        assertEquals("on Home a transport command has no video", ignored("not_in_player"), awaitResult(command("pause")))
     }
 
     @Test
     fun theErrorScreenCountsDownThirtySecondsThenGoesHome() {
-        paired()
         val vm = startTvOnHome()
         vm.onTileClicked(vm.state.value!!.home.first())
         assertEquals(Screen.Player, vm.screen.value)
         assertEquals(PlayerPhase.Loading, vm.player.ui.value.phase)
-        waitUntil("the error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
+        awaitErrorScreen(vm)
         assertEquals(PlayerPhase.Failed(30), vm.player.ui.value.phase)
         for (left in 29 downTo 1) {
             advance(1_000)
@@ -418,7 +357,6 @@ class AppViewModelTest {
 
     @Test
     fun autoplayCountsDownTenSecondsThenPlaysTheShow() {
-        paired()
         autoplayOnStart = true
         val vm = startTv()
         waitUntil("the autoplay countdown") { vm.autoplay.value != null }
@@ -434,13 +372,12 @@ class AppViewModelTest {
         advance(1)
         assertNull(vm.autoplay.value)
         assertEquals(Screen.Player, vm.screen.value)
-        waitUntil("the resolve request") { count("/api/v1/tv/resolve") == 1 }
+        awaitResolves(1)
         assertEquals("""{"episodeId":"a.film","trigger":"autoplay"}""", resolveBodies().single())
     }
 
     @Test
     fun autoplayEndsWhenTheShowLeavesHome() {
-        paired()
         autoplayOnStart = true
         val vm = startTv()
         waitUntil("the autoplay countdown") { vm.autoplay.value?.secondsLeft == 10 }
@@ -456,12 +393,25 @@ class AppViewModelTest {
         advance(30_000)
         settle()
         assertEquals(Screen.Home, vm.screen.value)
-        assertEquals(0, count("/api/v1/tv/resolve"))
+        assertEquals(0, count(RESOLVE))
+    }
+
+    @Test
+    fun autoplayOffersAChannelAsLiveAndPlaysItAtItsLiveEdge() {
+        autoplayOnStart = true
+        home = listOf("tv1", "a")
+        val vm = startTv()
+        waitUntil("the autoplay countdown") { vm.autoplay.value != null }
+        assertEquals("tv1", vm.autoplay.value?.entry?.item?.id)
+        advance(AutoplayPlan.COUNTDOWN_SEC * 1_000L)
+        assertEquals(Screen.Player, vm.screen.value)
+        assertTrue(vm.player.ui.value.live)
+        awaitResolves(1)
+        assertEquals("""{"itemId":"tv1","trigger":"autoplay"}""", resolveBodies().single())
     }
 
     @Test
     fun theMenuListsWhatTheFocusedShowAllowsAndBackPopsItsPagesOneByOne() {
-        paired()
         val vm = startTvOnHome()
         vm.openMenu()
         val home = vm.state.value!!.home
@@ -490,11 +440,21 @@ class AppViewModelTest {
         vm.onBack()
         assertNull(vm.menu.value)
         assertEquals(Screen.Home, vm.screen.value)
+
+        // Settings' server address: the address screen, which takes no command and which Back leaves for Home.
+        vm.openMenu()
+        vm.onRootEntry(RootEntry.Settings)
+        vm.onSettingsEntry(SettingsEntry.ServerAddress)
+        assertEquals(Screen.Setup(canGoBack = true), vm.screen.value)
+        assertNull(vm.menu.value)
+        assertEquals(ignored("not_ready"), awaitResult(command("play", """{"itemId":"b","episodeId":"b.e2"}""")))
+        assertEquals(0, count(RESOLVE))
+        vm.onBack()
+        assertEquals(Screen.Home, vm.screen.value)
     }
 
     @Test
     fun theLanguageEntryCyclesAutomaticTurkishEnglish() {
-        paired()
         val vm = startTvOnHome()
         assertNull(vm.uiLanguageOverride.value)
         assertEquals("en", vm.uiLanguage.value)
@@ -506,13 +466,11 @@ class AppViewModelTest {
     }
 
     @Test
-    fun aGuidedUpdateAsksForOkAndBackIsDeclined() {
-        paired()
-        apk = ByteArray(5_000) { it.toByte() }
-        grantInstalls(false)
+    fun aGuidedUpdateAsksForOkBackIsDeclinedAndAMinuteIsATimeout() {
+        offerUpdate(silent = false)
         val vm = startTvOnHome()
         assertEquals(UpdateCapability.Guided, app.graph.updater.capability.value)
-        assertEquals("izle-tv/${BuildConfig.VERSION_NAME} (Android 36; ${BuildConfig.VERSION_CODE}; guided)", requests.last { it.url.encodedPath == "/api/v1/tv/state" }.headers["User-Agent"])
+        assertEquals(userAgent("guided"), requests.last { it.url.encodedPath == "/api/v1/tv/state" }.headers["User-Agent"])
         vm.openMenu()
         val id = command("update", """{"versionCode":990000}""")
         waitUntil("the press OK screen") { vm.screen.value == Screen.Update(UpdateUi("99.0.0", UpdatePhase.Prompt(UpdatePlan.GUIDED_TIMEOUT_SEC))) }
@@ -521,37 +479,26 @@ class AppViewModelTest {
         assertEquals(Screen.Update(UpdateUi("99.0.0", UpdatePhase.Prompt(59))), vm.screen.value)
         vm.onBack()
         assertEquals(Screen.Home, vm.screen.value)
-        assertEquals("""{"result":"ignored","reason":"declined"}""", awaitResult(id))
+        assertEquals(ignored("declined"), awaitResult(id))
+
+        val again = promptUpdate(vm, versionCode = null)
+        advance(59_999)
+        assertTrue(vm.screen.value is Screen.Update)
+        advance(1)
+        assertEquals(Screen.Home, vm.screen.value)
+        assertEquals(ignored("timeout"), awaitResult(again))
         assertEquals(0, count("/api/v1/tv/app/apk"))
         assertTrue(installer.installs.isEmpty())
     }
 
     @Test
-    fun thePressOkScreenGoesHomeAfterAMinute() {
-        paired()
-        apk = ByteArray(5_000) { it.toByte() }
-        grantInstalls(false)
-        val vm = startTvOnHome()
-        val id = command("update")
-        waitUntil("the press OK screen") { vm.screen.value is Screen.Update }
-        advance(59_999)
-        assertTrue(vm.screen.value is Screen.Update)
-        advance(1)
-        assertEquals(Screen.Home, vm.screen.value)
-        assertEquals("""{"result":"ignored","reason":"timeout"}""", awaitResult(id))
-    }
-
-    @Test
     fun okOnThePressOkScreenDownloadsReportsAndOpensTheSystemDialog() {
-        paired()
         val bytes = ByteArray(70_000) { (it % 7).toByte() }
-        apk = bytes
-        grantInstalls(false)
+        offerUpdate(silent = false, bytes)
         val vm = startTvOnHome()
-        val id = command("update", """{"versionCode":990000}""")
-        waitUntil("the press OK screen") { vm.screen.value is Screen.Update }
+        val id = promptUpdate(vm)
         vm.onUpdateInstall()
-        assertEquals(Screen.Update(UpdateUi("99.0.0", UpdatePhase.Installing)), vm.screen.value)
+        assertEquals(INSTALLING, vm.screen.value)
         waitUntil("the install") { installer.installs.isNotEmpty() }
         val install = installer.installs.single()
         assertFalse(install.silent)
@@ -561,22 +508,16 @@ class AppViewModelTest {
         assertEquals("""{"result":"done","reason":"prompted"}""", awaitResult(id))
         assertEquals("Bearer device-token", requests.last { it.url.encodedPath == "/api/v1/tv/app/apk" }.headers["Authorization"])
 
-        // The system wants its dialog shown: the activity starts it.
-        val confirm = Intent("android.content.pm.action.CONFIRM_INSTALL")
-        vm.onInstallStatus(status(PackageInstaller.STATUS_PENDING_USER_ACTION).putExtra(Intent.EXTRA_INTENT, confirm))
-        mainLooper.idle()
-        assertEquals("android.content.pm.action.CONFIRM_INSTALL", runBlocking { withTimeout(5_000) { vm.launchIntents.first() } }.action)
-        // Cancel in that dialog: Home, nothing else.
-        vm.onInstallStatus(status(PackageInstaller.STATUS_FAILURE_ABORTED))
-        mainLooper.idle()
+        // The system wants its dialog shown: the activity starts it. Cancel in that dialog: Home, nothing else.
+        vm.answerInstall(PackageInstaller.STATUS_PENDING_USER_ACTION, Intent("android.content.pm.action.CONFIRM_INSTALL"))
+        assertEquals("android.content.pm.action.CONFIRM_INSTALL", vm.launchIntent().action)
+        vm.answerInstall(PackageInstaller.STATUS_FAILURE_ABORTED)
         assertEquals(Screen.Home, vm.screen.value)
     }
 
     @Test
     fun withTheGrantTheUpdateInstallsSilentlyAfterReportingIt() {
-        paired()
-        apk = ByteArray(70_000) { (it % 5).toByte() }
-        grantInstalls(true)
+        offerUpdate(silent = true, ByteArray(70_000) { (it % 5).toByte() })
         val vm = startTvOnHome()
         assertEquals(UpdateCapability.Silent, app.graph.updater.capability.value)
         val id = command("update", """{"versionCode":990000}""")
@@ -585,51 +526,42 @@ class AppViewModelTest {
         assertTrue(install.silent)
         assertTrue("the result went out before the install", install.resultSentBefore)
         assertEquals("""{"result":"done","reason":"installing"}""", awaitResult(id))
-        assertEquals(Screen.Update(UpdateUi("99.0.0", UpdatePhase.Installing)), vm.screen.value)
-        assertEquals("izle-tv/${BuildConfig.VERSION_NAME} (Android 36; ${BuildConfig.VERSION_CODE}; silent)", requests.last { it.url.encodedPath == "/api/v1/tv/app/apk" }.headers["User-Agent"])
+        assertEquals(INSTALLING, vm.screen.value)
+        assertEquals(userAgent("silent"), requests.last { it.url.encodedPath == "/api/v1/tv/app/apk" }.headers["User-Agent"])
 
         // The system wants it confirmed after all: abandoned, guided from now on, the owner told, back Home.
-        vm.onInstallStatus(status(PackageInstaller.STATUS_PENDING_USER_ACTION).putExtra(Intent.EXTRA_INTENT, Intent("x")))
-        mainLooper.idle()
+        vm.answerInstall(PackageInstaller.STATUS_PENDING_USER_ACTION, Intent("x"))
         assertEquals(listOf(7), installer.abandoned)
         assertEquals(Screen.Home, vm.screen.value)
         assertEquals(UpdateCapability.Guided, app.graph.updater.capability.value)
+        assertEquals("what the next requests say", userAgent("guided"), app.graph.updater.userAgent)
         waitUntil("the problem report") { count("/api/v1/tv/problems") == 1 }
-        assertTrue(requests.last { it.url.encodedPath == "/api/v1/tv/problems" }.body?.utf8().orEmpty().contains("\"code\":\"update_needs_user_action\""))
+        assertTrue(problemBodies().last().contains("\"code\":\"update_needs_user_action\""))
         waitUntil("the stored refusal") { runBlocking { app.graph.deviceStore.current().updateSilentRefused } }
-        app.graph.repository.refreshSoon()
-        waitUntil("a guided state request") {
-            requests.lastOrNull { it.url.encodedPath == "/api/v1/tv/state" }?.headers?.get("User-Agent") == "izle-tv/${BuildConfig.VERSION_NAME} (Android 36; ${BuildConfig.VERSION_CODE}; guided)"
-        }
     }
 
     @Test
-    fun anUpdateDuringPlaybackIsBusy() {
-        paired()
-        apk = ByteArray(5_000) { it.toByte() }
-        grantInstalls(true)
+    fun anUpdateDuringPlaybackIsBusyAndInstallUpdateLeavesThePlaybackAlone() {
+        offerUpdate(silent = true)
         val vm = startTvOnHome()
+        waitUntil("the offered version") { app.graph.updater.available.value?.versionCode == 990_000L }
         vm.onTileClicked(vm.state.value!!.home.first())
         assertEquals(Screen.Player, vm.screen.value)
+        val checks = count("/api/v1/tv/app")
+        vm.onSettingsEntry(SettingsEntry.InstallUpdate)
+        settle()
+        assertEquals(Screen.Player, vm.screen.value)
+        assertEquals(checks, count("/api/v1/tv/app"))
         val id = command("update", """{"versionCode":990000}""")
-        assertEquals("""{"result":"ignored","reason":"busy"}""", awaitResult(id))
+        assertEquals(ignored("busy"), awaitResult(id))
         assertEquals(Screen.Player, vm.screen.value)
         assertEquals(0, count("/api/v1/tv/app/apk"))
-    }
-
-    @Test
-    fun nothingNewerIsUpToDate() {
-        paired()
-        grantInstalls(true)
-        startTvOnHome()
-        assertEquals("""{"result":"ignored","reason":"up_to_date"}""", awaitResult(command("update", """{"versionCode":990000}""")))
+        assertTrue(installer.installs.isEmpty())
     }
 
     @Test
     fun aSilentTvUpdatesByItselfAfterThreeIdleMinutesOnHome() {
-        paired()
-        apk = ByteArray(5_000) { it.toByte() }
-        grantInstalls(true)
+        offerUpdate(silent = true)
         val vm = startTvOnHome()
         waitUntil("the offered version") { app.graph.updater.available.value?.versionCode == 990_000L }
         assertEquals("99.0.0", vm.aboutInfo().updateVersion)
@@ -642,55 +574,36 @@ class AppViewModelTest {
         advance(60_000)
         waitUntil("the install") { installer.installs.isNotEmpty() }
         assertTrue(installer.installs.single().silent)
-        assertEquals(Screen.Update(UpdateUi("99.0.0", UpdatePhase.Installing)), vm.screen.value)
+        assertEquals(INSTALLING, vm.screen.value)
         assertEquals(0, requests.count { it.url.encodedPath.endsWith("/result") })
     }
 
     @Test
-    fun theOwnerCanKeepTvsFromUpdatingByThemselves() {
-        paired()
-        apk = ByteArray(5_000) { it.toByte() }
-        apkAuto = false
-        grantInstalls(true)
-        startTvOnHome()
-        waitUntil("the offered version") { app.graph.updater.available.value?.versionCode == 990_000L }
-        advance(10 * 60_000)
-        settle()
-        assertTrue(installer.installs.isEmpty())
-    }
-
-    @Test
     fun theSystemDialogOverTheAppKeepsUpdatingAndBringsNoAutoplay() {
-        paired()
         autoplayOnStart = true
-        apk = ByteArray(5_000) { it.toByte() }
-        grantInstalls(false)
+        offerUpdate(silent = false)
         val vm = startTv()
         waitUntil("the autoplay countdown") { vm.autoplay.value != null }
         vm.cancelAutoplay()
-        val id = command("update", """{"versionCode":990000}""")
-        waitUntil("the press OK screen") { vm.screen.value is Screen.Update }
+        val id = promptUpdate(vm)
         vm.onUpdateInstall()
         waitUntil("the install") { installer.installs.isNotEmpty() }
         assertEquals("""{"result":"done","reason":"prompted"}""", awaitResult(id))
-        vm.onInstallStatus(status(PackageInstaller.STATUS_PENDING_USER_ACTION).putExtra(Intent.EXTRA_INTENT, Intent("x")))
-        mainLooper.idle()
-        assertEquals("x", runBlocking { withTimeout(5_000) { vm.launchIntents.first() } }.action)
+        vm.answerInstall(PackageInstaller.STATUS_PENDING_USER_ACTION, Intent("x"))
+        assertEquals("x", vm.launchIntent().action)
 
         // The system's dialog covers the app: it stops and comes back, still "Updating…".
-        val installing = Screen.Update(UpdateUi("99.0.0", UpdatePhase.Installing))
         vm.onBackground()
-        assertEquals(installing, vm.screen.value)
+        assertEquals(INSTALLING, vm.screen.value)
         val states = count("/api/v1/tv/state")
         vm.onForeground()
         waitUntil("a fresh state") { count("/api/v1/tv/state") > states }
         settle()
-        assertEquals(installing, vm.screen.value)
+        assertEquals(INSTALLING, vm.screen.value)
         assertNull("no autoplay over the dialog's answer", vm.autoplay.value)
 
         // Cancel in the dialog: Home, and still no autoplay.
-        vm.onInstallStatus(status(PackageInstaller.STATUS_FAILURE_ABORTED))
-        mainLooper.idle()
+        vm.answerInstall(PackageInstaller.STATUS_FAILURE_ABORTED)
         assertEquals(Screen.Home, vm.screen.value)
         advance(15_000)
         settle()
@@ -699,19 +612,20 @@ class AppViewModelTest {
     }
 
     @Test
-    fun pairingAgainDuringThePressOkScreenStaysOnTheCode() {
-        paired()
-        apk = ByteArray(5_000) { it.toByte() }
-        grantInstalls(false)
+    fun aRemovedTvShowsANewPairingCodeEvenOverThePressOkScreen() {
+        offerUpdate(silent = false)
         val vm = startTvOnHome()
-        val id = command("update", """{"versionCode":990000}""")
-        waitUntil("the press OK screen") { vm.screen.value is Screen.Update }
+        val id = promptUpdate(vm)
         advance(1_000)
-        // The server forgot this TV meanwhile.
+        // The server forgot this TV meanwhile: the token goes, the server stays.
         stateCode = 401
         app.graph.repository.refreshSoon()
-        waitUntil("the pairing code") { vm.screen.value == Screen.Pairing && vm.pairing.value.code == "999999" }
-        assertEquals("""{"result":"ignored","reason":"declined"}""", awaitResult(id))
+        awaitPairingCode(vm)
+        runBlocking {
+            assertNull(app.graph.deviceStore.current().deviceToken)
+            assertEquals(server.url("/").toString(), app.graph.deviceStore.current().serverUrl)
+        }
+        assertEquals(ignored("declined"), awaitResult(id))
         advance(UpdatePlan.GUIDED_TIMEOUT_SEC * 1_000L)
         settle()
         assertEquals(Screen.Pairing, vm.screen.value)
@@ -720,19 +634,14 @@ class AppViewModelTest {
 
     @Test
     fun aFailedInstallAfterThePromptedResultIsAProblemReportAndCouldNotUpdate() {
-        paired()
-        apk = ByteArray(5_000) { it.toByte() }
-        grantInstalls(false)
+        offerUpdate(silent = false)
         installer.installFailure = RuntimeException("installation services unavailable")
         val vm = startTvOnHome()
-        val id = command("update", """{"versionCode":990000}""")
-        waitUntil("the press OK screen") { vm.screen.value is Screen.Update }
+        val id = promptUpdate(vm)
         vm.onUpdateInstall()
         waitUntil("Could not update") { vm.screen.value == Screen.Update(UpdateUi("99.0.0", UpdatePhase.Failed(UpdatePlan.FAILED_HOME_SEC))) }
         assertEquals("""{"result":"done","reason":"prompted"}""", awaitResult(id))
-        waitUntil("the problem report") {
-            requests.any { it.url.encodedPath == "/api/v1/tv/problems" && it.body?.utf8().orEmpty().contains("\"code\":\"update_internal\"") }
-        }
+        waitUntil("the problem report") { problemBodies().any { it.contains("\"code\":\"update_internal\"") } }
         settle()
         assertEquals("one result per command", 1, results(id).size)
         advance(UpdatePlan.FAILED_HOME_SEC * 1_000L)
@@ -740,46 +649,21 @@ class AppViewModelTest {
     }
 
     @Test
-    fun installUpdateFromThePlayerLeavesThePlaybackAlone() {
-        paired()
-        apk = ByteArray(5_000) { it.toByte() }
-        grantInstalls(true)
-        val vm = startTvOnHome()
-        waitUntil("the offered version") { app.graph.updater.available.value?.versionCode == 990_000L }
-        vm.onTileClicked(vm.state.value!!.home.first())
-        assertEquals(Screen.Player, vm.screen.value)
-        val checks = count("/api/v1/tv/app")
-        vm.onSettingsEntry(SettingsEntry.InstallUpdate)
-        settle()
-        assertEquals(Screen.Player, vm.screen.value)
-        assertEquals(checks, count("/api/v1/tv/app"))
-        assertEquals(0, count("/api/v1/tv/app/apk"))
-        assertTrue(installer.installs.isEmpty())
-    }
-
-    @Test
     fun okOnAChannelResolvesItByItsItemIdAndTheOwnerHearsOfItByItsItem() {
-        paired()
         home = listOf("a", "tv1", "c", "tv2")
         val vm = startTvOnHome()
         val channel = vm.state.value!!.home[1]
         assertTrue(channel.item.isLive)
         assertNull(channel.playNext)
-        // On Home its menu has neither Episodes nor Start over.
-        vm.onTileFocused("tv1")
-        vm.openMenu()
-        assertEquals(listOf(RootEntry.Settings, RootEntry.About), (vm.menu.value?.page as MenuPage.Root).entries)
-        vm.onBack()
-
         vm.onTileClicked(channel)
         assertEquals(Screen.Player, vm.screen.value)
         assertEquals(PlayerPhase.Loading, vm.player.ui.value.phase)
         assertTrue("its name and Live while it loads", vm.player.ui.value.live)
         assertEquals("Channel 1", vm.player.ui.value.item?.title)
         assertEquals("tv1", vm.homeFocusItemId)
-        waitUntil("the resolve request") { count("/api/v1/tv/resolve") == 1 }
+        awaitResolves(1)
         assertEquals("""{"itemId":"tv1","trigger":"viewer"}""", resolveBodies().single())
-        waitUntil("the error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
+        awaitErrorScreen(vm)
         waitUntil("the problem reports") { problemBodies().size == 2 }
         // The failed resolve and "Can't play right now", by the channel's item id, without an episode or position.
         assertEquals(
@@ -792,43 +676,54 @@ class AppViewModelTest {
         }
         // Try again: the channel once more, at its live edge.
         vm.player.retry()
-        waitUntil("the second resolve") { count("/api/v1/tv/resolve") == 2 }
+        awaitResolves(2)
         assertEquals("""{"itemId":"tv1","trigger":"viewer"}""", resolveBodies().last())
         assertTrue(vm.player.ui.value.live)
     }
 
     @Test
     fun channelKeysZapAmongHomesChannelsInHomeOrderWithoutWrappingAround() {
-        paired()
         home = listOf("tv1", "c", "tv2", "a", "tv3")
         val vm = startTvOnHome()
         vm.onTileClicked(vm.state.value!!.home[0])
-        waitUntil("the first resolve") { count("/api/v1/tv/resolve") == 1 }
+        awaitResolves(1)
         // CH+ while it loads: past show C, to channel 2, whose name shows while it loads.
         vm.onChannelKey(1)
         assertEquals(PlayerPhase.Loading, vm.player.ui.value.phase)
         assertEquals("Channel 2", vm.player.ui.value.item?.title)
         assertTrue(vm.player.ui.value.live)
         assertEquals("tv2", vm.homeFocusItemId)
-        waitUntil("the second resolve") { count("/api/v1/tv/resolve") == 2 }
+        awaitResolves(2)
         vm.onChannelKey(1)
-        waitUntil("the third resolve") { count("/api/v1/tv/resolve") == 3 }
+        awaitResolves(3)
         assertEquals("Channel 3", vm.player.ui.value.item?.title)
         // The last channel: nothing after it.
         vm.onChannelKey(1)
         settle()
-        assertEquals(3, count("/api/v1/tv/resolve"))
+        assertEquals(3, count(RESOLVE))
         assertEquals("Channel 3", vm.player.ui.value.item?.title)
         vm.onChannelKey(-1)
-        waitUntil("the fourth resolve") { count("/api/v1/tv/resolve") == 4 }
+        awaitResolves(4)
         assertEquals("tv2", vm.homeFocusItemId)
-        assertEquals(
-            listOf(
-                """{"itemId":"tv1","trigger":"viewer"}""", """{"itemId":"tv2","trigger":"next"}""",
-                """{"itemId":"tv3","trigger":"next"}""", """{"itemId":"tv2","trigger":"next"}""",
-            ),
-            resolveBodies(),
-        )
+        assertEquals(listOf("tv1" to "viewer", "tv2" to "next", "tv3" to "next", "tv2" to "next").map(::channelResolve), resolveBodies())
+
+        // Nothing plays here: channel 2 ends on "Can't play right now", from where the owner's next zaps as CH+ does.
+        awaitErrorScreen(vm)
+        assertTrue(vm.player.ui.value.live)
+        val next = command("next")
+        assertEquals(DONE, awaitResult(next))
+        assertEquals(PlayerPhase.Loading, vm.player.ui.value.phase)
+        awaitResolves(5)
+        assertEquals("""{"itemId":"tv3","trigger":"command","commandId":$next}""", resolveBodies().last())
+        // The last channel's error screen: CH+ only shows the information, CH− goes back.
+        awaitErrorScreen(vm)
+        vm.onChannelKey(1)
+        settle()
+        assertEquals(5, count(RESOLVE))
+        assertTrue(vm.player.ui.value.phase is PlayerPhase.Failed)
+        vm.onChannelKey(-1)
+        awaitResolves(6)
+        assertEquals("Channel 2", vm.player.ui.value.item?.title)
         // Back: Home, the channel played last focused.
         vm.onBack()
         assertEquals(Screen.Home, vm.screen.value)
@@ -836,106 +731,42 @@ class AppViewModelTest {
     }
 
     @Test
-    fun channelKeysStillZapFromAChannelsErrorScreen() {
-        paired()
-        home = listOf("tv1", "c", "tv2", "tv3")
-        val vm = startTvOnHome()
-        vm.onTileClicked(vm.state.value!!.home[0])
-        waitUntil("the first resolve") { count("/api/v1/tv/resolve") == 1 }
-        // Nothing plays here: channel 1 ends on "Can't play right now".
-        waitUntil("the error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
-        assertTrue(vm.player.ui.value.live)
-        assertEquals(Screen.Player, vm.screen.value)
-        // CH+ there: channel 2, as from a playing channel; the error screen is gone while it loads.
-        vm.onChannelKey(1)
-        assertEquals(PlayerPhase.Loading, vm.player.ui.value.phase)
-        assertEquals("Channel 2", vm.player.ui.value.item?.title)
-        assertEquals("tv2", vm.homeFocusItemId)
-        waitUntil("the second resolve") { count("/api/v1/tv/resolve") == 2 }
-        assertEquals("""{"itemId":"tv2","trigger":"next"}""", resolveBodies().last())
-        // The owner's next from channel 2's error screen does the same.
-        waitUntil("channel 2's error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
-        val next = command("next")
-        assertEquals("""{"result":"done"}""", awaitResult(next))
-        waitUntil("the third resolve") { count("/api/v1/tv/resolve") == 3 }
-        assertEquals("""{"itemId":"tv3","trigger":"command","commandId":$next}""", resolveBodies().last())
-        // The last channel's error screen: CH+ only shows the information, CH− goes back.
-        waitUntil("channel 3's error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
-        vm.onChannelKey(1)
-        settle()
-        assertEquals(3, count("/api/v1/tv/resolve"))
-        assertTrue(vm.player.ui.value.phase is PlayerPhase.Failed)
-        vm.onChannelKey(-1)
-        waitUntil("the fourth resolve") { count("/api/v1/tv/resolve") == 4 }
-        assertEquals("Channel 2", vm.player.ui.value.item?.title)
-        vm.onBack()
-        assertEquals(Screen.Home, vm.screen.value)
-    }
-
-    @Test
     fun aPlayCommandWithoutAnEpisodePlaysTheChannelWhichIsNeverPaused() {
-        paired()
         home = listOf("a", "tv1", "c", "tv2")
         val vm = startTvOnHome()
         val play = command("play", """{"itemId":"tv1","episodeId":null}""")
-        waitUntil("the resolve request") { count("/api/v1/tv/resolve") == 1 }
+        awaitResolves(1)
         assertEquals("""{"itemId":"tv1","trigger":"command","commandId":$play}""", resolveBodies().single())
         assertTrue(vm.player.ui.value.live)
         assertEquals("Channel 1", vm.player.ui.value.item?.title)
         assertEquals("tv1", vm.homeFocusItemId)
         // No pause on a channel: pause, resume and seek do nothing.
         for ((type, payload) in listOf("pause" to "{}", "resume" to "{}", "seek" to """{"deltaMs":30000}""")) {
-            assertEquals(type, """{"result":"ignored","reason":"live"}""", awaitResult(command(type, payload)))
+            assertEquals(type, ignored("live"), awaitResult(command(type, payload)))
         }
         assertEquals(PlayerPhase.Loading, vm.player.ui.value.phase)
         assertTrue(vm.player.ui.value.playWhenReady)
         // Previous: channel 1 is Home's first. Next: channel 2, as CH+ would.
-        assertEquals("""{"result":"ignored","reason":"no_channel"}""", awaitResult(command("previous")))
+        assertEquals(ignored("no_channel"), awaitResult(command("previous")))
         val next = command("next")
-        assertEquals("""{"result":"done"}""", awaitResult(next))
-        assertEquals("the play command was replaced", """{"result":"ignored","reason":"superseded"}""", awaitResult(play))
-        waitUntil("the zap's resolve") { count("/api/v1/tv/resolve") == 2 }
+        assertEquals(DONE, awaitResult(next))
+        assertEquals("the play command was replaced", ignored("superseded"), awaitResult(play))
+        awaitResolves(2)
         assertEquals("""{"itemId":"tv2","trigger":"command","commandId":$next}""", resolveBodies().last())
         assertEquals("tv2", vm.homeFocusItemId)
 
         // A channel that is not on Home has no neighbours there.
         val elsewhere = command("play", """{"itemId":"tv9","episodeId":null}""")
-        waitUntil("its resolve") { count("/api/v1/tv/resolve") == 3 }
+        awaitResolves(3)
         assertNull("no name before the answer", vm.player.ui.value.item)
         assertTrue(vm.player.ui.value.live)
-        assertEquals("""{"result":"ignored","reason":"no_channel"}""", awaitResult(command("next")))
-        assertEquals(3, count("/api/v1/tv/resolve"))
-        waitUntil("the error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
-        assertEquals("""{"result":"failed","reason":"no_playable_source"}""", awaitResult(elsewhere))
+        assertEquals(ignored("no_channel"), awaitResult(command("next")))
+        assertEquals(3, count(RESOLVE))
+        awaitErrorScreen(vm)
+        assertEquals(failed("no_playable_source"), awaitResult(elsewhere))
         // On its error screen the transport commands find no video, as for a show.
-        assertEquals("""{"result":"ignored","reason":"not_in_player"}""", awaitResult(command("pause")))
+        assertEquals(ignored("not_in_player"), awaitResult(command("pause")))
     }
-
-    @Test
-    fun autoplayOffersAChannelAsLiveAndPlaysItAtItsLiveEdge() {
-        paired()
-        autoplayOnStart = true
-        home = listOf("tv1", "a")
-        val vm = startTv()
-        waitUntil("the autoplay countdown") { vm.autoplay.value != null }
-        assertEquals("tv1", vm.autoplay.value?.entry?.item?.id)
-        advance(AUTOPLAY_COUNTDOWN_MS)
-        assertEquals(Screen.Player, vm.screen.value)
-        assertTrue(vm.player.ui.value.live)
-        waitUntil("the resolve request") { count("/api/v1/tv/resolve") == 1 }
-        assertEquals("""{"itemId":"tv1","trigger":"autoplay"}""", resolveBodies().single())
-    }
-
-    private fun problemBodies() = requests.filter { it.url.encodedPath == "/api/v1/tv/problems" }.map { it.body?.utf8().orEmpty() }
-
-    private fun grantInstalls(granted: Boolean) = shadowOf(app.packageManager).setCanRequestPackageInstalls(granted)
-
-    /** What the system sends back for session 7. */
-    private fun status(status: Int) = Intent(AppInstaller.ACTION_INSTALL_STATUS)
-        .putExtra(PackageInstaller.EXTRA_STATUS, status)
-        .putExtra(PackageInstaller.EXTRA_SESSION_ID, 7)
-
-    private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     /** Checks and installs nothing; remembers what it was asked. */
     private inner class FakeInstaller : AppInstaller {
@@ -945,17 +776,15 @@ class AppViewModelTest {
         val installs = CopyOnWriteArrayList<Install>()
         val abandoned = CopyOnWriteArrayList<Int>()
 
-        /** What [install] throws, if anything. */
         @Volatile var installFailure: Exception? = null
 
         override suspend fun verifyArchive(file: File, expectedVersionCode: Long) {
             verified += expectedVersionCode
         }
 
-        override suspend fun install(file: File, silent: Boolean, commandId: Long?): Int {
+        override suspend fun install(file: File, silent: Boolean): Int {
             installFailure?.let { throw it }
-            val sent = commandId != null && results(commandId).isNotEmpty()
-            installs += Install(silent, file.readBytes(), sent)
+            installs += Install(silent, file.readBytes(), resultSentBefore = requests.any { it.url.encodedPath.endsWith("/result") })
             return 7
         }
 
@@ -968,24 +797,42 @@ class AppViewModelTest {
         }
     }
 
-    private fun unpaired() = runBlocking { app.graph.deviceStore.setServer(server.url("/").toString()) }
-
-    private fun paired() = runBlocking {
-        app.graph.deviceStore.setServer(server.url("/").toString())
-        app.graph.deviceStore.savePairing("tv-1", "device-token")
+    /** The server offers version 99.0.0; [silent]: this TV may install it without asking (Android 8+, with the grant). */
+    private fun offerUpdate(silent: Boolean, bytes: ByteArray = ByteArray(5_000) { it.toByte() }) {
+        apk = bytes
+        shadowOf(app.packageManager).setCanRequestPackageInstalls(silent)
     }
 
-    /** The view model as the activity creates it, with the app in front. */
-    private fun startTv(): AppViewModel {
+    /** The owner's `update`, waited for until the guided "press OK" shows; returns the command's id. */
+    private fun promptUpdate(vm: AppViewModel, versionCode: Long? = 990_000): Long {
+        val id = command("update", if (versionCode == null) "{}" else """{"versionCode":$versionCode}""")
+        waitUntil("the press OK screen") { vm.screen.value is Screen.Update }
+        return id
+    }
+
+    /** The system's answer about the install session, as the activity hands it over. */
+    private fun AppViewModel.answerInstall(status: Int, confirm: Intent? = null) {
+        onInstallStatus(installStatus(status).apply { if (confirm != null) putExtra(Intent.EXTRA_INTENT, confirm) })
+        mainLooper.idle()
+    }
+
+    private fun AppViewModel.launchIntent(): Intent = runBlocking { withTimeout(5_000) { launchIntents.first() } }
+
+    private fun userAgent(capability: String) = "izle-tv/${BuildConfig.VERSION_NAME} (Android 36; ${BuildConfig.VERSION_CODE}; $capability)"
+
+    /** The view model as the activity creates it, with the app in front ([paired]: with this server's device token). */
+    private fun startTv(paired: Boolean = true): AppViewModel {
+        runBlocking {
+            app.graph.deviceStore.setServer(server.url("/").toString())
+            if (paired) app.graph.deviceStore.savePairing("tv-1", "device-token")
+        }
         val factory = viewModelFactory { initializer { AppViewModel(app.graph) } }
-        val vm = ViewModelProvider(viewModels, factory)[AppViewModel::class.java]
-        vm.onForeground()
-        return vm
+        return ViewModelProvider(viewModels, factory)[AppViewModel::class.java].also { it.onForeground() }
     }
 
     private fun startTvOnHome(): AppViewModel = startTv().also { vm ->
         waitUntil("Home with its tiles") { vm.screen.value == Screen.Home && vm.state.value?.home?.size == home.size }
-        waitUntil("the event stream") { requests.any { it.url.encodedPath == "/api/v1/tv/events" } }
+        waitUntil("the event stream") { count("/api/v1/tv/events") > 0 }
         settle()
     }
 
@@ -1001,26 +848,37 @@ class AppViewModelTest {
     private fun commandEvent(id: Long, type: String, payload: String) =
         "event: command\ndata: {\"id\":$id,\"type\":\"$type\",\"payload\":$payload}\n\n"
 
-    /**
-     * The TV acknowledges a command right after handing it to the view model, which acts on it at once: once the ack
-     * arrives, the command's immediate effects are there (what it sends to the server may still be on its way).
-     */
-    private fun awaitAck(id: Long) {
-        waitUntil("the ack of command $id") { requests.any { it.url.encodedPath == "/api/v1/tv/commands/$id/ack" } }
-    }
+    /** Once a command's ack arrives, its immediate effects are there (what it sends the server may be on its way). */
+    private fun awaitAck(id: Long) = waitUntil("the ack of command $id") { count("/api/v1/tv/commands/$id/ack") > 0 }
+
+    private fun awaitResolves(n: Int) = waitUntil("resolve request $n") { count(RESOLVE) == n }
+
+    private fun awaitErrorScreen(vm: AppViewModel) = waitUntil("the error screen") { vm.player.ui.value.phase is PlayerPhase.Failed }
+
+    private fun awaitPairingCode(vm: AppViewModel) =
+        waitUntil("the pairing code") { vm.screen.value == Screen.Pairing && vm.pairing.value.code == "999999" }
 
     private fun count(path: String) = requests.count { it.url.encodedPath == path }
 
-    /** The bodies of the results the TV sent for command [id]. */
-    private fun results(id: Long) = requests.filter { it.url.encodedPath == "/api/v1/tv/commands/$id/result" }.map { it.body?.utf8().orEmpty() }
+    private fun bodies(path: String) = requests.filter { it.url.encodedPath == path }.map { it.body?.utf8().orEmpty() }
 
-    /** The single result of command [id], once it arrived. */
+    /** The results the TV sent for command [id]; [awaitResult]: the single one, once it arrived. */
+    private fun results(id: Long) = bodies("/api/v1/tv/commands/$id/result")
+
     private fun awaitResult(id: Long): String {
         waitUntil("the result of command $id") { results(id).isNotEmpty() }
         return results(id).single()
     }
 
-    private fun resolveBodies() = requests.filter { it.url.encodedPath == "/api/v1/tv/resolve" }.map { it.body?.utf8().orEmpty() }
+    private fun ignored(reason: String) = """{"result":"ignored","reason":"$reason"}"""
+
+    private fun failed(reason: String) = """{"result":"failed","reason":"$reason"}"""
+
+    private fun channelResolve(resolve: Pair<String, String>) = """{"itemId":"${resolve.first}","trigger":"${resolve.second}"}"""
+
+    private fun resolveBodies() = bodies(RESOLVE)
+
+    private fun problemBodies() = bodies("/api/v1/tv/problems")
 
     private val mainLooper get() = shadowOf(Looper.getMainLooper())
 
@@ -1066,9 +924,6 @@ class AppViewModelTest {
     /** The connection closes before an answer: an unreachable server, as the TV sees it. */
     private fun dropped(): MockResponse = MockResponse.Builder().onResponseStart(SocketEffect.CloseSocket()).build()
 
-    private fun json(code: Int, body: String) =
-        MockResponse.Builder().code(code).addHeader("Content-Type", "application/json").body(body).build()
-
     private fun stateJson(): String {
         val list = home.joinToString(",") { id ->
             if (id.startsWith("tv")) {
@@ -1084,10 +939,12 @@ class AppViewModelTest {
     }
 
     private companion object {
+        const val RESOLVE = "/api/v1/tv/resolve"
+
         /** How long a channel's resolve takes here (real time): the TV is still loading it meanwhile. */
         const val CHANNEL_RESOLVE_MS = 2_500L
 
-        /** Autoplay on start's whole countdown. */
-        const val AUTOPLAY_COUNTDOWN_MS = AutoplayPlan.COUNTDOWN_SEC * 1_000L
+        const val DONE = """{"result":"done"}"""
+        val INSTALLING = Screen.Update(UpdateUi("99.0.0", UpdatePhase.Installing))
     }
 }

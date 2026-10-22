@@ -106,10 +106,7 @@ fun SetupScreen(ui: SetupUi, onAddressChange: (String) -> Unit, onConnect: () ->
     }
 }
 
-/**
- * The 6-digit code the owner approves from the admin page, with that page's address so the owner knows what to open
- * on the phone; the TV long-polls until it gets its token.
- */
+/** The 6-digit code the owner approves from the admin page, with that page's address to open on the phone. */
 @Composable
 fun PairingScreen(ui: PairingUi) {
     Box(Modifier.fullScreen()) {

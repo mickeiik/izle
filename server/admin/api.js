@@ -5,9 +5,8 @@ import { toast } from "./dom.js";
 import { errorText } from "./lib.js";
 
 /**
- * localStorage access, which throws in a private window, with blocked site data or a full quota: then nothing is
- * remembered (`fallback`) and the page still works.
- * @template T @param {() => T} fn @param {T} fallback
+ * localStorage, which throws in a private window, with blocked site data or a full quota: then nothing is
+ * remembered (`fallback`) and the page still works. @template T @param {() => T} fn @param {T} fallback
  */
 function stored(fn, fallback) {
   try {
@@ -43,11 +42,7 @@ export const isUnauthorized = (err) => err instanceof ApiError && err.status ===
 
 export const getToken = () => readStored(TOKEN_KEY) ?? memoryToken;
 
-/**
- * Checks `token` against the server (rejects with its `ApiError` when refused), then keeps it. Resolves with whether
- * the browser remembers it beyond this tab; when it does not, the owner is told.
- * @param {string} token
- */
+/** Checks `token` with the server and keeps it; whether the browser remembers it. @param {string} token */
 export async function signIn(token) {
   await api("GET", "/catalog", undefined, { token });
   memoryToken = token;
@@ -70,11 +65,20 @@ export function onUnauthorized(fn) {
 export const devicePath = (id) => `/devices/${encodeURIComponent(id)}`;
 
 /**
- * One admin API call. Resolves with the JSON answer (null for 204), rejects with an `ApiError`: the server's error
- * code, `network` when it cannot be reached, `aborted` when `signal` fired.
- * @param {string} method
- * @param {string} path below /api/v1/admin
- * @param {unknown} [body]
+ * Sends a command to a TV and toasts that it was sent (`what` to `tv`, then `sentNote`) or queued for an offline TV.
+ * Resolves with whether the server took it.
+ * @param {string} deviceId @param {unknown} body @param {string} what @param {string} [tv] @param {string} [sentNote]
+ */
+export async function sendCommand(deviceId, body, what, tv = "the TV", sentNote = "") {
+  const r = await attempt(() => api("POST", `${devicePath(deviceId)}/commands`, body));
+  if (r.ok) toast(r.value.online ? `${what} sent to ${tv}.${sentNote}` : `${what} queued: ${tv} is offline and gets it if it connects within 2 minutes.`, r.value.online ? "ok" : "info");
+  return r.ok;
+}
+
+/**
+ * One admin API call (`path` below /api/v1/admin). Resolves with the JSON answer (null for 204), rejects with an
+ * `ApiError`: the server's error code, `network` when it cannot be reached, `aborted` when `signal` fired.
+ * @param {string} method @param {string} path @param {unknown} [body]
  * @param {{ token?: string | null, signal?: AbortSignal }} [opts] `token`: one other than the stored one
  * @returns {Promise<any>}
  */
@@ -83,15 +87,11 @@ export async function api(method, path, body, opts = {}) {
 }
 
 /**
- * Uploads a file as the raw request body (`PUT`), as an APK (`Content-Type`) with its name in `X-Izle-Filename`;
- * `headers` are added. Answers and fails like `api()`.
- * @param {string} path below /api/v1/admin
- * @param {File} file
- * @param {Record<string, string>} [headers]
- * @returns {Promise<any>}
+ * Uploads an APK as the raw `PUT` body, its name in `X-Izle-Filename`; like `api()`.
+ * @param {string} path @param {File} file @returns {Promise<any>}
  */
-export async function upload(path, file, headers = {}) {
-  return request("PUT", path, { "Content-Type": "application/vnd.android.package-archive", "X-Izle-Filename": file.name, ...headers }, file, {});
+export async function upload(path, file) {
+  return request("PUT", path, { "Content-Type": "application/vnd.android.package-archive", "X-Izle-Filename": file.name }, file, {});
 }
 
 /**
@@ -120,11 +120,9 @@ async function request(method, path, headers, body, opts) {
 }
 
 /**
- * Runs an action that calls the API. A failure becomes an error toast (a refused token signs out instead, and a
- * cancelled request says nothing); `success`, if given, is toasted once it worked.
- * @template T
- * @param {() => Promise<T>} fn
- * @param {string} [success]
+ * Runs an action that calls the API. A failure becomes an error toast (a refused token signs out instead, a cancelled
+ * request says nothing); `success`, if given, is toasted once it worked.
+ * @template T @param {() => Promise<T>} fn @param {string} [success]
  * @returns {Promise<{ ok: true, value: T } | { ok: false, error: unknown }>}
  */
 export async function attempt(fn, success) {

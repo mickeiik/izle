@@ -2,7 +2,7 @@
 // No I/O here so the rules are easy to test.
 
 import { isLiveItem, type CatalogItem, type EpisodicItem, type LanguageFacts, type Source } from "@izle/contract";
-import type { Progress } from "./store.ts";
+import type { Cursor, Progress } from "./store.ts";
 
 /** Index of the first episode after `from` (exclusive) with playbackAllowed, or -1 (`from` -1: the first one). */
 function nextAllowedIndex(item: EpisodicItem, from: number): number {
@@ -15,12 +15,7 @@ export function isPlayable(item: CatalogItem): boolean {
   return isLiveItem(item) ? item.playbackAllowed : nextAllowedIndex(item, -1) >= 0;
 }
 
-/** An item's cursor as the play-order rules see it; a bare episode id is an ordinary (not wrapped) cursor. */
-interface CursorLike {
-  episodeId: string;
-  /** Placed by the wrap to the first episode after the last one was finished. */
-  wrapped: boolean;
-}
+type CursorLike = Pick<Cursor, "episodeId" | "wrapped">;
 
 /**
  * The episode OK plays (index into item.episodes), or -1 when nothing is playable.
@@ -32,13 +27,12 @@ interface CursorLike {
  */
 export function cursorIndex(
   item: EpisodicItem,
-  cursor: string | CursorLike | null,
+  c: CursorLike | null,
   progress: ReadonlyMap<string, Pick<Progress, "status">>,
   appended: ReadonlySet<string> = new Set(),
 ): number {
   const first = nextAllowedIndex(item, -1);
   if (first < 0) return -1;
-  const c: CursorLike | null = typeof cursor === "string" ? { episodeId: cursor, wrapped: false } : cursor;
   if (c?.wrapped && appended.size > 0) {
     const added = item.episodes.findIndex((e) => e.playbackAllowed && appended.has(e.id));
     if (added >= 0) return added;
@@ -57,23 +51,20 @@ export function cursorIndex(
   return first;
 }
 
-/** What a progress report says the player is doing. */
 export const PROGRESS_REPORT_STATUSES = ["playing", "paused", "stopped", "finished"] as const;
 
 export type ProgressReportStatus = (typeof PROGRESS_REPORT_STATUSES)[number];
 
-/** What a channel's report may say: a channel is never paused and never finishes. */
+/** A channel is never paused and never finishes. */
 export const LIVE_REPORT_STATUSES = ["playing", "stopped"] as const;
 
 export type LiveReportStatus = (typeof LIVE_REPORT_STATUSES)[number];
 
 /**
  * The cursor after a progress report on the episode at `index`. `finished` moves it to the next allowed episode,
- * wrapping to the first after the last (so OK on a fully watched item starts it again; `autoAdvance` does not matter
- * here); only that wrap gives a wrapped cursor. Every other report keeps it on the reported episode as an ordinary
- * cursor. `changed` (the state version must be bumped) is always true for `stopped` and `finished` (the TV left the
- * player); any other report is a change when the cursor moves, or stops being wrapped (OK may then play another
- * episode).
+ * wrapping to the first after the last (only that wrap gives a wrapped cursor; `autoAdvance` does not matter here);
+ * any other report keeps it on the reported episode. `changed` (the state version must be bumped) is true for
+ * `stopped` and `finished` (the TV left the player), else when the cursor moves or stops being wrapped.
  */
 export function cursorAfterReport(
   item: EpisodicItem,

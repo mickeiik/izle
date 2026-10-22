@@ -10,17 +10,14 @@ const MIN_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 30_000;
 
 /**
- * Follows the events matching `filter` until `scope` ends. `handler` gets each event as the API sends it (`id`,
- * `type`, `deviceId`, `actor`, `data`); after a gap (the consumer fell behind, or the stream was away for long) it
- * gets `{ type: "gap" }` first, so a view re-reads what it shows. A lost connection is reopened with backoff, after
- * the last event seen; a refused token ends the watch (the API's 401 handling signs the page out on its next call).
- * @param {import("./router.js").Scope} scope
- * @param {{ devices?: string[], types?: string[] }} filter
+ * Follows the events matching `filter` until `scope` ends; after a gap (the consumer fell behind, or the stream was
+ * away for long) `handler` gets `{ type: "gap" }` first, so a view re-reads what it shows. A lost connection is
+ * reopened with backoff after the last event seen; a refused token ends the watch (the next API call signs out).
+ * @param {import("./router.js").Scope} scope @param {{ devices?: string[], types?: string[] }} filter
  * @param {(event: any) => void} handler
  */
 export function watchEvents(scope, filter, handler) {
-  /** @type {string | null} */
-  let last = null;
+  let last = /** @type {string | null} */ (null);
   let backoff = MIN_BACKOFF_MS;
   const url = () => {
     const q = new URLSearchParams();
@@ -58,8 +55,7 @@ export function watchEvents(scope, filter, handler) {
     for (;;) {
       const { value, done } = await reader.read();
       if (done) return true;
-      buffer += decoder.decode(value, { stream: true });
-      const { events, rest } = parseSse(buffer);
+      const { events, rest } = parseSse(buffer + decoder.decode(value, { stream: true }));
       buffer = rest;
       for (const e of events) deliver(e);
     }

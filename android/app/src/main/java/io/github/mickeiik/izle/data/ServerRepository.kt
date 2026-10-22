@@ -34,13 +34,10 @@ class ServerRepository(
     private val store: DeviceStore,
     private val events: EventsClient,
     private val timing: Timing = Timing(),
-    /**
-     * Asks the server which TV app version it offers (`GET /tv/app`): when the event stream opens, on its `app` events
-     * and every [Timing.appCheckMs] while started. The app's updater; nothing by default.
-     */
+    /** `GET /tv/app`: when the event stream opens, on its `app` events and every [Timing.appCheckMs] while started. */
     private val onAppCheck: suspend (ApiClient) -> Unit = {},
 ) {
-    /** [clock]: monotonic, in milliseconds (outage lengths). */
+    /** [clock]: monotonic, in milliseconds. */
     data class Timing(
         val pollMs: Long = 60_000,
         val offlinePollMs: Long = 10_000,
@@ -59,26 +56,22 @@ class ServerRepository(
     private val _commands = MutableSharedFlow<ServerEvent.Command>(extraBufferCapacity = 16)
     val commands: SharedFlow<ServerEvent.Command> = _commands.asSharedFlow()
 
-    /** The server's `app` events: the TV app version it offers changed (the [onAppCheck] hook already runs on them). */
-    private val _appEvents = MutableSharedFlow<ServerEvent.App>(extraBufferCapacity = 4)
-    val appEvents: SharedFlow<ServerEvent.App> = _appEvents.asSharedFlow()
-
-    /** Every state actually fetched from the server (never the offline cache). */
+    /** Never the offline cache. */
     private val _fetched = MutableSharedFlow<TvState>(extraBufferCapacity = 4)
     val fetched: SharedFlow<TvState> = _fetched.asSharedFlow()
 
     /**
-     * The length of an outage worth reporting (see [Problems.SERVER_UNREACHABLE_MIN_MS]) while started, announced once
-     * the server answers again. Time in the background does not count: the TV was not trying then.
+     * The length of an outage worth reporting ([Problems.SERVER_UNREACHABLE_MIN_MS]), once the server answers again.
+     * Time in the background does not count: the TV was not trying then.
      */
     private val _outages = MutableSharedFlow<Long>(extraBufferCapacity = 4)
     val outages: SharedFlow<Long> = _outages.asSharedFlow()
 
-    /** Since when the server has been unreachable while started (monotonic clock), or null. */
+    /** While started. */
     @Volatile
     private var offlineSince: Long? = null
 
-    /** The server no longer knows this device (deleted by the owner): it has to pair again. */
+    /** The owner deleted this device: it has to pair again. */
     private val _unauthorized = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val unauthorized: SharedFlow<Unit> = _unauthorized.asSharedFlow()
 
@@ -117,7 +110,7 @@ class ServerRepository(
         offlineSince = null
     }
 
-    /** Re-reads the state now, e.g. when the TV returns to Home after playback. */
+    /** E.g. when the TV returns to Home after playback. */
     fun refreshSoon() {
         val api = api ?: return
         scope.launch { refresh(api) }
@@ -144,7 +137,6 @@ class ServerRepository(
         }
     }
 
-    /** Updates [online] and measures outages; only time while started counts (see [outages]). */
     private fun setOnline(online: Boolean) {
         _online.value = online
         val now = timing.clock()
@@ -159,11 +151,7 @@ class ServerRepository(
 
     private suspend fun loadCached() {
         val text = store.cachedState() ?: return
-        _state.value = try {
-            ApiJson.decodeFromString(TvState.serializer(), text)
-        } catch (e: IllegalArgumentException) {
-            null
-        }
+        _state.value = runCatching { ApiJson.decodeFromString(TvState.serializer(), text) }.getOrNull()
     }
 
     private suspend fun pollLoop(api: ApiClient) {
@@ -203,10 +191,7 @@ class ServerRepository(
                             if (!_online.value) refresh(api)
                             checkApp(api)
                         }
-                        is ServerEvent.App -> {
-                            _appEvents.tryEmit(event)
-                            checkApp(api)
-                        }
+                        is ServerEvent.App -> checkApp(api)
                         is ServerEvent.State -> if (event.version != _state.value?.version) refresh(api)
                         is ServerEvent.Command -> dispatch(api, event)
                     }

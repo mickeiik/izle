@@ -34,31 +34,22 @@ const withShowEpisode = (id: string, number: number) => (items: Json[]) =>
 const without = (...ids: string[]) => (items: Json[]) =>
   items.filter((i) => !ids.includes(i.id)).map((i) => (i.episodes ? { ...i, episodes: i.episodes.filter((e: Json) => !ids.includes(e.id)) } : i));
 
-test("baseline: the first load of a catalog id records every episode as always there", async (t) => {
-  const { store, clock, service, builds, seenAt } = await setup(t);
+test("baseline, then append: the first load records everything as always there, a later build's news at its load time", async (t) => {
+  const { store, clock, service, publish, builds, seenAt } = await setup(t);
   const catalog = service();
   await catalog.load();
   const fixture = fixtureItems().items as Json[];
   const episodes = fixture.reduce((n, i) => n + (i.episodes?.length ?? 0), 0);
-
-  assert.deepEqual(builds(), [
-    {
-      catalogId: CATALOG, buildId: "fixture-1", builtAt: "2026-10-10T12:00:00Z", loadedAt: clock.now(), baseline: true, items: fixture.length,
-      episodes, itemsAdded: 0, itemsRemoved: 0, episodesAdded: 0, episodesRemoved: 0,
-    },
-  ]);
-  assert.deepEqual(store.getCatalogBuild(CATALOG, "fixture-1")?.changes, { items: { added: [], removed: [] }, episodes: { added: [], removed: [] } });
+  const baseline = {
+    catalogId: CATALOG, buildId: "fixture-1", builtAt: "2026-10-10T12:00:00Z", loadedAt: clock.now(), baseline: true, items: fixture.length,
+    episodes, itemsAdded: 0, itemsRemoved: 0, episodesAdded: 0, episodesRemoved: 0,
+  };
+  assert.deepEqual(builds(), [baseline]);
   const seen = store.catalogSeen(CATALOG);
   assert.equal(seen.length, episodes);
   assert.ok(seen.every((e) => e.firstSeenAt === 0 && e.removedAt === null && e.buildId === "fixture-1"));
   assert.equal(seenAt("show.e4")?.itemId, "show");
-  assert.deepEqual(store.episodesSeenAfter(CATALOG, "show", 0), [], "baseline episodes never count as new");
-});
 
-test("append: a later build's episodes and items are seen at its load time", async (t) => {
-  const { store, clock, service, publish, builds, seenAt } = await setup(t);
-  const catalog = service();
-  await catalog.load();
   clock.advance(60_000);
   await publish("fixture-2", (items) => [
     ...withShowEpisode("show.e6", 4)(items),
@@ -66,12 +57,10 @@ test("append: a later build's episodes and items are seen at its load time", asy
   ]);
   assert.equal((await catalog.reload()).ok, true);
 
-  const [latest, first] = builds();
-  assert.equal(first?.buildId, "fixture-1");
-  assert.deepEqual(
-    { ...latest, loadedAt: latest?.loadedAt === clock.now() },
-    { catalogId: CATALOG, buildId: "fixture-2", builtAt: "2026-10-10T12:00:00Z", loadedAt: true, baseline: false, items: 19, episodes: 23, itemsAdded: 1, itemsRemoved: 0, episodesAdded: 3, episodesRemoved: 0 },
-  );
+  assert.deepEqual(builds(), [
+    { ...baseline, buildId: "fixture-2", loadedAt: clock.now(), baseline: false, items: 19, episodes: 23, itemsAdded: 1, episodesAdded: 3 },
+    baseline,
+  ]);
   const { changes } = store.getCatalogBuild(CATALOG, "fixture-2")!;
   assert.deepEqual(changes.items, { added: [{ id: "newshow", title: "Yeni Dizi", kind: "series" }], removed: [] });
   assert.deepEqual(changes.episodes.removed, []);

@@ -1,14 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { main } from "../src/cli.ts";
 import { localServerUrl } from "../src/config.ts";
 import { linkBase, qrCode, signInLink } from "../src/shell.ts";
-import { SCHEMA_VERSION } from "../src/store.ts";
-import { ADMIN_TOKEN, startTestServer, tempDir } from "./helpers.ts";
+import { MIGRATIONS } from "../src/store/schema.ts";
+import { ADMIN_TOKEN, testServer, tempDir } from "./helpers.ts";
 
 // The CLI reads the admin token the way the server does; the test server runs with the token from the environment.
 process.env.IZLE_ADMIN_TOKEN = ADMIN_TOKEN;
@@ -37,8 +37,7 @@ async function refused(argv: string[], code: number, err?: RegExp, message?: str
 }
 
 test("cli: pair pending / pair approve drive the running server's admin API", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const cfg = ["--config", s.config.configPath!, "--server", s.base];
 
   let r = await run(["pair", "pending", ...cfg]);
@@ -88,11 +87,20 @@ test("cli: pair pending / pair approve drive the running server's admin API", as
   await refused(["pair", "approve", "123456", "--config", s.config.configPath!, "--server", "ftp://x"], 2);
   await refused(["admin-token", "--config", s.config.configPath!, "--server", s.base], 2, /--server belongs to the pair and token commands/);
   await refused(["check-resolver", "extra", "--config", s.config.configPath!], 2, undefined, "stray arguments are still refused");
+
+  // A wrong admin token is reported, not retried.
+  const start = await s.call("POST", "/api/v1/pair/start");
+  process.env.IZLE_ADMIN_TOKEN = "another-token-that-is-long-enough";
+  try {
+    await refused(["pair", "approve", start.json.code, ...cfg], 1, /did not accept the admin token/);
+  } finally {
+    process.env.IZLE_ADMIN_TOKEN = ADMIN_TOKEN;
+  }
+  assert.equal((await s.admin("GET", "/pair/pending")).json.codes.find((c: { code: string }) => c.code === start.json.code).approved, false);
 });
 
 test("cli: token create / list / revoke drive the running server's admin API; the secret is printed once, on stdout", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const cfg = ["--config", s.config.configPath!, "--server", s.base];
 
   let r = await run(["token", "list", ...cfg]);
@@ -127,28 +135,15 @@ test("cli: token create / list / revoke drive the running server's admin API; th
   assert.ok(!s.logs.some((l) => l.includes(secret)), "the server never logged the secret");
 });
 
-test("cli: pair approve against a wrong admin token is reported, not retried", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
-  const start = await s.call("POST", "/api/v1/pair/start");
-  const saved = process.env.IZLE_ADMIN_TOKEN;
-  process.env.IZLE_ADMIN_TOKEN = "another-token-that-is-long-enough";
-  try {
-    await refused(["pair", "approve", start.json.code, "--config", s.config.configPath!, "--server", s.base], 1, /did not accept the admin token/);
-  } finally {
-    process.env.IZLE_ADMIN_TOKEN = saved;
-  }
-  assert.equal((await s.admin("GET", "/pair/pending")).json.codes[0].approved, false);
-});
-
-test("cli: admin-token --link prints the sign-in link and its QR code", async (t) => {
-  const s = await startTestServer({ configFile: { publicUrl: "https://izle.example.org/" } });
-  t.after(() => s.close());
+test("cli: admin-token prints the token, with --link the sign-in link and its QR code; --rotate is refused under IZLE_ADMIN_TOKEN", async (t) => {
+  const s = await testServer(t, { configFile: { publicUrl: "https://izle.example.org/" } });
   const link = `https://izle.example.org/admin/#token=${ADMIN_TOKEN}`;
 
   let r = await run(["admin-token", "--config", s.config.configPath!]);
-  assert.equal(r.code, 0);
-  assert.equal(r.out, `${ADMIN_TOKEN}\n`, "without --link only the token is printed");
+  assert.deepEqual([r.code, r.out], [0, `${ADMIN_TOKEN}\n`], "without --link only the token is printed");
+  assert.match(r.err, /note: IZLE_ADMIN_TOKEN is set and overrides the token file/);
+  await refused(["admin-token", "--rotate", "--config", s.config.configPath!], 1, /IZLE_ADMIN_TOKEN is set and overrides the token file.*change or remove the variable/);
+  assert.equal((await run(["admin-token", "--config", s.config.configPath!])).out, `${ADMIN_TOKEN}\n`, "the token stays");
 
   r = await run(["admin-token", "--link", "--config", s.config.configPath!]);
   assert.equal(r.code, 0, r.err);
@@ -169,33 +164,27 @@ test("cli: admin-token --link prints the sign-in link and its QR code", async (t
   await refused(["--link", "--config", s.config.configPath!], 2, /--link belongs to the admin-token command/);
 });
 
-test("cli: admin-token --rotate is refused while IZLE_ADMIN_TOKEN is set, and the token stays", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
-  await refused(["admin-token", "--rotate", "--config", s.config.configPath!], 1, /IZLE_ADMIN_TOKEN is set and overrides the token file.*change or remove the variable/);
-  const r = await run(["admin-token", "--config", s.config.configPath!]);
-  assert.deepEqual([r.code, r.out], [0, `${ADMIN_TOKEN}\n`]);
-  assert.match(r.err, /note: IZLE_ADMIN_TOKEN is set and overrides the token file/);
-});
-
 test("shell helpers: local address, link base and link format", () => {
-  const config = (listen: { host: string; port: number }, publicUrl: string | null = null) => ({ listen, publicUrl }) as any;
-  assert.equal(localServerUrl(config({ host: "0.0.0.0", port: 8787 })), "http://127.0.0.1:8787");
-  assert.equal(localServerUrl(config({ host: "::", port: 8787 })), "http://127.0.0.1:8787");
-  assert.equal(localServerUrl(config({ host: "192.168.1.54", port: 8787 })), "http://192.168.1.54:8787");
-  assert.equal(localServerUrl(config({ host: "fd00::5", port: 8787 })), "http://[fd00::5]:8787");
+  const config = (host: string, publicUrl: string | null = null) => ({ listen: { host, port: 8787 }, publicUrl }) as any;
+  const local = [["0.0.0.0", "127.0.0.1"], ["::", "127.0.0.1"], ["192.168.1.54", "192.168.1.54"], ["fd00::5", "[fd00::5]"]];
+  for (const [host, url] of local) assert.equal(localServerUrl(config(host!)), `http://${url}:8787`);
 
   const interfaces = () =>
     ({
       lo: [{ address: "127.0.0.1", family: "IPv4", internal: true }],
       eth0: [{ address: "fe80::1", family: "IPv6", internal: false }, { address: "192.168.1.54", family: "IPv4", internal: false }],
     }) as any;
-  assert.deepEqual(linkBase(config({ host: "0.0.0.0", port: 8787 }, "https://izle.example.org"), interfaces), { url: "https://izle.example.org", source: "publicUrl" });
-  assert.deepEqual(linkBase(config({ host: "192.168.1.54", port: 8787 }), interfaces), { url: "http://192.168.1.54:8787", source: "listen.host" });
-  assert.deepEqual(linkBase(config({ host: "0.0.0.0", port: 8787 }), interfaces), { url: "http://192.168.1.54:8787", source: "interface" });
-  assert.deepEqual(linkBase(config({ host: "::", port: 8787 }), () => ({}) as any), { url: "http://127.0.0.1:8787", source: "loopback" });
-  assert.deepEqual(linkBase(config({ host: "127.0.0.1", port: 8787 }), interfaces), { url: "http://192.168.1.54:8787", source: "interface" }, "a loopback listen host (reverse proxy setup) is not the phone's address");
-  assert.deepEqual(linkBase(config({ host: "::1", port: 8787 }), () => ({}) as any), { url: "http://[::1]:8787", source: "loopback" });
+  const none = () => ({}) as any;
+  // A loopback listen host (a reverse proxy setup) is not the phone's address.
+  const bases: Array<[any, typeof interfaces, string, string]> = [
+    [config("0.0.0.0", "https://izle.example.org"), interfaces, "https://izle.example.org", "publicUrl"],
+    [config("192.168.1.54"), interfaces, "http://192.168.1.54:8787", "listen.host"],
+    [config("0.0.0.0"), interfaces, "http://192.168.1.54:8787", "interface"],
+    [config("127.0.0.1"), interfaces, "http://192.168.1.54:8787", "interface"],
+    [config("::"), none, "http://127.0.0.1:8787", "loopback"],
+    [config("::1"), none, "http://[::1]:8787", "loopback"],
+  ];
+  for (const [c, ifs, url, source] of bases) assert.deepEqual(linkBase(c, ifs), { url, source }, c.listen.host);
 
   assert.equal(signInLink("https://izle.example.org///", "tok-en"), "https://izle.example.org/admin/#token=tok-en");
   assert.equal(signInLink("https://host.example.org/izle", "a b&c"), "https://host.example.org/izle/admin/#token=a%20b%26c");
@@ -218,8 +207,7 @@ function readBackup(file: string) {
 }
 
 test("cli: backup copies the running server's database; an existing file needs --force", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   assert.equal((await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["show", "film"] })).status, 200);
   const dir = await tempDir("izle-backup-");
@@ -238,7 +226,7 @@ test("cli: backup copies the running server's database; an existing file needs -
   assert.equal(end, "");
   assert.equal(statSync(target).mode & 0o777, 0o600, "only the owner can read the copy");
   // The running server holds the database open in WAL mode; what it wrote is in the copy.
-  assert.deepEqual(readBackup(target), { schemaVersion: SCHEMA_VERSION, devices: [[tv.deviceId, "Salon"]], home: ["show", "film"] });
+  assert.deepEqual(readBackup(target), { schemaVersion: MIGRATIONS.length, devices: [[tv.deviceId, "Salon"]], home: ["show", "film"] });
 
   await refused(["backup", target, ...cfg], 1, /already exists; pass --force to replace it/);
   assert.equal((await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["film"] })).status, 200, "the server keeps working");
@@ -268,4 +256,17 @@ test("cli: backup without a database says so and creates nothing", async () => {
   assert.equal(r.code, 1);
   assert.equal(r.err, `izle-server: there is no database at ${path.join(dir, "data", "izle.db")}; the server creates it when it first starts\n`);
   assert.deepEqual(readdirSync(dir), ["izle.json"]);
+});
+
+test("cli: the server refuses a database made by a newer server", async () => {
+  const dir = await tempDir("izle-newer-");
+  const config = path.join(dir, "izle.json");
+  await writeFile(config, JSON.stringify({ listen: { host: "127.0.0.1", port: 0 }, dataDir: "./data", appUpdates: { source: "manual" } }));
+  mkdirSync(path.join(dir, "data"));
+  const newer = new DatabaseSync(path.join(dir, "data", "izle.db"));
+  newer.exec(`PRAGMA user_version = ${MIGRATIONS.length + 1}`);
+  newer.close();
+  const r = await run(["--config", config]);
+  assert.equal(r.code, 1);
+  assert.equal(r.err, `izle-server: database schema version ${MIGRATIONS.length + 1} is newer than this server (${MIGRATIONS.length})\n`);
 });

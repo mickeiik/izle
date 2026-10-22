@@ -26,12 +26,10 @@ export class HttpError extends Error {
   }
 }
 
-/** 429 with `Retry-After` in seconds. */
 export function tooManyRequests(code: string, message: string, retryAfterSec: number): HttpError {
   return new HttpError(429, code, message, {}, { "Retry-After": String(retryAfterSec) });
 }
 
-/** 401 `unauthorized` with `WWW-Authenticate: Bearer realm="<realm>"`. */
 export function unauthorized(realm: string, message: string): HttpError {
   return new HttpError(401, "unauthorized", message, {}, { "WWW-Authenticate": `Bearer realm="${realm}"` });
 }

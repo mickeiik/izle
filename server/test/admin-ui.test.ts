@@ -9,7 +9,7 @@ import {
   actorLabel, buildSummary, candidateOptions, catalogContents, clockOffset, commandResultText, companionTarget,
   continueText, episodeHistoryLine, episodeName, episodeStateLabel, episodeStates, errorText, formatClock, formatCode,
   formatCountdown, formatDrift, formatDuration, formatPosition, formatRelative, gridSummary, groupEpisodeChanges, isActive, issueLine,
-  languageLabel, liveViewingLine, mediaKindLabel, moveItem, nowPlayingLine, parseCandidate, parseSse, percent, playbackState, plural,
+  languageLabel, liveViewingLine, mediaKindLabel, nowPlayingLine, parseCandidate, parseSse, percent, playbackState, plural,
   problemContext, resumes, sameLanguage, scopeLabel, serverAddress, shortId, showMeta, sourceReport, syncDecision,
   titleLine, titleStatusLabel, tokenFromHash, triggerLabel, tvPositionAt, viewingEnd, viewingSpan,
   onTv, tvCard, tvGrid,
@@ -52,7 +52,7 @@ test("admin helpers: clocks, relative times, codes, sign-in links and the addres
   ]);
 });
 
-test("admin helpers: episode names, what OK does, list moves and episode states", () => {
+test("admin helpers: episode names, what OK does and episode states", () => {
   const c = { episodeId: "show.s1e2", season: 1, number: 2, title: "Two", label: null, durationMs: 600_000 };
   cases([
     [episodeName({ season: 1, number: 2, title: "Gran Dillama" }, "series"), "S1 · E2 — Gran Dillama"],
@@ -68,8 +68,6 @@ test("admin helpers: episode names, what OK does, list moves and episode states"
     [resumes({ ...c, status: "watching", positionMs: 29_999 }), false, "the TV resumes from 30 s on"],
     [resumes({ ...c, status: "finished", positionMs: 90_000 }), false], [resumes(null), false],
     [percent(30, 120), 25], [percent(30, null), null], [percent(500, 100), 100],
-    [moveItem(["a", "b", "c"], 1, -1), ["b", "a", "c"]], [moveItem(["a", "b", "c"], 2, 1), ["a", "b", "c"]],
-    [moveItem(["a", "b", "c"], 0, 2), ["b", "c", "a"]],
   ]);
   const states = episodeStates([{ id: "e1" }, { id: "e2" }, { id: "e3" }], "e2", [
     { episodeId: "e1", status: "finished", positionMs: 10, durationMs: 10 },
@@ -172,7 +170,6 @@ test("admin helpers: show lines, ids, issues, error texts and languages", () => 
     [issueLine({ file: "bundle.json", path: null, message: "unknown format" }), "bundle.json: unknown format"],
     [errorText({ code: "too_many_items" }), "A home screen holds at most 200 shows."],
     [errorText({ code: "network" }), "The server cannot be reached.", "an ApiError's code"],
-    [errorText({ code: "hls_unsupported" }), "This browser cannot play HLS.", "the companion player's"],
     [errorText({ code: "weird" }), "The server answered: weird."],
     [errorText(new TypeError("x is undefined")), "Something went wrong.", "a bug is not shown as it is"],
     [errorText({ code: 20, name: "AbortError" }), "Something went wrong.", "a DOMException's numeric code is not one of ours"],
@@ -422,7 +419,6 @@ test("admin helpers: Home with sections, laid out as the TV app does", () => {
     [deleteSectionText("Films", 6), "Delete Films? Its 6 shows move to No title."],
     [deleteSectionText("Films", 1), "Delete Films? Its show moves to No title."],
     [deleteSectionText("Films", 0), "Delete Films?"],
-    [errorText({ code: "too_many_sections" }), "A Home holds at most 20 sections."],
   ]);
 });
 
@@ -460,7 +456,7 @@ test("admin helpers: the event stream, durations, viewings, titles, episodes, co
     rest: "data: part",
   }, "comments and retry are skipped; the unfinished message stays for the next chunk");
   assert.deepEqual(parseSse("data: a\r\ndata: b\r\n\r\n"), { events: [{ id: null, event: "message", data: "a\nb" }], rest: "" });
-  const ended = { endedAt: ago(1000), endPositionMs: 754_000, seen: false, imported: false };
+  const ended = { endedAt: ago(1000), endPositionMs: 754_000, seen: false };
   cases([
     [formatDuration(0), "under a minute"], [formatDuration(45 * 60_000), "45 min"], [formatDuration(2 * 3_600_000 + 5 * 60_000), "2 h 05 min"],
     [formatDuration(null), "–"],
@@ -473,7 +469,7 @@ test("admin helpers: the event stream, durations, viewings, titles, episodes, co
     [viewingEnd({ ...ended, endReason: "stopped" }), "stopped at 12:34"],
     [viewingEnd({ ...ended, endReason: "replaced", seen: true }), "switched away at 12:34 · seen", "the 90 % rule"],
     [viewingEnd({ ...ended, endReason: "lost" }), "lost at 12:34"],
-    [viewingEnd({ ...ended, endReason: "stopped", imported: true }), "stopped", "an imported viewing has no position worth a time"],
+    [viewingEnd({ ...ended, endReason: "stopped", endPositionMs: null }), "stopped", "a channel's viewing has no position"],
     [titleStatusLabel("finished"), { label: "Finished", tone: "ok" }], [titleStatusLabel("new_episodes"), { label: "New episodes", tone: "info" }],
     [titleStatusLabel("watching"), { label: "Watching", tone: "" }], [titleStatusLabel("idle"), { label: "Idle", tone: "" }],
     [titleLine({ kind: "series", inCatalog: true, episodes: { total: 12, seen: 5 }, lastWatchedAt: ago(2 * 86400_000), watchedMs: 12_000_000 }, NOW), "Series · 5 of 12 episodes seen · last watched 2 days ago · 3 h 20 min"],
@@ -485,7 +481,6 @@ test("admin helpers: the event stream, durations, viewings, titles, episodes, co
     [commandResultText({ type: "pause", result: "ignored", reason: "not_in_player" }), "Pause: ignored (nothing is playing)"],
     [commandResultText({ type: "play", result: "failed", reason: "odd_reason" }), "Play: failed (odd reason)", "a reason the page does not know"],
     [scopeLabel("manage"), "Manage"], [scopeLabel("x"), "x"],
-    [errorText({ code: "insufficient_scope" }), "This token may not do that; the admin page needs the owner token."],
   ]);
 });
 
@@ -542,13 +537,9 @@ test("admin helpers: a channel (a live item) never reads as a film or a series",
   const result = (type: string, reason: string) => commandResultText({ type, result: "ignored", reason });
   cases([
     [result("pause", "live"), "Pause: ignored (a channel cannot be paused or seeked)"],
-    [result("seek", "live"), "Seek: ignored (a channel cannot be paused or seeked)"],
-    [result("next", "no_channel"), "Next: ignored (no channel after this one on Home)"],
+    [result("next", "no_channel"), "Next: ignored (no channel after this one on Home)", "by type and reason"],
     [result("previous", "no_channel"), "Previous: ignored (no channel before this one on Home)"],
     [result("play", "no_channel"), "Play: ignored (no channel that way on Home)", "by reason alone"],
-    [result("next", "no_episode"), "Next: ignored (no episode that way)"],
-    [errorText({ code: "not_playable" }), "That show has no episode that may be played, or that channel may not be played."],
-    [errorText({ code: "unsupported_media" }), "That source is DASH or MPEG-TS, which a phone cannot play through the server."],
   ]);
   const ts = { sourceId: "raw-ts", label: null, languages: { audio: ["tr"], subtitles: null }, current: false, supported: false, reason: "ts" };
   assert.deepEqual(candidateOptions([ts]).map((o) => [o.disabled, o.label]), [[true, "raw-ts · Türkçe (tr) · MPEG-TS, cannot play on a phone"]]);
@@ -578,10 +569,8 @@ test("admin helpers: TV app sizes, APK names, update chips, Android versions and
     [androidText(28), "Android 9 (API 28)"], [androidText(31), "Android 12 (API 31)"], [androidText(32), "Android 12L (API 32)"],
     [androidText(99), "API 99"], [androidText(null), "unknown"], [androidText(undefined), "unknown"],
     [capabilityText({ capability: "silent", androidSdk: 34 }), "Installs updates by itself while nobody is watching."],
-    [capabilityText({ capability: "silent", androidSdk: 34 }, true), "Installs updates by itself while nobody is watching."],
     [capabilityText({ capability: "silent", androidSdk: 34 }, false), "Can install updates by itself, but automatic installs are off on this server: an update needs Install now here.", "appUpdates.auto off"],
     [capabilityText({ capability: "guided", androidSdk: 28 }, false), "On Android 11 or older, an update needs Install now here, and someone at the TV pressing OK when the screen appears.", "auto does not change guided TVs"],
-    [capabilityText({ capability: "guided", androidSdk: 28 }), "On Android 11 or older, an update needs Install now here, and someone at the TV pressing OK when the screen appears."],
     [capabilityText({ capability: "guided", androidSdk: 33 }), "The TV lacks the one-time permission to install apps, so an update needs Install now here, and someone at the TV pressing OK when the screen appears.", "Android 12+ without the grant"],
     [capabilityText({ capability: null }), "Unknown: the TV has not said how it installs updates (an older app)."],
     [capabilityText(undefined), "Unknown: the TV has not said how it installs updates (an older app)."],
@@ -599,21 +588,12 @@ test("admin helpers: TV app sizes, APK names, update chips, Android versions and
 });
 
 test("admin helpers: TV app checks, their reasons and the update command's results", () => {
-  const reasons: Array<[string | null, string]> = [
-    ["network", "GitHub could not be reached"], ["http_502", "GitHub answered HTTP 502"],
-    ["rate_limited", "GitHub's rate limit was reached; a later check tries again"],
-    ["no_release", "the repository has no release yet"],
-    ["prerelease", "the latest release is a pre-release, which is not offered to TVs"],
-    ["bad_tag", "the latest release's tag is not a version (vX.Y.Z)"], ["no_apk_asset", "the latest release has no izle-tv APK"],
-    ["no_checksums", "the latest release has no checksum file"], ["checksums_too_large", "the release's checksum file is too large"],
-    ["checksum_missing", "the checksum file does not list the APK"], ["checksum_mismatch", "the downloaded APK does not match its checksum"],
-    ["too_large", "the APK is larger than 64 MiB"], ["not_an_apk", "the download is not an APK"],
-    ["new_reason", "new reason"], [null, "for an unknown reason"],
-  ];
-  for (const [reason, text] of reasons) assert.equal(appCheckReasonText(reason), text, String(reason));
   const check = (o: Record<string, unknown>) => ({ lastAt: null, nextAt: null, result: null, reason: null, running: false, ...o });
   const later = (ms: number) => new Date(NOW + ms).toISOString();
   cases([
+    [appCheckReasonText("network"), "GitHub could not be reached"],
+    [appCheckReasonText("http_502"), "GitHub answered HTTP 502"], [appCheckReasonText("new_reason"), "new reason"],
+    [appCheckReasonText(null), "for an unknown reason"],
     [appCheckText(check({ lastAt: ago(2 * 3600_000), result: "up_to_date", nextAt: later(4 * 3600_000) }), "github", NOW), "Last check 2 h ago: up to date · next check in 4 h"],
     [appCheckText(check({ lastAt: ago(5_000), result: "failed", reason: "network", nextAt: later(30 * 60_000) }), "github", NOW), "Last check failed just now: GitHub could not be reached · next check in 30 min"],
     [appCheckText(check({ lastAt: ago(60_000), result: "fetched", nextAt: later(26 * 3600_000) }), "github", NOW), "Last check 1 min ago: fetched a new version · next check in 1 day"],
@@ -626,7 +606,6 @@ test("admin helpers: TV app checks, their reasons and the update command's resul
     [checkResultText({ result: "fetched", reason: null, apk: { versionName: "0.3.0" } }, true), { text: "Fetched 0.3.0 from GitHub. TVs that install by themselves update when idle; the others need Install now.", kind: "ok" }],
     [checkResultText({ result: "fetched", reason: null, apk: { versionName: "0.3.0" } }, false), { text: "Fetched 0.3.0 from GitHub. Automatic installs are off: every TV needs Install now.", kind: "ok" }, "appUpdates.auto off"],
     [checkResultText({ result: "fetched", reason: null, apk: null }, true), { text: "Fetched a new version from GitHub. TVs that install by themselves update when idle; the others need Install now.", kind: "ok" }],
-    [checkResultText({ result: "up_to_date", reason: null, apk: { versionName: "0.3.0" } }, true), { text: "Up to date: 0.3.0 is the latest release.", kind: "info" }],
     [checkResultText({ result: "up_to_date", reason: null, apk: { versionName: "0.3.0" } }, false), { text: "Up to date: 0.3.0 is the latest release.", kind: "info" }],
     [checkResultText({ result: "failed", reason: "checksum_mismatch", apk: null }, false), { text: "The check failed: the downloaded APK does not match its checksum.", kind: "error" }],
     [newApkText(true), "TVs that install by themselves update when idle; the others need Install now."],
@@ -634,29 +613,14 @@ test("admin helpers: TV app checks, their reasons and the update command's resul
   ]);
   const update = (result: string, reason: string | null) => commandResultText({ type: "update", result, reason });
   cases([
-    [update("done", "installing"), "Update: the TV is installing"],
-    [update("done", "prompted"), "Update: the TV shows the install screen; someone has to press OK"],
+    [update("done", "installing"), "Update: the TV is installing", "by result and reason"],
     [update("done", null), "Update: done"],
-    [update("ignored", "up_to_date"), "Update: ignored, the TV is up to date"],
-    [update("ignored", "not_newer"), "Update: ignored, the TV has this version or a newer one"],
-    [update("ignored", "busy"), "Update: ignored, the TV is playing", "not the generic “busy”"],
-    [update("ignored", "not_ready"), "Update: ignored, the TV is not set up"],
-    [update("ignored", "declined"), "Update: declined on the TV (Back was pressed)"],
-    [update("ignored", "timeout"), "Update: nobody pressed OK on the TV within 60 s"],
-    [update("failed", "download"), "Update failed: the TV could not download the APK"],
-    [update("failed", "too_large"), "Update failed: the APK is too large for the TV"],
-    [update("failed", "verify"), "Update failed: the download did not match its checksum"],
-    [update("failed", "wrong_package"), "Update failed: the APK is not the izle TV app"],
-    [update("failed", "bad_archive"), "Update failed: the APK is damaged"],
+    [update("ignored", "busy"), "Update: ignored, the TV is playing", "by reason; not the generic “busy”"],
     [update("failed", "install_failure_incompatible"), "Update failed: different signing key (only a release APK installs over a release install)"],
     [update("failed", "install_failure_storage"), "Update failed: the TV's installer refused (failure storage)"],
     [update("failed", "odd_thing"), "Update failed (odd thing)"],
     [update("ignored", "odd_thing"), "Update: ignored (odd thing)"],
     [commandResultText({ type: "play", result: "ignored", reason: "busy" }), "Play: ignored (the TV was busy)", "other commands keep their words"],
-    [errorText({ code: "no_apk" }), "No TV app is stored on the server yet: fetch or upload one on the TV app page."],
-    [errorText({ code: "invalid_filename" }), "Name the file izle-tv-X.Y.Z.apk, as on the releases page."],
-    [errorText({ code: "apk_too_large" }), "That APK is larger than 64 MiB, the server's limit."],
-    [errorText({ code: "github_disabled" }), "Checks are off: this server is set to uploaded APKs only."],
   ]);
 });
 

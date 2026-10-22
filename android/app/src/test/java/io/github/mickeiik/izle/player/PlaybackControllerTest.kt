@@ -26,6 +26,7 @@ import io.github.mickeiik.izle.domain.PlayableRef
 import io.github.mickeiik.izle.domain.PlaybackOrigin
 import io.github.mickeiik.izle.domain.PlaybackPlan
 import io.github.mickeiik.izle.domain.RemoteCommand
+import io.github.mickeiik.izle.json
 import io.github.mickeiik.izle.settings.DeviceStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -36,6 +37,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.KSerializer
 import mockwebserver3.Dispatcher
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -75,22 +77,20 @@ class PlaybackControllerTest {
             override fun dispatch(request: RecordedRequest): MockResponse {
                 val path = request.url.encodedPath
                 val body = request.body?.utf8().orEmpty()
+                fun <T> MutableList<T>.record(serializer: KSerializer<T>, code: Int = 200): MockResponse {
+                    add(ApiJson.decodeFromString(serializer, body))
+                    return json(code, """{"ok":true}""")
+                }
                 return when {
                     path == "/api/v1/tv/resolve" -> {
                         resolves += ApiJson.decodeFromString(ResolveRequest.serializer(), body)
                         answers.poll() ?: json(500, """{"error":"unscripted_resolve"}""")
                     }
-                    path == "/api/v1/tv/progress" -> {
-                        progress += ApiJson.decodeFromString(ProgressReport.serializer(), body)
-                        json(200, """{"ok":true}""")
-                    }
-                    path == "/api/v1/tv/problems" -> {
-                        problems += ApiJson.decodeFromString(ProblemReport.serializer(), body)
-                        json(202, """{"ok":true}""")
-                    }
+                    path == "/api/v1/tv/progress" -> progress.record(ProgressReport.serializer())
+                    path == "/api/v1/tv/problems" -> problems.record(ProblemReport.serializer(), code = 202)
                     path.endsWith("/result") -> {
-                        results += path.substringBeforeLast('/').substringAfterLast('/').toLong() to
-                            ApiJson.decodeFromString(CommandResult.serializer(), body)
+                        val id = path.substringBeforeLast('/').substringAfterLast('/').toLong()
+                        results += id to ApiJson.decodeFromString(CommandResult.serializer(), body)
                         json(200, """{"ok":true}""")
                     }
                     path == "/api/v1/tv/state" -> json(200, STATE)
@@ -170,20 +170,44 @@ class PlaybackControllerTest {
         command?.let(PlaybackOrigin::command) ?: PlaybackOrigin.Viewer, playCommand = command != null,
     )
 
-    @Test
-    fun readyStartsPlaybackOnceAndHeartbeatsOnlyWhilePlaying() = runTest(StandardTestDispatcher()) {
+    private fun test(body: suspend TestScope.() -> Unit) = runTest(StandardTestDispatcher()) {
         createController()
-        answer(resolved())
-        play(command = 1)
+        body()
+    }
+
+    /** Plays [resolved] (for the owner's `play` command [command], if any) until it is loaded; [ready]: its first frame. */
+    private fun TestScope.start(
+        resolved: ResolveResponse = resolved(), command: Long? = null, ready: Boolean = true, date: String? = null,
+    ) {
+        val loads = engine.loads.size
+        answer(resolved, date)
+        play(command, live = resolved.item.isLive)
+        await("load ${loads + 1}") { engine.loads.size == loads + 1 }
+        if (ready) engine.ready()
+    }
+
+    /** [interrupt] breaks the playback off; the resolve that follows answers [resolved], which is then loaded. */
+    private fun TestScope.reload(resolved: ResolveResponse, interrupt: () -> Unit) {
+        val loads = engine.loads.size
+        answer(resolved)
+        interrupt()
+        await("load ${loads + 1}") { engine.loads.size == loads + 1 }
+    }
+
+    /** A viewer's resolve of the episode, or of the channel when [live]. */
+    private fun request(sourceId: String? = null, exclude: List<String>? = null, live: Boolean = false) =
+        ResolveRequest(if (live) null else "show.e1", if (live) "show" else null, sourceId, exclude, Trigger.Viewer)
+
+    @Test
+    fun readyStartsPlaybackOnceAndHeartbeatsOnlyWhilePlaying() = test {
+        start(command = 1, ready = false)
         assertEquals(PlayerPhase.Loading, controller.ui.value.phase)
-        await("the first load") { engine.loads.size == 1 }
-        assertEquals(55_000L, engine.loads.single().startAtMs)
+        val subtitles = listOf(SubtitleSpec(server.url("/captions/one").toString(), "tr", "vtt", "Turkish"))
+        val media = MediaSpec(server.url("/media/one").toString(), "mp4", subtitles, "show.e1", live = false)
+        assertEquals(FakeMediaEngine.Load(media, 55_000), engine.loads.single())
         assertEquals(listOf("pt-BR" to "tr"), engine.preferences)
         assertEquals(listOf("preferences", "load"), engine.calls.take(2))
-        assertEquals(server.url("/media/one").toString(), engine.loads.single().media.url)
-        assertEquals(server.url("/captions/one").toString(), engine.loads.single().media.subtitles.single().url)
-        assertEquals("show.e1", engine.loads.single().media.mediaId)
-        assertEquals(emptyList<CommandResult>(), results.map { it.second })
+        assertTrue(results.isEmpty())
         assertNull(controller.player.value)
 
         engine.ready()
@@ -197,10 +221,8 @@ class PlaybackControllerTest {
         engine.advancePosition(PlaybackPlan.HEARTBEAT_INTERVAL_MS)
         advance(1)
         await("the heartbeat") { progress.size == 2 }
-        assertEquals(70_000L, progress.last().positionMs)
-        assertEquals(ProgressStatus.Playing, progress.last().status)
-        assertEquals(true, progress.last().playing)
-        assertEquals(0L, progress.last().ageMs)
+        val heartbeat = ProgressReport("session-1", "show.e1", null, 70_000, DURATION, ProgressStatus.Playing, playing = true, ageMs = 0)
+        assertEquals(heartbeat, progress.last())
 
         engine.buffer(true)
         await("the stall anchor") { progress.size == 3 }
@@ -216,75 +238,49 @@ class PlaybackControllerTest {
     }
 
     @Test
-    fun aDecoderErrorTriesTheNextSourceAtThePositionAndReportsTheProblem() = runTest(StandardTestDispatcher()) {
-        createController()
-        answer(resolved(alternatives = listOf("second")))
-        play(command = 2)
-        await("the first load") { engine.loads.size == 1 }
-        engine.ready()
+    fun aDecoderErrorTriesTheNextSourceAtThePositionAndReportsTheProblem() = test {
+        start(resolved(alternatives = listOf("second")), command = 2)
         engine.positionMs = 123_000
         controller.pause()
-        answer(resolved(source = "second", session = "session-2"))
-        engine.fail()
-        await("the fallback and problem") { engine.loads.size == 2 && problems.isNotEmpty() }
-        assertEquals(listOf("first"), resolves.last().exclude)
-        assertNull(resolves.last().sourceId)
-        assertEquals(Trigger.Command, resolves.last().trigger)
-        assertEquals(2L, resolves.last().commandId)
+        reload(resolved(source = "second", session = "session-2")) { engine.fail() }
+        assertEquals(ResolveRequest("show.e1", exclude = listOf("first"), trigger = Trigger.Command, commandId = 2), resolves.last())
         assertEquals(123_000L, engine.loads.last().startAtMs)
         assertFalse(engine.playWhenReady)
         engine.ready()
-        val problem = problems.single()
-        assertEquals("ERROR_CODE_DECODING_FAILED", problem.code)
-        assertEquals("first", problem.sourceId)
-        assertEquals("session-1", problem.sessionId)
-        assertEquals(123_000L, problem.positionMs)
-        assertEquals("IOException", problem.detail)
-        assertNull(problem.httpStatus)
-        await("the command result") { results.size == 1 }
+        await("the problem and the command result") { problems.isNotEmpty() && results.isNotEmpty() }
+        val problem = ProblemReport(
+            "playback", "ERROR_CODE_DECODING_FAILED", ageMs = 0, episodeId = "show.e1", sourceId = "first", sessionId = "session-1",
+            positionMs = 123_000, detail = "IOException", appVersion = "0.4.0",
+        )
+        assertEquals(problem, problems.single())
         assertEquals(2L to CommandResult.Done, results.single())
     }
 
     @Test
-    fun anExpiredUrlRetriesItsPinnedSourceThenFallsBackAfterAShortRun() = runTest(StandardTestDispatcher()) {
-        createController()
-        answer(resolved(alternatives = listOf("second")))
-        play()
-        await("the first load") { engine.loads.size == 1 }
-        engine.ready()
+    fun anExpiredUrlRetriesItsPinnedSourceThenFallsBackAfterAShortRun() = test {
+        start(resolved(alternatives = listOf("second")))
         advance(PlaybackPlan.EXPIRED_URL_MIN_PLAYED_MS + 1)
         engine.positionMs = 400_000
-        answer(resolved(session = "session-2")) // pinned responses carry no alternatives
-        engine.fail("ERROR_CODE_IO_BAD_HTTP_STATUS", 403)
-        await("the pinned retry") { engine.loads.size == 2 }
-        assertEquals("first", resolves.last().sourceId)
-        assertNull(resolves.last().exclude)
+        // Pinned responses carry no alternatives.
+        reload(resolved(session = "session-2")) { engine.fail("ERROR_CODE_IO_BAD_HTTP_STATUS", 403) }
+        assertEquals(request(sourceId = "first"), resolves.last())
         assertEquals(400_000L, engine.loads.last().startAtMs)
         engine.ready()
         // Another 403 before five minutes of playback falls back instead of retrying the same source.
         advance(PlaybackPlan.EXPIRED_URL_MIN_PLAYED_MS - 1)
         engine.positionMs = 459_000
-        answer(resolved(source = "second"))
-        engine.fail("ERROR_CODE_IO_BAD_HTTP_STATUS", 403)
-        await("the next source") { engine.loads.size == 3 }
-        assertNull(resolves.last().sourceId)
-        assertEquals(listOf("first"), resolves.last().exclude)
+        reload(resolved(source = "second")) { engine.fail("ERROR_CODE_IO_BAD_HTTP_STATUS", 403) }
+        assertEquals(request(exclude = listOf("first")), resolves.last())
         assertEquals(459_000L, engine.loads.last().startAtMs)
         await("both HTTP problems") { problems.size == 2 }
         assertTrue(problems.all { it.httpStatus == 403 })
     }
 
     @Test
-    fun exhaustedSourcesStopAtThePositionAndFailOnlyACommandStillWaiting() = runTest(StandardTestDispatcher()) {
-        createController()
-        answer(resolved(alternatives = listOf("second")))
-        play(command = 3)
-        await("the first load") { engine.loads.size == 1 }
-        engine.ready()
+    fun exhaustedSourcesStopAtThePositionAndFailOnlyACommandStillWaiting() = test {
+        start(resolved(alternatives = listOf("second")), command = 3)
         engine.positionMs = 90_000
-        answer(resolved(source = "second"))
-        engine.fail()
-        await("the fallback") { engine.loads.size == 2 }
+        reload(resolved(source = "second")) { engine.fail() }
         engine.ready()
         engine.positionMs = 95_000
         engine.fail()
@@ -301,12 +297,8 @@ class PlaybackControllerTest {
         assertEquals(1, exits)
 
         // Before a first frame the same ladder must fail the command, never answer it again on retry or exit.
-        answer(resolved(alternatives = listOf("second")))
-        play(command = 4)
-        await("a new visit after release") { engine.loads.size == 3 }
-        answer(resolved(source = "second"))
-        engine.fail()
-        await("its fallback") { engine.loads.size == 4 }
+        start(resolved(alternatives = listOf("second")), command = 4, ready = false)
+        reload(resolved(source = "second")) { engine.fail() }
         engine.fail()
         await("the waiting command's failure") { results.size == 2 }
         assertEquals(4L to CommandResult.failed(CommandResult.PLAYBACK_ERROR), results.last())
@@ -320,12 +312,9 @@ class PlaybackControllerTest {
     }
 
     @Test
-    fun aChannelsErrorScreenStillZapsAnEpisodesDoesNot() = runTest(StandardTestDispatcher()) {
-        createController()
+    fun aChannelsErrorScreenStillZapsAnEpisodesDoesNot() = test {
         // A channel whose only source fails before a first frame: "Can't play right now", with CH+/CH− still live.
-        answer(resolved(live = true, kind = "ts"))
-        play(live = true)
-        await("the channel") { engine.loads.size == 1 }
+        start(resolved(live = true, kind = "ts"), ready = false)
         assertEquals("show", controller.zappableChannelId)
         engine.fail()
         await("the error screen") { controller.ui.value.phase is PlayerPhase.Failed }
@@ -336,21 +325,15 @@ class PlaybackControllerTest {
         assertNull("nothing to zap from on Home", controller.zappableChannelId)
 
         // An episode's error screen offers Try again and Home only.
-        answer(resolved())
-        play()
-        await("the episode") { engine.loads.size == 2 }
+        start(ready = false)
         engine.fail()
         await("its error screen") { controller.ui.value.phase is PlayerPhase.Failed }
         assertNull(controller.zappableChannelId)
     }
 
     @Test
-    fun expiryRefreshPinsTheSourceSwapsOnlyChangedMediaAndReanchorsEachSession() = runTest(StandardTestDispatcher()) {
-        createController()
-        answer(resolved(expiresAt = "2026-10-21T12:02:00Z"), DATE)
-        play()
-        await("the initial load") { engine.loads.size == 1 }
-        engine.ready()
+    fun expiryRefreshPinsTheSourceSwapsOnlyChangedMediaAndReanchorsEachSession() = test {
+        start(resolved(expiresAt = "2026-10-21T12:02:00Z"), date = DATE)
         controller.pause()
         engine.positionMs = 80_000
         answer(resolved(session = "session-2", expiresAt = "2026-10-21T12:04:00Z"), "Wed, 21 Oct 2026 12:01:00 GMT")
@@ -359,8 +342,7 @@ class PlaybackControllerTest {
         advance(1)
         await("the unchanged URL's anchor") { progress.any { it.sessionId == "session-2" } }
         assertEquals(1, engine.loads.size)
-        assertEquals("first", resolves.last().sourceId)
-        assertNull(resolves.last().exclude)
+        assertEquals(request(sourceId = "first"), resolves.last())
         assertEquals(80_000L, progress.last().positionMs)
         assertEquals(ProgressStatus.Paused, progress.last().status)
 
@@ -378,13 +360,9 @@ class PlaybackControllerTest {
     }
 
     @Test
-    fun anEpisodeEndsWithAutoNextOrTheEndThenHome() = runTest(StandardTestDispatcher()) {
-        createController()
+    fun anEpisodeEndsWithAutoNextOrTheEndThenHome() = test {
         val next = NextEpisode("show.e2", number = 2)
-        answer(resolved(next = next))
-        play()
-        await("the first episode") { engine.loads.size == 1 }
-        engine.ready()
+        start(resolved(next = next))
         engine.ended()
         await("finished and Up next") { progress.any { it.status == ProgressStatus.Finished } && controller.ui.value.phase is PlayerPhase.UpNext }
         assertEquals(PlayerPhase.UpNext(next, PlaybackPlan.AUTO_NEXT_COUNTDOWN_SEC), controller.ui.value.phase)
@@ -394,9 +372,7 @@ class PlaybackControllerTest {
         assertEquals(1, resolves.size)
         advance(1)
         await("the next episode") { engine.loads.size == 2 }
-        assertEquals("show.e2", resolves.last().episodeId)
-        assertEquals(Trigger.Next, resolves.last().trigger)
-        assertNull(resolves.last().commandId)
+        assertEquals(ResolveRequest("show.e2", trigger = Trigger.Next), resolves.last())
         engine.ready()
         engine.ended()
         await("the last finished report") { progress.count { it.status == ProgressStatus.Finished } == 2 }
@@ -409,18 +385,13 @@ class PlaybackControllerTest {
     }
 
     @Test
-    fun aChannelNeverPausesAndRestartsAtTheLiveEdgeBeforeTryingAlternatives() = runTest(StandardTestDispatcher()) {
-        createController()
-        answer(resolved(live = true, kind = "ts", alternatives = listOf("second")))
-        play(live = true)
-        await("the channel") { engine.loads.size == 1 }
-        engine.ready()
+    fun aChannelNeverPausesAndRestartsAtTheLiveEdgeBeforeTryingAlternatives() = test {
+        start(resolved(live = true, kind = "ts", alternatives = listOf("second")))
         assertTrue(controller.ui.value.live)
         assertNull(controller.ui.value.durationMs)
         assertEquals("show", controller.zappableChannelId)
-        assertTrue(engine.loads.single().media.live)
-        assertEquals("ts", engine.loads.single().media.kind)
-        assertNull(engine.loads.single().startAtMs)
+        val load = engine.loads.single()
+        assertEquals(Triple("ts", true, null), Triple(load.media.kind, load.media.live, load.startAtMs))
         val calls = engine.calls.toList()
         controller.pause()
         controller.togglePause()
@@ -431,73 +402,51 @@ class PlaybackControllerTest {
         assertEquals(calls, engine.calls)
         assertTrue(engine.playWhenReady)
 
-        answer(resolved(live = true, kind = "ts"))
-        engine.ended()
-        await("the live-edge retry") { engine.loads.size == 2 }
-        assertEquals("first", resolves.last().sourceId)
-        assertNull(resolves.last().exclude)
+        reload(resolved(live = true, kind = "ts")) { engine.ended() }
+        assertEquals(request(sourceId = "first", live = true), resolves.last())
         assertNull(engine.loads.last().startAtMs)
         assertTrue(engine.playWhenReady)
         assertEquals(0, problems.size)
         engine.ready()
         advance(59_999)
-        answer(resolved(live = true, kind = "ts", source = "second"))
-        engine.fail()
-        await("the alternative") { engine.loads.size == 3 }
-        assertEquals(listOf("first"), resolves.last().exclude)
-        assertNull(resolves.last().sourceId)
+        reload(resolved(live = true, kind = "ts", source = "second")) { engine.fail() }
+        assertEquals(request(exclude = listOf("first"), live = true), resolves.last())
         assertNull(engine.loads.last().startAtMs)
         assertTrue(progress.all { it.itemId == "show" && it.episodeId == null && it.positionMs == null && it.durationMs == null })
         assertTrue(progress.all { it.status == ProgressStatus.Playing })
 
         // A stable run earns another same-source attempt, even after that source has already been retried.
         engine.ready()
-        answer(resolved(live = true, source = "second"))
-        engine.ended()
-        await("the alternative's retry") { engine.loads.size == 4 }
+        reload(resolved(live = true, source = "second")) { engine.ended() }
         engine.ready()
         advance(PlaybackPlan.LIVE_STABLE_PLAYED_MS)
-        answer(resolved(live = true, source = "second"))
-        engine.ended()
-        await("the stable source's retry") { engine.loads.size == 5 }
-        assertEquals("second", resolves.last().sourceId)
-        assertNull(resolves.last().exclude)
+        reload(resolved(live = true, source = "second")) { engine.ended() }
+        assertEquals(request(sourceId = "second", live = true), resolves.last())
     }
 
     @Test
-    fun stopAndReplacementAnswerWaitingCommandsOnceAndReportPlayingVisitsOnce() = runTest(StandardTestDispatcher()) {
-        createController()
-        answer(resolved())
-        play(command = 5)
-        await("playing visit") { engine.loads.size == 1 }
-        engine.ready()
+    fun stopAndReplacementAnswerWaitingCommandsOnceAndReportPlayingVisitsOnce() = test {
+        start(command = 5)
         engine.positionMs = 100_000
         controller.stop()
         controller.stop()
-        await("the single stopped report") { progress.any { it.status == ProgressStatus.Stopped } }
-        assertEquals(1, progress.count { it.status == ProgressStatus.Stopped })
+        await("the stopped report") { progress.any { it.status == ProgressStatus.Stopped } }
         assertEquals(100_000L, progress.single { it.status == ProgressStatus.Stopped }.positionMs)
         assertEquals(PlayerPhase.Idle, controller.ui.value.phase)
         assertNull(controller.player.value)
         assertEquals(1, engine.calls.count { it == "release" })
 
-        answer(resolved())
-        play(command = 6)
-        await("a waiting command") { engine.loads.size == 2 }
+        start(command = 6, ready = false)
         assertEquals(listOf("preferences", "load"), engine.calls.dropWhile { it != "release" }.drop(1).take(2))
         controller.stop()
         engine.ready() // detached callbacks cannot finish the waiting command
         await("ignored stopped") { results.any { it.first == 6L } }
-        assertEquals(6L to CommandResult.ignored(CommandResult.STOPPED), results.single { it.first == 6L })
         assertEquals(1, progress.count { it.status == ProgressStatus.Stopped })
 
-        answer(resolved())
-        play(command = 7)
-        await("another loading command") { engine.loads.size == 3 }
+        start(command = 7, ready = false)
         answer(resolved(episode = "show.e2"))
         controller.play(PlayableRef.Episode("show.e2"), PlaybackOrigin.command(8), playCommand = true)
         await("its replacement") { engine.loads.size == 4 && results.any { it.first == 7L } }
-        assertEquals(7L to CommandResult.ignored(CommandResult.SUPERSEDED), results.single { it.first == 7L })
         engine.ready()
         engine.ready()
         await("the replacement's done") { results.size == 4 }
@@ -506,12 +455,9 @@ class PlaybackControllerTest {
     }
 
     @Test
-    fun tracksAndSelectionsPassThroughAndDisablingSubtitlesClearsCues() = runTest(StandardTestDispatcher()) {
-        createController()
+    fun tracksAndSelectionsPassThroughAndDisablingSubtitlesClearsCues() = test {
         assertEquals(emptyList<TrackOption>(), controller.audioTracks())
-        answer(resolved())
-        play()
-        await("the load") { engine.loads.size == 1 }
+        start(ready = false)
         val audio = TrackOption(0, 1, "tr", "Turkish", false)
         val text = TrackOption(1, 0, "en", "English", true)
         engine.audio = listOf(audio)
@@ -528,8 +474,6 @@ class PlaybackControllerTest {
         assertEquals(listOf(audio, null), engine.audioSelections)
         assertEquals(listOf(text, null), engine.textSelections)
     }
-
-    private fun json(status: Int, body: String) = MockResponse.Builder().code(status).body(body).build()
 
     private companion object {
         const val DURATION = 1_200_000L

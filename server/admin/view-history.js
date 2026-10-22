@@ -4,21 +4,19 @@
 // episodes and is never seen: its page lists its viewings, when and how long each ran.
 
 import { api, attempt } from "./api.js";
-import { actionButton, card, chip, h, keepFocus, page, setChip, setTitle, slot } from "./dom.js";
+import { actionButton, card, chip, h, keepFocus, options, page, rowText, setChip, setTitle, slot } from "./dom.js";
 import { episodeHistoryLine, episodeName, formatDuration, formatRelative, liveViewingLine, plural, titleLine, titleStatusLabel, triggerLabel } from "./lib.js";
 import { watchEvents } from "./events.js";
 
 const DAYS_SHOWN = 7;
 const TITLES_LIMIT = 100;
-/** A channel's page lists this many of its latest viewings. */
 const CHANNEL_VIEWINGS = 50;
 
 /** A remembered filter choice, for the time of the page (localStorage may be off). */
-const remembered = /** @type {Record<string, string>} */ ({});
+const remembered = { status: "", sort: "recent" };
 
 /** @param {import("./router.js").Scope} scope */
 export function historyView(scope) {
-  // Days ---------------------------------------------------------------------------------------------------------
   const daysSlot = slot();
   const refreshDays = async () => {
     const { days } = await scope.read("/history/days");
@@ -29,19 +27,18 @@ export function historyView(scope) {
     const summary = h("p", null, h("strong", null, formatDuration(total)), ` over ${plural(count, "viewing")} on the last ${plural(recent.length, "day")} with something watched.`);
     const tr = (/** @type {any} */ d) => {
       const shows = d.items.map((/** @type {any} */ i) => `${i.title} (${formatDuration(i.watchedMs)})`).join(", ");
-      return h("tr", null, h("td", null, d.date), h("td", null, formatDuration(d.watchedMs)), h("td", null, String(d.viewings)), h("td", null, shows));
+      return h("tr", null, [d.date, formatDuration(d.watchedMs), String(d.viewings), shows].map((c) => h("td", null, c)));
     };
     const head = h("thead", null, h("tr", null, ["Day", "Watched", "Viewings", "Shows"].map((t) => h("th", { scope: "col" }, t))));
     const table = h("table", null, h("caption", null, "Per calendar day, in the server's time zone; a viewing counts on the day it started."), head, h("tbody", null, recent.reverse().map(tr)));
     daysSlot.show(summary, h("div", { class: "table-wrap", tabindex: "0", role: "region", "aria-label": "Watched per day" }, table));
   };
 
-  // Titles -------------------------------------------------------------------------------------------------------
   const titlesSlot = slot();
   const status = h("select", { id: "h-status", "aria-label": "Status" },
-    [["", "Every status"], ["watching", "Watching"], ["new_episodes", "New episodes"], ["finished", "Finished"], ["idle", "Idle"]].map(([v, t]) => h("option", { value: v, selected: v === (remembered.status ?? "") }, t)));
+    options([["", "Every status"], ["watching", "Watching"], ["new_episodes", "New episodes"], ["finished", "Finished"], ["idle", "Idle"]], remembered.status));
   const sort = h("select", { id: "h-sort", "aria-label": "Order" },
-    [["recent", "Last watched first"], ["watched", "Most watched first"], ["title", "By title"]].map(([v, t]) => h("option", { value: v, selected: v === (remembered.sort ?? "recent") }, t)));
+    options([["recent", "Last watched first"], ["watched", "Most watched first"], ["title", "By title"]], remembered.sort));
   const summary = h("p", { class: "summary muted", role: "status" });
   const refreshTitles = async () => {
     remembered.status = status.value;
@@ -53,7 +50,7 @@ export function historyView(scope) {
     const row = (/** @type {any} */ t) => {
       const s = titleStatusLabel(t.status);
       return h("a", { class: "row link", href: `#/history/${encodeURIComponent(t.itemId)}` },
-        h("div", { class: "grow" }, h("strong", null, t.title), h("div", { class: "muted" }, titleLine(t))), chip(s.label, s.tone));
+        rowText(t.title, titleLine(t)), chip(s.label, s.tone));
     };
     titlesSlot.show(titles.length === 0 ? h("p", { class: "muted" }, "Nothing here yet: titles appear once a TV played them or an episode was marked.") : h("div", { class: "list" }, titles.map(row)));
   };
@@ -91,28 +88,32 @@ export function historyItemView(scope, itemId) {
     if (r.ok) await keepFocus(() => job.now(), head.querySelector("h2"));
   };
 
-  /** @param {any} e */
-  const episodeRow = (e) => {
+  const episodeRow = (/** @type {any} */ e) => {
     const name = e.inCatalog ? episodeName(e, detail.title.kind) : `${episodeName(e, detail.title.kind)} (no longer in the catalog)`;
     const seenChip = e.seen ? chip("Seen", "ok") : chip(e.viewings > 0 ? "Started" : "Not seen");
     const button = (/** @type {string} */ label, /** @type {boolean | null} */ value, /** @type {boolean} */ pressed) =>
       actionButton(label, { "aria-pressed": String(pressed), "data-focus": `${label}:${e.episodeId}`, "aria-label": `${label}: ${name}` }, () =>
         mark([e.episodeId], pressed ? null : value, pressed ? "Mark removed." : `${name}: ${label.toLowerCase()}.`));
     const buttons = h("div", { class: "buttons" }, button("Seen", true, e.mark === true), button("Not seen", false, e.mark === false));
-    return h("li", null, h("div", { class: "row" }, seenChip, h("div", { class: "grow" }, h("strong", null, name), h("div", { class: "muted" }, episodeHistoryLine(e))), buttons));
+    return h("li", null, h("div", { class: "row" }, seenChip, rowText(name, episodeHistoryLine(e)), buttons));
+  };
+
+  /** The card above the list: the title's facts, its catalog link, then `more`. @param {any} t @param {Array<string | null>} facts @param {string} link @param {...HTMLElement} more */
+  const showHead = (t, facts, link, ...more) => {
+    const line = [titleLine(t), t.firstWatchedAt ? `first watched ${formatRelative(t.firstWatchedAt)}` : null, ...facts].filter(Boolean).join(" · ");
+    const catalogLink = t.inCatalog ? h("p", null, h("a", { href: `#/catalog/items/${encodeURIComponent(itemId)}` }, link)) : null;
+    head.replaceChildren(h("div", null, h("p", { class: "muted" }, line), catalogLink, ...more));
+    return h("section", { class: "card" }, h("div", { class: "row top-align" }, head));
   };
 
   /** A channel: its latest viewings, one line each (no marks: a channel is never seen). @param {any} t */
   const loadChannel = async (t) => {
     const { viewings } = await scope.read(`/history/viewings?item=${encodeURIComponent(itemId)}&limit=${CHANNEL_VIEWINGS}`);
-    const facts = [titleLine(t), t.firstWatchedAt ? `first watched ${formatRelative(t.firstWatchedAt)}` : null].filter(Boolean).join(" · ");
-    const catalogLink = t.inCatalog ? h("a", { href: `#/catalog/items/${encodeURIComponent(itemId)}` }, "Channel in the catalog") : null;
-    head.replaceChildren(h("div", null, h("p", { class: "muted" }, facts), catalogLink ? h("p", null, catalogLink) : null));
     const day = (/** @type {string} */ iso) => new Date(iso).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
     const row = (/** @type {any} */ v) => {
       const by = triggerLabel(v);
       const more = [v.deviceName, by ? `started by ${by}` : null].filter(Boolean).join(" · ");
-      return h("li", null, h("div", { class: "row" }, h("div", { class: "grow" }, h("strong", null, `${day(v.startedAt)} · ${liveViewingLine(v)}`), more ? h("div", { class: "muted" }, more) : null)));
+      return h("li", null, h("div", { class: "row" }, rowText(`${day(v.startedAt)} · ${liveViewingLine(v)}`, more)));
     };
     const list = viewings.length === 0
       ? h("p", { class: "muted" }, "No viewing is kept for this channel.")
@@ -120,7 +121,7 @@ export function historyItemView(scope, itemId) {
     const intro = viewings.length >= CHANNEL_VIEWINGS
       ? `The last ${CHANNEL_VIEWINGS} viewings, the latest first: when the channel was on and how long the picture ran.`
       : "Its viewings, the latest first: when the channel was on and how long the picture ran.";
-    body.show(h("section", { class: "card" }, h("div", { class: "row top-align" }, head)), card({ title: "Viewings", intro }, list));
+    body.show(showHead(t, [], "Channel in the catalog"), card({ title: "Viewings", intro }, list));
   };
 
   const load = async () => {
@@ -130,18 +131,14 @@ export function historyItemView(scope, itemId) {
     const s = titleStatusLabel(t.status);
     setChip(statusChip, s.label, s.tone);
     if (t.kind === "live") return loadChannel(t);
-    const facts = [titleLine(t), t.firstWatchedAt ? `first watched ${formatRelative(t.firstWatchedAt)}` : null, t.rewatches > 0 ? plural(t.rewatches, "rewatch") : null,
-      t.shortViewings > 0 ? `${plural(t.shortViewings, "short viewing")} (gave up early)` : null].filter(Boolean).join(" · ");
     const ids = detail.episodes.map((/** @type {any} */ e) => e.episodeId);
     const allSeen = actionButton("Mark all seen", { "data-focus": "all-seen" }, () => mark(ids, true, "All episodes marked seen."));
     const clearMarks = actionButton("Clear marks", { "data-focus": "clear-marks" }, () => mark(ids, null, "Marks removed: what the TVs reported counts again."));
     const anyMark = detail.episodes.some((/** @type {any} */ e) => e.mark !== null);
-    const catalogLink = t.inCatalog ? h("a", { href: `#/catalog/items/${encodeURIComponent(itemId)}` }, "Show in the catalog") : null;
-    head.replaceChildren(h("div", null, h("p", { class: "muted" }, facts), catalogLink ? h("p", null, catalogLink) : null,
-      h("div", { class: "actions" }, allSeen, anyMark ? clearMarks : null)));
+    const facts = [t.rewatches > 0 ? plural(t.rewatches, "rewatch") : null, t.shortViewings > 0 ? `${plural(t.shortViewings, "short viewing")} (gave up early)` : null];
     episodesList.replaceChildren(...detail.episodes.map(episodeRow));
     body.show(
-      h("section", { class: "card" }, h("div", { class: "row top-align" }, head)),
+      showHead(t, facts, "Show in the catalog", h("div", { class: "actions" }, allSeen, anyMark ? clearMarks : null)),
       card({ title: t.kind === "movie" ? "The film" : "Episodes", intro: "A mark is the owner's word and wins over what the TVs reported; it changes nothing on the TVs." },
         h("div", { class: "table-wrap", role: "region", "aria-label": "Episodes" }, episodesList)),
     );

@@ -1,26 +1,20 @@
+// Helpers for the owner's shell commands: calls to the running server's admin API, and the admin page's sign-in
+// link (its base address) with its QR code.
+
 import { networkInterfaces } from "node:os";
 import { renderUnicodeCompact } from "uqr";
 import { isWildcardHost, localServerUrl, type ServerConfig } from "./config.ts";
 
-/**
- * Helpers for the owner's shell commands (`izle-server pair …`, `izle-server admin-token --link`): calls to the
- * running server's admin API, and the admin page's sign-in link (its base address) with its QR code.
- */
-
-interface LinkBase {
-  url: string;
-  /** Where the address came from, for the note printed next to the link. */
-  source: "publicUrl" | "listen.host" | "interface" | "loopback";
-}
-
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "::1", "localhost"]);
 
 /**
- * The base URL a phone would open the admin page at: `publicUrl` when set; else a specific, non-loopback listen
- * address; else the first non-internal IPv4 address of this host; else loopback (a server behind a reverse proxy
- * listens on loopback, and its phone-facing address is the proxy's: `publicUrl` or `--base`).
+ * The base URL a phone would open the admin page at, and where it came from (for the note next to the link):
+ * `publicUrl`; else a specific, non-loopback listen address; else this host's first non-internal IPv4 address; else
+ * loopback (behind a reverse proxy the phone-facing address is the proxy's: `publicUrl` or `--base`).
  */
-export function linkBase(config: ServerConfig, interfaces: () => ReturnType<typeof networkInterfaces> = networkInterfaces): LinkBase {
+type LinkBase = { url: string; source: "publicUrl" | "listen.host" | "interface" | "loopback" };
+
+export function linkBase(config: ServerConfig, interfaces = networkInterfaces): LinkBase {
   if (config.publicUrl) return { url: config.publicUrl, source: "publicUrl" };
   const host = config.listen.host;
   if (!isWildcardHost(host) && !LOOPBACK_HOSTS.has(host)) return { url: localServerUrl(config), source: "listen.host" };
@@ -31,10 +25,7 @@ export function linkBase(config: ServerConfig, interfaces: () => ReturnType<type
   return { url: localServerUrl(config), source: "loopback" };
 }
 
-/**
- * The admin page's sign-in link. The token travels in the URL fragment, which browsers never send to the server
- * or a reverse proxy; the page stores it and removes it from the address bar at once.
- */
+/** The token travels in the URL fragment, which browsers never send; the page stores it and removes it at once. */
 export function signInLink(base: string, token: string): string {
   return `${base.replace(/\/+$/, "")}/admin/#token=${encodeURIComponent(token)}`;
 }
@@ -48,7 +39,7 @@ export class ServerUnreachableError extends Error {
   override name = "ServerUnreachableError";
 }
 
-/** The status and the JSON answer (null when it is not JSON), assumed to have the shape `T` the caller checks for. */
+/** The status and the JSON answer (null when it is not JSON). */
 type AdminAnswer<T> = { status: number; json: T | null };
 
 /** One call to the running server's admin API with the admin token. */
@@ -57,16 +48,14 @@ export async function adminCall<T>(server: string, token: string, method: string
   if (body !== undefined) headers["Content-Type"] = "application/json";
   let res: Response;
   try {
-    res = await fetch(`${server.replace(/\/+$/, "")}${route}`, { method, headers, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+    res = await fetch(`${server.replace(/\/+$/, "")}${route}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   } catch {
     throw new ServerUnreachableError(`no izle server answers at ${server}`);
   }
   const text = await res.text();
-  let json: T | null = null;
   try {
-    json = text ? JSON.parse(text) : null;
+    return { status: res.status, json: text ? JSON.parse(text) : null };
   } catch {
-    // not JSON
+    return { status: res.status, json: null };
   }
-  return { status: res.status, json };
 }

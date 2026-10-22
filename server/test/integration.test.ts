@@ -93,7 +93,7 @@ test("full boot with the shipped sample catalog on an ephemeral port", async (t)
   assert.equal(JSON.parse(logs.find((l) => l.includes('"msg":"listening"'))!).adminAuth, "env");
 });
 
-test("CLI: admin-token creates, reuses and rotates; validate-catalog; bad config exits 1", async () => {
+test("CLI: admin-token creates, reuses and rotates; validate-catalog; bad config exits 1; the server stops on SIGTERM", async (t) => {
   const dir = await tempDir();
   const cfg = path.join(dir, "izle.json");
   writeFileSync(cfg, JSON.stringify({ dataDir: "./state" }));
@@ -118,11 +118,7 @@ test("CLI: admin-token creates, reuses and rotates; validate-catalog; bad config
   const version = await run(["--version"]);
   assert.equal(version.code, 0);
   assert.equal(version.stdout, `${JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version}\n`);
-});
 
-test("CLI: the server starts, answers and stops on SIGTERM", async (t) => {
-  const dir = await tempDir();
-  const cfg = path.join(dir, "izle.json");
   writeFileSync(cfg, JSON.stringify({ listen: { host: "127.0.0.1", port: 0 }, dataDir: "./data", appUpdates: { source: "manual" } }));
   const { INIT_CWD: _ignored, ...env } = process.env;
   const child = spawn(process.execPath, [BIN, "--config", cfg], { env, stdio: ["ignore", "pipe", "pipe"] });

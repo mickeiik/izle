@@ -13,11 +13,18 @@ class PlaybackOriginTest {
     private fun wire(request: ResolveRequest) = ApiJson.encodeToString(ResolveRequest.serializer(), request)
 
     @Test
-    fun eachOriginHasItsTrigger() {
+    fun eachOriginHasItsTriggerAndFallbacksAndRefreshesRepeatIt() {
         assertEquals("""{"episodeId":"e","trigger":"viewer"}""", wire(PlaybackOrigin.Viewer.request(episode)))
         assertEquals("""{"episodeId":"e","trigger":"autoplay"}""", wire(PlaybackOrigin.Autoplay.request(episode)))
         assertEquals("""{"episodeId":"e","trigger":"next"}""", wire(PlaybackOrigin.Next.request(episode)))
         assertEquals("""{"episodeId":"e","trigger":"command","commandId":12}""", wire(PlaybackOrigin.command(12).request(episode)))
+        val origin = PlaybackOrigin.command(7)
+        val fallback = origin.request(episode, exclude = listOf("a", "b"))
+        assertEquals("""{"episodeId":"e","exclude":["a","b"],"trigger":"command","commandId":7}""", wire(fallback))
+        val pinned = origin.request(episode, sourceId = "a")
+        assertEquals("""{"episodeId":"e","sourceId":"a","trigger":"command","commandId":7}""", wire(pinned))
+        // Without origin: what an older TV sent; the server records trigger `unknown`.
+        assertEquals("""{"episodeId":"e"}""", wire(ResolveRequest("e")))
     }
 
     @Test
@@ -34,21 +41,5 @@ class PlaybackOriginTest {
         // Never both, never neither.
         assertThrows(IllegalArgumentException::class.java) { ResolveRequest(episodeId = "e", itemId = "news-24") }
         assertThrows(IllegalArgumentException::class.java) { ResolveRequest() }
-    }
-
-    @Test
-    fun fallbacksAndRefreshesRepeatTheOrigin() {
-        val origin = PlaybackOrigin.command(7)
-        assertEquals(
-            """{"episodeId":"e","exclude":["a","b"],"trigger":"command","commandId":7}""",
-            wire(origin.request(episode, exclude = listOf("a", "b"))),
-        )
-        assertEquals("""{"episodeId":"e","sourceId":"a","trigger":"command","commandId":7}""", wire(origin.request(episode, sourceId = "a")))
-    }
-
-    @Test
-    fun aRequestWithoutOriginIsTheOldOne() {
-        // What an older TV sent; the server records trigger `unknown`.
-        assertEquals("""{"episodeId":"e"}""", wire(ResolveRequest("e")))
     }
 }

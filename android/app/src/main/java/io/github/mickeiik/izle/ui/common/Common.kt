@@ -1,6 +1,5 @@
 package io.github.mickeiik.izle.ui.common
 
-import android.content.Context
 import android.content.ContextWrapper
 import android.content.res.Configuration
 import android.content.res.Resources
@@ -61,10 +60,7 @@ import io.github.mickeiik.izle.ui.theme.IzleShapes
 import io.github.mickeiik.izle.ui.theme.IzleSpacing
 import java.util.Locale
 
-/**
- * Makes `stringResource` follow the server-set UI language instead of the system locale. The wrapper keeps the
- * activity as base context so anything looking for it still finds it.
- */
+/** `stringResource` in the server-set UI language; the wrapper keeps the activity as base context for whoever looks for it. */
 @Composable
 fun LocalizedContent(language: String, content: @Composable () -> Unit) {
     val base = LocalContext.current
@@ -83,8 +79,6 @@ fun LocalizedContent(language: String, content: @Composable () -> Unit) {
     )
 }
 
-fun Context.currentLocale(): Locale = resources.configuration.locales[0]
-
 @Composable
 fun episodeNameText(name: EpisodeName): String? = when (name) {
     EpisodeName.None -> null
@@ -94,10 +88,7 @@ fun episodeNameText(name: EpisodeName): String? = when (name) {
         else stringResource(R.string.episode_number, name.number)
 }
 
-/**
- * What a home tile's chip says: New / Continue / Watch again, the episode OK plays ("Continue · Episode 2"), or Live
- * for a channel.
- */
+/** What a home tile's chip says: New / Continue / Watch again / Live, or the episode OK plays ("Continue · Episode 2"). */
 @Composable
 fun tileBadgeText(badge: TileBadge): String = when (badge) {
     TileBadge.Live -> stringResource(R.string.badge_live)
@@ -112,11 +103,9 @@ fun tileBadgeText(badge: TileBadge): String = when (badge) {
 
 /** 1:05:09 or 5:09. */
 fun formatTime(ms: Long): String {
-    val total = (ms.coerceAtLeast(0) / 1000)
-    val h = total / 3600
-    val m = (total % 3600) / 60
-    val s = total % 60
-    return if (h > 0) "%d:%02d:%02d".format(Locale.ROOT, h, m, s) else "%d:%02d".format(Locale.ROOT, m, s)
+    val s = ms.coerceAtLeast(0) / 1000
+    return if (s < 3600) "%d:%02d".format(Locale.ROOT, s / 60, s % 60)
+    else "%d:%02d:%02d".format(Locale.ROOT, s / 3600, s % 3600 / 60, s % 60)
 }
 
 /** A language tag as a name in the UI language ("it" → "Italian" / "İtalyanca"). */
@@ -190,9 +179,8 @@ fun Modifier.fullScreen(background: Color = IzleColors.Background): Modifier =
     fillMaxSize().background(background).padding(IzleSpacing.Safe)
 
 /**
- * Asks for the focus once a frame, from the next frame on and for up to 10 frames, until the request goes through and
- * [took] says the focus really arrived: the screen may still be laying out. [requester] is looked up again each frame,
- * since a lazy list composes its rows late (null: not there yet).
+ * Asks for the focus once a frame for up to 10 frames until [took] says it arrived: the screen may still be laying
+ * out. [requester] is looked up each frame, since a lazy list composes its rows late (null: not there yet).
  */
 suspend fun requestFocusWithin(requester: () -> FocusRequester?, took: () -> Boolean = { true }) {
     repeat(10) {
@@ -208,10 +196,7 @@ fun ErrorText(text: String, textAlign: TextAlign? = null) {
     Text(text, style = MaterialTheme.typography.headlineSmall, color = IzleColors.Error, textAlign = textAlign)
 }
 
-/**
- * The app's one button: dark with a grey outline, and white with a white border, 10 % larger, while focused, so the
- * focused one is unmistakable from across the room.
- */
+/** The app's one button: white and 10 % larger while focused, so the focused one is unmistakable from across the room. */
 @Composable
 fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Button(
@@ -244,32 +229,23 @@ fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, e
 }
 
 /**
- * The owner's message: 30 sp bold, stepping down to 24 sp only when a long one would not fit otherwise, at most three
- * lines, dark on the warm accent so it stands out on any picture. Not focusable, no buttons: it goes away by itself.
+ * The owner's message across the top, over everything: 30 sp, down to 24 sp only when a long one would not fit in three
+ * lines, dark on the accent so it stands out on any picture. Not focusable: it goes away by itself.
  */
-@Composable
-fun MessageBanner(
-    text: String,
-    modifier: Modifier = Modifier,
-    textAlign: TextAlign = TextAlign.Start,
-) {
-    BasicText(
-        text,
-        style = MaterialTheme.typography.headlineSmall.copy(color = IzleColors.OnAccent, lineHeight = 1.25.em, textAlign = textAlign),
-        maxLines = 3,
-        overflow = TextOverflow.Ellipsis,
-        autoSize = TextAutoSize.StepBased(minFontSize = 24.sp, maxFontSize = 30.sp, stepSize = 2.sp),
-        modifier = modifier
-            .border(IzleBorders.OutlineWidth, IzleColors.BannerEdge, IzleShapes.Large)
-            .background(IzleColors.Accent, IzleShapes.Large)
-            .padding(horizontal = IzleSpacing.XLarge, vertical = IzleSpacing.Medium),
-    )
-}
-
-/** The banner across the top of the screen, inside the safe margins (864 dp wide): over Home, the video, menu and overlays. */
 @Composable
 fun MessageBannerOverlay(text: String, modifier: Modifier) {
     Box(modifier.fillMaxWidth().padding(IzleSpacing.Safe), contentAlignment = Alignment.TopCenter) {
-        MessageBanner(text, Modifier.widthIn(max = 864.dp), textAlign = TextAlign.Center)
+        BasicText(
+            text,
+            style = MaterialTheme.typography.headlineSmall.copy(color = IzleColors.OnAccent, lineHeight = 1.25.em, textAlign = TextAlign.Center),
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+            autoSize = TextAutoSize.StepBased(minFontSize = 24.sp, maxFontSize = 30.sp, stepSize = 2.sp),
+            modifier = Modifier
+                .widthIn(max = 864.dp)
+                .border(IzleBorders.OutlineWidth, IzleColors.BannerEdge, IzleShapes.Large)
+                .background(IzleColors.Accent, IzleShapes.Large)
+                .padding(horizontal = IzleSpacing.XLarge, vertical = IzleSpacing.Medium),
+        )
     }
 }

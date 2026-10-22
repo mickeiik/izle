@@ -3,27 +3,25 @@
 // every source of an episode or a channel through the server's resolve path and shows what came back (no URLs: hosts
 // and header names only).
 
-import { ApiError, api, attempt, devicePath } from "./api.js";
-import { actionButton, card, h, page, poster, setTitle, slot, srOnly, toast } from "./dom.js";
+import { ApiError, api, attempt, sendCommand } from "./api.js";
+import { actionButton, card, h, page, poster, setTitle, slot, srOnly } from "./dom.js";
 import { episodeName, errorText, formatClock, mediaKindLabel, plural, showMeta, sourceReport } from "./lib.js";
 
 /** @param {any} report the answer of POST /admin/diagnostics/resolve */
 function reportView(report) {
-  /** @type {Array<ReturnType<typeof sourceReport>>} */
   const sources = report.sources.map((/** @type {any} */ s) => sourceReport(s));
-  const working = sources.filter((r) => r.ok).length;
   const item = (/** @type {ReturnType<typeof sourceReport>} */ r) => {
     const name = h("strong", null, h("span", { "aria-hidden": "true" }, r.ok ? "✔ " : "✖ "), srOnly(r.ok ? "Works: " : "Fails: "), r.sourceId);
     return h("li", { class: r.ok ? "ok" : "bad" }, name, h("span", { class: "muted" }, ` ${r.how}`), h("div", null, r.lines.map((l) => h("div", null, l))));
   };
+  const working = sources.filter((/** @type {any} */ r) => r.ok).length;
   const summary = h("p", { class: "summary" }, `Working: ${working} of ${plural(sources.length, "source")}.`);
   return h("div", null, summary, h("ul", { class: "diag" }, sources.map(item)));
 }
 
 /**
  * One episode (or the only entry of a film or a channel): what it is, its sources, and "Test sources". A channel is
- * tested by its item id (it has no episode); `e` is then the item itself, which carries `playbackAllowed` and
- * `sources`.
+ * tested by its item id; `e` is then the item itself, which carries `playbackAllowed` and `sources`.
  * @param {any} e @param {any} item
  */
 function episodeEntry(e, item) {
@@ -41,30 +39,26 @@ function episodeEntry(e, item) {
     e.playbackAllowed ? null : "playback not allowed",
     e.sources.length === 0 ? "no sources" : null,
     e.autoAdvance === false ? "no auto-advance after this one" : null,
-  ].filter(Boolean);
+  ].filter(Boolean).join(" · ");
   const source = (/** @type {any} */ s) => {
     const audio = s.languages.audio === null ? "unknown" : s.languages.audio.join(", ") || "none";
     return h("li", null, h("code", null, s.id), ` ${s.type === "adapter" ? `adapter ${s.adapter}` : mediaKindLabel(s.kind)}${s.needsProxy ? " · proxied" : ""}${s.label ? ` · ${s.label}` : ""} · audio ${audio}`);
   };
-  const factsLine = facts.length ? h("div", { class: "muted" }, item.kind === "movie" && e.durationMs ? `Duration ${facts.join(" · ")}` : facts.join(" · ")) : null;
+  const factsLine = facts ? h("div", { class: "muted" }, item.kind === "movie" && e.durationMs ? `Duration ${facts}` : facts) : null;
   const what = h("div", { class: "grow" }, single ? null : h("strong", null, label), factsLine, h("ul", { class: "sources" }, e.sources.map(source)));
   return h(single ? "div" : "li", null, h("div", { class: "row top-align" }, what, e.sources.length ? test : null), out);
 }
 
 /**
- * "Play on": one button per paired TV; the TV plays what OK would play for the show (its next episode, or where it
- * left off), or the channel live, on its home screen or not. Nothing for a channel the catalog does not allow.
+ * "Play on": one button per paired TV, which plays what OK would play for the show, or the channel live, whether it
+ * is on its home screen or not. Nothing for a channel the catalog does not allow.
  * @param {any} item @param {any[]} devices
  */
 function playOnCard(item, devices) {
-  const itemId = item.id;
   const active = devices.filter((d) => d.status === "active");
   if (active.length === 0 || (item.kind === "live" && !item.playbackAllowed)) return null;
   const button = (/** @type {any} */ d) =>
-    actionButton(d.name, { "aria-label": `Play on ${d.name}` }, async () => {
-      const r = await attempt(() => api("POST", `${devicePath(d.id)}/commands`, { type: "play", itemId }));
-      if (r.ok) toast(r.value.online ? `Play sent to ${d.name}.` : `Play queued: ${d.name} is offline and gets it if it connects within 2 minutes.`, r.value.online ? "ok" : "info");
-    });
+    actionButton(d.name, { "aria-label": `Play on ${d.name}` }, () => sendCommand(d.id, { type: "play", itemId: item.id }, "Play", d.name));
   const intro = item.kind === "live"
     ? "The TV plays this channel live, whether it is on its home screen or not."
     : "The TV plays the episode OK would play for this show, whether it is on its home screen or not.";
@@ -88,7 +82,6 @@ export function itemView(scope, itemId) {
         item.genres.join(", "),
       ];
       const advance = item.kind === "series" ? h("p", { class: "muted" }, item.autoAdvance ? "Episodes advance on their own." : "Episodes do not advance on their own.") : null;
-      // A channel has no episodes: it plays live, when the catalog allows it at all.
       const channel = live
         ? h("p", { class: "muted" }, item.playbackAllowed ? "Plays live: the TV always joins it where the broadcast is now." : "Playback not allowed by the catalog: the TVs do not show this channel.")
         : null;

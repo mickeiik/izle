@@ -15,22 +15,18 @@ import kotlinx.coroutines.flow.map
 data class DeviceSettings(
     val serverUrl: String? = null,
     val deviceToken: String? = null,
-    /** `tr`/`en` set from the hidden menu, or null to follow the server. */
+    /** Set from the hidden menu; null follows the server. */
     val uiLanguageOverride: String? = null,
-    /** The show played last on this TV: what "autoplay on start" offers. */
     val lastPlayedItemId: String? = null,
-    /** A silent self-update came back asking for a confirmation: this TV updates guided (until the next update). */
+    /** A silent self-update came back asking for a confirmation: guided until the next update. */
     val updateSilentRefused: Boolean = false,
-    /** When a self-update last failed (wall clock, ms): no automatic attempt for a while. */
+    /** Wall clock. */
     val lastUpdateFailureAt: Long? = null,
 ) {
     val isPaired: Boolean get() = serverUrl != null && deviceToken != null
 }
 
-/**
- * DataStore-backed settings: server address, pairing result, the local UI language override, the show played last
- * and the last home state (shown while the server is unreachable). Lives in app-private storage.
- */
+/** Also the last home state, shown while the server is unreachable. */
 class DeviceStore(private val dataStore: DataStore<Preferences>) {
     val settings: Flow<DeviceSettings> = dataStore.data.map { p ->
         DeviceSettings(
@@ -65,7 +61,6 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { p -> p.forgetDevice() }
     }
 
-    /** The pairing and what belongs to that device: its cached state and the show played last on it. */
     private fun MutablePreferences.forgetDevice() {
         remove(DEVICE_ID)
         remove(DEVICE_TOKEN)

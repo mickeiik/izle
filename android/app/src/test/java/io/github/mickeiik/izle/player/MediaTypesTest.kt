@@ -1,6 +1,5 @@
 package io.github.mickeiik.izle.player
 
-import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -9,27 +8,24 @@ import org.junit.Test
 class MediaTypesTest {
     @Test
     fun aLanguageAlsoAcceptsItsPrimarySubtag() {
-        assertArrayEquals(arrayOf("pt-BR", "pt"), languagePreference("pt-BR"))
-        assertArrayEquals(arrayOf("tr"), languagePreference("tr"))
-        assertArrayEquals(arrayOf("EN", "en"), languagePreference("EN"))
-        assertArrayEquals(arrayOf("zh-Hant-TW", "zh"), languagePreference("zh-Hant-TW"))
+        val cases = mapOf(
+            "pt-BR" to listOf("pt-BR", "pt"), "tr" to listOf("tr"), "EN" to listOf("EN", "en"), "zh-Hant-TW" to listOf("zh-Hant-TW", "zh"),
+        )
+        assertEquals(cases, cases.mapValues { (language, _) -> languagePreference(language).toList() })
         // No language means no preference.
-        assertArrayEquals(emptyArray<String>(), languagePreference(null))
-        assertArrayEquals(emptyArray<String>(), languagePreference(""))
-        assertArrayEquals(emptyArray<String>(), languagePreference("  "))
+        assertEquals(listOf(0, 0, 0), listOf(null, "", "  ").map { languagePreference(it).size })
     }
 
     @Test
     fun mediaKindsAndSubtitleFormatsMapToTheirMimeTypes() {
-        assertEquals("application/x-mpegURL", mediaMimeType("hls"))
-        assertEquals("application/dash+xml", mediaMimeType("dash"))
-        assertEquals("video/mp4", mediaMimeType("mp4"))
-        assertEquals("video/mp2t", mediaMimeType("ts"))
-        assertEquals("an unknown kind is played as MP4", "video/mp4", mediaMimeType("webm"))
-        assertEquals("application/x-subrip", subtitleMimeType("srt"))
-        assertEquals("application/ttml+xml", subtitleMimeType("ttml"))
-        assertEquals("text/vtt", subtitleMimeType("vtt"))
-        assertEquals("an unknown format is read as WebVTT", "text/vtt", subtitleMimeType("ass"))
+        // An unknown kind (webm) is played as MP4, an unknown format (ass) read as WebVTT.
+        val kinds = mapOf(
+            "hls" to "application/x-mpegURL", "dash" to "application/dash+xml", "mp4" to "video/mp4", "ts" to "video/mp2t",
+            "webm" to "video/mp4",
+        )
+        assertEquals(kinds, kinds.mapValues { mediaMimeType(it.key) })
+        val formats = mapOf("srt" to "application/x-subrip", "ttml" to "application/ttml+xml", "vtt" to "text/vtt", "ass" to "text/vtt")
+        assertEquals(formats, formats.mapValues { subtitleMimeType(it.key) })
     }
 
     @Test

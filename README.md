@@ -28,7 +28,7 @@ Everything else is done remotely by the owner from the server's admin page, on a
 - access tokens with a scope, so the owner's own scripts or an AI agent can watch the TVs, play something, change a
   home screen, through the same API and a live event stream
 
-The TV app always talks to the server; there is no standalone mode. The TV app is in English and Turkish.
+The TV app always talks to the server (there is no standalone mode) and is in English and Turkish.
 
 **Status:** early development (see the [changelog](CHANGELOG.md)). Server, TV app, admin page and self-hosting
 setup work; expect rough edges.
@@ -38,25 +38,17 @@ setup work; expect rough edges.
 Try izle with the included sample catalog of openly licensed films. You need a computer with Docker and Git, and an
 Android TV (or Google TV) on the same network, or an Android TV emulator.
 
-**1. Start the server** on the computer:
+**1. Start the server** on the computer, then print the admin token and sign in at `http://localhost:8787/admin/`
+(from a phone: add `--link --base http://<computer's address>:8787` for a sign-in link and QR code):
 
 ```bash
 git clone https://github.com/mickeiik/izle.git && cd izle
 docker build -t izle-server .
 docker run -d --name izle --restart unless-stopped -p 8787:8787 -v izle-data:/var/lib/izle izle-server
-curl -s http://localhost:8787/healthz          # {"ok":true}
-```
-
-**2. Open the admin page.** Print the admin token and sign in at `http://localhost:8787/admin/`:
-
-```bash
 docker exec izle izle-server admin-token --config /etc/izle/izle.json
 ```
 
-To sign in from a phone instead, add `--link --base http://<computer's address>:8787` (for example
-`http://192.168.1.10:8787`): it prints a sign-in link and a QR code to scan.
-
-**3. Install the TV app.** Download `izle-tv-X.Y.Z-debug.apk` from the
+**2. Install the TV app.** Download `izle-tv-X.Y.Z-debug.apk` from the
 [latest release](https://github.com/mickeiik/izle/releases/latest) and install it with
 [adb](https://developer.android.com/tools/releases/platform-tools), after turning on USB or wireless debugging in
 the TV's developer options:
@@ -66,19 +58,15 @@ adb connect <TV's address>:5555
 adb install izle-tv-X.Y.Z-debug.apk
 ```
 
-The debug APK is meant for trying izle: a later APK cannot be installed over it. For a TV you will keep using, take
-`izle-tv-X.Y.Z.apk` instead. Other ways to install (without a computer, with a USB stick):
-[self-hosting guide § 8](docs/deploy/self-hosting.md#8-install-the-tv-app). This first install is the only one
-done at the TV: later releases reach it through the server (the admin page's **TV app** tab), and a TV on Android 12
-or newer installs them by itself while idle.
+The debug APK is for trying izle: a later APK cannot be installed over it. For a TV you will keep using, take
+`izle-tv-X.Y.Z.apk`; other ways to install, and how later releases reach the TV through the server:
+[self-hosting guide § 8](docs/deploy/self-hosting.md#8-install-the-tv-app).
 
-**4. Pair the TV.** Start izle on the TV and enter the server's address, `http://<computer's address>:8787` (on the
-emulator, keep the prefilled `http://10.0.2.2:8787`). The TV shows a 6-digit code: approve it on the admin page under
-**TVs** and give the TV a name.
+**3. Pair the TV.** Start izle on the TV and enter `http://<computer's address>:8787` (on the emulator, keep the
+prefilled `http://10.0.2.2:8787`). Approve the 6-digit code it shows on the admin page under **TVs**.
 
-**5. Put shows on its home screen.** On the TV's page, add a few sample films under **Home screen**. The posters
-appear on the TV at once; press OK on one and it plays. Try **Now playing** and **Message to the TV** from the admin
-page while it does.
+**4. Put shows on its home screen.** On the TV's page, add a few sample films under **Home screen**; they appear on
+the TV at once. Press OK on one, and try **Now playing** and **Message to the TV** from the admin page while it plays.
 
 To remove everything afterwards: `docker rm -f izle && docker volume rm izle-data`, and uninstall the app.
 
@@ -92,36 +80,22 @@ each video or stream is. The [sample catalog](sample-catalog/) is one. Videos ar
 - How a bundle is built: [catalog bundle contract](docs/spec/catalog-bundle-v1.md); check one with
   `npx izle-validate <dir>` (`--probe` also checks that every video answers).
 - Streams that need resolving at play time (signed, expiring URLs, a required `Referer`): write a
-  [resolver module](docs/spec/resolver-module-v1.md). A runnable [example module](server/examples/resolver-example/README.md)
-  comes with a local stand-in streaming site.
-
-Streams that need upstream request headers or come as playlist text are served to the TV through the server's media
-proxy, so those headers and the upstream URLs never reach the TV.
+  [resolver module](docs/spec/resolver-module-v1.md); a runnable [example](server/examples/resolver-example/README.md)
+  comes with a local stand-in streaming site. Streams that need upstream headers or come as playlist text reach the TV
+  through the server's media proxy, so those headers and the upstream URLs never do.
 
 ## Running it for real
 
 Each [release](https://github.com/mickeiik/izle/releases) has the server as one dependency-free package
 (`izle-server-X.Y.Z.tgz`, Node.js ≥ 22.13) and the TV app as an APK. The [self-hosting guide](docs/deploy/self-hosting.md)
-covers installing the server as a systemd service or with Docker, HTTPS with Caddy for TVs outside your home, your
-own catalog and resolver module, backups and updates, installing the app on a TV, and troubleshooting.
-
-Security problems are reported privately: [SECURITY.md](SECURITY.md).
+covers systemd or Docker, HTTPS with Caddy for TVs outside your home, your own catalog and resolver module, backups
+and updates, installing the app, and troubleshooting. Security problems are reported privately:
+[SECURITY.md](SECURITY.md).
 
 ## Development
 
-Requirements: Node.js ≥ 22.13 and npm; for the TV app a JDK 21+ and the Android SDK.
-
-```bash
-npm ci && npm test
-npm run -w server dev -- --config server/izle.dev.json            # sample catalog on :8787, state in server/data/
-npm run -s -w server dev -- admin-token --config server/izle.dev.json   # prints the admin token
-```
-
-Every command (tests, typecheck, packaging, resolver check, the Android emulator loop) is listed in
-[AGENTS.md](AGENTS.md#commands); [Try the API with curl](docs/try-the-api.md) walks through pairing a TV and playing
-an episode by hand. Debug builds of the TV app prefill the emulator's address of the host's server; on the TV, the
-remote's Menu key or holding OK opens the [hidden menu](docs/ux/senior-tv.md#hidden-menu). Making releases:
-[docs/releasing.md](docs/releasing.md).
+Node.js ≥ 22.13 and npm (`npm ci && npm test`); for the TV app a JDK 21+ and the Android SDK. Every command is in
+[AGENTS.md](AGENTS.md#commands); making releases: [docs/releasing.md](docs/releasing.md).
 
 | Path | What |
 |---|---|
@@ -132,7 +106,34 @@ remote's Menu key or holding OK opens the [hidden menu](docs/ux/senior-tv.md#hid
 | `android/` | Android TV app (Kotlin, Compose for TV, Media3) |
 | `scripts/` | release tooling: server package build (`pack-server.mjs`) and smoke test, version bump/check |
 | `Dockerfile` | container image of the server package |
-| `docs/` | specs ([catalog bundle](docs/spec/catalog-bundle-v1.md), [resolver module](docs/spec/resolver-module-v1.md), [server API](docs/spec/server-api-v1.md)), [TV UX](docs/ux/senior-tv.md), [self-hosting](docs/deploy/self-hosting.md), [releasing](docs/releasing.md), [decision log](docs/decisions.md) |
+| `docs/` | specs ([catalog bundle](docs/spec/catalog-bundle-v1.md), [resolver module](docs/spec/resolver-module-v1.md), [server API](docs/spec/server-api-v1.md)), UX ([TV](docs/ux/senior-tv.md), [admin Home](docs/ux/admin-home.md)), [self-hosting](docs/deploy/self-hosting.md), [releasing](docs/releasing.md), [decision log](docs/decisions.md) |
+
+### Try the API with curl
+
+What a TV and its owner do, against the development server with the sample catalog
+([server API](docs/spec/server-api-v1.md)); needs `curl` and `jq`. Start `npm run -w server dev -- --config
+server/izle.dev.json`, then in a second terminal:
+
+```bash
+B=http://localhost:8787; J='Content-Type: application/json'
+dev() { npm run -s -w server dev -- "$@" --config server/izle.dev.json; }
+ADMIN="Authorization: Bearer $(dev admin-token)"
+START=$(curl -s -X POST $B/api/v1/pair/start); CODE=$(echo "$START" | jq -r .code)   # the TV shows a code
+dev pair approve $CODE Living room                                                    # the owner approves it
+WAIT=$(curl -s "$B/api/v1/pair/wait?code=$CODE" -H "Authorization: Bearer $(echo "$START" | jq -r .pairToken)")
+DEVICE=$(echo "$WAIT" | jq -r .deviceId); TV="Authorization: Bearer $(echo "$WAIT" | jq -r .deviceToken)"
+curl -s -X PUT $B/api/v1/admin/devices/$DEVICE/home -H "$ADMIN" -H "$J" -d '{"itemIds":["caminandes","sintel"]}' >/dev/null
+curl -s $B/api/v1/tv/state -H "$TV" | jq -c '.home[] | {show: .item.title, next: .continue.episodeId}'
+curl -s -X POST $B/api/v1/tv/resolve -H "$TV" -H "$J" -d '{"episodeId":"caminandes.s01e01"}' | jq -c '{sourceId, media}'
+curl -s -X POST $B/api/v1/tv/progress -H "$TV" -H "$J" \
+  -d '{"episodeId":"caminandes.s01e01","positionMs":90000,"durationMs":90000,"status":"finished"}'   # cursor moves on
+AGENT="Authorization: Bearer $(dev token create Agent --scope control | tail -1)"                   # an access token
+curl -s -X POST $B/api/v1/admin/devices/$DEVICE/commands -H "$AGENT" -H "$J" -d '{"type":"play","itemId":"sintel"}'
+curl -s "$B/api/v1/admin/events?after=0&types=home.,command." -H "$AGENT" | jq -c '.events[] | {type, data}'
+```
+
+`curl -N $B/api/v1/tv/events -H "$TV"` follows the TV's live updates, `curl -N $B/api/v1/admin/events/stream -H
+"$AGENT"` the event log.
 
 ## License
 

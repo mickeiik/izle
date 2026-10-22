@@ -21,10 +21,7 @@ import io.github.mickeiik.izle.ui.theme.IzleColors
 import io.github.mickeiik.izle.ui.theme.IzleSpacing
 import io.github.mickeiik.izle.update.UpdatePlan
 
-/**
- * A new version of the app, full screen (docs/ux/senior-tv.md, "Update"): the guided "press OK" with Install focused
- * and Not now beside it, counting down to Home; "Updating…" while it installs; "Could not update", then Home.
- */
+/** A new version of the app, full screen (docs/ux/senior-tv.md, "Update"). */
 @Composable
 fun UpdateScreen(ui: UpdateUi, onInstall: () -> Unit, onHome: () -> Unit) {
     val appName = stringResource(R.string.app_name)

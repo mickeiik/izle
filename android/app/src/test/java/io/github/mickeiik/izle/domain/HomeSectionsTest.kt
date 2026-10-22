@@ -24,6 +24,8 @@ class HomeSectionsTest {
         assertEquals(listOf("-:abcde"), drawn.shape())
         assertEquals(HomeSections.UNTITLED_ID, drawn.single().id)
         assertTrue(HomeSections.of(emptyList(), listOf(section("Hq7cP2xd", "Films", "a"))).isEmpty())
+        // A blank title is no title.
+        assertEquals(listOf("-:abcde"), HomeSections.of(home, listOf(section("Films123", "  ", "a", "b", "c", "d", "e"))).shape())
     }
 
     @Test
@@ -72,10 +74,5 @@ class HomeSectionsTest {
         )
         // None: one is added at the end.
         assertEquals(listOf("Films:bc", "-:ade"), HomeSections.of(home, listOf(section("Films123", "Films", "b", "c"))).shape())
-    }
-
-    @Test
-    fun aBlankTitleIsNoTitle() {
-        assertEquals(listOf("-:abcde"), HomeSections.of(home, listOf(section("Films123", "  ", "a", "b", "c", "d", "e"))).shape())
     }
 }

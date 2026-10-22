@@ -1,10 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { openEvents, startTestServer, type Json } from "./helpers.ts";
+import { logged, openEvents, testServer, type Json } from "./helpers.ts";
 
 test("play: by item it is what OK plays at send time, on the home list or not; both ids must agree; positionMs in the payload", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   const send = (body: Json) => s.admin("POST", `/devices/${tv.deviceId}/commands`, { type: "play", ...body });
   // The pilot finished: OK on the show now plays episode 2.
@@ -43,8 +42,7 @@ test("play: by item it is what OK plays at send time, on the home list or not; b
 });
 
 test("play: a channel's item id plays it at its live edge (episodeId null, a positionMs left out); what is refused", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   const send = (body: Json) => s.admin("POST", `/devices/${tv.deviceId}/commands`, { type: "play", ...body });
   const es = await openEvents(s.base, tv.token);
@@ -84,14 +82,13 @@ test("play: a channel's item id plays it at its live edge (episodeId null, a pos
     id: sent.json.id, type: "play", payload: { itemId: "news", episodeId: null }, actor: { type: "owner" }, createdAt: "2026-10-10T12:00:00.000Z",
     deliveredAt: "2026-10-10T12:00:01.000Z", result: "done", reason: null, resultAt: "2026-10-10T12:00:03.000Z",
   });
-  const queued = s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === "command queued");
+  const queued = logged(s, "command queued");
   assert.equal(queued.length, 2);
   for (const line of queued) assert.deepEqual(Object.keys(line).sort(), ["commandId", "deviceId", "level", "msg", "time", "type"], "type and ids only");
 });
 
 test("results: reported once per command by its TV, with the command.result event; GET shows every field", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   const other = await s.pair("Other");
   const play = (await s.admin("POST", `/devices/${tv.deviceId}/commands`, { type: "play", itemId: "film" })).json.id;

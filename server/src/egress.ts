@@ -1,9 +1,7 @@
-// Where the media proxy may connect. Upstream playlist text and upstream redirects name the URLs the proxy fetches,
-// so without a policy a playlist author could steer the server's requests into its own network (loopback services,
-// the LAN, cloud metadata). Every destination is vetted: IP literals before the request, host names in the
-// connection's own DNS lookup, so the address that was checked is the address connected to. Loopback, private,
-// link-local, CGNAT, multicast, reserved and unspecified addresses are refused unless the owner lists the upstream
-// in `proxy.privateUpstreams`.
+// Where the media proxy may connect. Upstream playlists and redirects name the URLs it fetches, so without a policy a
+// playlist author could steer the server into its own network (loopback, the LAN, cloud metadata). IP literals are
+// vetted before the request, host names in the connection's own DNS lookup (the address checked is the address
+// connected to). Non-public addresses are refused unless the owner lists the upstream in `proxy.privateUpstreams`.
 
 import { lookup as dnsLookup, type LookupAddress } from "node:dns";
 import { Agent as HttpAgent, request as httpRequest, type IncomingMessage } from "node:http";
@@ -37,10 +35,9 @@ const DENIED_RANGES: ReadonlyArray<[network: string, prefix: number, type: "ipv4
 const DENIED = new BlockList();
 for (const [network, prefix, type] of DENIED_RANGES) DENIED.addSubnet(network, prefix, type);
 
-/** Why a destination was refused; never the URL or the address. */
 export type EgressRefusal = "scheme" | "credentials_in_url" | "private_address";
 
-/** A destination the policy refuses. Its message names the reason only. */
+/** Its message names the reason only, never the URL or the address. */
 export class EgressDenied extends Error {
   override name = "EgressDenied";
   readonly code = "EGRESS_DENIED";
@@ -51,7 +48,7 @@ export class EgressDenied extends Error {
   }
 }
 
-/** The refusal behind a failed upstream request (thrown itself, or as the `cause` of a network error), or null. */
+/** The refusal behind a failed upstream request (itself, or the `cause` of a network error), or null. */
 export function egressRefusal(err: unknown): EgressDenied | null {
   if (err instanceof EgressDenied) return err;
   const cause = (err as { cause?: unknown } | null)?.cause;
@@ -60,12 +57,7 @@ export function egressRefusal(err: unknown): EgressDenied | null {
 
 /** The IPv4 address an IPv4-mapped (`::ffff:a.b.c.d`) or NAT64 (`64:ff9b::a.b.c.d`) IPv6 address carries, or null. */
 function embeddedIpv4(v6: string): string | null {
-  let canonical: string;
-  try {
-    canonical = new URL(`http://[${v6.split("%")[0]}]/`).hostname.slice(1, -1);
-  } catch {
-    return null;
-  }
+  const canonical = URL.parse(`http://[${v6.split("%")[0]}]/`)?.hostname.slice(1, -1) ?? "";
   const m = /^(?:::ffff:|64:ff9b::)(?:([0-9a-f]{1,4}):)?([0-9a-f]{1,4})$/.exec(canonical);
   if (!m) return null;
   const high = parseInt(m[1] ?? "0", 16);
@@ -83,17 +75,10 @@ function checkedAddress(address: string): { address: string; type: "ipv4" | "ipv
   return v4 ? { address: v4, type: "ipv4" } : { address: plain, type: "ipv6" };
 }
 
-/** Whether `address` is loopback, private, link-local or in another range the proxy never reaches by default. */
-export function isNonPublicAddress(address: string): boolean {
-  const a = checkedAddress(address);
-  return a === null || DENIED.check(a.address, a.type);
-}
-
 interface Rule {
-  /** A host name (lowercase, no trailing dot), or null: `net` decides. */
+  /** Lowercase, no trailing dot; null: `net` decides. */
   name: string | null;
   net: BlockList | null;
-  /** null = any port. */
   port: number | null;
 }
 
@@ -102,15 +87,12 @@ const HOST_NAME = /^(?=.{1,253}$)[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?(\.[a-z0-9
 /** One `proxy.privateUpstreams` entry as a rule, or null when it is none of the accepted forms. */
 function compileRule(entry: string): Rule | null {
   const e = entry.trim().toLowerCase().replace(/\.$/, "");
-  if (e.includes("/") || isIP(e) !== 0) {
-    const { list, invalid } = compileTrustedProxies([e]);
-    return invalid === null ? { name: null, net: list, port: null } : null;
-  }
-  const withPort = /^\[([0-9a-f:.]+)\]:(\d{1,5})$/.exec(e) ?? /^([^:]+):(\d{1,5})$/.exec(e);
+  const ranged = e.includes("/") || isIP(e) !== 0;
+  const withPort = ranged ? null : (/^\[([0-9a-f:.]+)\]:(\d{1,5})$/.exec(e) ?? /^([^:]+):(\d{1,5})$/.exec(e));
   const host = withPort ? withPort[1]! : e;
   const port = withPort ? Number(withPort[2]) : null;
   if (port !== null && !(port >= 1 && port <= 65535)) return null;
-  if (isIP(host) !== 0) {
+  if (ranged || isIP(host) !== 0) {
     const { list, invalid } = compileTrustedProxies([host]);
     return invalid === null ? { name: null, net: list, port } : null;
   }
@@ -123,18 +105,15 @@ export function invalidPrivateUpstream(entries: string[]): string | null {
   return entries.find((e) => compileRule(e) === null) ?? null;
 }
 
-/** The URL's host as rules see it: lowercase, no brackets, no trailing dot. */
 const hostOf = (url: URL): string => url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "");
 const portOf = (url: URL): number => (url.port ? Number(url.port) : url.protocol === "https:" ? 443 : 80);
 
 export interface EgressPolicy {
-  /** Whether a connection to `address` for `host`:`port` is allowed. */
   allows(host: string, port: number, address: string): boolean;
-  /** Throws EgressDenied for a URL that is refused before any lookup: its scheme, credentials or IP literal. */
+  /** Throws EgressDenied for a URL refused before any lookup: its scheme, credentials or IP literal. */
   check(url: URL): void;
 }
 
-/** The policy, with `privateUpstreams` (validated config entries) as the owner's exceptions. */
 export function egressPolicy(privateUpstreams: string[] = []): EgressPolicy {
   const rules = privateUpstreams.map(compileRule).filter((r) => r !== null);
   const allows = (host: string, port: number, address: string): boolean => {
@@ -158,11 +137,9 @@ export function egressPolicy(privateUpstreams: string[] = []): EgressPolicy {
 /** How the proxy talks to upstreams: one GET, redirects answered as they are (the caller vets each Location). */
 export type UpstreamFetch = (url: string, init: { headers: Record<string, string>; signal: AbortSignal; redirect: "manual" }) => Promise<Response>;
 
-/** Defaults the global fetch sends too, so upstreams see the same request as before the policy. */
 const DEFAULT_HEADERS = { accept: "*/*", "accept-encoding": "gzip, br", "user-agent": "node" };
 const NULL_BODY_STATUS = new Set([204, 205, 304]);
 
-/** The upstream response as a fetch Response; the body is decoded like fetch does (gzip, deflate, br). */
 function toResponse(res: IncomingMessage): Response {
   const status = res.statusCode ?? 0;
   const headers = new Headers();
@@ -184,9 +161,8 @@ function toResponse(res: IncomingMessage): Response {
 }
 
 /**
- * An UpstreamFetch over node:http(s) that enforces `policy`: the URL is checked first, and a host name is resolved
- * by the connection's own lookup, which hands the socket only the addresses the policy allows (the request fails
- * with EgressDenied when none is left). Failures reject like fetch: a TypeError whose `cause` is the error.
+ * An UpstreamFetch over node:http(s) whose connection lookup hands the socket only the addresses `policy` allows
+ * (EgressDenied when none is left). Failures reject like fetch: a TypeError whose `cause` is the error.
  */
 export function egressFetch(policy: EgressPolicy): UpstreamFetch {
   const agents = { "http:": new HttpAgent({ keepAlive: true }), "https:": new HttpsAgent({ keepAlive: true }) };

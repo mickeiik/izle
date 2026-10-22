@@ -25,13 +25,12 @@ data class MenuUi(val pages: List<MenuPage>, val item: ItemCard?, val fromPlayer
 
     fun push(next: MenuPage): MenuUi = copy(pages = pages + next)
 
-    /** One page back, or null when the root page is the one closing (the menu closes). */
+    /** One page back, or null when the root page is the one closing. */
     fun pop(): MenuUi? = if (pages.size > 1) copy(pages = pages.dropLast(1)) else null
 
-    /** The current page replaced in place (a loading page by what it loaded). */
+    /** A loading page replaced by what it loaded. */
     fun replaceTop(page: MenuPage): MenuUi = copy(pages = pages.dropLast(1) + page)
 
-    /** The root page remembers [entry] as the one that opened the page above it. */
     fun focusingRoot(entry: RootEntry): MenuUi =
         copy(pages = pages.map { if (it is MenuPage.Root) it.copy(focused = it.entries.indexOf(entry)) else it })
 }
@@ -39,9 +38,8 @@ data class MenuUi(val pages: List<MenuPage>, val item: ItemCard?, val fromPlayer
 /** What the hidden menu offers (docs/ux/senior-tv.md, "Hidden menu"). */
 object MenuPlan {
     /**
-     * The root page's entries for a show or channel of [itemKind] (null: none, an empty Home): Episodes for a series
-     * and Start over for any show (a channel has neither); in the player (shows and channels), Audio language with at
-     * least two audio tracks, and Subtitles; then Settings and About, always.
+     * For a show or channel of [itemKind] (null: an empty Home): Episodes for a series and Start over for any show; in
+     * the player, Audio language with at least two audio tracks, and Subtitles; then Settings and About.
      */
     fun rootEntries(itemKind: String?, fromPlayer: Boolean, audioTrackCount: Int): List<RootEntry> = buildList {
         if (itemKind != null && itemKind != ItemCard.KIND_LIVE) {
@@ -56,9 +54,6 @@ object MenuPlan {
         add(RootEntry.About)
     }
 
-    /**
-     * The version Settings offers to install ("Install update"), if any: [updateVersion], the newer one the server
-     * offers, but never over the player (an update never interrupts playback).
-     */
+    /** The newer version Settings offers to install, never over the player (an update never interrupts playback). */
     fun installUpdateVersion(updateVersion: String?, fromPlayer: Boolean): String? = updateVersion?.takeIf { !fromPlayer }
 }

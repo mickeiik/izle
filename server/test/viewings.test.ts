@@ -3,27 +3,30 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ADMIN_TOKEN, fixtureItems, fixtureManifest, openEvents, publishBuild, startTestServer, writeBundle, type Json, type TestServer, type TestServerOptions } from "./helpers.ts";
+import { ADMIN_TOKEN, fixtureItems, fixtureManifest, openEvents, publishBuild, tempDir, testServer, writeBundle, type Json, type TestServer, type TestServerOptions } from "./helpers.ts";
 
 const MIN = 60_000;
 const RUN = "Zq3v9Kx2LmN8pQ4rT6uW1yA5bC7dE0fGhIjKlMnO"; // gitleaks:allow (made-up hostile fixture)
 
 async function setup(t: { after(fn: () => unknown): void }, opts: TestServerOptions = {}, name = "Salon") {
-  const s = await startTestServer(opts);
-  t.after(() => s.close());
+  const s = await testServer(t, opts);
   const h = helpers(s, await s.pair(name));
   return { s, ...h };
 }
 
 function helpers(s: TestServer, tv: { deviceId: string; token: string }) {
   const as = (method: string, route: string, body?: unknown) => s.call(method, `/api/v1/tv${route}`, { token: tv.token, body });
-  return {
-    tv, as,
-    resolve: (episodeId: string, extra: Json = {}) => as("POST", "/resolve", { episodeId, ...extra }),
-    report: (episodeId: string, status: string, positionMs: number, extra: Json = {}) => as("POST", "/progress", { episodeId, positionMs, status, ...extra }),
-    /** The TV's running viewing (as stored), or null. */
-    running: () => s.srv.ctx.playing.running(tv.deviceId),
+  const resolve = (episodeId: string, extra: Json = {}) => as("POST", "/resolve", { episodeId, ...extra });
+  const report = (episodeId: string, status: string, positionMs: number, extra: Json = {}) => as("POST", "/progress", { episodeId, positionMs, status, ...extra });
+  /** Plays `ms` from the start, stops, and lets a minute pass. */
+  const watch = async (episodeId: string, ms = 20_000) => {
+    await resolve(episodeId);
+    await report(episodeId, "playing", 0);
+    s.clock.advance(ms);
+    await report(episodeId, "stopped", ms);
+    s.clock.advance(MIN);
   };
+  return { tv, as, resolve, report, watch, running: () => s.srv.ctx.playing.running(tv.deviceId) };
 }
 
 const viewings = async (s: TestServer, query = "") => (await s.admin("GET", `/history/viewings${query}`)).json;
@@ -235,7 +238,7 @@ test("watched time, played ranges, seeks, stalls and pauses, with their events a
   assert.deepEqual([film.title.status, film.title.episodes, film.title.shortViewings], ["watching", { total: 1, seen: 0, started: 1 }, 1]);
 });
 
-test("titles and episodes: seen by viewing or mark (a mark wins), imported viewings, status and sort", async (t) => {
+test("titles and episodes: seen by viewing or mark (a mark wins), another TV's viewing, status and sort", async (t) => {
   const { s, resolve, report } = await setup(t);
   const store = s.srv.ctx.store;
   /** Plays from `from` to `to` with a report every 15 s (the TV's cadence), then the final report. */
@@ -252,10 +255,10 @@ test("titles and episodes: seen by viewing or mark (a mark wins), imported viewi
   const e1SeenAt = new Date(s.clock.now() - 1_000).toISOString();
   await play("show.e2", "stopped", 0, 30_000);
   await play("film.main", "stopped", 0, 2_700_000, 5_400_000);
-  // Imported at the upgrade: a saved position of a TV that is long gone, with no ranges and no watched time.
-  const imported = { catalogId: "fixture", itemKind: "movie", itemTitle: "Silent", episodeTitle: null, season: null, number: null, sourceId: null, startPositionMs: null, watchedMs: null, commandId: null, imported: true, trigger: "unknown" as const, lastReportAt: null, lastPositionMs: null, lastPlaying: false, lastAnchorAt: null, lastState: null };
+  // A viewing of a TV that is long gone, stored without played ranges.
+  const oldTv = { catalogId: "fixture", itemKind: "movie", itemTitle: "Silent", episodeTitle: null, season: null, number: null, sourceId: "main", startPositionMs: 0, watchedMs: 1_000_000, commandId: null, trigger: "viewer" as const, lastReportAt: null, lastPositionMs: null, lastPlaying: false, lastAnchorAt: null, lastState: null };
   const old = Date.parse("2026-09-01T20:00:00Z");
-  store.insertViewing({ ...imported, deviceId: "oldtv0000001", deviceName: "Old TV", itemId: "silent", episodeId: "silent.main", startedAt: old, endedAt: old, endPositionMs: 3_000_000, durationMs: 3_000_000, endReason: "finished", seen: true, actor: { type: "tv", deviceId: "oldtv0000001" } });
+  store.insertViewing({ ...oldTv, deviceId: "oldtv0000001", deviceName: "Old TV", itemId: "silent", episodeId: "silent.main", startedAt: old, endedAt: old, endPositionMs: 3_000_000, durationMs: 3_000_000, endReason: "finished", seen: true, actor: { type: "tv", deviceId: "oldtv0000001" } });
   // A mark on an episode nobody watched, and one that says the finished episode was not seen after all.
   s.clock.advance(1_000);
   assert.deepEqual((await s.admin("POST", "/history/marks", { episodeIds: ["show.e4", "show.e1"], seen: false })).json, { updated: 2 });
@@ -270,7 +273,7 @@ test("titles and episodes: seen by viewing or mark (a mark wins), imported viewi
   assert.deepEqual([show.title, show.kind, show.viewings, show.watchedMs, show.rewatches, show.shortViewings], ["Şov Dünyası", "series", 2, 1_230_000, 0, 1]);
   assert.deepEqual(show.seasons, [{ season: 1, total: 2, seen: 0, started: 2 }, { season: 2, total: 2, seen: 0, started: 0 }]);
   assert.equal(show.firstWatchedAt, "2026-10-10T12:00:00.000Z");
-  assert.deepEqual(titles[2].watchedMs, 0, "imported viewings have no watched time");
+  assert.deepEqual(titles[2].watchedMs, 1_000_000);
 
   let detail = (await s.admin("GET", "/history/titles/show")).json;
   assert.deepEqual(detail.episodes.map((e: Json) => [e.episodeId, e.seen, e.mark, e.seenAt, e.viewings, e.coveredFraction, e.lastPositionMs]), [
@@ -290,7 +293,7 @@ test("titles and episodes: seen by viewing or mark (a mark wins), imported viewi
     ["owner", { episodeIds: ["show.e4", "show.e1"], seen: false }], ["owner", { episodeIds: ["show.e4", "show.e1"], seen: null }], ["owner", { episodeIds: ["show.e2"], seen: true }],
   ]);
   const silent = (await s.admin("GET", "/history/titles/silent")).json;
-  assert.deepEqual([silent.episodes[0].coveredFraction, silent.episodes[0].seenAt, silent.episodes[0].lastPositionMs], [null, "2026-09-01T20:00:00.000Z", 3_000_000], "only imported viewings: no covered fraction");
+  assert.deepEqual([silent.episodes[0].coveredFraction, silent.episodes[0].seenAt, silent.episodes[0].lastPositionMs], [0, "2026-09-01T20:00:00.000Z", 3_000_000], "no played ranges: nothing covered");
 
   // The marks need an episode the catalog or the history knows; `device` narrows the counts, not seen.
   const bad = await s.admin("POST", "/history/marks", { episodeIds: ["show.e5", "nope"], seen: true });
@@ -323,13 +326,7 @@ test("titles and episodes: seen by viewing or mark (a mark wins), imported viewi
 });
 
 test("days: a viewing counts on the day it started in the zone asked for; invalid zones and spans", async (t) => {
-  const { s, resolve, report } = await setup(t);
-  const watch = async (episodeId: string, ms: number) => {
-    await resolve(episodeId);
-    await report(episodeId, "playing", 0);
-    s.clock.advance(ms);
-    await report(episodeId, "stopped", ms);
-  };
+  const { s, watch } = await setup(t);
   await watch("show.e1", 30_000); // 2026-10-10 12:00Z
   s.clock.advance(9 * 60 * MIN);
   await watch("film.main", 45_000); // 21:30Z: already 2026-10-11 in Istanbul
@@ -349,27 +346,20 @@ test("days: a viewing counts on the day it started in the zone asked for; invali
 });
 
 test("viewings: filters and paging, newest first; they outlive the TV and the catalog", async (t) => {
-  const { s, resolve, report, tv } = await setup(t);
+  const { s, resolve, watch, tv } = await setup(t);
   const kitchen = helpers(s, await s.pair("Mutfak"));
-  const watch = async (h: { resolve: typeof resolve; report: typeof report }, episodeId: string) => {
-    await h.resolve(episodeId);
-    await h.report(episodeId, "playing", 0);
-    s.clock.advance(20_000);
-    await h.report(episodeId, "stopped", 20_000);
-    s.clock.advance(MIN);
-  };
-  await watch({ resolve, report }, "show.e1");
-  await watch(kitchen, "film.main");
-  await watch({ resolve, report }, "show.e2");
-  await watch(kitchen, "show.e1");
+  await watch("show.e1");
+  await kitchen.watch("film.main");
+  await watch("show.e2");
+  await kitchen.watch("show.e1");
   await resolve("film.main"); // running
   const ids = (list: Json) => list.viewings.map((v: Json) => v.episodeId);
   const all = await viewings(s);
   assert.deepEqual(ids(all), ["film.main", "show.e1", "show.e2", "film.main", "show.e1"]);
   assert.equal(all.next, null);
   const runningOne = all.viewings[0];
-  assert.deepEqual([runningOne.endedAt, runningOne.endReason, runningOne.seen, runningOne.deviceName, runningOne.trigger, runningOne.actor, runningOne.commandId, runningOne.imported],
-    [null, null, false, "Salon", "unknown", { type: "tv", deviceId: tv.deviceId }, null, false]);
+  assert.deepEqual([runningOne.endedAt, runningOne.endReason, runningOne.seen, runningOne.deviceName, runningOne.trigger, runningOne.actor, runningOne.commandId],
+    [null, null, false, "Salon", "unknown", { type: "tv", deviceId: tv.deviceId }, null]);
   const page1 = await viewings(s, "?limit=2");
   assert.deepEqual([ids(page1), page1.next], [["film.main", "show.e1"], page1.viewings[1].id]);
   const page2 = await viewings(s, `?limit=2&before=${page1.next}`);
@@ -457,20 +447,13 @@ test("events: ended before started on a replace, episode.seen after its ended; t
 });
 
 test("deletions: one viewing, a TV's, older than a date, everything; a deleted running viewing stays gone", async (t) => {
-  const { s, resolve, report, tv } = await setup(t);
+  const { s, resolve, report, watch, tv } = await setup(t);
   const kitchen = helpers(s, await s.pair("Mutfak"));
-  const watch = async (h: { resolve: typeof resolve; report: typeof report }, episodeId: string) => {
-    await h.resolve(episodeId);
-    await h.report(episodeId, "playing", 0);
-    s.clock.advance(20_000);
-    await h.report(episodeId, "stopped", 20_000);
-    s.clock.advance(MIN);
-  };
-  await watch({ resolve, report }, "show.e1");
-  await watch(kitchen, "show.e1");
+  await watch("show.e1");
+  await kitchen.watch("show.e1");
   const cut = at(s);
-  await watch({ resolve, report }, "show.e2");
-  await watch(kitchen, "show.e2");
+  await watch("show.e2");
+  await kitchen.watch("show.e2");
   await resolve("film.main");
   const count = async (q = "") => (await viewings(s, q)).viewings.length;
   assert.equal(await count(), 5);
@@ -514,8 +497,7 @@ test("hostile fixture: titles and names with URLs and tokens never reach the log
   const items = fixtureItems();
   items.items[0].title = `Şov https://evil.example.test/show?sig=${RUN}`;
   items.items[0].episodes[0].title = `Pilot ${RUN}`;
-  const s = await startTestServer({ bundleDir: await writeBundle(`${await (await import("./helpers.ts")).tempDir()}/bundle`, fixtureManifest(), items) });
-  t.after(() => s.close());
+  const s = await testServer(t, { bundleDir: await writeBundle(`${await tempDir()}/bundle`, fixtureManifest(), items) });
   const h = helpers(s, await s.pair(`TV https://evil.example.test/tv?t=${RUN.slice(0, 24)}`));
   const from = s.logs.length;
   await h.resolve("show.e1");

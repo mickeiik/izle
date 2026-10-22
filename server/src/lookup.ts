@@ -1,6 +1,5 @@
 // Catalog lookups that answer the request with an error when they find nothing. Routes differ in that answer (404 for
-// an id in the path, 400 for one in a request body, 403 or 400 for an episode that may not be played), so every
-// caller names its status and code.
+// an id in the path, 400 in a body, 403 or 400 for an episode that may not be played), so every caller names it.
 
 import { isLiveItem, type CatalogItem, type EpisodicItem, type Playable, type Source } from "@izle/contract";
 import { liveRef, playableOf, type CatalogService, type EpisodeRef, type LiveRef, type PlayableRef } from "./catalog.ts";
@@ -8,10 +7,7 @@ import { HttpError } from "./errors.ts";
 
 type LookupStatus = 400 | 403 | 404;
 
-/**
- * How a request body names what to play: an episode by its episode id, or a channel by its item id (exactly one;
- * the two id spaces are separate).
- */
+/** How a request body names what to play: an episode by its episode id, or a channel by its item id. */
 export type PlayableId = { episodeId: string; itemId?: undefined } | { itemId: string; episodeId?: undefined };
 
 export function requireItem(catalog: CatalogService, itemId: string, status: LookupStatus, code: string): CatalogItem {
@@ -20,7 +16,7 @@ export function requireItem(catalog: CatalogService, itemId: string, status: Loo
   return item;
 }
 
-/** An item played through its episodes (a movie or a series); 400 `unknown_episode` for a channel, which has none. */
+/** A movie or a series; 400 `unknown_episode` for a channel, which has no episodes. */
 export function requireEpisodicItem(catalog: CatalogService, itemId: string, status: LookupStatus, code: string): EpisodicItem {
   const item = requireItem(catalog, itemId, status, code);
   if (isLiveItem(item)) throw new HttpError(400, "unknown_episode", "a channel has no episodes");
@@ -33,10 +29,7 @@ export function requireEpisode(catalog: CatalogService, episodeId: string, statu
   return ref;
 }
 
-/**
- * The episode (`unknown_episode`) or the channel (`unknown_item`) a body names, with `status` for either. An
- * `itemId` naming an item that is played through its episodes answers 400 `has_episodes`: name one of them.
- */
+/** `unknown_episode` or `unknown_item` with `status`; 400 `has_episodes` for an item played through its episodes. */
 export function requirePlayableRef(catalog: CatalogService, id: { itemId: string; episodeId?: undefined }, status?: LookupStatus): LiveRef;
 export function requirePlayableRef(catalog: CatalogService, id: PlayableId, status?: LookupStatus): PlayableRef;
 export function requirePlayableRef(catalog: CatalogService, id: PlayableId, status: LookupStatus = 404): PlayableRef {
@@ -52,7 +45,6 @@ export function requireSource(playable: Playable, sourceId: string, status: Look
   return source;
 }
 
-/** The episode (404 `unknown_episode`) and its source (404 `unknown_source`) that a "Listen along" route names. */
 export function requireEpisodeSource(catalog: CatalogService, episodeId: string, sourceId: string): { ref: EpisodeRef; source: Source } {
   const ref = requireEpisode(catalog, episodeId, 404, "unknown_episode");
   return { ref, source: requireSource(ref.episode, sourceId, 404, "unknown_source") };
@@ -63,7 +55,6 @@ export function requirePlayable(playable: Playable, status: LookupStatus, code =
   if (!playable.playbackAllowed) throw new HttpError(status, code, `playback of this ${what} is not allowed`);
 }
 
-/** `requirePlayable` for a ref, naming an episode or a channel in the message. */
 export function requireAllowed(ref: PlayableRef, status: LookupStatus): void {
   requirePlayable(playableOf(ref), status, "not_allowed", ref.kind === "episode" ? "episode" : "channel");
 }

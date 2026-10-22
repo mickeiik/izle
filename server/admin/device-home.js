@@ -1,14 +1,11 @@
 // @ts-check
-// The "Home screen" tab of a TV's page: the TV's Home drawn to scale (the same cards, chips and titles, and its
-// sections with their titles, the lines between them and the scrolling lines), its grid size, the sections, what the
-// TV hides, the selected show's controls (Play, Episodes…, moves, its section, Remove) and "Add shows". A channel
-// plays live: it has no "continue", progress or episodes. Every edit is one single change on the server (an item or a
-// section added, moved, changed or removed), never the whole list, and the screen redraws from the answer.
-// Everything is built once and updated in place, so a refresh never takes the focus away.
+// The "Home screen" tab of a TV's page: the TV's Home drawn to scale, its grid, sections, hidden shows, the selected
+// show's controls and "Add shows". Every edit is one single change on the server (never the whole list), and the screen
+// redraws from the answer. Everything is built once and updated in place, so a refresh never takes the focus away.
 
 import { api, attempt } from "./api.js";
 import { catalogBrowser } from "./catalog-browser.js";
-import { actionButton, card, chip, h, keepFocus, keyedRows, loadError, loading, onSubmit, progressBar, setOff, setProgress, showRow, toast, uid } from "./dom.js";
+import { actionButton, card, chip, h, keepFocus, keyedRows, loadError, loading, onSubmit, options, progressBar, setOff, setProgress, showRow, toast, uid } from "./dom.js";
 import {
   HOME_COLUMNS, HOME_MAX, HOME_ROWS, TV_W, UNTITLED, cardPlace, continueText, deleteSectionText, episodeName, episodeStateLabel, episodeStates,
   formatClock, gridSummary, onTv, percent, plural, resumes, sectionCount, sectionName, showMeta, tvCard, tvHomeLayout, tvLineOf, tvMove,
@@ -31,19 +28,14 @@ const nameOf = (e) => e.title ?? e.itemId;
 
 /** @param {import("./view-device.js").DeviceContext} ctx */
 export function homeCard(ctx) {
-  /** Every entry of the Home list, in Home order (what the TV hides included). */
-  /** @type {any[]} */
+  /** Every entry of the Home list, in Home order (what the TV hides included). @type {any[]} */
   let entries = [];
-  /** @type {Section[]} */
-  let sections = [];
+  let sections = /** @type {Section[]} */ ([]);
   let sectionsMax = 20;
-  /** Each section's cards on the TV, by section id. */
-  /** @type {Map<string, any[]>} */
+  /** Each section's cards on the TV, by section id. @type {Map<string, any[]>} */
   let shownIn = new Map();
-  /** Each item's section, by item id. */
-  /** @type {Map<string, Section>} */
+  /** Each item's section, by item id. @type {Map<string, Section>} */
   let sectionOf = new Map();
-  /** The selected card's item, kept while it is on the TV. */
   let selected = /** @type {string | null} */ (null);
   /** Each scrolling line's first card in view, by section id: it keeps its place when the selection leaves it. */
   /** @type {Record<string, number>} */
@@ -56,16 +48,13 @@ export function homeCard(ctx) {
   const counter = h("span", { class: "muted count" });
   const itemPath = (/** @type {string} */ itemId) => `/home/items/${encodeURIComponent(itemId)}`;
   const sectionPath = (/** @type {string} */ sectionId) => `/home/sections/${encodeURIComponent(sectionId)}`;
-  /** The cards the TV shows, in Home order. */
   const shownAll = () => sections.flatMap((s) => shownIn.get(s.id) ?? []);
 
-  /** The change being saved; the next one waits for it or is ignored. */
   let running = /** @type {Promise<unknown> | null} */ (null);
   /**
-   * Saves one change (`method` on `path` below the TV's) and redraws from the answer. While a change is saved, a move
-   * or an add is ignored (each was computed from what the owner saw), and with `wait` the change waits for it (a
-   * title or a layout, which do not depend on it). A failure toasts and reads the TV again. Resolves with the answer,
-   * or null.
+   * Saves one change (`method` on `path` below the TV's) and redraws from the answer, which it resolves with (null on
+   * a failure, which toasts and reads the TV again). While a change is saved, a move or an add is ignored (each was
+   * computed from what the owner saw); with `wait` (a title or a layout) the change waits for it.
    * @param {string} method @param {string} path @param {unknown} body @param {string} message @param {boolean} [wait]
    * @returns {Promise<any>}
    */
@@ -86,15 +75,18 @@ export function homeCard(ctx) {
   };
 
   // --- the grid's size: previewed on the mirror as soon as it is chosen, saved with "Save grid" ---------------------
-  /** The TV's saved grid; null until the TV was read. */
   let savedGrid = /** @type {{ columns: number, rows: number } | null} */ (null);
-  const columns = h("select", { id: uid("columns") }, HOME_COLUMNS.map((n) => h("option", { value: String(n) }, String(n))));
-  const rows = h("select", { id: uid("rows") }, HOME_ROWS.map((n) => h("option", { value: String(n) }, String(n))));
   const gridHint = h("p", { class: "hint", id: uid("grid-hint"), role: "status" });
-  columns.setAttribute("aria-describedby", gridHint.id);
-  rows.setAttribute("aria-describedby", gridHint.id);
+  const sizeSelect = (/** @type {string} */ id, /** @type {number[]} */ sizes) =>
+    h("select", { id: uid(id), "aria-describedby": gridHint.id }, options(sizes.map((n) => [String(n), String(n)])));
+  const columns = sizeSelect("columns", HOME_COLUMNS);
+  const rows = sizeSelect("rows", HOME_ROWS);
   const chosenGrid = () => ({ columns: Number(columns.value), rows: Number(rows.value) });
   const gridChanged = () => savedGrid !== null && (chosenGrid().columns !== savedGrid.columns || chosenGrid().rows !== savedGrid.rows);
+  const showGrid = (/** @type {{ columns: number, rows: number }} */ g) => {
+    columns.value = String(g.columns);
+    rows.value = String(g.rows);
+  };
   const saveGrid = actionButton("Save grid", null, async () => {
     if (!gridChanged()) return;
     const r = await attempt(() => api("PATCH", ctx.path, { homeColumns: chosenGrid().columns, homeRows: chosenGrid().rows }), "Grid saved. The TV applies it right away.");
@@ -103,37 +95,27 @@ export function homeCard(ctx) {
   // Undo hides itself: the focus goes back to the columns.
   const undoGrid = actionButton("Undo", null, async () => {
     if (!savedGrid) return;
-    columns.value = String(savedGrid.columns);
-    rows.value = String(savedGrid.rows);
+    showGrid(savedGrid);
     draw();
     columns.focus();
   });
-  columns.addEventListener("change", () => draw());
-  rows.addEventListener("change", () => draw());
+  for (const select of [columns, rows]) select.addEventListener("change", () => draw());
   const gridControls = h("div", { class: "grid-size" },
     h("label", { for: columns.id }, "Columns"), columns, h("label", { for: rows.id }, "Rows"), rows, saveGrid, undoGrid);
 
   // --- the mirror: the TV's screen, 960 × 540 dp scaled to the card's width ------------------------------------------
-  // The viewport spans the screen's width, so a scrolling line's cards show into the side margins up to the screen's
-  // edge; it clips above and below. Its content moves by `offset`, a scrolling line's cards by its first card.
   const tvEmpty = h("div", { class: "tv-empty" }, h("strong", null, "Nothing here yet"), h("span", null, "The owner adds shows from the izle admin page."));
   const content = h("div", { class: "tv-content" });
   const view = h("div", { class: "tv-view", role: "listbox", "aria-label": "Home on the TV", "aria-describedby": gridHint.id }, content);
   // `overflow: clip` keeps the browser from scrolling it to a focused card; this catches a browser without it.
-  view.addEventListener("scroll", () => {
-    view.scrollTop = 0;
-    view.scrollLeft = 0;
-  });
+  view.addEventListener("scroll", () => view.scrollTo(0, 0));
   const thumb = h("span");
   const scrollBar = h("div", { class: "tv-scroll", "aria-hidden": "true", hidden: true }, thumb);
   const canvas = h("div", { class: "tv-canvas" }, tvEmpty, view, scrollBar);
   const screen = h("div", { class: "tv-screen" }, canvas);
-  const scale = new ResizeObserver(() => {
-    canvas.style.transform = `scale(${screen.clientWidth / TV_W})`;
-  });
+  const scale = new ResizeObserver(() => (canvas.style.transform = `scale(${screen.clientWidth / TV_W})`));
   scale.observe(screen);
   ctx.scope.onCleanup(() => scale.disconnect());
-  /** The layout drawn last. */
   let L = tvHomeLayout(4, 2, [], () => false);
 
   // Whether a card's title wraps at the card's width: measured in the mirror's own font, as the TV measures in its own.
@@ -144,12 +126,11 @@ export function homeCard(ctx) {
     if (!measure) return false;
     const font = `700 24px ${getComputedStyle(canvas).fontFamily || "sans-serif"}`;
     const key = `${font}\n${title}`;
-    let w = widths.get(key);
-    if (w === undefined) {
+    if (!widths.has(key)) {
       measure.font = font;
-      widths.set(key, (w = measure.measureText(title).width));
+      widths.set(key, measure.measureText(title).width);
     }
-    return w > width;
+    return /** @type {number} */ (widths.get(key)) > width;
   };
 
   /** @param {string} itemId */
@@ -158,11 +139,10 @@ export function homeCard(ctx) {
     let pictureKey = "";
     const badge = h("span", { class: "tv-chip" });
     const bar = h("div", { class: "tv-bar" }, h("span"));
-    const shade = h("div", { class: "tv-shade" }, badge, bar);
     const fresh = h("span", { class: "tv-new" });
     const title = h("span", { class: "tv-title" });
     const element = h("div", { class: "tv-tile", role: "option", id: uid("tile"), tabindex: "-1", "aria-selected": "false" },
-      h("div", { class: "tv-card" }, picture, shade, fresh), title);
+      h("div", { class: "tv-card" }, picture, h("div", { class: "tv-shade" }, badge, bar), fresh), title);
     element.addEventListener("click", () => select(itemId, true));
     return {
       element,
@@ -191,7 +171,6 @@ export function homeCard(ctx) {
   /** @type {Map<string, ReturnType<typeof tile>>} */
   const tiles = new Map();
 
-  /** Each drawn section: a group of cards with its title, the line above it and, empty, its dashed band. */
   /** @type {Map<string, { group: HTMLElement, line: HTMLElement, heading: HTMLElement, band: HTMLElement, cells: HTMLElement }>} */
   const sectionViews = new Map();
   const sectionView = (/** @type {string} */ id) => {
@@ -207,7 +186,7 @@ export function homeCard(ctx) {
     return v;
   };
 
-  /** Where a card is in the layout drawn last: its section's index there and its place among the section's cards. */
+  /** A card's section index in the layout drawn last and its place among the section's cards. */
   const locate = (/** @type {string | null} */ itemId) => {
     const sec = itemId ? sectionOf.get(itemId) : undefined;
     if (!sec) return null;
@@ -216,7 +195,6 @@ export function homeCard(ctx) {
     return s < 0 || i < 0 ? null : { s, i, sec };
   };
 
-  /** Selects a card (and with `focus`, moves the focus to it); the screen follows it as the TV follows its focus. */
   const select = (/** @type {string} */ itemId, /** @type {boolean} */ focus) => {
     selected = itemId;
     anchor = null;
@@ -224,31 +202,20 @@ export function homeCard(ctx) {
     if (focus) tiles.get(itemId)?.element.focus({ preventScroll: true });
   };
 
-  /** Scrolls the screen to a section chosen in the Sections list, as little as shows its first line with its title. */
-  const choose = (/** @type {string} */ sectionId) => {
-    if (anchor === sectionId) return;
-    anchor = sectionId;
-    draw();
-  };
-
   // ← → ↑ ↓ move the selection as the remote moves the focus on the TV; Home and End go to the first and last card.
   view.addEventListener("keydown", (ev) => {
     const at = locate(selected);
     if (!at) return;
     let to = /** @type {string | undefined} */ (undefined);
-    if (ev.key === "Home" || ev.key === "End") {
-      const all = shownAll();
-      to = (ev.key === "Home" ? all[0] : all[all.length - 1])?.itemId;
-    } else if (ev.key.startsWith("Arrow")) {
+    if (ev.key === "Home" || ev.key === "End") to = shownAll().at(ev.key === "Home" ? 0 : -1)?.itemId;
+    else if (ev.key.startsWith("Arrow")) {
       const m = tvMove(L, firsts, at.s, at.i, ev.key);
-      const box = m ? L.sections[m.s] : undefined;
-      to = box && m ? shownIn.get(box.id)?.[m.i]?.itemId : undefined;
+      to = m ? shownIn.get(L.sections[m.s].id)?.[m.i]?.itemId : undefined;
     } else return;
     ev.preventDefault();
     if (to) select(to, true);
   });
 
-  /** Lays out the mirror for the chosen grid, scrolls it to the selected card (or the chosen section), and the rest. */
   const draw = () => {
     const hadFocus = view.contains(document.activeElement);
     const g = chosenGrid();
@@ -260,10 +227,8 @@ export function homeCard(ctx) {
     view.style.setProperty("--card-w", `${grid.cardWidth}px`);
     view.style.setProperty("--title-lines", String(grid.titleLines));
     content.style.height = `${L.contentHeight}px`;
-    /** @type {Set<string>} */
-    const drawn = new Set();
+    const drawn = new Set(L.sections.map((b) => b.id));
     L.sections.forEach((box, k) => {
-      drawn.add(box.id);
       const v = sectionView(box.id);
       if (content.children[k] !== v.group) content.insertBefore(v.group, content.children[k] ?? null);
       v.group.setAttribute("aria-label", box.empty ? `${sectionName(box)}, empty: not shown on the TV` : sectionName(box));
@@ -275,36 +240,30 @@ export function homeCard(ctx) {
         setBox(v.heading, L.x0, box.titleTop, L.contentWidth);
       }
       v.band.hidden = !box.empty;
-      if (box.empty) setBox(v.band, L.x0, /** @type {number} */ (box.rowTops[0]), L.contentWidth, grid.cellHeight);
-      const cards = shownIn.get(box.id) ?? [];
-      cards.forEach((e, j) => {
+      if (box.empty) setBox(v.band, L.x0, box.rowTops[0], L.contentWidth, grid.cellHeight);
+      (shownIn.get(box.id) ?? []).forEach((e, j) => {
         let t = tiles.get(e.itemId);
         if (!t) tiles.set(e.itemId, (t = tile(e.itemId)));
         t.update(e);
         if (box.row) setBox(t.element, j * L.pitch, 0);
-        else setBox(t.element, L.x0 + (j % cols) * L.pitch, /** @type {number} */ (box.rowTops[Math.floor(j / cols)]));
+        else setBox(t.element, L.x0 + (j % cols) * L.pitch, box.rowTops[Math.floor(j / cols)]);
         if (v.cells.children[j] !== t.element) v.cells.insertBefore(t.element, v.cells.children[j] ?? null);
       });
     });
-    for (const [id, v] of sectionViews) {
-      if (drawn.has(id)) continue;
-      v.group.remove();
-      sectionViews.delete(id);
-    }
     const shownIds = new Set(shownAll().map((e) => e.itemId));
-    for (const [id, t] of tiles) {
-      if (shownIds.has(id)) continue;
-      t.element.remove();
-      tiles.delete(id);
+    for (const [map, keep] of /** @type {const} */ ([[sectionViews, drawn], [tiles, shownIds]])) {
+      for (const [id, v] of map) {
+        if (keep.has(id)) continue;
+        ("group" in v ? v.group : v.element).remove();
+        map.delete(id);
+      }
     }
 
-    // On every redraw (a move of the selection, or an edit that moved the selected card), the selected card is
-    // brought into view as the TV brings its focus: its line slides, the screen scrolls (or to the chosen section).
     const at = locate(selected);
     ({ firsts, offset } = tvView(L, firsts, at, anchor === null ? -1 : L.sections.findIndex((b) => b.id === anchor), offset));
     content.style.transform = `translateY(${-offset}px)`;
     L.sections.forEach((box, k) => {
-      const v = /** @type {NonNullable<ReturnType<typeof sectionViews.get>>} */ (sectionViews.get(box.id));
+      const v = sectionView(box.id);
       v.heading.classList.toggle("on", at?.s === k);
       v.cells.style.transform = box.row ? `translate(${L.x0 - (firsts[box.id] ?? 0) * L.pitch}px, ${box.rowTops[0]}px)` : "";
     });
@@ -315,9 +274,8 @@ export function homeCard(ctx) {
       setBox(thumb, 0, sb.thumbTop, null, sb.thumbHeight);
     }
     for (const [id, t] of tiles) {
-      const on = id === selected;
-      t.element.setAttribute("aria-selected", String(on));
-      t.element.tabIndex = on ? 0 : -1;
+      t.element.setAttribute("aria-selected", String(id === selected));
+      t.element.tabIndex = id === selected ? 0 : -1;
     }
     // A card moved to another section, or removed, lost the focus: it goes to the selected card, else to "Add shows".
     if (hadFocus && !view.contains(document.activeElement)) (tiles.get(selected ?? "")?.element ?? browser.search).focus({ preventScroll: true });
@@ -331,8 +289,7 @@ export function homeCard(ctx) {
 
   // --- what the TV hides ------------------------------------------------------------------------------------------
   const hiddenList = h("ul", { class: "list" });
-  /** @param {any} first */
-  const hiddenRow = (first) => {
+  const hiddenRow = (/** @type {any} */ first) => {
     const itemId = first.itemId;
     let entry = first;
     const name = h("strong");
@@ -358,8 +315,7 @@ export function homeCard(ctx) {
 
   // --- the sections, in their order on the TV ------------------------------------------------------------------------
   const sectionList = h("ol", { class: "list sections", "aria-label": "Sections, in their order on the TV" });
-  /** @param {Section} first */
-  const sectionRow = (first) => {
+  const sectionRow = (/** @type {Section} */ first) => {
     const id = first.id;
     let s = first;
     let index = 0;
@@ -372,12 +328,8 @@ export function homeCard(ctx) {
     const commit = async () => {
       if (!title) return;
       const v = title.value.trim();
-      if (!v) {
-        title.value = s.title ?? "";
-        return;
-      }
-      title.value = v;
-      if (v === s.title || v === sending) return;
+      title.value = v || (s.title ?? "");
+      if (!v || v === s.title || v === sending) return;
       sending = v;
       await save("PATCH", sectionPath(id), { title: v }, `Section renamed to ${v}.`, true);
       sending = null;
@@ -418,9 +370,14 @@ export function homeCard(ctx) {
       h("div", { class: "grow" }, name,
         h("div", { class: "meta" }, h("label", { class: "check" }, scroll, "One scrolling line"), count, id === UNTITLED ? null : del)),
       id === UNTITLED ? null : asking);
-    // Choosing a section scrolls the screen to it.
-    element.addEventListener("focusin", () => choose(id));
-    element.addEventListener("click", () => choose(id));
+    // Choosing a section scrolls the screen to it, as little as shows its first line with its title.
+    const choose = () => {
+      if (anchor === id) return;
+      anchor = id;
+      draw();
+    };
+    element.addEventListener("focusin", choose);
+    element.addEventListener("click", choose);
     return {
       element,
       /** @param {Section} next @param {number} i @param {Section[]} all */
@@ -450,8 +407,7 @@ export function homeCard(ctx) {
     const t = newTitle.value.trim();
     if (!t) {
       toast("Type the new section's title first.", "error");
-      newTitle.focus();
-      return null;
+      return newTitle.focus();
     }
     return async () => {
       const r = await save("POST", "/home/sections", { title: t }, `${t} added at the end of Home.`);
@@ -471,11 +427,10 @@ export function homeCard(ctx) {
   const line = h("div", { class: "muted" });
   const progress = /** @type {HTMLElement} */ (progressBar(0, "How far"));
   const entryNow = () => (selected ? shownAll().find((e) => e.itemId === selected) : undefined);
-  const play = actionButton("Play", { class: "primary" }, () => {
+  const play = actionButton("Play", { class: "primary" }, async () => {
     const e = entryNow();
-    if (!e) return Promise.resolve();
-    if (e.kind === "live") return ctx.send({ type: "play", itemId: e.itemId }, "Play");
-    return e.continue ? ctx.send({ type: "play", episodeId: e.continue.episodeId }, "Play") : Promise.resolve();
+    if (e?.kind === "live") await ctx.send({ type: "play", itemId: e.itemId }, "Play");
+    else if (e?.continue) await ctx.send({ type: "play", episodeId: e.continue.episodeId }, "Play");
   });
   /** The selected series' "continue from" picker: one per show, made when the show is selected. */
   let picker = /** @type {ReturnType<typeof episodePicker> | null} */ (null);
@@ -500,13 +455,12 @@ export function homeCard(ctx) {
   const right = actionButton("▶", { class: "icon", "aria-label": "Move right" }, () => moveTo((i) => i + 1));
   const up = actionButton("▲", { class: "icon", "aria-label": "Move up a row" }, () => moveTo((i) => i - cols()));
   const down = actionButton("▼", { class: "icon", "aria-label": "Move down a row" }, () => moveTo((i, n) => Math.min(i + cols(), n - 1)));
-  const first = actionButton("Move to first", null, () => {
+  const first = actionButton("Move to first", null, async () => {
     const e = entryNow();
-    return e ? save("PATCH", itemPath(e.itemId), { position: 0 }, "Order saved.") : Promise.resolve();
+    if (e) await save("PATCH", itemPath(e.itemId), { position: 0 }, "Order saved.");
   });
   // The card goes to the end of the chosen section and stays selected there.
   const sectionChoice = h("select", { id: uid("section") });
-  let choiceKey = "";
   sectionChoice.addEventListener("change", async () => {
     const e = entryNow();
     const to = sections.find((s) => s.id === sectionChoice.value);
@@ -525,22 +479,31 @@ export function homeCard(ctx) {
       h("label", { for: sectionChoice.id }, "Section"), sectionChoice, h("span", { class: "grow" }), remove),
     pickerBox);
 
-  /** Shows the selected card in the inspector (or hides it with no card selected). */
+  /** @param {any} e */
+  const setPicker = (e) => {
+    picker?.sync(null, false);
+    pickerOpen = false;
+    pickerFor = e?.itemId ?? null;
+    // "Continue from here" closes the picker: the focus goes to its toggle.
+    picker = e?.kind === "series" ? episodePicker(ctx, e.itemId, async () => {
+      pickerOpen = false;
+      await keepFocus(async () => {
+        showInspector();
+        await ctx.reload();
+      }, episodes);
+    }) : null;
+    pickerBox.replaceChildren(...(picker ? [picker.element] : []));
+    if (picker) episodes.setAttribute("aria-controls", picker.element.id);
+  };
+
   const showInspector = () => {
     const e = entryNow();
     const at = locate(selected);
     inspector.hidden = !e || !at;
-    if (!e || !at) {
-      picker?.sync(null, false);
-      picker = null;
-      pickerFor = null;
-      pickerBox.replaceChildren();
-      return;
-    }
-    const box = /** @type {import("./lib.js").SectionBox} */ (L.sections[at.s]);
+    if (!e || !at) return setPicker(null);
+    const box = L.sections[at.s];
     const n = box.count;
-    const c0 = cols();
-    where.textContent = cardPlace(box, at.i, n, c0);
+    where.textContent = cardPlace(box, at.i, n, cols());
     const title = nameOf(e);
     name.textContent = title;
     const c = e.continue;
@@ -557,31 +520,11 @@ export function homeCard(ctx) {
     setOff(up, box.row || row === 0);
     setOff(down, box.row || row === box.rowTops.length - 1);
     setOff(first, at.i === 0);
-    const key = JSON.stringify(sections.map((s) => [s.id, s.title]));
-    if (key !== choiceKey) {
-      choiceKey = key;
-      sectionChoice.replaceChildren(...sections.map((s) => h("option", { value: s.id }, sectionName(s))));
-    }
     sectionChoice.value = at.sec.id;
     sectionChoice.setAttribute("aria-label", `Section of ${title}`);
     remove.setAttribute("aria-label", `Remove ${title} from Home`);
-    // A series has the "continue from" picker.
     episodes.hidden = e.kind !== "series";
-    if (pickerFor !== e.itemId) {
-      picker?.sync(null, false);
-      pickerOpen = false;
-      pickerFor = e.itemId;
-      // "Continue from here" closes the picker: the focus goes to its toggle.
-      picker = e.kind === "series" ? episodePicker(ctx, e.itemId, async () => {
-        pickerOpen = false;
-        await keepFocus(async () => {
-          showInspector();
-          await ctx.reload();
-        }, episodes);
-      }) : null;
-      pickerBox.replaceChildren(...(picker ? [picker.element] : []));
-      if (picker) episodes.setAttribute("aria-controls", picker.element.id);
-    }
+    if (pickerFor !== e.itemId) setPicker(e);
     episodes.setAttribute("aria-expanded", String(pickerOpen));
     episodes.textContent = pickerOpen ? "Hide episodes" : "Episodes…";
     picker?.sync(e, pickerOpen);
@@ -591,13 +534,11 @@ export function homeCard(ctx) {
   // "Add to": the section a show is added to, the untitled one unless the owner picks another, kept while the tab is open.
   const addTo = h("select", { id: uid("add-to") });
   let addToId = UNTITLED;
-  let addToKey = "";
-  addTo.addEventListener("change", () => {
-    addToId = addTo.value;
-  });
+  /** The sections the two section selects were last filled with. */
+  let sectionsKey = "";
+  addTo.addEventListener("change", () => (addToId = addTo.value));
   const addToBox = h("div", { class: "add-to" }, h("label", { for: addTo.id }, "Add to"), addTo);
-  /** @param {any} item */
-  const resultRow = (item) => {
+  const resultRow = (/** @type {any} */ item) => {
     const add = actionButton("Add", { "data-control": "add", "data-focus": `add:${item.id}`, "aria-label": `Add ${item.title}` }, async () => {
       const after = browser.items().map((/** @type {any} */ r) => `add:${r.id}`);
       const at = after.indexOf(`add:${item.id}`);
@@ -608,9 +549,8 @@ export function homeCard(ctx) {
       await keepFocus(() => save("POST", "/home/items", body, `${item.title} added to ${to?.title ?? "Home"}.`), ...after.slice(at + 1), ...after.slice(0, at).reverse(), browser.search);
     });
     const reason = chip("");
-    const element = showRow(item, { meta: showMeta(item), end: h("div", { class: "end" }, add, reason) });
     return {
-      element,
+      element: showRow(item, { meta: showMeta(item), end: h("div", { class: "end" }, add, reason) }),
       /** @param {any} next */
       update(next) {
         const onHome = sectionOf.has(next.id);
@@ -623,11 +563,7 @@ export function homeCard(ctx) {
   };
   const browser = catalogBrowser(ctx.scope, { row: resultRow, label: "Add shows", heading: true, notOnDevice: ctx.id, above: addToBox });
 
-  /**
-   * Shows the TV's Home (the device's GET, or a change's answer) and, with `device`, its saved grid (a grid being
-   * previewed stays until it is saved or undone).
-   * @param {HomeAnswer} d @param {any} [device]
-   */
+  /** With `device`, also its saved grid (a grid being previewed stays). @param {HomeAnswer} d @param {any} [device] */
   const update = (d, device) => {
     // A selected card that went away (removed here or elsewhere, or hidden by a catalog reload) hands the selection
     // to the card that takes its place in Home order, else the one before it.
@@ -636,25 +572,13 @@ export function homeCard(ctx) {
     sections = d.sections;
     if (typeof d.sectionsMax === "number") sectionsMax = d.sectionsMax;
     const byId = new Map(entries.map((e) => [e.itemId, e]));
-    sectionOf = new Map();
-    shownIn = new Map();
-    for (const s of sections) {
-      /** @type {any[]} */
-      const cards = [];
-      for (const id of s.itemIds) {
-        sectionOf.set(id, s);
-        const e = byId.get(id);
-        if (e && onTv(e)) cards.push(e);
-      }
-      shownIn.set(s.id, cards);
-    }
+    sectionOf = new Map(sections.flatMap((s) => s.itemIds.map((id) => [id, s])));
+    shownIn = new Map(sections.map((s) => [s.id, s.itemIds.map((id) => byId.get(id)).filter((e) => e && onTv(e))]));
     if (device) {
       const before = savedGrid;
       savedGrid = { columns: device.settings.homeColumns, rows: device.settings.homeRows };
-      if (!before || (chosenGrid().columns === before.columns && chosenGrid().rows === before.rows)) {
-        columns.value = String(savedGrid.columns);
-        rows.value = String(savedGrid.rows);
-      }
+      const previewing = before && (chosenGrid().columns !== before.columns || chosenGrid().rows !== before.rows);
+      if (!previewing) showGrid(savedGrid);
     }
     const shown = shownAll();
     counter.textContent = plural(entries.length, "show");
@@ -664,15 +588,14 @@ export function homeCard(ctx) {
     hiddenRows.set(entries.filter((e) => !onTv(e)));
     hiddenBox.hidden = shown.length === entries.length;
     sectionRows.set(sections);
-    const titled = sections.filter((s) => s.id !== UNTITLED).length;
-    addForm.hidden = titled >= sectionsMax;
+    addForm.hidden = sections.filter((s) => s.id !== UNTITLED).length >= sectionsMax;
     full.hidden = !addForm.hidden;
     full.textContent = `A Home holds at most ${sectionsMax} sections.`;
     if (!sections.some((s) => s.id === addToId)) addToId = UNTITLED;
     const key = JSON.stringify(sections.map((s) => [s.id, s.title]));
-    if (key !== addToKey) {
-      addToKey = key;
-      addTo.replaceChildren(...sections.map((s) => h("option", { value: s.id }, sectionName(s))));
+    if (key !== sectionsKey) {
+      sectionsKey = key;
+      for (const select of [addTo, sectionChoice]) select.replaceChildren(...options(sections.map((s) => [s.id, sectionName(s)])));
     }
     addTo.value = addToId;
     if (anchor !== null && !sections.some((s) => s.id === anchor)) anchor = null;
@@ -693,10 +616,8 @@ export function homeCard(ctx) {
 
 /**
  * The "continue from" picker of a series: its episodes with what the TV did with each, "Continue from here" and
- * "Play now". `sync(entry, open)` shows or hides it for the row's home entry; an open picker reloads when what OK
- * plays changed.
- * @param {import("./view-device.js").DeviceContext} ctx
- * @param {string} itemId
+ * "Play now". `sync(entry, open)` shows or hides it; an open picker reloads when what OK plays changed.
+ * @param {import("./view-device.js").DeviceContext} ctx @param {string} itemId
  * @param {() => Promise<void>} continued runs once "Continue from here" moved where OK continues
  */
 function episodePicker(ctx, itemId, continued) {
@@ -731,12 +652,10 @@ function episodePicker(ctx, itemId, continued) {
       const playNow = e.playbackAllowed ? actionButton("Play now", { "data-focus": `now:${e.id}`, "aria-label": `Play now: ${label}` }, () => ctx.send({ type: "play", episodeId: e.id }, "Play")) : null;
       return h("li", { class: s.current ? "current" : "" }, h("span", { class: "grow" }, label), chip(episodeStateLabel(s), s.current ? "ok" : ""), continueHere, playNow);
     });
-    await keepFocus(() =>
-      element.replaceChildren(
-        h("p", { class: "muted" }, "OK on the TV plays the episode marked “next”. Choose where it continues; that episode starts from its beginning."),
-        h("ul", { class: "episodes" }, rows),
-      ),
-    );
+    await keepFocus(() => element.replaceChildren(
+      h("p", { class: "muted" }, "OK on the TV plays the episode marked “next”. Choose where it continues; that episode starts from its beginning."),
+      h("ul", { class: "episodes" }, rows),
+    ));
   };
 
   return {

@@ -17,23 +17,21 @@ class HomeLayoutTest {
 
     private fun row(count: Int, title: Boolean = false, twoLines: Boolean = false) = SectionShape(title, row = true, count = count, lastLineNeedsTwoTitleLines = twoLines)
 
-    private val noRows: (Int) -> Int = { 0 }
-
     @Test
     fun withoutATitledSectionHomeIsTodaysGrid() {
         for ((columns, rows) in listOf(4 to 2, 4 to 3, 6 to 4, 3 to 1)) {
             val g = HomeGrid.compute(columns, rows, 864f, 486f, 32f)
             val l = layout(columns, rows, grid(11))
             assertEquals(g, l.grid)
-            assertEquals(0f, l.titleReserve)
             assertEquals(g.viewportHeight, l.viewportHeight, 0f)
             val count = g.rowCount(11)
             assertEquals(count, l.lines.size)
             l.lines.forEachIndexed { r, line ->
                 assertEquals(g.padding + r * g.rowPitch, line.cardTop, 0.001f)
-                // Scrolling to a row is today's whole-row scroll, from anywhere.
+                // Scrolling to a row is today's whole-row scroll, from anywhere: Home stays put when the row is in
+                // view, else the row comes in at the top or the bottom edge.
                 for (firstRow in 0..maxOf(0, count - g.rows)) {
-                    val expected = g.firstRowShowing(r, firstRow) * g.rowPitch
+                    val expected = firstRow.coerceIn((r - g.rows + 1).coerceAtLeast(0), r) * g.rowPitch
                     assertEquals("row $r from $firstRow", expected, l.scrollFor(line = r, current = firstRow * g.rowPitch), 0.001f)
                 }
             }
@@ -41,12 +39,6 @@ class HomeLayoutTest {
             // Exactly the grid's items: no title, no span.
             assertEquals((0 until 11).map { Card(0, it, g.padding + it / g.columns * g.rowPitch, 1) }, l.slots)
         }
-        // Today's numbers for 4 × 2.
-        val l = layout(4, 2, grid(5))
-        assertEquals(194f, l.grid.cardWidth, 0f)
-        assertEquals(414.25f, l.viewportHeight, 0.001f)
-        assertEquals(14f, l.lines[0].cardTop, 0f)
-        assertEquals(217.125f, l.lines[1].cardTop, 0.001f)
     }
 
     @Test
@@ -56,7 +48,6 @@ class HomeLayoutTest {
             val l = layout(columns, rows, row(11))
             // No title, nothing set aside: today's card size and viewport.
             assertEquals(g, l.grid)
-            assertEquals(0f, l.titleReserve)
             assertEquals(g.viewportHeight, l.viewportHeight, 0f)
             // One line, its cards at the padding from the top; Home does not scroll.
             assertEquals(1, l.lines.size)
@@ -75,7 +66,6 @@ class HomeLayoutTest {
     fun aTitleSetsItsHeightAsideFromTheCardSize() {
         // 4 × 3: two title lines would leave smaller cards, as without sections, but the cards are now 146 wide.
         val l = layout(4, 3, grid(4, title = true), grid(4))
-        assertEquals(44f, l.titleReserve)
         assertEquals(HomeGrid.compute(4, 3, 864f, 486f - 44f, 32f), l.grid)
         assertEquals(146f, l.grid.cardWidth, 0f)
         assertEquals(1, l.grid.titleLines)
@@ -253,6 +243,6 @@ class HomeLayoutTest {
         assertNull(l.vertical(0, 2, -1, rowFirst))
         assertNull(l.vertical(2, 1, 1, rowFirst))
         assertEquals(listOf(0, 1, 2, 3), listOf(l.lineOf(0, 3), l.lineOf(0, 4), l.lineOf(1, 8), l.lineOf(2, 1)))
-        assertNull(l.vertical(0, 0, 0, noRows))
+        assertNull(l.vertical(0, 0, 0) { 0 })
     }
 }

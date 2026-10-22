@@ -12,6 +12,7 @@ import { SCOPES, type Scope } from "./tokens.ts";
 import { healthcheckAll, loadResolver, ResolverLoadError } from "./resolver.ts";
 import { startServer } from "./server.ts";
 import { adminCall, linkBase, qrCode, ServerUnreachableError, signInLink } from "./shell.ts";
+import { DatabaseVersionError } from "./store.ts";
 import { VERSION } from "./version.ts";
 
 const USAGE = `usage:
@@ -46,22 +47,21 @@ config file resolve against the file's directory. IZLE_ADMIN_TOKEN overrides the
 
 const out = (line: string) => void process.stdout.write(`${line}\n`);
 const TOKEN_REFUSED = "the server did not accept the admin token; is it the one the server runs with?";
-/** For the commands' own log lines (redacted, like the server's), so stdout stays what the command prints. */
+/** The commands' own log lines (redacted, like the server's) go to stderr: stdout is what the command prints. */
 const stderrLog = createLogger({ write: (l) => void process.stderr.write(`${l}\n`) });
 
-/** A problem the command ran into, on stderr; exit status 1. */
 function fail(line: string): number {
   process.stderr.write(`izle-server: ${line}\n`);
   return 1;
 }
 
-/** A command line that cannot be run: why, then the usage, on stderr; exit status 2. */
+/** A command line that cannot be run: exit status 2 (a problem the command ran into is 1). */
 function usage(message: string): number {
   process.stderr.write(`${message}\n${USAGE}\n`);
   return 2;
 }
 
-/** Loads the resolver module like the server does, then runs the healthchecks. Exit status 1 on any problem. */
+/** Loads the resolver module like the server does, then runs the healthchecks. */
 async function checkResolver(config: ServerConfig): Promise<number> {
   if (!config.resolver) return fail("no resolver module is configured (resolver.module in the config file)");
   const resolver = await loadResolver({ module: config.resolver.module, config: config.resolver.config, dataDir: config.dataDir, log: stderrLog });
@@ -69,129 +69,109 @@ async function checkResolver(config: ServerConfig): Promise<number> {
   out(`sha256 ${resolver.sha256}`);
   out(`adapters: ${[...resolver.adapters.keys()].join(", ") || "(none)"}`);
   let ok = true;
-  try {
-    const { bundle } = await loadBundle(config.catalog.dir);
-    const missing = bundle.manifest.adapters.filter((a) => !resolver.adapters.has(a));
-    if (missing.length > 0) {
-      ok = false;
-      for (const a of missing) out(`✖ catalog ${bundle.manifest.catalogId} needs adapter "${a}", which the module does not provide`);
-    } else {
-      out(`✔ catalog ${bundle.manifest.catalogId}: all ${bundle.manifest.adapters.length} declared adapter(s) provided`);
-    }
-  } catch (err) {
+  const bad = (line: string) => {
     ok = false;
-    out(`✖ catalog ${config.catalog.dir} cannot be loaded${err instanceof BundleValidationError ? " (invalid bundle; run validate-catalog)" : ""}`);
+    out(`✖ ${line}`);
+  };
+  try {
+    const { manifest } = (await loadBundle(config.catalog.dir)).bundle;
+    const missing = manifest.adapters.filter((a) => !resolver.adapters.has(a));
+    for (const a of missing) bad(`catalog ${manifest.catalogId} needs adapter "${a}", which the module does not provide`);
+    if (missing.length === 0) out(`✔ catalog ${manifest.catalogId}: all ${manifest.adapters.length} declared adapter(s) provided`);
+  } catch (err) {
+    bad(`catalog ${config.catalog.dir} cannot be loaded${err instanceof BundleValidationError ? " (invalid bundle; run validate-catalog)" : ""}`);
   }
   for (const h of await healthcheckAll(resolver)) {
     if (h.ok) out(`✔ ${h.adapterId}: ${h.skipped ? "no healthcheck" : `healthy (${h.ms} ms)`}`);
-    else {
-      ok = false;
-      out(`✖ ${h.adapterId}: healthcheck failed (${h.code}, ${h.name}, ${h.ms} ms)`);
-    }
+    else bad(`${h.adapterId}: healthcheck failed (${h.code}, ${h.name}, ${h.ms} ms)`);
   }
   return ok ? 0 : 1;
 }
 
-/**
- * `pair pending` / `pair approve <code> [name…]` / `pair cancel <code>` against the running server's admin API. Exit
- * status 1 on any problem.
- */
+/** What a command could not do: exit status 1 with the message. */
+class CommandFailed extends Error {}
+
+/** Calls the running server's admin API (`--server`, else where the config says it listens) with the admin token. */
+function adminApi(config: ServerConfig, serverUrl: string | undefined) {
+  const server = serverUrl ?? localServerUrl(config);
+  const { token } = loadAdminToken(config, stderrLog, { create: false });
+  /** The answer when it has the `ok` status; else the command fails with `known[status]`, or what the server said. */
+  return async <T>(method: string, route: string, ok: number, known: Record<number, string> = {}, body?: unknown) => {
+    const r = await adminCall<T>(server, token, method, `/api/v1/admin${route}`, body);
+    if (r.status === ok) return r.json!;
+    const message = (r.json as { message?: string } | null)?.message;
+    const unexpected = `unexpected answer ${r.status} from ${server}${message ? `: ${message}` : ""}`;
+    throw new CommandFailed(known[r.status] ?? (r.status === 401 ? TOKEN_REFUSED : unexpected));
+  };
+}
+
+/** `pair pending` / `pair approve <code> [name…]` / `pair cancel <code>`. */
 async function pair(config: ServerConfig, args: string[], serverUrl: string | undefined): Promise<number> {
   const [sub, ...rest] = args;
   if (sub !== "pending" && sub !== "approve" && sub !== "cancel") return usage(`pair needs "pending", "approve <code> [name…]" or "cancel <code>"`);
-  const server = serverUrl ?? localServerUrl(config);
-  const { token } = loadAdminToken(config, stderrLog, { create: false });
-  try {
-    if (sub === "pending") {
-      if (rest.length > 0) return fail(`pair pending takes no arguments`);
-      const r = await adminCall<{ codes: Array<{ code: string; expiresAt: string; approved: boolean }> }>(server, token, "GET", "/api/v1/admin/pair/pending");
-      if (r.status === 401) return fail(TOKEN_REFUSED);
-      if (r.status !== 200) return fail(`unexpected answer ${r.status} from ${server}`);
-      const codes = r.json!.codes;
-      if (codes.length === 0) out("no TV is waiting; izle on the TV shows a 6-digit code when it is not paired");
-      for (const c of codes) {
-        const left = Math.max(0, Math.round((Date.parse(c.expiresAt) - Date.now()) / 1000));
-        out(`${c.code}  ${c.approved ? "approved, waiting for the TV to collect its token" : `waiting for approval, expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`}`);
-      }
-      return 0;
+  const api = adminApi(config, serverUrl);
+  if (sub === "pending") {
+    if (rest.length > 0) return fail(`pair pending takes no arguments`);
+    const { codes } = await api<{ codes: Array<{ code: string; expiresAt: string; approved: boolean }> }>("GET", "/pair/pending", 200);
+    if (codes.length === 0) out("no TV is waiting; izle on the TV shows a 6-digit code when it is not paired");
+    for (const c of codes) {
+      const left = Math.max(0, Math.round((Date.parse(c.expiresAt) - Date.now()) / 1000));
+      out(`${c.code}  ${c.approved ? "approved, waiting for the TV to collect its token" : `waiting for approval, expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`}`);
     }
-    if (sub === "cancel") {
-      const [code, ...more] = rest;
-      if (!PAIR_CODE.test(code ?? "") || more.length > 0) return fail("pair cancel needs one 6-digit code (pair pending lists them)");
-      const r = await adminCall<{ message?: string }>(server, token, "DELETE", `/api/v1/admin/pair/pending/${code}`);
-      if (r.status === 404) return fail(`no code ${code} is waiting; it was collected, cleared or expired`);
-      if (r.status === 401) return fail(TOKEN_REFUSED);
-      if (r.status !== 204) return fail(`unexpected answer ${r.status} from ${server}${r.json?.message ? `: ${r.json.message}` : ""}`);
-      out(`cleared: the code ${code} no longer pairs; a TV that showed it asks for a new one`);
-      return 0;
-    }
-    const [code, ...nameWords] = rest;
-    if (!PAIR_CODE.test(code ?? "")) return fail("pair approve needs the 6-digit code the TV shows");
-    const name = nameWords.join(" ").trim();
-    const body = { code, ...(name ? { name } : {}) };
-    const r = await adminCall<{ deviceId: string; name: string; message?: string }>(server, token, "POST", "/api/v1/admin/pair/approve", body);
-    if (r.status === 404) return fail(`no TV is waiting with the code ${code}; the TV shows a new code every 10 minutes`);
-    if (r.status === 409) return fail(`the code ${code} is already approved`);
-    if (r.status === 401) return fail(TOKEN_REFUSED);
-    if (r.status !== 200) return fail(`unexpected answer ${r.status} from ${server}${r.json?.message ? `: ${r.json.message}` : ""}`);
-    out(`approved: "${r.json!.name}" (${r.json!.deviceId}) shows its home screen in a moment; put shows on it from the admin page`);
     return 0;
-  } catch (err) {
-    if (err instanceof ServerUnreachableError) return fail(`${err.message}; is it running? (--server <url> if it listens elsewhere)`);
-    throw err;
   }
+  if (sub === "cancel") {
+    const [code, ...more] = rest;
+    if (!PAIR_CODE.test(code ?? "") || more.length > 0) return fail("pair cancel needs one 6-digit code (pair pending lists them)");
+    await api("DELETE", `/pair/pending/${code}`, 204, { 404: `no code ${code} is waiting; it was collected, cleared or expired` });
+    out(`cleared: the code ${code} no longer pairs; a TV that showed it asks for a new one`);
+    return 0;
+  }
+  const [code, ...nameWords] = rest;
+  if (!PAIR_CODE.test(code ?? "")) return fail("pair approve needs the 6-digit code the TV shows");
+  const name = nameWords.join(" ").trim();
+  const refusals = {
+    404: `no TV is waiting with the code ${code}; the TV shows a new code every 10 minutes`,
+    409: `the code ${code} is already approved`,
+  };
+  const body = { code, ...(name ? { name } : {}) };
+  const tv = await api<{ deviceId: string; name: string }>("POST", "/pair/approve", 200, refusals, body);
+  out(`approved: "${tv.name}" (${tv.deviceId}) shows its home screen in a moment; put shows on it from the admin page`);
+  return 0;
 }
 
-/** `token create <name…> --scope <scope>` / `token list` / `token revoke <id>` against the running server. */
+/** `token create <name…> --scope <scope>` / `token list` / `token revoke <id>`. */
 async function token(config: ServerConfig, args: string[], serverUrl: string | undefined, scope: string | undefined): Promise<number> {
   const [sub, ...rest] = args;
   if (sub !== "create" && sub !== "list" && sub !== "revoke") return usage(`token needs "create <name…> --scope <scope>", "list" or "revoke <id>"`);
   if (scope !== undefined && sub !== "create") return usage("--scope belongs to token create");
-  const server = serverUrl ?? localServerUrl(config);
-  const { token: adminToken } = loadAdminToken(config, stderrLog, { create: false });
+  const api = adminApi(config, serverUrl);
   type Token = { id: string; name: string; scope: Scope; createdAt: string; lastUsedAt: string | null };
-  const unexpected = (r: { status: number; json: unknown }) => {
-    const message = (r.json as { message?: string } | null)?.message;
-    return fail(r.status === 401 ? TOKEN_REFUSED : `unexpected answer ${r.status} from ${server}${message ? `: ${message}` : ""}`);
-  };
-  try {
-    if (sub === "list") {
-      if (rest.length > 0) return fail("token list takes no arguments");
-      const r = await adminCall<{ tokens: Token[] }>(server, adminToken, "GET", "/api/v1/admin/tokens");
-      if (r.status !== 200) return unexpected(r);
-      if (r.json!.tokens.length === 0) out("no access tokens; create one with `izle-server token create <name> --scope <scope>`");
-      for (const t of r.json!.tokens) out(`${t.id}  ${t.scope.padEnd(7)}  ${t.lastUsedAt ? `last used ${t.lastUsedAt}` : "never used"}  ${t.name}`);
-      return 0;
-    }
-    if (sub === "revoke") {
-      const [id, ...extra] = rest;
-      if (!id || extra.length > 0) return fail("token revoke needs the token's id (see token list)");
-      const r = await adminCall<{ message?: string }>(server, adminToken, "DELETE", `/api/v1/admin/tokens/${encodeURIComponent(id)}`);
-      if (r.status === 404) return fail(`no access token with the id ${id}`);
-      if (r.status !== 204) return unexpected(r);
-      out(`revoked access token ${id}; requests with it answer 401 from now on`);
-      return 0;
-    }
-    const name = rest.join(" ").trim();
-    if (!name) return fail("token create needs a name");
-    if (!SCOPES.includes(scope as Scope)) return fail(`token create needs --scope ${SCOPES.join("|")}`);
-    const r = await adminCall<{ token: Token; secret: string; message?: string }>(server, adminToken, "POST", "/api/v1/admin/tokens", { name, scope });
-    if (r.status === 409) return fail(`an access token named "${name}" exists`);
-    if (r.status !== 201) return unexpected(r);
-    // The secret alone on stdout, like admin-token, so a script can capture it; it is shown only now.
-    process.stderr.write(`created access token "${r.json!.token.name}" (${r.json!.token.id}, scope ${r.json!.token.scope}); its secret, shown only now:\n`);
-    out(r.json!.secret);
+  if (sub === "list") {
+    if (rest.length > 0) return fail("token list takes no arguments");
+    const { tokens } = await api<{ tokens: Token[] }>("GET", "/tokens", 200);
+    if (tokens.length === 0) out("no access tokens; create one with `izle-server token create <name> --scope <scope>`");
+    for (const t of tokens) out(`${t.id}  ${t.scope.padEnd(7)}  ${t.lastUsedAt ? `last used ${t.lastUsedAt}` : "never used"}  ${t.name}`);
     return 0;
-  } catch (err) {
-    if (err instanceof ServerUnreachableError) return fail(`${err.message}; is it running? (--server <url> if it listens elsewhere)`);
-    throw err;
   }
+  if (sub === "revoke") {
+    const [id, ...extra] = rest;
+    if (!id || extra.length > 0) return fail("token revoke needs the token's id (see token list)");
+    await api("DELETE", `/tokens/${encodeURIComponent(id)}`, 204, { 404: `no access token with the id ${id}` });
+    out(`revoked access token ${id}; requests with it answer 401 from now on`);
+    return 0;
+  }
+  const name = rest.join(" ").trim();
+  if (!name) return fail("token create needs a name");
+  if (!SCOPES.includes(scope as Scope)) return fail(`token create needs --scope ${SCOPES.join("|")}`);
+  const refusals = { 409: `an access token named "${name}" exists` };
+  const { token: t, secret } = await api<{ token: Token; secret: string }>("POST", "/tokens", 201, refusals, { name, scope });
+  // The secret alone on stdout, like admin-token, so a script can capture it; it is shown only now.
+  process.stderr.write(`created access token "${t.name}" (${t.id}, scope ${t.scope}); its secret, shown only now:\n`);
+  out(secret);
+  return 0;
 }
 
-/**
- * `admin-token`: prints the admin token (creating it, or with `rotate` replacing it), or with `link` the admin page's
- * sign-in link and its QR code.
- */
 function adminToken(config: ServerConfig, opts: { rotate: boolean; link: boolean; base: string | undefined }): number {
   const { token, source } = loadAdminToken(config, stderrLog, { rotate: opts.rotate });
   if (source === "env") process.stderr.write("note: IZLE_ADMIN_TOKEN is set and overrides the token file\n");
@@ -199,7 +179,6 @@ function adminToken(config: ServerConfig, opts: { rotate: boolean; link: boolean
     out(token);
     return 0;
   }
-  // The link carries the token, like the plain print does; the QR code is the same link for a phone's camera.
   const base = opts.base !== undefined ? { url: opts.base, source: "--base" } : linkBase(config);
   const link = signInLink(base.url, token);
   out(`${link}\n\n${qrCode(link)}`);
@@ -211,7 +190,7 @@ function adminToken(config: ServerConfig, opts: { rotate: boolean; link: boolean
 
 const size = (bytes: number) => (bytes < 1024 ? `${bytes} bytes` : bytes < 1024 ** 2 ? `${Math.round(bytes / 1024)} KiB` : `${(bytes / 1024 ** 2).toFixed(1)} MiB`);
 
-/** `backup <file>`: a consistent copy of the database, taken while the server keeps running (BackupError → exit 1). */
+/** `backup <file>`: a consistent copy of the database, taken while the server keeps running. */
 function backup(config: ServerConfig, file: string, force: boolean): number {
   const target = path.resolve(invocationDir(), file);
   const { bytes } = backupDatabase(databaseFile(config), target, { force });
@@ -228,9 +207,7 @@ function backup(config: ServerConfig, file: string, force: boolean): number {
 }
 
 /** npm sets INIT_CWD to where `npm run` was invoked, so `npm run -w server dev -- --config x` behaves as typed. */
-function invocationDir(): string {
-  return process.env.INIT_CWD ?? process.cwd();
-}
+const invocationDir = () => process.env.INIT_CWD ?? process.cwd();
 
 const OPTIONS = {
   config: { type: "string", short: "c" }, rotate: { type: "boolean" }, link: { type: "boolean" }, base: { type: "string" },
@@ -291,7 +268,9 @@ export async function main(argv: string[]): Promise<number> {
     process.on("SIGHUP", () => void reloadOnSignal(server.ctx, "SIGHUP"));
     return -1; // keep running
   } catch (err) {
-    if (err instanceof ConfigError || err instanceof ResolverLoadError || err instanceof BackupError) return fail(err.message);
+    const known = [ConfigError, ResolverLoadError, BackupError, DatabaseVersionError, CommandFailed];
+    if (known.some((E) => err instanceof E)) return fail((err as Error).message);
+    if (err instanceof ServerUnreachableError) return fail(`${err.message}; is it running? (--server <url> if it listens elsewhere)`);
     if (err instanceof BundleValidationError) {
       const errors = err.issues.filter((x) => x.severity === "error").map((i) => `\n  ✖ ${formatIssue(i)}`);
       return fail(`the catalog bundle is invalid:${errors.join("")}`);

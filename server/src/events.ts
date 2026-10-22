@@ -18,14 +18,8 @@ export function commandEvent(cmd: Pick<Command, "id" | "type" | "payload">): Ser
 
 /** The SSE `id` of an event: `s<version>` for state, `c<commandId>` for commands, `a<versionCode>` for the app. */
 export function eventId(ev: ServerEvent): string {
-  switch (ev.type) {
-    case "state":
-      return `s${ev.data.version}`;
-    case "command":
-      return `c${ev.data.id}`;
-    case "app":
-      return `a${ev.data.versionCode}`;
-  }
+  if (ev.type === "state") return `s${ev.data.version}`;
+  return ev.type === "command" ? `c${ev.data.id}` : `a${ev.data.versionCode}`;
 }
 
 /** A TV stays online this long after its last event stream closed, so a reconnect does not flap. */
@@ -37,12 +31,11 @@ export const OFFLINE_GRACE_MS = 60_000;
  */
 export class EventHub {
   private readonly subscribers = new Map<string, Set<Subscriber>>();
-  /** Devices whose last stream closed less than the grace period ago: still online until the timer fires. */
+  /** Devices whose last stream closed less than the grace period ago: online until the timer fires. */
   private readonly closing = new Map<string, ReturnType<typeof setTimeout>>();
   /** Devices removed while a stream was open: their last unsubscribe is not a disconnect to announce. */
   private readonly dropped = new Set<string>();
   private readonly offlineGraceMs: number;
-  /** Told when a device goes online (its first stream opens) or offline (the grace period after its last ended). */
   onOnline: (deviceId: string, online: boolean) => void = () => {};
 
   constructor(offlineGraceMs = OFFLINE_GRACE_MS) {
@@ -55,14 +48,9 @@ export class EventHub {
     set.add(subscriber);
     this.dropped.delete(deviceId);
     if (set.size === 1) {
-      const timer = this.closing.get(deviceId);
-      if (timer !== undefined) {
-        // A reconnect within the grace period: the TV never went offline.
-        clearTimeout(timer);
-        this.closing.delete(deviceId);
-      } else {
-        this.onOnline(deviceId, true);
-      }
+      // A reconnect within the grace period: the TV never went offline.
+      clearTimeout(this.closing.get(deviceId));
+      if (!this.closing.delete(deviceId)) this.onOnline(deviceId, true);
     }
     return () => {
       if (!set.delete(subscriber)) return;
@@ -82,7 +70,6 @@ export class EventHub {
     for (const s of this.subscribers.get(deviceId) ?? []) s.send(event);
   }
 
-  /** Sends the event to every open stream of every device (a new TV app APK). */
   publishAll(event: ServerEvent): void {
     for (const set of this.subscribers.values()) for (const s of set) s.send(event);
   }
@@ -96,15 +83,12 @@ export class EventHub {
    * over (`gone` false) is disconnected like any other, so the new TV connecting within the grace does not flap.
    */
   closeDevice(deviceId: string, gone = true): void {
-    if (!gone) {
-      for (const s of [...(this.subscribers.get(deviceId) ?? [])]) s.close();
-      return;
-    }
-    const timer = this.closing.get(deviceId);
-    if (timer !== undefined) clearTimeout(timer);
-    this.closing.delete(deviceId);
     const open = [...(this.subscribers.get(deviceId) ?? [])];
-    if (open.length > 0) this.dropped.add(deviceId);
+    if (gone) {
+      clearTimeout(this.closing.get(deviceId));
+      this.closing.delete(deviceId);
+      if (open.length > 0) this.dropped.add(deviceId);
+    }
     for (const s of open) s.close();
   }
 
@@ -131,12 +115,11 @@ export class Notifier {
     this.events = events;
   }
 
-  /** The device's state version as stored now; the one `device` was read with when the device is gone. */
+  /** The state version as stored now; the one `device` was read with when the device is gone. */
   version(device: Device): number {
     return this.store.getDevice(device.id)?.stateVersion ?? device.stateVersion;
   }
 
-  /** Bumps the device's state version and tells its streams; returns the new version. */
   bump(deviceId: string): number {
     const version = this.store.bumpStateVersion(deviceId);
     this.state(deviceId, version);
@@ -148,7 +131,6 @@ export class Notifier {
     this.events.publish(deviceId, { type: "state", data: { version } });
   }
 
-  /** Bumps every device's state version (after a catalog reload) and tells each one. */
   bumpAll(): void {
     for (const { id, stateVersion } of this.store.bumpAllStateVersions()) this.state(id, stateVersion);
   }

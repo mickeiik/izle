@@ -1,7 +1,4 @@
-// The viewing history's owner side: the owner's seen marks and the deletion of viewings. The TV side (a viewing
-// starts with a successful resolve, follows the TV's reports and ends with a stop, a finish, another resolve or
-// silence) lives with the now-playing row in playing.ts, which owns what a TV is playing. Every change appends its
-// event in its own transaction.
+// The viewing history's owner side: the owner's seen marks and the deletion of viewings (the TV side is playing.ts).
 
 import type { Actor } from "./actor.ts";
 import type { CatalogService } from "./catalog.ts";
@@ -27,17 +24,14 @@ export class ViewingService {
     this.s = deps;
   }
 
-  /**
-   * The owner's word on episodes (`seen: null` removes it); each must be in the catalog or the history. Returns how
-   * many. A channel's item id is no episode id: channels are never marked.
-   */
+  /** The owner's word on episodes (`seen: null` removes it); each must be in the catalog or the history. */
   setMarks(episodeIds: readonly string[], seen: boolean | null, actor: Actor): number {
     const { store, catalog } = this.s;
     const catalogId = catalog.catalogId;
     const entries = new Map<string, { episodeId: string; itemId: string }>();
     for (const episodeId of episodeIds) {
       const itemId = catalog.episode(episodeId)?.item.id ?? store.historyEpisodeItem(catalogId, episodeId) ?? store.getMark(catalogId, episodeId)?.itemId;
-      if (itemId === undefined || itemId === null) throw new HttpError(400, "unknown_episode", "the episode is neither in the catalog nor in the history", { episodeId });
+      if (itemId == null) throw new HttpError(400, "unknown_episode", "the episode is neither in the catalog nor in the history", { episodeId });
       entries.set(episodeId, { episodeId, itemId });
     }
     store.transaction(() => {
@@ -56,7 +50,6 @@ export class ViewingService {
     });
   }
 
-  /** Deletes one viewing; false when there is none with this id. */
   deleteViewing(id: number, actor: Actor): boolean {
     return this.s.store.transaction(() => {
       const v = this.s.store.getViewing(id);

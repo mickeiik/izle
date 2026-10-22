@@ -1,9 +1,8 @@
-// The media proxy. It serves header-bound and inline-playlist streams to the TV so upstream request headers never
-// leave the server: `/p/<token>/index.m3u8` (or `video.mp4`, or `stream.ts` for progressive MPEG-TS) is the entry
-// point, every URI inside a playlist is rewritten to `/p/<token>/u/<signed ref>`, and subtitle files are served
-// from `/p/<token>/sub/<n>.<ext>`. A playlist is fetched upstream anew on every request, so a live playlist slides
-// along; an MP4 or MPEG-TS body streams through for as long as the TV reads it (a channel's never ends). Sessions
-// live in memory only; a restart answers 410 and the TV re-resolves.
+// The media proxy: serves header-bound and inline-playlist streams so upstream request headers never leave the
+// server. `/p/<token>/index.m3u8` (or `video.mp4`, `stream.ts`) is the entry, every URI in a playlist is rewritten to
+// `/p/<token>/u/<signed ref>`, subtitles are `/p/<token>/sub/<n>.<ext>`. A playlist is fetched anew on every request
+// (a live one slides on); MP4 and MPEG-TS bodies stream through. Sessions live in memory: after a restart they
+// answer 410 and the TV re-resolves.
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { newToken } from "./auth.ts";
@@ -15,52 +14,38 @@ import type { Logger } from "./log.ts";
 const MAX_SESSIONS_PER_DEVICE = 2;
 /** Absolute session lifetime, whatever the sliding TTL. */
 const SESSION_MAX_AGE_MS = 12 * 60 * 60_000;
-/** Largest upstream playlist the proxy reads into memory. */
 export const MAX_PLAYLIST_BYTES = 4 * 1024 * 1024;
-/**
- * What a rewrite may make of a playlist: every link embeds its URL, so without a bound a long base URL would blow up
- * a playlist of short lines. A playlist past one answers 502 `playlist_too_large` like one past MAX_PLAYLIST_BYTES.
- */
+/** Every rewritten link embeds its URL: without a bound, a long base URL would blow up a playlist of short lines. */
 export const REWRITE_LIMITS: RewriteLimits = { maxLines: 250_000, maxLength: 4 * MAX_PLAYLIST_BYTES, maxUrlLength: 4096 };
-/** Time allowed for an upstream to answer with headers; the body then streams for as long as the TV reads. */
+/** Time for an upstream to answer with headers; the body then streams for as long as the TV reads. */
 const UPSTREAM_HEADERS_TIMEOUT_MS = 20_000;
-/** Redirects followed for one request; each Location is vetted like the first URL. */
 const MAX_REDIRECTS = 5;
 const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
 /** Request headers that carry a credential: sent only to the origin they were given for. */
 const CREDENTIAL_HEADER = /authorization|cookie|token|secret|passw|api-?key|session/i;
 
-/** Session tokens are 32 random bytes, base64url. */
 export const PROXY_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
 const PLAYLIST_TYPE = "application/vnd.apple.mpegurl";
 const SUBTITLE_TYPES: Record<string, string> = { vtt: "text/vtt; charset=utf-8", srt: "application/x-subrip; charset=utf-8", ttml: "application/ttml+xml" };
-/** Response headers passed from the upstream to the TV; everything else (cookies, redirects, CORS) is dropped. */
+/** Response headers passed to the TV; everything else (cookies, redirects, CORS) is dropped. */
 const PASSED_HEADERS = ["content-type", "content-length", "content-range", "accept-ranges", "last-modified", "etag"];
-/** Formats the TS aligner never touches (by URL extension). */
 const NOT_TS_EXTENSIONS = new Set(["m4s", "mp4", "m4a", "m4v", "cmfv", "cmfa", "aac", "mp3", "ac3", "ec3", "vtt", "webvtt", "key"]);
 
-/** Kinds of main media the proxy serves: HLS (rewritten playlists), and MP4 and MPEG-TS (streamed through). */
 export type ProxyMainKind = "hls" | "mp4" | "ts";
 
 interface ProxySessionInit {
-  /** Owner key of the session-limit bucket: the TV's device id, or `companion:<deviceId>` for the phone. */
   deviceId: string;
-  /** What the session plays, for problem reports: an item's episode, or (`episodeId` null) a channel. */
   itemId?: string | null;
   episodeId?: string | null;
   sourceId?: string | null;
-  /** Null when only subtitle tracks need the proxy. */
   main: { kind: ProxyMainKind; url: string; playlist?: undefined } | { kind: "hls"; playlist: string; baseUrl: string } | null;
-  /** Upstream headers for the main media and everything its playlists reference. */
   headers: Record<string, string>;
-  /** One entry per subtitle track the TV gets; null = that track is not proxied. */
   subtitles: Array<{ url: string; headers: Record<string, string> } | null>;
 }
 
 interface Session extends ProxySessionInit {
   token: string;
-  /** Per-session key that signs the URLs written into rewritten playlists. */
   key: Buffer;
   createdAt: number;
   lastUsedAt: number;
@@ -70,23 +55,13 @@ interface Session extends ProxySessionInit {
 export type ProxyTarget = { type: "index" } | { type: "video" } | { type: "stream" } | { type: "u"; ref: string } | { type: "sub"; file: string };
 
 /**
- * `upstream_<status>` (401/403/410: the session went stale), `upstream_error` (5xx, or a playlist that broke off),
- * `upstream_unreachable` (network error or no answer in time), `not_a_playlist`, `playlist_too_large`,
- * `egress_denied` (a URL or redirect named a loopback, private or other non-public address, see egress.ts).
+ * `upstream_<status>` (the session went stale), `upstream_error` (5xx, or a playlist that broke off),
+ * `upstream_unreachable` (network error or no answer in time), `egress_denied` (a non-public address, see egress.ts).
  */
-export type ProxyProblemCode =
-  | `upstream_${401 | 403 | 410}`
-  | "upstream_error"
-  | "upstream_unreachable"
-  | "not_a_playlist"
-  | "playlist_too_large"
-  | "egress_denied";
+export type ProxyProblemCode = `upstream_${401 | 403 | 410}` | "upstream_error" | "upstream_unreachable" | "not_a_playlist" | "playlist_too_large" | "egress_denied";
 
-/** An upstream request of a session that failed in a way the owner should hear about. */
 export interface ProxyProblem {
-  /** The session's owner key: a TV's device id, or `companion:<deviceId>`. */
   owner: string;
-  /** What the session plays: the item, and its episode (null for a channel). */
   itemId: string | null;
   episodeId: string | null;
   sourceId: string | null;
@@ -99,14 +74,10 @@ export interface ProxyProblem {
 interface ProxyOptions {
   log: Logger;
   now?: () => number;
-  /** Sliding session lifetime. */
   ttlMs: number;
   alignTsSegments?: boolean;
-  /** `proxy.privateUpstreams`: the non-public upstreams the proxy may reach anyway. */
   privateUpstreams?: string[];
-  /** Upstream transport (tests); default: node:http(s) with the egress policy applied to every connection. */
   fetch?: UpstreamFetch;
-  /** Told about failed upstream requests (problem reports). */
   onProblem?: (problem: ProxyProblem) => void;
 }
 
@@ -116,28 +87,8 @@ export const entryPath = (token: string, kind: ProxyMainKind): string => `/p/${t
 
 export const subtitlePath = (token: string, index: number, format: string): string => `/p/${token}/sub/${index}.${format}`;
 
-function extensionOf(url: string): string | null {
-  try {
-    return /\.([A-Za-z0-9]{1,5})$/.exec(new URL(url).pathname)?.[1]?.toLowerCase() ?? null;
-  } catch {
-    return null;
-  }
-}
-
-/** The origin of `url`, or null when it has none. */
-function originOf(url: string): string | null {
-  try {
-    const origin = new URL(url).origin;
-    return origin === "null" ? null : origin;
-  } catch {
-    return null;
-  }
-}
-
-/** `headers` without the credential-type ones, for a request to another origin than the one they were given for. */
-function withoutCredentials(headers: Record<string, string>): Record<string, string> {
-  return Object.fromEntries(Object.entries(headers).filter(([name]) => !CREDENTIAL_HEADER.test(name)));
-}
+const extensionOf = (url: string): string | null =>
+  /\.([A-Za-z0-9]{1,5})$/.exec(URL.parse(url)?.pathname ?? "")?.[1]?.toLowerCase() ?? null;
 
 function json(status: number, error: string, extra: Record<string, unknown> = {}): Response {
   return new Response(JSON.stringify({ error, ...extra }), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
@@ -146,13 +97,15 @@ function json(status: number, error: string, extra: Record<string, unknown> = {}
 /** A stream error that @hono/node-server treats as a closed connection rather than a crash to print. */
 const prematureClose = (): Error => Object.assign(new Error("upstream closed early"), { code: "ERR_STREAM_PREMATURE_CLOSE" });
 
-/** Why a fetch failed, without its message: the network error code (`ECONNREFUSED`, `ENOTFOUND`) or the class name. */
+const cancel = (res: Response): Promise<void> => res.body?.cancel().catch(() => {}) ?? Promise.resolve();
+
+/** The network error code (`ECONNREFUSED`) or the class name, never the message. */
 function networkReason(err: unknown): string {
   const code = (err as { cause?: { code?: unknown } } | null)?.cause?.code;
   return typeof code === "string" && /^[A-Z][A-Z0-9_]{1,39}$/.test(code) ? code : errorName(err);
 }
 
-/** The response body as UTF-8 text, or null (the rest cancelled) once it grows past `limit` bytes. */
+/** The body as UTF-8 text; null (the rest cancelled) past `limit` bytes. */
 export async function readText(res: Response, limit: number): Promise<string | null> {
   if (!res.body) return "";
   const reader = res.body.getReader();
@@ -167,18 +120,6 @@ export async function readText(res: Response, limit: number): Promise<string | n
     chunks.push(r.value);
   }
   return Buffer.concat(chunks).toString("utf8");
-}
-
-/** The headers the TV gets with streamed upstream media: the passed ones, with `contentType` in place of the upstream's. */
-function passedHeaders(upstream: Response, contentType: string | undefined): Headers {
-  const out = new Headers({ "Cache-Control": "no-store" });
-  for (const name of PASSED_HEADERS) {
-    const value = upstream.headers.get(name);
-    if (value !== null) out.set(name, value);
-  }
-  if (upstream.headers.has("content-encoding")) out.delete("content-length"); // fetch already decoded the body
-  if (contentType) out.set("content-type", contentType);
-  return out;
 }
 
 export class ProxyService {
@@ -217,7 +158,6 @@ export class ProxyService {
     return token;
   }
 
-  /** Ends every session of an owner key (the device was deleted). */
   dropDevice(deviceId: string): void {
     for (const s of this.sessions.values()) if (s.deviceId === deviceId) this.sessions.delete(s.token);
   }
@@ -226,7 +166,7 @@ export class ProxyService {
     return t - s.lastUsedAt > this.o.ttlMs || t - s.createdAt > SESSION_MAX_AGE_MS;
   }
 
-  /** The signature of a rewritten link: the first 16 bytes of the session key's HMAC of `<kind>.<base64url URL>`. */
+  /** A link's signature: the first 16 bytes of the session key's HMAC of `<kind>.<base64url URL>`. */
   private mac(s: Session, kind: LinkKind, b64: string): Buffer {
     return createHmac("sha256", s.key).update(`${kind}.${b64}`).digest().subarray(0, 16);
   }
@@ -258,34 +198,32 @@ export class ProxyService {
     s.lastUsedAt = t;
 
     // The session's credential-type headers go to the origin of the URL the catalog or adapter gave, nowhere else.
-    const mainOrigin = s.main === null ? null : originOf(s.main.playlist !== undefined ? s.main.baseUrl : s.main.url);
+    const origin = s.main && (URL.parse(s.main.playlist !== undefined ? s.main.baseUrl : s.main.url)?.origin ?? null);
     switch (target.type) {
       case "index":
-        if (s.main?.kind !== "hls") return json(404, "not_found");
+        if (s.main?.kind !== "hls") break;
         if (s.main.playlist !== undefined) return this.playlistResponse(s, s.main.playlist, s.main.baseUrl, "u/", null, "playlist");
-        return this.forward(req, s, s.main.url, s.headers, { kind: "p", prefix: "u/", what: "playlist", origin: mainOrigin });
+        return this.forward(req, s, s.main.url, s.headers, { kind: "p", prefix: "u/", what: "playlist", origin });
       case "video":
-        if (s.main?.kind !== "mp4") return json(404, "not_found");
-        return this.forward(req, s, s.main.url, s.headers, { kind: "r", prefix: null, what: "video", origin: mainOrigin });
       case "stream":
-        // Progressive MPEG-TS, streamed like MP4 (Range forwarded); for a channel the body never ends.
-        if (s.main?.kind !== "ts") return json(404, "not_found");
-        return this.forward(req, s, s.main.url, s.headers, { kind: "r", prefix: null, what: "stream", origin: mainOrigin });
+        if (s.main?.kind !== (target.type === "video" ? "mp4" : "ts")) break;
+        return this.forward(req, s, s.main.url, s.headers, { kind: "r", prefix: null, what: target.type, origin });
       case "u": {
         const link = this.verify(s, target.ref);
-        if (!link) return json(404, "not_found");
-        return this.forward(req, s, link.url, s.headers, { kind: link.kind, prefix: "", what: link.kind === "p" ? "playlist" : "segment", origin: mainOrigin });
+        if (!link) break;
+        return this.forward(req, s, link.url, s.headers, { kind: link.kind, prefix: "", what: link.kind === "p" ? "playlist" : "segment", origin });
       }
       case "sub": {
         const m = /^(\d{1,2})\.(vtt|srt|ttml)$/.exec(target.file);
-        const sub = m ? s.subtitles[Number(m[1])] : undefined;
-        if (!m || !sub) return json(404, "not_found");
-        return this.forward(req, s, sub.url, sub.headers, { kind: "r", prefix: null, contentType: SUBTITLE_TYPES[m[2]!], what: "subtitles", origin: originOf(sub.url) });
+        const sub = m && s.subtitles[Number(m[1])];
+        if (!sub) break;
+        const opts = { kind: "r" as const, prefix: null, contentType: SUBTITLE_TYPES[m[2]!], what: "subtitles", origin: URL.parse(sub.url)?.origin ?? null };
+        return this.forward(req, s, sub.url, sub.headers, opts);
       }
     }
+    return json(404, "not_found");
   }
 
-  /** The playlist rewritten for the TV; one past REWRITE_LIMITS answers 502 and is reported (`status`: the upstream's). */
   private playlistResponse(s: Session, text: string, baseUrl: string, prefix: string, status: number | null, what: string): Response {
     let body: string;
     try {
@@ -299,11 +237,10 @@ export class ProxyService {
   }
 
   /**
-   * Fetches `url` with the upstream headers. Playlists (`kind` p, or a playlist content type) are read, rewritten
-   * and answered; anything else streams through with `Range` forwarded. `prefix` is how rewritten URIs are
-   * written relative to the requested path (null: the response is never treated as a playlist). `what` names the
-   * request in problem reports. Credential-type headers are sent only to `origin`. Redirects are followed here,
-   * up to MAX_REDIRECTS, each Location checked by the egress policy like the first URL.
+   * Fetches `url` with the upstream headers, following redirects here (each Location vetted by the egress policy).
+   * Playlists (`kind` p, or a playlist content type) are rewritten; anything else streams through with `Range`.
+   * `prefix`: how rewritten URIs are written relative to the requested path (null: never a playlist). `what` names
+   * the request in problem reports. Credential-type headers go to `origin` only.
    */
   private async forward(
     req: Request,
@@ -314,6 +251,7 @@ export class ProxyService {
   ): Promise<Response> {
     const range = opts.kind === "r" ? req.headers.get("range") : null;
     const extra = { ...(range ? { Range: range } : {}), ...(opts.kind === "r" ? { "Accept-Encoding": "identity" } : {}) };
+    const foreign = Object.fromEntries(Object.entries(headers).filter(([name]) => !CREDENTIAL_HEADER.test(name)));
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(), UPSTREAM_HEADERS_TIMEOUT_MS);
     const signal = AbortSignal.any([req.signal, timeout.signal]);
@@ -322,20 +260,17 @@ export class ProxyService {
       for (let hops = 0; ; hops++) {
         const target = new URL(url);
         this.policy.check(target);
-        const sent = target.origin === opts.origin ? headers : withoutCredentials(headers);
+        const sent = target.origin === opts.origin ? headers : foreign;
         upstream = await this.fetch(target.href, { headers: { ...sent, ...extra }, redirect: "manual", signal });
         if (!REDIRECT_STATUS.has(upstream.status)) break;
-        await upstream.body?.cancel().catch(() => {});
+        await cancel(upstream);
         const location = upstream.headers.get("location");
-        let next: URL | null = null;
-        try {
-          next = location === null ? null : new URL(location, target);
-        } catch {
-          // an unparsable Location
-        }
+        const next = location === null ? null : URL.parse(location, target.href);
         if (next === null || hops >= MAX_REDIRECTS) {
-          this.log.warn("upstream redirect not followed", { deviceId: s.deviceId, status: upstream.status, hops, reason: next === null ? "no_location" : "too_many" });
-          this.problem(s, "upstream_error", upstream.status, `${opts.what}: ${next === null ? "redirect without a valid Location" : `more than ${MAX_REDIRECTS} redirects`}`);
+          const reason = next === null ? "no_location" : "too_many";
+          this.log.warn("upstream redirect not followed", { deviceId: s.deviceId, status: upstream.status, hops, reason });
+          const why = next === null ? "redirect without a valid Location" : `more than ${MAX_REDIRECTS} redirects`;
+          this.problem(s, "upstream_error", upstream.status, `${opts.what}: ${why}`);
           return json(502, "upstream_error", { status: upstream.status });
         }
         next.hash = "";
@@ -361,14 +296,14 @@ export class ProxyService {
 
     const status = upstream.status;
     if (status === 401 || status === 403 || status === 410) {
-      await upstream.body?.cancel().catch(() => {});
+      await cancel(upstream);
       s.stale = true;
       this.log.warn("upstream refused the session; marked stale", { deviceId: s.deviceId, status });
       this.problem(s, `upstream_${status}`, status, opts.what);
       return json(410, "stale");
     }
     if (status >= 400 && status !== 416) {
-      await upstream.body?.cancel().catch(() => {});
+      await cancel(upstream);
       this.log.warn("upstream error", { deviceId: s.deviceId, status });
       if (status >= 500) this.problem(s, "upstream_error", status, opts.what);
       return status === 404 ? json(404, "upstream_not_found") : json(502, "upstream_error", { status });
@@ -378,17 +313,19 @@ export class ProxyService {
       return this.upstreamPlaylist(req, s, upstream, url, opts.prefix, opts.what);
     }
 
-    const out = passedHeaders(upstream, opts.contentType);
+    const out = new Headers({ "Cache-Control": "no-store" });
+    for (const name of PASSED_HEADERS) {
+      const value = upstream.headers.get(name);
+      if (value !== null) out.set(name, value);
+    }
+    if (upstream.headers.has("content-encoding")) out.delete("content-length"); // fetch already decoded the body
+    if (opts.contentType) out.set("content-type", opts.contentType);
     if (!upstream.body) return new Response(null, { status, headers: out });
     const align = !!this.o.alignTsSegments && s.main?.kind === "hls" && opts.prefix === "" && status === 200 && range === null;
     const body = await this.stream(upstream.body, align && !NOT_TS_EXTENSIONS.has(extensionOf(url) ?? ""), out);
     return new Response(body, { status, headers: out });
   }
 
-  /**
-   * An upstream playlist (status 200) read, checked and answered rewritten. A read that breaks off, a playlist over
-   * MAX_PLAYLIST_BYTES and anything that is not a playlist answer 502 and are reported.
-   */
   private async upstreamPlaylist(req: Request, s: Session, upstream: Response, url: string, prefix: string, what: string): Promise<Response> {
     const status = upstream.status;
     let text: string | null;
@@ -415,9 +352,9 @@ export class ProxyService {
   }
 
   /**
-   * Wraps the upstream body so it streams chunk by chunk and a broken upstream ends the response like a dropped
-   * connection. With `align`, up to TS_ALIGN_LOOKAHEAD bytes are read first and any junk before the first MPEG-TS
-   * packet is cut off; `headers` then get the shorter length and the MPEG-TS content type.
+   * The upstream body streamed chunk by chunk; a broken upstream ends the response like a dropped connection. With
+   * `align`, junk before the first MPEG-TS packet (within TS_ALIGN_LOOKAHEAD bytes) is cut off and `headers` get the
+   * shorter length and the MPEG-TS content type.
    */
   private async stream(body: ReadableStream<Uint8Array>, align: boolean, headers: Headers): Promise<ReadableStream<Uint8Array>> {
     const reader = body.getReader();

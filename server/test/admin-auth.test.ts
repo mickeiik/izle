@@ -2,17 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { errorText } from "../admin/lib.js";
 import { RateLimiter } from "../src/ratelimit.ts";
-import { ADMIN_TOKEN, startTestServer, type Json, type TestServer } from "./helpers.ts";
+import { ADMIN_TOKEN, logged, testServer } from "./helpers.ts";
 
 // A hostile guess with no run of 20 token characters: the log's string scrubbing would let it through, so only never
 // logging the presented token keeps it out of the log.
 const GUESS = "hostile.guess/of:the+admin=token~42";
 
-const logged = (s: TestServer, msg: string): Json[] => s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === msg);
-
 test("admin auth: ten failures lock the address out until the window ends, even with the right token", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   const devices = (token: string | null) => s.call("GET", "/api/v1/admin/devices", { token });
 
@@ -69,8 +66,7 @@ test("admin auth: ten failures lock the address out until the window ends, even 
 });
 
 test("admin auth: requests without a token answer 401 but never count toward the lockout", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   // What another site's page in the owner's browser can send: no credentials, cross-site fetch metadata.
   const crossSite = { "Origin": "https://elsewhere.example", "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "no-cors" };
   for (let i = 0; i < 50; i++) {
@@ -86,9 +82,8 @@ test("admin auth: requests without a token answer 401 but never count toward the
   assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: ADMIN_TOKEN })).status, 200);
 });
 
-test("admin auth: behind a trusted reverse proxy each X-Forwarded-For client is counted on its own", async (t) => {
-  const s = await startTestServer({ configFile: { trustedProxies: ["127.0.0.1", "::1"] } });
-  t.after(() => s.close());
+test("admin auth: behind a trusted reverse proxy each X-Forwarded-For client is counted on its own, an IPv6 one by its /64", async (t) => {
+  const s = await testServer(t, { configFile: { trustedProxies: ["127.0.0.1", "::1"] } });
   const devices = (client: string | null, token: string | null) =>
     s.call("GET", "/api/v1/admin/devices", { token, ...(client ? { headers: { "X-Forwarded-For": client } } : {}) }).then((r) => r.status);
 
@@ -103,16 +98,12 @@ test("admin auth: behind a trusted reverse proxy each X-Forwarded-For client is 
   assert.deepEqual(logged(s, "admin auth failed").map((l) => l.client), [...Array<string>(10).fill("203.0.113.1"), "203.0.113.2"]);
   assert.deepEqual(logged(s, "admin auth locked out").map((l) => l.client), ["203.0.113.1"]);
   assert.ok(!s.logs.some((l) => l.includes(GUESS) || l.includes(ADMIN_TOKEN)));
-});
 
-test("admin auth: an IPv6 client is counted by its /64, so it cannot escape the lockout by changing addresses", async (t) => {
-  const s = await startTestServer({ configFile: { trustedProxies: ["127.0.0.1", "::1"] } });
-  t.after(() => s.close());
-  const devices = (client: string, token: string) => s.call("GET", "/api/v1/admin/devices", { token, headers: { "X-Forwarded-For": client } }).then((r) => r.status);
+  // Changing addresses within a /64 does not escape the lockout.
   for (let i = 0; i < 10; i++) assert.equal(await devices(`2001:db8:1:2::${(i + 1).toString(16)}`, GUESS), 401);
   assert.equal(await devices("2001:db8:1:2:ffff::1", GUESS), 429, "a fresh address in the same /64 is locked out");
   assert.equal(await devices("2001:db8:1:3::1", ADMIN_TOKEN), 200, "the next /64 is not");
-  assert.deepEqual(logged(s, "admin auth failed").map((l) => l.client).slice(0, 2), ["2001:db8:1:2::1", "2001:db8:1:2::2"], "the log keeps the full address");
+  assert.deepEqual(logged(s, "admin auth failed").map((l) => l.client).slice(11, 13), ["2001:db8:1:2::1", "2001:db8:1:2::2"], "the log keeps the full address");
 });
 
 test("RateLimiter: each hit drops a few expired windows, oldest first, without scanning the others", () => {
@@ -158,7 +149,7 @@ test("RateLimiter: each hit drops a few expired windows, oldest first, without s
   assert.equal(order.check("a").ok, true);
 });
 
-test("RateLimiter: when full, a new key evicts the oldest window", () => {
+test("RateLimiter: when full, a new key evicts the oldest window; check counts no hit", () => {
   let now = 0;
   const limiter = new RateLimiter(1, 60_000, () => now, 3);
   for (const k of ["a", "b", "c"]) assert.equal(limiter.hit(k).ok, true);
@@ -169,20 +160,19 @@ test("RateLimiter: when full, a new key evicts the oldest window", () => {
   assert.equal(limiter.check("a").ok, true, "the oldest window (a) was evicted");
   assert.equal(limiter.check("d").ok, false);
   assert.equal(limiter.hit("b").ok, false, "the others are still counted");
-});
 
-test("RateLimiter.check reports a used-up key without counting a hit", () => {
-  let now = 0;
-  const limiter = new RateLimiter(2, 60_000, () => now);
-  assert.deepEqual(limiter.check("a"), { ok: true, retryAfterSec: 0 });
-  limiter.hit("a");
-  for (let i = 0; i < 5; i++) assert.equal(limiter.check("a").ok, true, "checking does not count");
-  limiter.hit("a");
+  // check reports a used-up key without counting a hit.
+  now = 0;
+  const checked = new RateLimiter(2, 60_000, () => now);
+  assert.deepEqual(checked.check("a"), { ok: true, retryAfterSec: 0 });
+  checked.hit("a");
+  for (let i = 0; i < 5; i++) assert.equal(checked.check("a").ok, true, "checking does not count");
+  checked.hit("a");
   now = 15_000;
-  assert.deepEqual(limiter.check("a"), { ok: false, retryAfterSec: 45 });
-  assert.equal(limiter.check("b").ok, true, "keys are independent");
+  assert.deepEqual(checked.check("a"), { ok: false, retryAfterSec: 45 });
+  assert.equal(checked.check("b").ok, true, "keys are independent");
   now = 60_000;
-  assert.deepEqual(limiter.check("a"), { ok: true, retryAfterSec: 0 }, "the window has ended");
+  assert.deepEqual(checked.check("a"), { ok: true, retryAfterSec: 0 }, "the window has ended");
 });
 
 test("admin page: the lockout has owner-facing text", () => {

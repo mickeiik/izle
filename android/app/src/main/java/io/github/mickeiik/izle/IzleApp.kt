@@ -50,16 +50,12 @@ class AppGraph(val context: Context) {
 
     val repository = ServerRepository(appScope, deviceStore, EventsClient(sseHttp), onAppCheck = { api -> updater.check(api) })
 
-    /** Problem reports for the owner, sent from the application scope so they outlive the screen. */
     val problems = ProblemReporter(appScope, { repository.api }, SystemClock::elapsedRealtime)
-
-    /** What became of the owner's commands, also sent from the application scope. */
     val commandResults = CommandResultReporter(appScope) { api, id, result -> api.reportCommandResult(id, result) }
 
-    /** The system side of self-updates; the tests put a fake here before the view model starts. */
+    /** The tests put a fake here before the view model starts, and replace [mediaEngine]. */
     var installer: AppInstaller = PackageInstallerAppInstaller(context)
 
-    /** One media engine per controller; the tests replace this before the view model starts. */
     var mediaEngine: () -> MediaEngine = {
         ExoMediaEngine(
             context, http, userAgent,
@@ -68,7 +64,6 @@ class AppGraph(val context: Context) {
         )
     }
 
-    /** The TV's self-update (docs/ux/senior-tv.md, "Update"). */
     val updater: AppUpdater by lazy {
         AppUpdater(
             scope = appScope,
@@ -83,14 +78,9 @@ class AppGraph(val context: Context) {
         )
     }
 
-    /**
-     * API calls (never media) say which app version this is and how it can update: the server records it per TV.
-     * Null for the first moment, until the updater read what it stored (OkHttp's own goes out then).
-     */
-    val apiUserAgent: String? get() = updater.userAgent
-
+    /** API calls (never media) say which app version this is and how it can update. */
     fun apiClient(baseUrl: HttpUrl, deviceToken: String?): ApiClient =
-        ApiClient(baseUrl, deviceToken, http, longPollHttp, userAgent = { apiUserAgent })
+        ApiClient(baseUrl, deviceToken, http, longPollHttp, userAgent = { updater.userAgent })
 
     /** Media requests. */
     val userAgent: String = "izle-tv/${BuildConfig.VERSION_NAME}"

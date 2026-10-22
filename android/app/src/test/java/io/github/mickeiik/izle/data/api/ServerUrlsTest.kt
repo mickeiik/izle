@@ -7,19 +7,18 @@ import org.junit.Test
 
 class ServerUrlsTest {
     @Test
-    fun parsesWhatTheOwnerTypes() {
-        assertEquals("http://10.0.2.2:8787/", ServerUrls.parse("10.0.2.2:8787").toString())
-        assertEquals("http://192.168.1.10:8787/", ServerUrls.parse("  http://192.168.1.10:8787  ").toString())
-        assertEquals("https://izle.example.org/tv/", ServerUrls.parse("https://izle.example.org/tv").toString())
-        assertEquals("http://host:8787/", ServerUrls.parse("http://user:pw@host:8787/?x=1#frag").toString())
-    }
-
-    @Test
-    fun rejectsGarbage() {
-        assertNull(ServerUrls.parse(""))
-        assertNull(ServerUrls.parse("not an address"))
-        assertNull(ServerUrls.parse("ftp://host"))
-        assertNull(ServerUrls.parse("http://"))
+    fun parsesWhatTheOwnerTypesAndRejectsGarbage() {
+        val typed = mapOf(
+            "10.0.2.2:8787" to "http://10.0.2.2:8787/",
+            "  http://192.168.1.10:8787  " to "http://192.168.1.10:8787/",
+            "https://izle.example.org/tv" to "https://izle.example.org/tv/",
+            "http://user:pw@host:8787/?x=1#frag" to "http://host:8787/",
+            "" to null,
+            "not an address" to null,
+            "ftp://host" to null,
+            "http://" to null,
+        )
+        for ((input, expected) in typed) assertEquals(input, expected, ServerUrls.parse(input)?.toString())
     }
 
     @Test

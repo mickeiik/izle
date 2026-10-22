@@ -1,5 +1,4 @@
-// The owner's side of the paired TVs (admin API): how a TV appears in the device list and on its page, what it has
-// watched and is playing, settings changes, and deletion.
+// The owner's side of the paired TVs (admin API): the device list and page, settings changes, and deletion.
 
 import { tvActor, type Actor } from "./actor.ts";
 import type { AppUpdateService } from "./app-updates.ts";
@@ -26,9 +25,7 @@ interface DeviceDeps {
   eventLog: EventLog;
   problems: ProblemService;
   appUpdates: AppUpdateService;
-  /** The home list the device page shows. */
   home: HomeService;
-  /** A deleted device's proxy sessions end with it. */
   proxy: ProxyService;
   log: Logger;
   now: () => number;
@@ -48,7 +45,6 @@ export function effectiveSettings(device: Device, config: ServerConfig, catalog:
   };
 }
 
-/** Whether the device row already has what the TV reports. */
 export function sameApp(d: Device, info: TvAppInfo): boolean {
   return d.appVersion === info.version && d.appVersionCode === info.versionCode && d.androidSdk === info.androidSdk && d.updateCapability === info.capability;
 }
@@ -60,7 +56,7 @@ export class DeviceService {
     this.s = deps;
   }
 
-  /** A device as the admin API shows it: status, settings (stored and effective) and recent problems. */
+  /** A device as the admin API shows it: status, settings (stored and effective), recent problems and its app. */
   view(d: Device) {
     return {
       id: d.id, name: d.name, status: d.tokenHash ? "active" : "pending", online: this.s.events.isOnline(d.id), createdAt: iso(d.createdAt),
@@ -72,9 +68,8 @@ export class DeviceService {
   }
 
   /**
-   * The TV's app as its User-Agent reported it, and where it stands against the stored APK: `unknown` (no report,
-   * or no APK), `up_to_date`, `pending` (newer APK; the TV installs it by itself when idle) or `needs_install_now`
-   * (newer APK; the TV needs the viewer, or automatic updates are off: an `update` command starts it).
+   * Where the TV's app stands against the stored APK: `pending` when the TV installs the newer one by itself when idle,
+   * `needs_install_now` when it needs the viewer or automatic updates are off (an `update` command starts it).
    */
   app(d: Device) {
     const apk = this.s.appUpdates.current();
@@ -89,8 +84,8 @@ export class DeviceService {
   /** Records the app a TV reports when it differs from what is stored; returns the device as it is now. */
   recordApp(d: Device, info: TvAppInfo): Device {
     const { store, eventLog, now } = this.s;
+    // Read again inside the transaction: two requests with the new User-Agent record it once.
     const changed = store.transaction(() => {
-      // Read again inside the transaction: two requests with the new User-Agent record it once.
       const current = store.getDevice(d.id);
       if (!current || sameApp(current, info)) return null;
       store.setDeviceApp(d.id, info, now());
@@ -104,15 +99,11 @@ export class DeviceService {
     return changed;
   }
 
-  /** Every device, with the length of its home list. */
   list() {
     return this.s.store.listDevices().map((d) => ({ ...this.view(d), homeCount: this.s.home.ids(d.id).length }));
   }
 
-  /**
-   * The device's home list with what OK would play and whether it can (`playable`); items gone from the catalog
-   * stay and are flagged `missing`. A channel has no `continue` and no new episodes.
-   */
+  /** The device's home list with what OK would play; items gone from the catalog stay and are flagged `missing`. */
   home(d: Device) {
     const { catalog } = this.s;
     return this.s.home.list(d.id).map(({ itemId, item, missing, playable, continue: cont, newEpisodes }) => {
@@ -123,7 +114,7 @@ export class DeviceService {
     });
   }
 
-  /** The device's cursors and saved positions, with titles from the loaded catalog (`missing` when the episode is gone). */
+  /** The device's cursors and saved positions, with titles from the loaded catalog. */
   progress(d: Device) {
     const { store, catalog } = this.s;
     const catalogId = catalog.catalogId;
@@ -133,16 +124,12 @@ export class DeviceService {
     };
     return {
       cursors: store.listCursors(d.id, catalogId).map((cur) => ({ itemId: cur.itemId, episodeId: cur.episodeId, updatedAt: iso(cur.updatedAt), ...titlesOf(cur) })),
-      progress: store.listProgress(d.id, catalogId).map(({ itemId, episodeId, positionMs, durationMs, status, updatedAt }) => {
-        return { itemId, episodeId, positionMs, durationMs, status, updatedAt: iso(updatedAt), ...titlesOf({ itemId, episodeId }) };
-      }),
+      progress: store.listProgress(d.id, catalogId).map(({ itemId, episodeId, positionMs, durationMs, status, updatedAt }) =>
+        ({ itemId, episodeId, positionMs, durationMs, status, updatedAt: iso(updatedAt), ...titlesOf({ itemId, episodeId }) })),
     };
   }
 
-  /**
-   * What the device is playing (`n`, from playing.ts), with the anchor the phone's "Listen along" follows. A
-   * channel (`itemKind: "live"`) has no episode, positions or anchor.
-   */
+  /** What the device is playing, with the anchor the phone's "Listen along" follows (none for a channel). */
   now(d: Device, n: Current | null) {
     const about = n && this.s.catalog.describe(n);
     return {
@@ -155,7 +142,7 @@ export class DeviceService {
         viewingId: n.viewingId,
       },
       // Where the TV is: positionMs as of atMs (server clock), advancing at `rate` while `playing`.
-      anchor: n && n.positionMs !== null ? { positionMs: n.positionMs, atMs: n.anchorAt ?? n.updatedAt, playing: n.playing, rate: 1 } : null,
+      anchor: n && n.positionMs !== null ? { positionMs: n.positionMs, atMs: n.anchorAt, playing: n.playing, rate: 1 } : null,
     };
   }
 
@@ -184,10 +171,7 @@ export class DeviceService {
     this.s.log.info("device deleted", { deviceId: d.id });
   }
 
-  /**
-   * Gives the viewings of a deleted TV to this one (after replacing a TV the old way: delete, pair anew). 409
-   * `device_exists` while `fromDeviceId` is still a device: its history is its own.
-   */
+  /** Gives the viewings of a deleted TV to this one (after replacing a TV the old way: delete, pair anew). */
   adoptHistory(d: Device, fromDeviceId: string, actor: Actor): number {
     const { store, eventLog } = this.s;
     if (store.getDevice(fromDeviceId)) throw new HttpError(409, "device_exists", "that TV still exists; delete it first");

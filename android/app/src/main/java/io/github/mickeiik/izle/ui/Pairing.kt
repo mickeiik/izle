@@ -26,7 +26,6 @@ interface PairingApi {
     suspend fun wait(code: String, pairToken: String): PairWait
 }
 
-/** The server's pairing routes, without a device token. */
 fun ApiClient.pairingApi(): PairingApi = object : PairingApi {
     override suspend fun start() = pairStart()
 
@@ -34,10 +33,9 @@ fun ApiClient.pairingApi(): PairingApi = object : PairingApi {
 }
 
 /**
- * Pairing: shows a code, long-polls for the owner's approval and starts over when the code expires. A refused start
- * (any error answer, 429 in practice) waits `Retry-After` (5–600 s, 30 s without one), an unreachable server is tried
- * again every 10 s and a lost long poll after 5 s with the same code; an unknown code (404, the server restarted), an
- * expired one (410) or an unusable answer gets a new code at once.
+ * Shows a code and long-polls for the owner's approval. A refused start (429 in practice) waits `Retry-After` (5–600 s,
+ * 30 s without one), an unreachable server is tried again every 10 s and a lost long poll after 5 s with the same
+ * code; an unknown code (404: the server restarted), an expired one or an unusable answer gets a new code at once.
  */
 object PairingLoop {
     const val UNREACHABLE_RETRY_MS = 10_000L
@@ -45,10 +43,7 @@ object PairingLoop {
     const val RETRY_AFTER_DEFAULT_SEC = 30L
     val RETRY_AFTER_RANGE_SEC = 5L..600L
 
-    /**
-     * Runs until the owner approves, showing the code and any problem in [ui]. The server hands the device token out
-     * once, so [onApproved] runs to its end even if the loop is cancelled meanwhile (the screen went away).
-     */
+    /** Runs until the owner approves; the token comes only once, so [onApproved] runs to its end even if cancelled. */
     suspend fun run(api: PairingApi, ui: MutableStateFlow<PairingUi>, onApproved: suspend (deviceId: String, deviceToken: String) -> Unit) {
         while (currentCoroutineContext().isActive) {
             val start = try {

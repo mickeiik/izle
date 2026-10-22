@@ -1,7 +1,6 @@
-// Problem reports, kept for the owner (usually not in the room): what a TV reports itself, and what the server sees
-// for a TV (resolves with nothing playable, sources it fell back past, proxy upstreams that refused, broke or could
-// not be reached; never "Listen along" ones). A problem names an episode, or a channel by its item alone. Free text
-// from the TV is redacted before it is stored, and detail is never logged.
+// Problem reports, kept for the owner: what a TV reports itself, and what the server sees for a TV (resolves with
+// nothing playable, sources it fell back past, failing proxy upstreams; never "Listen along" ones). Free text from
+// the TV is redacted before it is stored, and detail is never logged.
 
 import { SERVER, tvActor } from "./actor.ts";
 import { playingKey, type CatalogService, type PlayingKey } from "./catalog.ts";
@@ -19,7 +18,7 @@ export const TV_PROBLEM_KINDS = ["playback", "resolve", "network", "other"] as c
 
 export type ProblemKind = (typeof TV_PROBLEM_KINDS)[number] | "proxy";
 
-/** A TV's problem report (`POST /tv/problems`, validated in validation.ts). */
+/** A TV's problem report (validated in validation.ts). */
 export interface ProblemReportBody {
   kind: (typeof TV_PROBLEM_KINDS)[number];
   code: string;
@@ -37,11 +36,9 @@ export interface ProblemReportBody {
 
 /** Problems kept per device (older ones are deleted on insert). */
 const PROBLEMS_KEPT = 100;
-/** Problems older than this are purged by the housekeeping timer. */
 const PROBLEM_RETENTION_MS = 30 * 24 * 60 * 60_000;
 /** `Device.problems.recent` counts the problems of this period. */
 const RECENT_PROBLEMS_MS = 24 * 60 * 60_000;
-/** Reports a TV may send per window. */
 const PROBLEM_REPORT_LIMIT = { max: 30, windowMs: 10 * 60_000 };
 /** Server-origin proxy problems: at most one per device and code in this period (a flapping CDN must not flood). */
 const PROXY_PROBLEM_INTERVAL_MS = 60_000;
@@ -63,17 +60,13 @@ interface ServerProblem {
 interface ProblemDeps {
   store: Store;
   catalog: CatalogService;
-  /** The playback sessions a report names. */
   sessions: PlaybackSessions;
   eventLog: EventLog;
   log: Logger;
   now: () => number;
 }
 
-/**
- * What a problem names, as a playing key; null when it names nothing, or an episode alone (the TV gave no item and
- * the episode was unknown when it was recorded) that the catalog does not know either.
- */
+/** What a problem names; null when it names nothing, or an episode alone the catalog does not know. */
 function problemKey(catalog: CatalogService, p: Pick<Problem, "itemId" | "episodeId">): PlayingKey | null {
   if (p.itemId !== null) return { itemId: p.itemId, episodeId: p.episodeId };
   const ref = p.episodeId !== null ? catalog.episode(p.episodeId) : undefined;
@@ -87,10 +80,7 @@ export function triedDetail(t: Tried): string {
   return t.name && !(t.code === "timeout" && t.name === "TimeoutError") ? `${t.code} ${t.name}` : t.code;
 }
 
-/**
- * The `tried` list of a `502 no_playable_source`, compact (`src-a: timeout; src-b: error InvalidResult`), plus the
- * sources the TV excluded because they had already failed on it.
- */
+/** A `502 no_playable_source`'s `tried` list (`src-a: timeout; src-b: error InvalidResult`) and the TV's exclusions. */
 export function noPlayableDetail(tried: readonly Tried[], exclude: readonly string[] = []): string {
   const parts = tried.map((t) => `${t.sourceId}: ${triedDetail(t)}`);
   if (exclude.length > 0) parts.push(`excluded by the TV: ${exclude.join(", ")}`);
@@ -123,7 +113,7 @@ export class ProblemService {
     });
   }
 
-  /** A TV's own report. Free text is redacted before it is stored; 429 beyond the rate limit. */
+  /** A TV's own report. Free text is redacted before it is stored. */
   report(device: Device, body: ProblemReportBody): Problem {
     const rate = this.reports.hit(device.id);
     if (!rate.ok) throw tooManyRequests("too_many_problems", "too many problem reports from this TV", rate.retryAfterSec);
@@ -159,16 +149,12 @@ export class ProblemService {
     this.record(p.owner, { kind: "proxy", code: p.code, itemId: p.itemId, episodeId: p.episodeId, sourceId: p.sourceId, httpStatus: p.httpStatus, detail: p.detail });
   }
 
-  /** `Device.problems`: how many happened in the last 24 hours, and when the latest one did. */
   stats(deviceId: string): { recent: number; lastAt: string | null } {
     const s = this.o.store.problemStats(deviceId, this.o.now() - RECENT_PROBLEMS_MS);
     return { recent: s.recent, lastAt: iso(s.lastAt) };
   }
 
-  /**
-   * The admin list, newest first, with titles from the current catalog (`missing` when the episode, or a channel's
-   * item, is gone).
-   */
+  /** The admin list, newest first, with titles from the current catalog. */
   list(deviceId: string, limit: number) {
     const { catalog } = this.o;
     return this.o.store.listProblems(deviceId, limit).map((p) => {
@@ -189,7 +175,6 @@ export class ProblemService {
     this.o.log.info("problems cleared", { deviceId });
   }
 
-  /** Housekeeping: drops problems older than the retention period. */
   purge(): void {
     this.o.store.purgeProblems(this.o.now() - PROBLEM_RETENTION_MS);
   }

@@ -1,9 +1,7 @@
 package io.github.mickeiik.izle.domain
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.OffsetDateTime
 
@@ -25,10 +23,7 @@ class ExpiryPlanTest {
 
     @Test
     fun oneRetryThirtySecondsLaterForNetworkAndServerErrors() {
-        assertTrue(ExpiryPlan.isRetryable(null))
-        assertTrue(ExpiryPlan.isRetryable(502))
-        assertFalse(ExpiryPlan.isRetryable(403))
-        assertFalse(ExpiryPlan.isRetryable(404))
+        assertEquals(listOf(true, true, false, false), listOf(null, 502, 403, 404).map(ExpiryPlan::isRetryable))
         assertEquals(30_000L, ExpiryPlan.retryDelayMs(retryable = true, alreadyRetried = false, remainingMs = 60_000))
         assertNull(ExpiryPlan.retryDelayMs(retryable = true, alreadyRetried = true, remainingMs = 60_000))
         assertNull(ExpiryPlan.retryDelayMs(retryable = false, alreadyRetried = false, remainingMs = 60_000))

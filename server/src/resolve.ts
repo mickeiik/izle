@@ -12,13 +12,11 @@ import type { ResolveTrigger } from "./viewings.ts";
 const FAILURE_PENALTY_MS = 10 * 60_000;
 const PLAYBACK_SESSION_TTL_MS = 12 * 60 * 60_000;
 
-/** `POST /tv/resolve`: an episode by `episodeId` or a channel by `itemId` (exactly one), and how to pick its source. */
+/** `POST /tv/resolve`: an episode by `episodeId` or a channel by `itemId`, and how to pick its source. */
 export type ResolveInput = PlayableId & {
   sourceId?: string;
   exclude?: string[];
-  /** What started this playback (the viewing history); absent from a TV that does not say. */
   trigger?: ResolveTrigger;
-  /** With `trigger: "command"`: the command's id. */
   commandId?: number;
 };
 
@@ -26,10 +24,7 @@ export type ResolveInput = PlayableId & {
 export const companionScope = (deviceId: string): string => `companion:${deviceId}`;
 export const isCompanionScope = (owner: string): boolean => owner.startsWith("companion:");
 
-/**
- * What a report says it played, as far as it says: an episode report gives `{episodeId}`, a channel report
- * `{itemId, episodeId: null}`, a problem report either id, both or neither.
- */
+/** What a report says it played: `{episodeId}`, a channel's `{itemId, episodeId: null}`, either id, both or neither. */
 export type PartialPlayingKey = { itemId?: string | undefined; episodeId?: string | null | undefined };
 
 /** Whether `key` plays what a report says: the fields the report leaves out are taken from `key`. */
@@ -59,7 +54,6 @@ export interface ResolvedStream {
   session: PlaybackSession;
   ref: PlayableRef;
   source: Source;
-  /** What the TV plays: the upstream URL, or a server-relative `/p/<token>/…` URL when proxied. */
   media: { kind: MediaKind; url: string };
   subtitleTracks: SubtitleTrack[];
   languages: LanguageFacts;
@@ -67,14 +61,10 @@ export interface ResolvedStream {
   alternatives: string[];
   delivery: "direct" | "proxy";
   expiresAt: string | null;
-  /** Candidates tried before this one that produced nothing (the server fell back past them). */
   failed: Tried[];
 }
 
-/**
- * Why a source produced nothing: `adapter_unavailable` (no resolver module provides its adapter), `unsupported`
- * (DASH that needs upstream headers), or the adapter's failure (`timeout`, `abort`, `error`, `empty`).
- */
+/** Why a source produced nothing: no module provides its adapter, DASH that needs headers, or the adapter failed. */
 export type TriedCode = "adapter_unavailable" | "unsupported" | AdapterFailureCode;
 
 export interface Tried {
@@ -94,33 +84,23 @@ interface ResolveServiceOptions {
   log: Logger;
   now?: () => number;
   proxy: ProxyService;
-  /** Where resolve opens the playback sessions that progress and problem reports refer to. */
   sessions: PlaybackSessions;
-  /** Adapters of the loaded resolver module; null when none is configured. */
   adapters: ReadonlyMap<string, Adapter> | null;
-  /** `proxy.always`: send every HLS/MP4 stream through the proxy. */
   proxyAlways: boolean;
-  /** Time for one adapter call. */
   deadlineMs: number;
   /** Time for all adapter calls of one resolve request. */
   budgetMs: number;
 }
 
-/** Whether a set of upstream request headers is present and not empty. */
 export const hasHeaders = (h: Record<string, string> | undefined): h is Record<string, string> =>
   h !== undefined && Object.keys(h).length > 0;
 
 /** DASH manifests are not rewritten by the proxy (v1), so DASH that needs upstream headers cannot be served. */
 const servable = (media: ResolvedMedia, headers: Record<string, string> | undefined): boolean => !(media.kind === "dash" && hasHeaders(headers));
 
-/** The proxy's entry for a kind of main media: HLS playlists, progressive MP4, and MPEG-TS streamed like MP4. */
 const proxyKind = (kind: MediaKind): "hls" | "mp4" | "ts" => (kind === "mp4" || kind === "ts" ? kind : "hls");
 
-/**
- * How a stream reaches the client, shared by resolve and the admin diagnostics so both always agree. The main
- * media goes through the proxy when it is an inline playlist, needs headers, or is HLS/MP4/MPEG-TS under
- * `proxyAlways`; each subtitle track when it needs headers or under `proxyAlways`.
- */
+/** How a stream reaches the client, shared by resolve and the admin diagnostics so both always agree. */
 export function deliveryPlan(
   s: {
     media: ResolvedMedia;
@@ -136,7 +116,6 @@ export function deliveryPlan(
   };
 }
 
-/** The playback sessions resolve hands out, in memory; progress and problem reports name them. */
 export class PlaybackSessions {
   private readonly sessions = new Map<string, PlaybackSession>();
   private readonly now: () => number;
@@ -145,7 +124,6 @@ export class PlaybackSessions {
     this.now = now;
   }
 
-  /** Opens a session (pruning expired ones once there are many). */
   open(s: Omit<PlaybackSession, "id" | "createdAt">): PlaybackSession {
     const t = this.now();
     if (this.sessions.size >= 1000) {
@@ -156,7 +134,6 @@ export class PlaybackSessions {
     return session;
   }
 
-  /** A session by id, until it is older than PLAYBACK_SESSION_TTL_MS. */
   get(id: string): PlaybackSession | undefined {
     const s = this.sessions.get(id);
     if (s && this.now() - s.createdAt > PLAYBACK_SESSION_TTL_MS) {
@@ -166,21 +143,13 @@ export class PlaybackSessions {
     return s;
   }
 
-  /**
-   * The session `id` names, if it belongs to the device and plays what `playing` says: a report names only its TV's
-   * own sessions. A field the report leaves out is not checked, so a report naming nothing matches any playback.
-   */
+  /** The session `id` names if it is the device's and plays what `playing` says (a field left out is not checked). */
   owned(id: string | null | undefined, deviceId: string, playing: PartialPlayingKey = {}): PlaybackSession | undefined {
     const s = id ? this.get(id) : undefined;
     return s && s.deviceId === deviceId && matchesSaid(playing, s) ? s : undefined;
   }
 }
 
-/**
- * Picks the source to play for an episode or a channel and decides how the TV gets it. Direct sources without
- * upstream headers go to the TV as they are; adapter sources are resolved by the owner's resolver module under
- * deadlines; anything that needs upstream headers or comes as an inline playlist is served through the proxy.
- */
 export class ResolveService {
   private readonly failures = new Map<string, number>();
   private readonly o: ResolveServiceOptions;
@@ -197,17 +166,15 @@ export class ResolveService {
     this.proxyAlways = opts.proxyAlways;
   }
 
-  /** Failures are kept per episode or channel (an episode id may equal an item id, so the key carries both). */
+  /** Per episode or channel: an episode id may equal an item id, so the key carries both. */
   private failureKey(playing: PlayingKey, sourceId: string): string {
     return `${this.catalog.catalogId}\u0000${playing.itemId}\u0000${playing.episodeId ?? ""}\u0000${sourceId}`;
   }
 
-  /** Records that a source could not be played (the TV excluded it, or its adapter failed). */
   private markFailed(playing: PlayingKey, sourceId: string): void {
     this.failures.set(this.failureKey(playing, sourceId), this.now());
   }
 
-  /** Whether a source can be tried at all (known before resolving it). */
   private staticCheck(source: Source): Tried | null {
     if (source.type === "adapter") {
       return this.o.adapters?.has(source.adapter) ? null : { sourceId: source.id, code: "adapter_unavailable", adapterId: source.adapter };
@@ -215,10 +182,6 @@ export class ResolveService {
     return servable(source.media, source.media.headers) ? null : { sourceId: source.id, code: "unsupported" };
   }
 
-  /**
-   * Resolves one source to its upstream stream without delivering it (no proxy session, no playback session).
-   * Used by resolve and by the admin diagnostics.
-   */
   async attempt(
     ref: PlayableRef,
     source: Source,
@@ -236,12 +199,9 @@ export class ResolveService {
       return { ok: true, results: null, ms: 0, stream: stream({ media: { kind, url }, headers }) };
     }
     const adapter = this.o.adapters!.get(source.adapter)!;
-    const req = { catalogId: this.catalog.catalogId, ...playingKey(ref), sourceId: source.id, ref: source.ref };
-    const outcome = await runAdapter(
-      adapter,
-      { ...req, preferredAudioLanguage: opts.preferredAudioLanguage },
-      { deadlineMs: opts.deadlineMs, ...(opts.signal ? { signal: opts.signal } : {}) },
-    );
+    const { preferredAudioLanguage, deadlineMs, signal } = opts;
+    const req = { catalogId: this.catalog.catalogId, ...playingKey(ref), sourceId: source.id, ref: source.ref, preferredAudioLanguage };
+    const outcome = await runAdapter(adapter, req, { deadlineMs, ...(signal ? { signal } : {}) });
     if (!outcome.ok) {
       const tried: Tried = { sourceId: source.id, code: outcome.code, adapterId: adapter.id };
       if (outcome.name) tried.name = outcome.name;
@@ -254,10 +214,6 @@ export class ResolveService {
     return { ok: true, results, ms, stream: stream(result) };
   }
 
-  /**
-   * Turns an upstream stream into what the client gets, creating a proxy session (owned by `owner`, labelled with
-   * what it plays for problem reports) when needed.
-   */
   private deliver(
     owner: string,
     s: UpstreamStream,
@@ -292,14 +248,10 @@ export class ResolveService {
   }
 
   /**
-   * Tries the episode's (or the channel's) candidate sources in order within the request's time budget and
-   * delivers the first one that resolves, with a new playback session. None does: 502 `no_playable_source` with
-   * what was tried.
-   *
-   * `companion`: the owner's phone resolving a second source of the episode the TV plays ("Listen along"). Its
-   * proxy sessions live under their own owner key, the stream is always proxied (the admin page only loads
-   * same-origin media), DASH and MPEG-TS (which a browser cannot play) are refused, and failures do not reorder the
-   * TV's fallback.
+   * Delivers the first candidate source that resolves within the request's time budget, with a new playback
+   * session; none does: 502 `no_playable_source`. `companion` ("Listen along" on the owner's phone): its own proxy
+   * owner key, always proxied (the admin page loads same-origin media only), no DASH or MPEG-TS (a browser cannot
+   * play them), and its failures do not reorder the TV's fallback.
    */
   async resolve(
     deviceId: string,
@@ -351,10 +303,7 @@ export class ResolveService {
     throw new HttpError(502, "no_playable_source", `none of the ${what}'s sources can be played`, { tried });
   }
 
-  /**
-   * The sources to try, in order: the forced one, or the episode's (or channel's) sources by audio language with
-   * recent failures last. Sources the TV excluded are left out, and count as failed for the TV.
-   */
+  /** The forced source, or all by audio language with recent failures last; excluded ones count as failed. */
   private candidatesFor(playable: Playable, playing: PlayingKey, input: ResolveInput, preferredAudioLanguage: string | null, companion: boolean): Source[] {
     const exclude = new Set(input.exclude ?? []);
     if (!companion) for (const id of exclude) if (playable.sources.some((s) => s.id === id)) this.markFailed(playing, id);

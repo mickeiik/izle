@@ -1,30 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ADMIN_TOKEN, openEvents, startTestServer, type Json, type TestServer } from "./helpers.ts";
-
-const logged = (s: TestServer, msg: string): Json[] => s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === msg);
-
-/** Creates an access token through the API and returns its secret and id. */
-async function createToken(s: TestServer, name: string, scope: string) {
-  const r = await s.admin("POST", "/tokens", { name, scope });
-  assert.equal(r.status, 201, JSON.stringify(r.json));
-  return { secret: r.json.secret as string, id: r.json.token.id as string };
-}
+import { ADMIN_TOKEN, createToken, logged, openEvents, testServer, type Json } from "./helpers.ts";
 
 test("access tokens: create (the secret shown once), list oldest first, lastUsedAt once a minute, revoke; the log never has the secret", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
 
   const created = await s.admin("POST", "/tokens", { name: "  Kitchen agent ", scope: "control" });
   assert.equal(created.status, 201);
-  assert.match(created.json.secret, /^izat_[A-Za-z0-9_-]{43}$/);
-  assert.deepEqual(created.json.token, { id: created.json.token.id, name: "Kitchen agent", scope: "control", createdAt: "2026-10-10T12:00:00.000Z", lastUsedAt: null });
-  assert.match(created.json.token.id, /^[A-Za-z0-9]{12}$/);
-  const secret: string = created.json.secret;
-  const id: string = created.json.token.id;
+  const { secret, token: { id } } = created.json as { secret: string; token: { id: string } };
+  assert.match(secret, /^izat_[A-Za-z0-9_-]{43}$/);
+  assert.match(id, /^[A-Za-z0-9]{12}$/);
+  assert.deepEqual(created.json.token, { id, name: "Kitchen agent", scope: "control", createdAt: "2026-10-10T12:00:00.000Z", lastUsedAt: null });
 
-  assert.equal((await s.admin("POST", "/tokens", { name: "Kitchen agent", scope: "read" })).status, 409);
-  assert.equal((await s.admin("POST", "/tokens", { name: "Kitchen agent", scope: "read" })).json.error, "duplicate_name");
+  const duplicate = await s.admin("POST", "/tokens", { name: "Kitchen agent", scope: "read" });
+  assert.deepEqual([duplicate.status, duplicate.json.error], [409, "duplicate_name"]);
   for (const body of [{ name: "x", scope: "owner" }, { name: "", scope: "read" }, { name: "x".repeat(61), scope: "read" }, { scope: "read" }, { name: "x" }]) {
     assert.equal((await s.admin("POST", "/tokens", body)).status, 400, JSON.stringify(body));
   }
@@ -63,8 +52,7 @@ test("access tokens: create (the secret shown once), list oldest first, lastUsed
 });
 
 test("scopes: each level against a representative route of every level; 403 insufficient_scope names what is needed and is not throttled", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   const tokens = { read: await createToken(s, "r", "read"), control: await createToken(s, "c", "control"), manage: await createToken(s, "m", "manage") };
 
@@ -125,8 +113,7 @@ test("scopes: each level against a representative route of every level; 403 insu
 });
 
 test("a revoked (or wrong) access token counts as a failed sign-in and locks the address out like a wrong owner token", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const { secret, id } = await createToken(s, "old app", "read");
   await s.admin("DELETE", `/tokens/${id}`);
   const devices = (token: string) => s.call("GET", "/api/v1/admin/devices", { token });
@@ -140,8 +127,7 @@ test("a revoked (or wrong) access token counts as a failed sign-in and locks the
 });
 
 test("revoking an access token ends the event stream and long-poll it has open, before any later event", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   const reader = await createToken(s, "monitor", "read");
   const other = await createToken(s, "other", "read");
@@ -170,8 +156,7 @@ test("revoking an access token ends the event stream and long-poll it has open, 
 });
 
 test("an admin event stream whose access token is gone ends at the next ping", async (t) => {
-  const s = await startTestServer({ pingMs: 30 });
-  t.after(() => s.close());
+  const s = await testServer(t, { pingMs: 30 });
   const reader = await createToken(s, "monitor", "read");
   const es = await openEvents(s.base, reader.secret, "/api/v1/admin/events/stream");
   t.after(() => es.close());

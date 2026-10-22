@@ -10,6 +10,7 @@ const locked = items.find((i) => i.id === "locked")!;
 /** Saved positions with these episodes finished. */
 const finished = (...ids: string[]) => new Map(ids.map((id) => [id, { status: "finished" as const }]));
 const watched = finished("show.e1", "show.e2", "show.e4", "show.e5");
+const at = (episodeId: string) => ({ episodeId, wrapped: false });
 
 test("cursor: without one, the first allowed unfinished episode (else the first); a given one wins or moves on", () => {
   assert.equal(cursorIndex(show, null, new Map()), 0);
@@ -18,9 +19,9 @@ test("cursor: without one, the first allowed unfinished episode (else the first)
   assert.equal(cursorIndex(show, null, watched), 0);
   assert.equal(cursorIndex(locked, null, new Map()), -1);
   assert.equal(isPlayable(locked), false);
-  assert.equal(cursorIndex(show, "show.e4", finished("show.e4")), 3);
-  assert.equal(cursorIndex(show, "show.e3", new Map()), 3, "e3 is not allowed → next allowed e4");
-  assert.equal(cursorIndex(show, "gone", finished("show.e1")), 1);
+  assert.equal(cursorIndex(show, at("show.e4"), finished("show.e4")), 3);
+  assert.equal(cursorIndex(show, at("show.e3"), new Map()), 3, "e3 is not allowed → next allowed e4");
+  assert.equal(cursorIndex(show, at("gone"), finished("show.e1")), 1);
 });
 
 // The fixture's show as if a later build appended e6 (not allowed), e7 and e8, after it was watched to the end.
@@ -42,8 +43,7 @@ test("cursor: a wrapped cursor plays the first appended episode with playbackAll
 test("cursor: without appended episodes, or with an ordinary cursor, the rules are unchanged", () => {
   assert.equal(cursorIndex(grown, wrapped, watched), 0, "wrapped without appended episodes: the cursor episode");
   assert.equal(cursorIndex(grown, wrapped, watched, new Set()), 0);
-  assert.equal(cursorIndex(grown, { episodeId: "show.e1", wrapped: false }, watched, new Set(["show.e7"])), 0, "an ordinary cursor ignores them");
-  assert.equal(cursorIndex(grown, "show.e1", watched, new Set(["show.e7"])), 0, "a bare episode id is an ordinary cursor");
+  assert.equal(cursorIndex(grown, at("show.e1"), watched, new Set(["show.e7"])), 0, "an ordinary cursor ignores them");
   assert.equal(cursorIndex(grown, null, watched, new Set(["show.e7"])), 6, "without a cursor: the first unfinished allowed episode");
   assert.equal(cursorIndex(grown, { episodeId: "show.e3", wrapped: true }, watched, new Set(["show.e6"])), 3, "a disallowed cursor moves on as before");
 });

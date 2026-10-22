@@ -32,7 +32,6 @@ export interface BundleManifest {
   assetsDir: typeof BUNDLE_ASSETS_DIR;
 }
 
-/** Content of items.json. */
 export interface ItemsFile {
   items: CatalogItem[];
 }
@@ -45,7 +44,6 @@ export interface Playable {
   sources: Source[];
 }
 
-/** The fields every kind of item has. */
 interface ItemBase {
   id: Id;
   title: string;
@@ -54,10 +52,7 @@ interface ItemBase {
   genres?: string[];
   /** "assets/<sha256-of-content>.<jpg|png|webp>" or null. */
   poster: string | null;
-  /**
-   * Optional landscape image (16:9, around 1280×720): "assets/<sha256-of-content>.<jpg|png|webp>" or null. Absent
-   * or null, the TV crops the poster to a landscape band.
-   */
+  /** Landscape image (16:9, around 1280×720), named like the poster. Absent or null, the TV crops the poster. */
   backdrop?: string | null;
 }
 
@@ -72,15 +67,11 @@ export interface EpisodicItem extends ItemBase {
   episodes: Episode[];
 }
 
-/**
- * A TV channel: a stream with no beginning or end, addressed by its item id; no episodes, duration, resume or play
- * order.
- */
+/** A TV channel: an endless stream addressed by its item id; no episodes, duration, resume or play order. */
 export interface LiveItem extends ItemBase, Playable {
   kind: "live";
 }
 
-/** `kind` decides the shape. */
 export type CatalogItem = EpisodicItem | LiveItem;
 
 export const isLiveItem = (item: CatalogItem): item is LiveItem => item.kind === "live";
@@ -138,7 +129,7 @@ export interface AdapterSource extends SourceBase {
 
 export type Source = DirectSource | AdapterSource;
 
-/** A fully loaded, validated bundle. */
+/** A loaded, validated bundle. */
 export interface Bundle {
   dir: string;
   manifest: BundleManifest;

@@ -6,64 +6,53 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * A section of Home as the layout needs it: whether it has a title, whether it is one line that scrolls sideways
- * ([row]) or a grid, how many cards it holds (at least one), and whether a card title in its last line (every card of
- * a [row]) needs two lines at the card width.
+ * A section as the layout needs it: titled or not, one line that scrolls sideways ([row]) or a grid, how many cards
+ * (at least one), and whether a card title in its last line (every card of a [row]) needs two lines.
  */
 data class SectionShape(val titled: Boolean, val row: Boolean, val count: Int, val lastLineNeedsTwoTitleLines: Boolean = false)
 
 /**
- * Where everything on Home goes, in dp, in content coordinates: y = 0 at the viewport's top, the viewport [grid]'s
- * (centred in the safe area as without sections) plus [titleReserve]. docs/ux/senior-tv.md, "Sections".
- *
- * One card size for the whole Home ([grid]): when a section has a title, [SECTION_HEADER] is set aside from the height
- * first. Section k > 0 starts where a next row would: one [HomeGrid.gap] under the previous section's last cell. A
- * titled section's title takes [SECTION_HEADER] above its first row's [HomeGrid.padding]. Without a titled section
- * this is Home's grid of rows exactly.
+ * Where everything on Home goes (docs/ux/senior-tv.md, "Sections"), in dp from the viewport's top. One card size for
+ * all of Home ([grid]), [SECTION_HEADER] set aside from the height when a section has a title. Section k > 0 starts
+ * where a next row would; a title takes [SECTION_HEADER] above its first row's padding. Without a titled section this
+ * is Home's grid of rows exactly.
  */
 data class HomeLayout(
     val grid: HomeGrid,
-    val titleReserve: Float,
     val viewportHeight: Float,
     val contentHeight: Float,
     val sections: List<Section>,
     val lines: List<Line>,
-    /** The items of the lazy grid that draws Home, in order (see [Slot]). */
     val slots: List<Slot>,
 ) {
+    /** [top]: what shows with its first line (its title, else the padding); [divider]: the line above it's centre. */
     data class Section(
         val titled: Boolean,
         val row: Boolean,
         val count: Int,
-        /** The title's top, else the first row's top − padding: what shows with its first line. */
         val top: Float,
-        /** The centre of the line between this section and the one above (null for the first section). */
         val divider: Float?,
         val firstLine: Int,
         val lastLine: Int,
-        /** Its first slot (its title's, else its first line's). */
         val firstSlot: Int,
     )
 
     /**
-     * One line of cards: a row of a grid section, or a whole row section. [first] and [count]: its cards' indices in
-     * the section. [top] and [bottom]: what must show when it has the focus (the section's title included on its first
-     * line, else the padding above the row; the padding under the cell).
+     * A row of a grid section, or a whole row section: cards [first] to [first] + [count] of [section]. [top] to
+     * [bottom] must show when it has the focus (its section's title on the first line, the padding otherwise).
      */
     data class Line(val section: Int, val first: Int, val count: Int, val cardTop: Float, val top: Float, val bottom: Float, val slot: Int)
 
     /**
-     * An item of the lazy grid that draws Home with `spacedBy(gap)` between lines and [HomeGrid.padding] above and
-     * below: every line is a [Card] row (or one [Row] item for a row section), a titled section has a full-width
-     * [Title] item before its first line, so a gap above and below it place the title and the cards as the layout
-     * says. [top] is the item's top in content coordinates.
+     * An item of the lazy grid that draws Home, with `spacedBy(gap)` between lines and the padding above and below:
+     * [Card]s (one [Row] for a row section) and a full-width [Title] before a titled section's first line.
      */
     sealed interface Slot {
         val top: Float
         val section: Int
     }
 
-    /** [height] is the item's, [textOffset] where the title's text is drawn in it (above it on Home's first line). */
+    /** [textOffset]: where the title's text is drawn in the item (above it on Home's first line). */
     data class Title(override val section: Int, override val top: Float, val height: Float, val textOffset: Float) : Slot
 
     /** [span]: more than one column for a grid section's last card when an untitled grid follows, to end the row. */
@@ -71,26 +60,20 @@ data class HomeLayout(
 
     data class Row(override val section: Int, override val top: Float) : Slot
 
-    /** The width the cards take: the first column's left edge to the last column's right edge. */
+    /** From the first column's left edge to the last column's right edge. */
     val contentWidth: Float get() = grid.viewportWidth - 2 * grid.padding
 
-    /** The furthest Home scrolls. */
     val maxScroll: Float get() = max(0f, contentHeight - viewportHeight)
 
-    /** The line that holds card [index] of section [section]. */
     fun lineOf(section: Int, index: Int): Int {
         val s = sections[section]
         return if (s.row) s.firstLine else s.firstLine + index / grid.columns
     }
 
-    /**
-     * The scroll offset that shows [line] whole, moving as little as possible from [current]: the line comes in at the
-     * top or the bottom edge, or Home stays put when it is already in view. Home's first line is shown at offset 0.
-     */
+    /** The scroll offset that shows [line] whole, moving as little as possible from [current]. */
     fun scrollFor(line: Int, current: Float): Float {
         val l = lines[line]
-        val offset = min(max(current, l.bottom - viewportHeight), l.top)
-        return offset.coerceIn(0f, maxScroll)
+        return min(max(current, l.bottom - viewportHeight), l.top).coerceIn(0f, maxScroll)
     }
 
     /** The card ← ([direction] < 0) or → of card [index] in its line, or null at the line's end: the focus stays. */
@@ -102,9 +85,8 @@ data class HomeLayout(
     }
 
     /**
-     * The card ↑ ([direction] < 0) or ↓ of card [index] of [section], as (section, index): on the line above or below,
-     * across sections, the one whose left edge is nearest this card's; in a row section only among the cards in view,
-     * [rowFirst] of a section being its first card in view. Null on Home's first line going up or its last going down.
+     * The card ↑ ([direction] < 0) or ↓, as (section, index): on the next line, the one whose left edge is nearest; in
+     * a row section only among the cards in view ([rowFirst]: a section's first card in view). Null at Home's ends.
      */
     fun vertical(section: Int, index: Int, direction: Int, rowFirst: (Int) -> Int): Pair<Int, Int>? {
         if (direction == 0) return null
@@ -126,41 +108,30 @@ data class HomeLayout(
     private fun column(section: Int, index: Int, rowFirst: (Int) -> Int): Int =
         if (sections[section].row) index - rowFirst(section) else index % grid.columns
 
-    /** The scroll bar's thumb, as a fraction of its track. */
+    /** The scroll bar's thumb and its top, as fractions of the track. */
     val thumbFraction: Float get() = min(1f, viewportHeight / contentHeight)
 
-    /** Where the thumb's top is, as a fraction of the track, for the scroll offset [scroll]. */
     fun thumbOffset(scroll: Float): Float = scroll.coerceIn(0f, maxScroll) / contentHeight
 
     companion object {
         /** A section title's block: 30 sp bold on a 38 dp line, and 6 dp under it. */
         const val SECTION_HEADER = 44f
-
-        /** The line between two sections. */
         const val DIVIDER_HEIGHT = 2f
 
-        /** [HomeGrid.compute] with [SECTION_HEADER] set aside from [height] when a section is [titled]. */
         fun grid(columns: Int, rows: Int, width: Float, height: Float, titleLine: Float, titled: Boolean): HomeGrid =
             HomeGrid.compute(columns, rows, width, height - if (titled) SECTION_HEADER else 0f, titleLine)
 
-        /**
-         * The first card in view of a row section of [count] cards after the focus moved to [focus], [first] being
-         * the one before: the line slides only once the focus reaches the edge of what is in view.
-         */
+        /** A row section's first card in view once the focus moved to [focus]: it slides only at the edge of what is in view. */
         fun rowFirst(first: Int, focus: Int, count: Int, columns: Int): Int =
             minOf(max(first, focus - columns + 1), focus, max(0, count - columns)).coerceAtLeast(0)
 
         /** JavaScript's `Math.round` (halves up), as the admin page's mirror of this layout rounds. */
         private fun round(value: Float): Float = floor(value + 0.5f)
 
-        /**
-         * The layout of [sections] (not empty ones) on a Home of [columns] × [rows] in an area of [width] × [height]
-         * dp (the safe area), card titles of [titleLine] dp per line.
-         */
+        /** [sections] (none empty) on a Home of [columns] × [rows] in the safe area, card titles of [titleLine] dp a line. */
         fun compute(columns: Int, rows: Int, width: Float, height: Float, titleLine: Float, sections: List<SectionShape>): HomeLayout {
             val titled = sections.any { it.titled }
             val g = grid(columns, rows, width, height, titleLine, titled)
-            val reserve = if (titled) SECTION_HEADER else 0f
             val placed = ArrayList<Section>(sections.size)
             val lines = ArrayList<Line>()
             val slots = ArrayList<Slot>()
@@ -210,8 +181,7 @@ data class HomeLayout(
             }
             return HomeLayout(
                 grid = g,
-                titleReserve = reserve,
-                viewportHeight = g.viewportHeight + reserve,
+                viewportHeight = g.viewportHeight + if (titled) SECTION_HEADER else 0f,
                 contentHeight = if (lines.isEmpty()) 0f else cellBottom + g.padding,
                 sections = placed,
                 lines = lines,

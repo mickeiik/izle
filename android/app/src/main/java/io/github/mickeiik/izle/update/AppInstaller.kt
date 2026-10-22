@@ -20,35 +20,28 @@ import java.io.File
 /** The system side of an update; replaced by a fake in the tests. */
 interface AppInstaller {
     /**
-     * Throws [UpdateException] unless [file] is this app (`wrong_package`), the version the server announced
-     * (`bad_archive`, as when it is no APK at all) and newer than the running version (`not_newer`, ignored). In
-     * that order: a mislabelled archive is a failure, not an older version.
+     * Throws [UpdateException] unless [file] is this app (`wrong_package`), the announced version (`bad_archive`, as
+     * when it is no APK) and newer than this one (`not_newer`, ignored). In that order: a mislabelled archive is a
+     * failure, not an older version.
      */
     suspend fun verifyArchive(file: File, expectedVersionCode: Long)
 
     /**
-     * Writes [file] into an install session and commits it; the outcome comes back to [MainActivity] as an
-     * [ACTION_INSTALL_STATUS] intent. [silent]: asks the system not to show its dialog. Returns the session id.
-     * Throws [UpdateException] `install_write` when the session could not be created or written (installation
-     * services unavailable included).
+     * Commits [file] in an install session and returns its id; the outcome comes back to [MainActivity] as an
+     * [ACTION_INSTALL_STATUS] intent. Throws [UpdateException] `install_write` when the session could not be written.
      */
-    suspend fun install(file: File, silent: Boolean, commandId: Long?): Int
+    suspend fun install(file: File, silent: Boolean): Int
 
-    /** Whether [sessionId] is an install session this app opened (a status intent can come from any app). */
+    /** A status intent can come from any app. */
     fun ownsSession(sessionId: Int): Boolean
 
-    /**
-     * Whether [intent] (a status's confirmation) may be started: not one that opens another app than a system one. The
-     * session check ([ownsSession], random session ids) is what keeps other apps out; this is a second look.
-     */
+    /** A second look after [ownsSession] (random session ids): a confirmation must not open another app than a system one. */
     fun isSystemConfirmation(intent: Intent): Boolean
 
     fun abandon(sessionId: Int)
 
     companion object {
         const val ACTION_INSTALL_STATUS = "io.github.mickeiik.izle.INSTALL_STATUS"
-        const val EXTRA_COMMAND_ID = "izle.commandId"
-        const val EXTRA_SILENT = "izle.silent"
     }
 }
 
@@ -64,7 +57,7 @@ class PackageInstallerAppInstaller(private val context: Context) : AppInstaller 
         if (code <= installedVersionCode) throw UpdateException(CommandResult.NOT_NEWER, ignored = true)
     }
 
-    override suspend fun install(file: File, silent: Boolean, commandId: Long?): Int = withContext(Dispatchers.IO) {
+    override suspend fun install(file: File, silent: Boolean): Int = withContext(Dispatchers.IO) {
         // IOException, SecurityException (installation services unavailable), IllegalArgumentException (parameters
         // this Android refuses): all `install_write`.
         val (installer, sessionId) = try {
@@ -92,7 +85,7 @@ class PackageInstallerAppInstaller(private val context: Context) : AppInstaller 
                         session.fsync(output)
                     }
                 }
-                session.commit(statusReceiver(silent, commandId).intentSender)
+                session.commit(statusReceiver().intentSender)
             }
         } catch (e: Exception) {
             runCatching { installer.abandonSession(sessionId) }
@@ -103,17 +96,12 @@ class PackageInstallerAppInstaller(private val context: Context) : AppInstaller 
     }
 
     /**
-     * The status comes back as an activity start of [MainActivity], delivered while the app is visible (the guided
-     * path's "user action required"). It does not bring the new version back after a silent self-update: the old
-     * process is gone by then and the package installer sends the intent with background activity starts denied
-     * (Android 10+ blocks it; verified on API 36), so the TV shows its launcher until izle is opened again. Mutable
-     * from Android 12: the system adds the status extras.
+     * An activity start of [MainActivity], delivered while the app is visible (the guided path). It does not bring the
+     * new version back after a silent self-update: the installer sends it with background activity starts denied
+     * (Android 10+; verified on API 36). Mutable from Android 12: the system adds the status extras.
      */
-    private fun statusReceiver(silent: Boolean, commandId: Long?): PendingIntent {
-        val intent = Intent(context, MainActivity::class.java)
-            .setAction(AppInstaller.ACTION_INSTALL_STATUS)
-            .putExtra(AppInstaller.EXTRA_SILENT, silent)
-        if (commandId != null) intent.putExtra(AppInstaller.EXTRA_COMMAND_ID, commandId)
+    private fun statusReceiver(): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java).setAction(AppInstaller.ACTION_INSTALL_STATUS)
         val mutable = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) PendingIntent.FLAG_MUTABLE else 0
         // Android 14+: the creator allows the activity start it was made for (Android 15 denies it by default).
         val options = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
