@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -38,10 +39,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -61,6 +63,7 @@ import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -93,6 +96,9 @@ import kotlin.math.roundToInt
 /** The thin scroll indicator in the right safe margin, 22 dp from the screen's edge. */
 private val ScrollIndicatorWidth = 6.dp
 private val ScrollIndicatorEndGap = 22.dp
+
+/** An unfocused tile: the background at 38 % over it looks like the tile at 62 % opacity, without an offscreen layer. */
+private val UnfocusedVeil = IzleColors.Background.copy(alpha = 0.38f)
 
 /** Where a portrait poster is cut to fill a landscape card: a band 28 % of the way down, above the poster's centre. */
 private val PosterCrop = BiasAlignment(horizontalBias = 0f, verticalBias = -0.44f)
@@ -207,16 +213,19 @@ private fun TileGrid(
     onFocused: (String) -> Unit,
     onPlay: (HomeEntry) -> Unit,
 ) {
-    val gridState = rememberLazyGridState()
+    // A row beyond each edge is composed ahead, so ↓ or ↑ onto it does not compose a whole row in one frame.
+    val rowsShown = rows.coerceIn(HomeGrid.MIN_ROWS, HomeGrid.MAX_ROWS)
+    val cacheWindow = remember(rowsShown) { LazyLayoutCacheWindow(aheadFraction = 1f / rowsShown, behindFraction = 1f / rowsShown) }
+    val gridState = rememberLazyGridState(cacheWindow)
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     var gridHasFocus by remember { mutableStateOf(false) }
     var lastFocusedIndex by remember { mutableStateOf(0) }
-    val ids = home.map { it.item.id }
+    val ids = remember(home) { home.map { it.item.id } }
 
     val density = LocalDensity.current
     val titleLine = with(density) { MaterialTheme.typography.titleSmall.lineHeight.toDp() }
     val isActive by rememberUpdatedState(active)
-    val measurer = rememberTextMeasurer()
+    val chipSizes = rememberChipSizes()
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         val grid = remember(columns, rows, maxWidth, maxHeight, titleLine) {
             HomeGrid.compute(columns, rows, maxWidth.value, maxHeight.value, titleLine.value)
@@ -255,7 +264,7 @@ private fun TileGrid(
                         grid = grid,
                         backdropUrl = imageUrl(entry.item.backdropUrl),
                         posterUrl = imageUrl(entry.item.posterUrl),
-                        measurer = measurer,
+                        chipSizes = chipSizes,
                         // While the hidden menu is open, focus must not fall through to the tiles behind it.
                         modifier = Modifier.focusRequester(requester).focusProperties { canFocus = active },
                         onFocused = {
@@ -308,16 +317,23 @@ private fun Tile(
     grid: HomeGrid,
     backdropUrl: String?,
     posterUrl: String?,
-    measurer: TextMeasurer,
+    chipSizes: ChipSizes,
     modifier: Modifier,
     onFocused: () -> Unit,
     onClick: () -> Unit,
 ) {
+    // The focus is read in the effect and the draw phase only: moving it recomposes no tile here.
     val interaction = remember { MutableInteractionSource() }
-    val focused by interaction.collectIsFocusedAsState()
-    LaunchedEffect(focused) { if (focused) onFocused() }
+    val focused = interaction.collectIsFocusedAsState()
+    val currentOnFocused by rememberUpdatedState(onFocused)
+    LaunchedEffect(interaction) { snapshotFlow { focused.value }.collect { if (it) currentOnFocused() } }
 
-    Column(Modifier.fillMaxWidth().height(grid.cellHeight.dp).alpha(if (focused) 1f else 0.62f)) {
+    Column(
+        Modifier.fillMaxWidth().height(grid.cellHeight.dp).drawWithContent {
+            drawContent()
+            if (!focused.value) drawRect(UnfocusedVeil)
+        },
+    ) {
         Card(
             onClick = onClick,
             interactionSource = interaction,
@@ -329,7 +345,7 @@ private fun Tile(
         ) {
             Box(Modifier.fillMaxSize()) {
                 CardPicture(backdropUrl, posterUrl, entry.item.title, grid.titleLinesInCard)
-                CardChips(entry, grid, measurer)
+                CardChips(entry, grid, chipSizes)
             }
         }
         Spacer(Modifier.height(grid.titleGap.dp))
@@ -387,7 +403,7 @@ private fun BoxScope.CardPicture(backdropUrl: String?, posterUrl: String?, title
  * bar; at the top right, the new-episode count (when it fits too). A channel has neither a progress bar nor a count.
  */
 @Composable
-private fun BoxScope.CardChips(entry: HomeEntry, grid: HomeGrid, measurer: TextMeasurer) {
+private fun BoxScope.CardChips(entry: HomeEntry, grid: HomeGrid, chipSizes: ChipSizes) {
     val badge = EpisodeNames.badge(entry.item.kind, entry.playNext)
     val progress = EpisodeNames.progressFraction(entry.playNext)
     val label = tileBadgeText(badge)
@@ -396,7 +412,7 @@ private fun BoxScope.CardChips(entry: HomeEntry, grid: HomeGrid, measurer: TextM
     val cardHeight = grid.cardHeight.dp
     val barHeight = if (progress != null) IzleSpacing.Small + 6.dp else 0.dp
 
-    val actionChip = chipSize(measurer, label, labelStyle, ChipVerticalPadding)
+    val actionChip = chipSizes.of(label, labelStyle, ChipVerticalPadding)
     val showAction = actionChip.width <= cardWidth - 2 * IzleSpacing.Small &&
         IzleSpacing.Small + actionChip.height + barHeight + IzleSpacing.Small <= cardHeight
     val bottomHeight = when {
@@ -423,7 +439,7 @@ private fun BoxScope.CardChips(entry: HomeEntry, grid: HomeGrid, measurer: TextM
     val newEpisodes = EpisodeNames.newEpisodes(entry)
     if (newEpisodes > 0) {
         val short = pluralStringResource(R.plurals.badge_new_episodes_short, newEpisodes, newEpisodes)
-        val newChip = chipSize(measurer, short, MaterialTheme.typography.labelSmall, 0.dp)
+        val newChip = chipSizes.of(short, MaterialTheme.typography.labelSmall, 0.dp)
         val fits = newChip.width <= cardWidth - 2 * IzleSpacing.Small &&
             IzleSpacing.Small + newChip.height + bottomHeight <= cardHeight
         if (fits) NewEpisodesChip(newEpisodes, short, Modifier.align(Alignment.TopEnd).padding(IzleSpacing.Small))
@@ -434,14 +450,24 @@ private val ChipVerticalPadding = 2.dp
 
 private data class ChipSize(val width: Dp, val height: Dp)
 
-/** How large a chip ([posterChip]) with [text] on one line is. */
-@Composable
-private fun chipSize(measurer: TextMeasurer, text: String, style: TextStyle, verticalPadding: Dp): ChipSize {
-    val density = LocalDensity.current
-    return remember(measurer, text, style, verticalPadding, density) {
+/**
+ * How large a chip ([posterChip]) with a text on one line is, measured once per text for the whole grid: the same few
+ * labels ("New", "Live", "Episode 5") come back on most cards, and a row scrolling in measures none of them again.
+ */
+private class ChipSizes(private val measurer: TextMeasurer, private val density: Density) {
+    private val sizes = HashMap<Triple<String, TextStyle, Dp>, ChipSize>()
+
+    fun of(text: String, style: TextStyle, verticalPadding: Dp): ChipSize = sizes.getOrPut(Triple(text, style, verticalPadding)) {
         val size = measurer.measure(text, style, maxLines = 1, softWrap = false, density = density).size
         with(density) { ChipSize(size.width.toDp() + 2 * IzleSpacing.Small, size.height.toDp() + 2 * verticalPadding) }
     }
+}
+
+@Composable
+private fun rememberChipSizes(): ChipSizes {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    return remember(measurer, density) { ChipSizes(measurer, density) }
 }
 
 /**

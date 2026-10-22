@@ -1,16 +1,16 @@
 // @ts-check
-// A TV's page under a sticky section nav. The view loads the TV once, then polls: what it plays every 5 s, the rest
-// every 15 s. Controls are built once and only enabled, disabled and relabelled, so polling never takes the
-// keyboard focus away.
+// A TV's page under sticky tabs, the tab kept in the address (`#/devices/<id>/<tab>`). The view loads the TV once,
+// then polls every tab, shown or not: what it plays every 5 s, the rest every 15 s. Controls are built once and only
+// enabled, disabled and relabelled, so polling never takes the keyboard focus away.
 
 import { ApiError, api, attempt, devicePath } from "./api.js";
 import { companionCard } from "./companion.js";
 import { homeCard } from "./device-home.js";
-import { actionButton, card, chip, h, keepFocus, onSubmit, page, progressBar, setChip, setOff, setProgress, setTitle, slot, statusChip, toast } from "./dom.js";
+import { actionButton, card, chip, h, keepFocus, onSubmit, page, progressBar, setChip, setOff, setProgress, setTitle, slot, statusChip, tabs, toast } from "./dom.js";
 import { watchEvents } from "./events.js";
 import {
-  HOME_COLUMNS, HOME_ROWS, LANGUAGES, androidText, appUpdateChip, capabilityText, commandResultText, episodeName, errorText,
-  formatClock, formatDuration, formatRelative, gridSummary, installNowBlocked, languageLabel, nowPlayingLine, percent,
+  LANGUAGES, androidText, appUpdateChip, capabilityText, commandResultText, episodeName, errorText,
+  formatClock, formatDuration, formatRelative, installNowBlocked, languageLabel, nowPlayingLine, percent,
   playbackState, problemContext, triggerLabel, viewingEnd, viewingSpan,
 } from "./lib.js";
 
@@ -26,8 +26,12 @@ import {
  * @typedef {{ element: HTMLElement, refresh: () => Promise<void>, fail: import("./router.js").OnError }} Section
  */
 
-/** @param {import("./router.js").Scope} scope @param {string} id */
-export function deviceView(scope, id) {
+/** The tabs of a TV's page, in order: the key in the address and the label. */
+const TABS = /** @type {const} */ ([["now", "Now playing"], ["home", "Home screen"], ["listen", "Listen along"], ["history", "History"],
+  ["settings", "Settings"], ["problems", "Problems"]]);
+
+/** @param {import("./router.js").Scope} scope @param {string} id @param {string} [tab] the tab in the address */
+export function deviceView(scope, id, tab) {
   const path = devicePath(id);
   const title = h("h1", null, "TV");
   const chipBox = h("span");
@@ -54,14 +58,31 @@ export function deviceView(scope, id) {
   const tvApp = appCard(ctx);
   const listenAlong = companionCard({ deviceId: id, signal: scope.signal });
   scope.onCleanup(() => listenAlong.stop());
-  const history = historyCard(ctx);
-  const problems = problemsCard(ctx);
-  /** @type {Array<[string, HTMLElement]>} */
-  const sections = [["Now playing", now.element], ["Home screen", home.element], ["Settings", settings.element],
-    ["TV app", tvApp.element], ["Listen along", listenAlong.element], ["History", history.element], ["Problems", problems.element]];
-  sections.forEach(([label, el]) => (el.id = `sec-${label.toLowerCase().replace(/\s+/g, "-")}`));
-  const nav = sectionNav(scope, sections);
-  const top = h("div", { class: "sticky", hidden: true }, nav.element, scope.note);
+  const viewings = historyCard(ctx);
+  const problems = problemsCard(ctx, (count) => tabBar.setBadge("problems", count));
+  /** @type {Record<typeof TABS[number][0], HTMLElement[]>} */
+  const content = {
+    now: [now.element],
+    home: [home.element],
+    listen: [listenAlong.element],
+    history: [viewings.element],
+    settings: [tvApp.element, settings.element, removeCard(ctx, () => device)],
+    problems: [problems.element],
+  };
+  // The tab is kept in the address without a navigation (which would render the page again); Back leaves the page.
+  // Scrolled down past the tabs, a new tab starts at its top.
+  const tabBar = tabs({
+    label: "Sections of this page",
+    tabs: TABS.map(([key, label]) => ({ key, label, content: content[key] })),
+    selected: tab ?? "now",
+    onSelect: (key) => {
+      history.replaceState(null, "", `#/devices/${encodeURIComponent(id)}/${key}`);
+      const gap = parseFloat(getComputedStyle(top).marginBottom) || 0;
+      const under = body.element.getBoundingClientRect().top - top.getBoundingClientRect().bottom - gap;
+      if (under < 0) window.scrollBy(0, under);
+    },
+  });
+  const top = h("div", { class: "sticky", hidden: true }, scope.note, tabBar.list);
   const body = slot();
 
   const loadDevice = async () => {
@@ -81,11 +102,10 @@ export function deviceView(scope, id) {
     seen.textContent = device.status === "active" ? `last seen ${formatRelative(device.lastSeenAt)}` : "approved, waiting for the TV to collect its token";
     now.setDevice(device);
     tvApp.setDevice(device);
-    home.update(d.home);
-    settings.setHomeCount(d.home.length);
+    home.update(d.home, device);
   };
 
-  // The TV first; once it is there, the sections and their polls.
+  // The TV first; once it is there, the tabs and their polls.
   let started = false;
   scope.load(
     async () => {
@@ -93,13 +113,12 @@ export function deviceView(scope, id) {
       if (started) return;
       started = true;
       settings.update(device);
-      body.show(...sections.map(([, el]) => el), removeCard(ctx, () => device));
+      body.show(...tabBar.panels);
       top.hidden = false;
-      nav.update();
       const nowJob = scope.poll(now.refresh, 5000, now.fail);
       scope.poll(listenAlong.refresh, 5000, listenAlong.fail);
       const deviceJob = scope.poll(loadDevice, 15000);
-      const historyJob = scope.poll(history.refresh, 15000, history.fail);
+      const historyJob = scope.poll(viewings.refresh, 15000, viewings.fail);
       const problemsJob = scope.poll(problems.refresh, 15000, problems.fail);
       scope.poll(tvApp.refresh, 30_000, tvApp.fail);
       // The polls stay as the fallback; the event stream makes the page follow the TV as things happen.
@@ -117,56 +136,6 @@ export function deviceView(scope, id) {
   );
 
   return page({ back: ["#/devices", "← TVs"], title, aside: [chipBox, seen] }, top, body.element);
-}
-
-/**
- * Buttons that scroll to the page's sections (and move the focus to their heading); the section in view is marked
- * with `aria-current` (`update()` marks it now). Buttons, not `#anchor` links: a hash change would re-run the router.
- * @param {import("./router.js").Scope} scope @param {Array<[string, HTMLElement]>} sections
- */
-function sectionNav(scope, sections) {
-  const scrollTo = (/** @type {HTMLElement} */ section) => {
-    const smooth = !matchMedia("(prefers-reduced-motion: reduce)").matches;
-    section.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
-    section.querySelector("h2")?.focus({ preventScroll: true });
-  };
-  const buttons = sections.map(([label, s]) => h("button", { type: "button", onclick: () => scrollTo(s) }, label));
-  const nav = h("nav", { class: "sections-nav", "aria-label": "Sections of this page" }, buttons);
-  let current = -1;
-  let queued = false;
-  const mark = () => {
-    queued = false;
-    if (!nav.isConnected || nav.closest("[hidden]")) return;
-    const line = nav.getBoundingClientRect().bottom + 32;
-    // The last section whose top passed under the bar; at the bottom of the page, where the last sections never
-    // reach the bar, the last one in view (if any is).
-    let at = 0;
-    let inView = -1;
-    sections.forEach(([, s], i) => {
-      const top = s.getBoundingClientRect().top;
-      if (top <= line) at = i;
-      if (top < window.innerHeight) inView = i;
-    });
-    if (inView >= 0 && window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4) at = inView;
-    if (at === current) return;
-    current = at;
-    buttons.forEach((b, i) => (i === at ? b.setAttribute("aria-current", "true") : b.removeAttribute("aria-current")));
-    const b = buttons[at];
-    // Keep the marked button in view when the nav scrolls sideways (phones).
-    if (b && (b.offsetLeft < nav.scrollLeft || b.offsetLeft + b.offsetWidth > nav.scrollLeft + nav.clientWidth)) nav.scrollLeft = b.offsetLeft - 16;
-  };
-  const onScroll = () => {
-    if (queued) return;
-    queued = true;
-    requestAnimationFrame(mark);
-  };
-  window.addEventListener("scroll", onScroll, { passive: true });
-  window.addEventListener("resize", onScroll);
-  scope.onCleanup(() => {
-    window.removeEventListener("scroll", onScroll);
-    window.removeEventListener("resize", onScroll);
-  });
-  return { element: nav, update: onScroll };
 }
 
 /**
@@ -286,9 +255,9 @@ function nowPlayingCard(ctx) {
 }
 
 /**
- * Name, languages, subtitles and the home grid (saved together with "Save settings") and autoplay (saved on its own,
- * at once). The form is filled when the page loads and after a save, never by the poll, so edits in progress stay;
- * the poll only brings the home list's length for the grid's hint.
+ * Name, languages and subtitles (saved together with "Save settings") and autoplay (saved on its own, at once). The
+ * form is filled when the page loads and after a save, never by the poll, so edits in progress stay. The home grid's
+ * size is set on the Home screen tab, next to its preview.
  * @param {DeviceContext} ctx
  */
 function settingsCard(ctx) {
@@ -298,13 +267,6 @@ function settingsCard(ctx) {
   const ui = h("select", { id: "s-ui" });
   const audio = h("select", { id: "s-audio", "aria-describedby": "s-audio-hint" });
   const subs = h("select", { id: "s-subs" });
-  const columns = h("select", { id: "s-columns", "aria-describedby": "s-grid-hint" });
-  const rows = h("select", { id: "s-rows", "aria-describedby": "s-grid-hint" });
-  const gridHint = h("p", { class: "hint", id: "s-grid-hint" });
-  let homeCount = 0;
-  const showGrid = () => (gridHint.textContent = gridSummary(Number(columns.value), Number(rows.value), homeCount));
-  columns.addEventListener("change", showGrid);
-  rows.addEventListener("change", showGrid);
   const save = h("button", { class: "primary", type: "submit" }, "Save settings");
   const autoplay = h("input", { type: "checkbox", id: "s-autoplay", "aria-describedby": "s-autoplay-hint" });
 
@@ -325,11 +287,6 @@ function settingsCard(ctx) {
     fillSelect(audio, [["", `Server default${s.preferredAudioLanguage ? "" : ` — ${languageLabel(eff.preferredAudioLanguage, "none")}`}`], ...langs], s.preferredAudioLanguage);
     fillSelect(subs, [["", "Off"], ...langs], s.subtitlesLanguage);
     autoplay.checked = Boolean(s.autoplayOnStart);
-    /** @param {number[]} values */
-    const numbers = (values) => /** @type {Array<[string, string]>} */ (values.map((n) => [String(n), String(n)]));
-    fillSelect(columns, numbers(HOME_COLUMNS), String(s.homeColumns));
-    fillSelect(rows, numbers(HOME_ROWS), String(s.homeRows));
-    showGrid();
   };
 
   // Autoplay is saved at once. A second click while the first is saving is undone: one request at a time.
@@ -351,20 +308,16 @@ function settingsCard(ctx) {
   const field = (/** @type {HTMLElement} */ control, /** @type {string} */ text) => [h("label", { for: control.id }, text), control];
   const audioHint = h("p", { class: "hint", id: "s-audio-hint" }, "Sources with this audio language are tried first, and the player picks it when a stream has several.");
   const form = h("form", { class: "form" }, field(name, "Name"), field(ui, "Menu language"), field(audio, "Preferred audio language"), audioHint, field(subs, "Subtitles"),
-    h("h3", null, "Home grid"), field(columns, "Columns"), field(rows, "Rows"), gridHint, h("div", { class: "actions" }, save));
+    h("div", { class: "actions" }, save));
   // "Save settings": what differs from the TV's settings is saved in one request.
   onSubmit(form, save, () => {
     if (!device) return;
-    /** @type {Record<string, string | number | null>} */
+    /** @type {Record<string, string | null>} */
     const patch = {};
     const typed = name.value.trim();
     if (typed && typed !== device.name) patch.name = typed;
     for (const [key, select] of /** @type {const} */ ([["uiLanguage", ui], ["preferredAudioLanguage", audio], ["subtitlesLanguage", subs]])) {
       const value = select.value || null;
-      if (value !== device.settings[key]) patch[key] = value;
-    }
-    for (const [key, select] of /** @type {const} */ ([["homeColumns", columns], ["homeRows", rows]])) {
-      const value = Number(select.value);
       if (value !== device.settings[key]) patch[key] = value;
     }
     if (Object.keys(patch).length === 0) return toast("Nothing changed.", "info");
@@ -377,12 +330,7 @@ function settingsCard(ctx) {
   });
   const autoplayHint = h("p", { class: "hint", id: "s-autoplay-hint" }, "When the app opens, the show the viewer watched last (else the first tile) starts after a 10-second countdown. Any key stops the countdown.");
   const toggle = h("div", { class: "toggle" }, h("label", { class: "check", for: "s-autoplay" }, autoplay, "Autoplay when the TV starts"), autoplayHint);
-  /** @param {number} n */
-  const setHomeCount = (n) => {
-    homeCount = n;
-    if (columns.value) showGrid();
-  };
-  return { element: card("Settings", form, toggle), update, setHomeCount };
+  return { element: card("Settings", form, toggle), update };
 }
 
 /**
@@ -480,8 +428,15 @@ function historyCard(ctx) {
   return { element, refresh, fail: (err, retry) => shown.fail(err, retry, "Could not load the history.") };
 }
 
-/** @param {DeviceContext} ctx @returns {Section} */
-function problemsCard(ctx) {
+/** How many problems the card reads (the latest). */
+const PROBLEMS_SHOWN = 50;
+
+/**
+ * @param {DeviceContext} ctx @param {(count: string) => void} counted runs after each read with the count for the tab
+ *   ("3", "50+" when the read was full, "" for none)
+ * @returns {Section}
+ */
+function problemsCard(ctx, counted) {
   const shown = slot();
   const list = rebuiltOnChange();
   const clear = actionButton("Clear", { class: "danger", hidden: true, "aria-label": "Clear the problems" }, async () => {
@@ -490,8 +445,9 @@ function problemsCard(ctx) {
     if (r.ok) await keepFocus(() => refresh().catch(() => {}), element.querySelector("h2"));
   });
   const refresh = async () => {
-    const { problems } = await ctx.scope.read(`${ctx.path}/problems?limit=50`);
+    const { problems } = await ctx.scope.read(`${ctx.path}/problems?limit=${PROBLEMS_SHOWN}`);
     clear.hidden = problems.length === 0;
+    counted(problems.length >= PROBLEMS_SHOWN ? `${PROBLEMS_SHOWN}+` : problems.length > 0 ? String(problems.length) : "");
     const content = list.content(problems, (time) => {
       if (problems.length === 0) return h("p", { class: "muted" }, "No problems recorded.");
       const li = (/** @type {any} */ p) => {

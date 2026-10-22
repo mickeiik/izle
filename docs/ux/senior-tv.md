@@ -11,7 +11,7 @@ remotely from the admin page (`/admin/` on the server) or, on the TV itself, beh
 2. **Back always goes home**, and Back on Home does nothing: the viewer cannot fall out of the app. (The remote's
    HOME button belongs to the system; when it is pressed the app saves the position and comes back on Home.)
 3. **Every error ends on Home by itself**, after a short, large message. Nothing waits for an answer.
-4. **Nothing small.** No text below 24 sp on the 960×540 dp TV canvas, except the chips on Home cards (20 sp,
+4. **Nothing small.** No text below 24 sp on the 960×540 dp TV canvas, except the chips on Home cards (16 sp,
    short words in solid colours); high contrast; one focused element with a thick white border, everything else
    dimmed; nothing that matters outside the 5 % safe margins (48 dp left and right, 27 dp top and bottom), where
    many TVs crop the picture.

@@ -17,8 +17,31 @@ contract share one version number. How to update (back up, update the server, th
   `GET /api/v1/admin/catalog/search` takes the matching parameters plus `offset` and answers `total`;
   `GET /api/v1/admin/catalog` gains `facets`.
 
+### Changed
+
+- **Admin page:** a TV's page is split into tabs instead of one long page: Now playing, Home screen, Listen along,
+  History, Settings and Problems (with a count when there are any). The tab is kept in the address
+  (`#/devices/<id>/settings`), so a reload or a shared link opens it. Settings now holds the TV app's version and
+  "Install now", the TV's settings, and "Forget this TV".
+- **Admin page:** a TV's Home screen tab draws the TV's Home to scale instead of a list: the same grid, cards, chips,
+  progress bars and titles, with further rows scrolling inside the screen as on the TV. Select a card (or move with
+  the arrow keys) to play it, move it left, right, up or down a row or to the first place, open its episodes, or
+  remove it. What the TV hides (missing from the catalog, not playable) is listed under the screen. The grid's
+  columns and rows moved here from Settings: a new size is previewed on the screen before "Save grid".
+- **TV app:** the chips on Home's cards ("Live", "New", "Episode 5", "2 new") are smaller (16 sp, was 20 sp), so
+  they cover less of the picture.
+- **TV app:** Home scrolls more smoothly. The row beyond each edge of the screen is prepared ahead, so ↓ or ↑ onto it
+  no longer builds a whole row of cards at once; the dimmed cards around the focused one are drawn without an extra
+  layer each; a chip's label is measured once for the whole screen.
+- **TV app:** release builds are shrunk and optimized by R8 (class names are kept, so problem reports read the same):
+  a smaller APK and a faster app, Home's scrolling above all.
+
 ### Fixed
 
+- **Admin page: a Home list with a missing show could not be edited.** Once a catalog update dropped a show (or
+  made it unplayable) that was on a TV's Home, every change to that list, removing the missing show included,
+  failed with "That show is not in the catalog (any more)." Only the shows a change adds are checked now; the ones
+  already on the list may stay until the owner removes them.
 - **TV app: CH+/CH− on a dead channel.** When a channel ends on "Can't play right now" (Try again / Home with its
   countdown), CH+/CH− and |◀◀ ▶▶| now switch to the next / previous channel on Home as they do while a channel
   plays; before, they did nothing until the viewer pressed a button. The owner's `next` and `previous` commands do

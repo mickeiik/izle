@@ -12,6 +12,7 @@ import {
   languageLabel, liveViewingLine, mediaKindLabel, moveItem, nowPlayingLine, parseCandidate, parseSse, percent, playbackState, plural,
   problemContext, resumes, sameLanguage, scopeLabel, serverAddress, shortId, showMeta, sourceReport, syncDecision,
   titleLine, titleStatusLabel, tokenFromHash, triggerLabel, tvPositionAt, viewingEnd, viewingSpan,
+  onTv, tvCard, tvGrid,
 } from "../admin/lib.js";
 import { ADMIN_FILES, ADMIN_VENDOR_FILES } from "../src/admin-files.ts";
 import { HOME_COLUMNS as SERVER_COLUMNS, HOME_MAX_ITEMS, HOME_ROWS as SERVER_ROWS } from "../src/home.ts";
@@ -270,6 +271,35 @@ test("admin helpers: the catalog browser's paths, summaries, hash state and 'new
 test("admin helpers: the home limit and grid choices are the server's", () => {
   const range = (r: { min: number; max: number }) => Array.from({ length: r.max - r.min + 1 }, (_, i) => r.min + i);
   cases([[HOME_MAX, HOME_MAX_ITEMS], [HOME_COLUMNS, range(SERVER_COLUMNS)], [HOME_ROWS, range(SERVER_ROWS)]]);
+});
+
+test("admin helpers: the TV's Home grid and what its cards show", () => {
+  const size = (g: ReturnType<typeof tvGrid>) => [g.columns, g.rows, g.cardWidth, g.titleLines, g.viewportWidth, g.viewportHeight];
+  cases([
+    // 4 × 2 (the default): width-bound cards, two title lines; the viewport is exactly two rows.
+    [size(tvGrid(4, 2)), [4, 2, 194, 2, 864, 414.25]],
+    [size(tvGrid(3, 1)), [3, 1, 265, 2, 863, 251.0625]],
+    // 6 × 4: a second title line would shrink the cards (45 dp), so one line (102 dp).
+    [size(tvGrid(6, 4)), [6, 4, 102, 1, 740, 485.5]],
+    [[tvGrid(9, 0).columns, tvGrid(9, 0).rows], [6, 1], "clamped to 3–6 × 1–4"],
+  ]);
+  const ep = (o: object) => ({ episodeId: "e", season: 1, number: 2, title: null, label: null, index: 1, status: "new", positionMs: 0, durationMs: 600_000, ...o });
+  const card = (kind: string, c: object | null, newEpisodes = 0) => tvCard({ kind, continue: c ? (ep(c) as any) : null, newEpisodes });
+  cases([
+    [card("live", null, 3), { chip: "Live", tone: "live", progress: null, newEpisodes: 0 }, "a channel: Live, never a count"],
+    [card("movie", null), { chip: "New", tone: "new", progress: null, newEpisodes: 0 }],
+    [card("series", {}, 2), { chip: "Episode 2", tone: "", progress: null, newEpisodes: 2 }],
+    [card("series", { season: 2, number: 3 }).chip, "Season 2, Episode 3"],
+    [card("series", { season: null, number: null, index: 4 }).chip, "Episode 5", "no number: the play order"],
+    [card("series", { label: " Pilot " }).chip, "Pilot"],
+    [card("series", { status: "watching", positionMs: 60_000 }), { chip: "Continue · Episode 2", tone: "resume", progress: 10, newEpisodes: 0 }],
+    [card("series", { status: "watching", positionMs: 20_000 }).chip, "Episode 2", "under 30 s starts over"],
+    [card("series", { status: "watching", positionMs: 590_000 }).progress, null, "within the credits: starts over"],
+    [card("movie", { status: "watching", positionMs: 45_000, durationMs: 3_600_000 }), { chip: "Continue", tone: "resume", progress: 1, newEpisodes: 0 }],
+    [card("movie", { status: "finished" }).chip, "Watch again"],
+    [card("movie", { status: "new" }).tone, "new"],
+    [[onTv({}), onTv({ playable: true }), onTv({ missing: true }), onTv({ playable: false })], [true, true, false, false]],
+  ]);
 });
 
 test("admin helpers: a diagnostics source, line by line", () => {

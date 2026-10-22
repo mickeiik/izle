@@ -252,9 +252,9 @@ class SeniorInvariantsTest {
             val live = string(R.string.badge_live)
             assertEquals(setOf("Show B", live), tileTexts("Show B"))
             assertEquals(emptyList<String>(), tileDescriptions("Show B"))
-            // The chips at 20 sp, the names at 24.
+            // The chips at 16 sp, the names at 24.
             assertTextSizes(chips = setOf(string(R.string.badge_new), live))
-            assertEquals(20f, drawnTexts().first { it.first == live }.second.value, 0.01f)
+            assertEquals(16f, drawnTexts().first { it.first == live }.second.value, 0.01f)
 
             tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
             assertFocusedTile("Show B")
@@ -521,12 +521,12 @@ class SeniorInvariantsTest {
     /** Every text on the screen is drawn at 24 sp or more. */
     private fun assertAllTextAtLeast24Sp() = assertTextSizes(chips = emptySet())
 
-    /** Every text on the screen is drawn at 24 sp or more, except the Home cards' [chips], at 20 sp or more. */
+    /** Every text on the screen is drawn at 24 sp or more, except the Home cards' [chips], at 16 sp or more. */
     private fun assertTextSizes(chips: Set<String>) {
         val texts = drawnTexts()
         assertTrue("texts on screen", texts.isNotEmpty())
         for ((text, size) in texts) {
-            val min = if (text in chips) 20f else 24f
+            val min = if (text in chips) 16f else 24f
             assertTrue("\"$text\" at $size", size.isSp && size.value >= min)
         }
     }
