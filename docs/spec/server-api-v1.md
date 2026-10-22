@@ -1,32 +1,31 @@
 # izle-server API v1
 
-Status: **draft, implemented**.
-Changes within v1 are additive only (new optional request fields, new response fields, new routes); clients MUST
-ignore unknown response fields. Until the first deployment the owner may change v1 in place; such changes are marked
-**breaking (pre-release)** in the [changelog](#changelog).
+Status: **draft, implemented**. Changes within v1 are additive only (new optional request fields, new response
+fields, new routes); clients MUST ignore unknown response fields. Until the first deployment the owner may change v1
+in place, marked **breaking (pre-release)** in the [changelog](#changelog).
 
 ## Conventions
 
-- Base path `/api/v1`. JSON request and response bodies (`Content-Type: application/json`), request bodies ≤ 64 KiB
-  (except the APK upload, [`PUT /admin/app/apk`](#tv-app), which streams up to 64 MiB).
-- **TV routes** (`/api/v1/tv/*`) need `Authorization: Bearer <deviceToken>`, **admin routes** (`/api/v1/admin/*`)
-  `Authorization: Bearer <adminToken>` or an [access token](#access-tokens); neither works on the other's routes. A
-  missing or wrong token answers `401 unauthorized` with a `WWW-Authenticate: Bearer` header (on admin routes `429`
-  after repeated failures, see [Authentication model](#authentication-model)).
-- Errors: `{"error": "<code>", "message"?: "<human text>", …details}` with an HTTP status; codes are listed per
-  route. `400 invalid_json`, `400 invalid_request` (with `details: [{path, message}]`; also for unknown request
-  fields, which every route refuses), `404 not_found` (no such route), `413 body_too_large` and `500 internal` can
-  happen anywhere.
+- Base path `/api/v1`. JSON request and response bodies, requests ≤ 64 KiB (except the APK upload,
+  [`PUT /admin/app/apk`](#tv-app), which streams up to 64 MiB).
+- **TV routes** (`/api/v1/tv/*`) need `Authorization: Bearer <deviceToken>`, **admin routes** (`/api/v1/admin/*`) the
+  admin token or an [access token](#access-tokens); neither works on the other's routes. A missing or wrong token
+  answers `401 unauthorized` with `WWW-Authenticate: Bearer` (on admin routes `429` after repeated failures, see
+  [Authentication model](#authentication-model)).
+- Errors: `{"error": "<code>", "message"?, …details}` with an HTTP status; codes are listed per route. Anywhere:
+  `400 invalid_json`, `400 invalid_request` (with `details: [{path, message}]`; also for unknown request fields, which
+  every route refuses), `404 not_found` (no such route), `413 body_too_large`, `500 internal`.
 - Timestamps are ISO 8601 strings; positions and durations are integer milliseconds.
-- All ids are catalog ids (`^[A-Za-z0-9][A-Za-z0-9._~-]{0,119}$`) except device ids (12 alphanumeric
-  characters) and playback session ids (16 alphanumeric characters). Episodes are addressed by their episode id and
-  channels (catalog items of kind `live`) by their item id; the two id spaces are separate (an episode id may equal
-  an item id), so the field (`episodeId` or `itemId`) says which one is meant.
-- Every response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `X-Frame-Options: DENY`;
-  API responses also `Cache-Control: no-store`. No CORS: the admin UI is served by the same origin. TLS is the reverse
-  proxy's job; plain HTTP is fine on a LAN.
-- One catalog per server in v1, but every stored reference is scoped by `catalogId`, so switching bundles never
-  mixes progress.
+- All ids are catalog ids (`^[A-Za-z0-9][A-Za-z0-9._~-]{0,119}$`) except device ids (12 alphanumeric characters) and
+  playback session ids (16). Episodes are addressed by episode id, channels by item id; the two id spaces are
+  separate (an episode id may equal an item id), so the field (`episodeId` or `itemId`) says which one is meant.
+- A **channel** (a catalog item of kind `live`) has no episodes, cursor, saved position or duration, is never
+  "seen" and always plays at its live edge: response fields that describe an episode or a position (`episodeId`,
+  `episodeTitle`, `season`, `number`, `positionMs`, `durationMs`, `startPositionMs`, `endPositionMs`) are null for it.
+- Every response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and
+  `X-Frame-Options: DENY`; API responses also `Cache-Control: no-store`. No CORS: the admin UI is served by the same
+  origin. TLS is the reverse proxy's job; plain HTTP is fine on a LAN.
+- One catalog per server in v1; every stored reference is scoped by `catalogId`, so switching bundles mixes nothing.
 
 ## Authentication model
 
@@ -40,34 +39,30 @@ The admin and pair tokens are compared in constant time; device and access token
 No token is ever logged ([Logging](#logging)).
 
 Failed admin authentications (a wrong or revoked token on `/api/v1/admin/*`) are counted per client address
-(`trustedProxies`, [Configuration](#configuration); an IPv6 address by its /64): after 10 within 10 minutes of the
-first, every admin request from that address, even with the right token, answers `429 too_many_attempts` with
-`Retry-After` until those 10 minutes are over. Successes are never counted, nor are requests without a token (no
-guess, so tokenless requests that another site's page sends from the owner's browser cannot lock the owner out).
-Each failure is logged as a warning with the client address and the route template. TV routes and pairing are not
-affected.
+([`trustedProxies`](#configuration); an IPv6 address by its /64): after 10 within 10 minutes of the first, every admin
+request from that address, even with the right token, answers `429 too_many_attempts` with `Retry-After` until those
+10 minutes are over. Successes and requests without a token are never counted (so tokenless requests that another
+site's page sends from the owner's browser cannot lock the owner out). Each failure is logged as a warning with the
+client address and the route template. TV routes and pairing are not affected.
 
 ## Pairing
 
-The TV shows a 6-digit code; the owner approves it through the admin API; the TV's long-poll then receives its
-device token.
+The TV shows a 6-digit code; the owner approves it; the TV's long-poll then receives its device token.
 
 ### `POST /api/v1/pair/start`
 
 No body. → `200 {"code": "483920", "pairToken": "<secret>", "expiresAt": "…"}`; codes live 10 minutes. Errors:
-`429 rate_limited` (more than 10 starts per client address, an IPv6 one by its /64, in 10 minutes; `Retry-After`;
-behind a reverse proxy see `trustedProxies`), `429 too_many_pending` with `Retry-After` (seconds until the earliest
-of those codes expires): this client address already has 2 codes waiting for approval, or 10 codes are open
-server-wide; `503 busy` (no free code found). A start never ends another code: clients that share an address pair
-one after the other. Each code remembers a hash of the address that started it.
+`429 rate_limited` (more than 10 starts per client address, an IPv6 one by its /64, in 10 minutes; `Retry-After`),
+`429 too_many_pending` with `Retry-After` (seconds until the earliest of those codes expires): this client address
+already has 2 codes waiting for approval, or 10 codes are open server-wide; `503 busy` (no free code found). A start
+never ends another code (clients sharing an address pair one after the other); each remembers its address's hash.
 
 ### `GET /api/v1/pair/wait?code=<6 digits>[&wait=<0..25>]`
 
 `Authorization: Bearer <pairToken>`. Long-polls up to `wait` seconds (default 25) for the approval.
 
 - `200 {"status": "pending"}`: not approved yet; poll again.
-- `200 {"status": "approved", "deviceId": "…", "deviceToken": "<secret>"}`: **exactly once**; the server keeps
-  only the token's hash.
+- `200 {"status": "approved", "deviceId": "…", "deviceToken": "<secret>"}`: **exactly once** (only its hash is kept).
 - `410 {"error": "expired", "status": "expired"}`: expired or already delivered; start over.
 - `404 not_found`: unknown code or wrong pair token (indistinguishable on purpose); `401` without a pair token,
   `400 invalid_request` for a malformed `code` or `wait`.
@@ -86,17 +81,17 @@ server, `pair pending` and `pair cancel <code>` the next two.
 
 ### `DELETE /api/v1/admin/pair/pending/:code`
 
-Owner only. Clears an open code that none of the owner's TVs shows → `204`: the code expires now, so its
-`pair/wait` answers `410` (a TV that showed it asks for a new one) and it can no longer be approved. A device
-approved on it that never collected its token is deleted; a TV it was to [replace](#replacing-a-tv) stays as it is.
-Event `pairing.cancelled`. Errors: `404 unknown_code` (no open code with this value).
+Owner only. Clears an open code that none of the owner's TVs shows → `204`: the code expires now (its `pair/wait`
+answers `410`, so a TV that showed it asks for a new one) and can no longer be approved. A device approved on it that
+never collected its token is deleted; a TV it was to [replace](#replacing-a-tv) stays as it is. Event
+`pairing.cancelled`. Errors: `404 unknown_code` (no open code with this value).
 
 ## TV API
 
-**User-Agent.** The TV app names itself on every API call:
-`izle-tv/<versionName> (Android <sdkInt>; <versionCode>; silent|guided)`, e.g.
-`izle-tv/0.2.0 (Android 25; 200; guided)`; `silent`: the TV can install an update by itself (Android 12+, API 31),
-`guided`: the viewer has to confirm Android's install screen. The server matches it strictly
+**User-Agent.** The TV app names itself on every API call: `izle-tv/<versionName> (Android <sdkInt>;
+<versionCode>; silent|guided)`, e.g. `izle-tv/0.2.0 (Android 25; 200; guided)`; `silent`: the TV can install an
+update by itself (Android 12+, API 31), `guided`: the viewer has to confirm Android's install screen. The server
+matches it strictly
 (`^izle-tv\/(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?) \(Android (\d{1,3}); (\d{1,9}); (silent|guided)\)$`, at most 200
 characters) and records a change for the device ([`Device.app`](#devices), event `device.app_version`); anything
 else (an older app sends OkHttp's default) is ignored without an error.
@@ -108,34 +103,26 @@ Everything the home screen needs:
 ```json
 {
   "version": 7,
-  "device": { "id": "aZ3…", "name": "Living room", "uiLanguage": "tr", "preferredAudioLanguage": "tr", "subtitlesLanguage": null, "autoplayOnStart": false,
-              "homeColumns": 4, "homeRows": 2 },
+  "device": { "id": "aZ3…", "name": "Living room", "uiLanguage": "tr", "preferredAudioLanguage": "tr",
+              "subtitlesLanguage": null, "autoplayOnStart": false, "homeColumns": 4, "homeRows": 2 },
   "catalog": { "id": "izle-sample", "buildId": "20261010-247b34f7", "name": "izle sample catalog" },
   "home": [
-    {
-      "item": { "id": "caminandes", "kind": "series", "title": "Caminandes", "year": 2013, "posterUrl": "/assets/f3f9….jpg", "backdropUrl": null },
-      "continue": {
-        "episodeId": "caminandes.s01e02", "season": 1, "number": 2, "title": "Gran Dillama", "label": null,
-        "index": 1, "count": 3, "positionMs": 0, "durationMs": 146050, "status": "new"
-      },
-      "newEpisodes": 0
-    },
-    {
-      "item": { "id": "news-24", "kind": "live", "title": "News 24", "year": null, "posterUrl": "/assets/7b0e….png", "backdropUrl": null },
-      "continue": null,
-      "newEpisodes": 0
-    }
+    { "item": { "id": "caminandes", "kind": "series", "title": "Caminandes", "year": 2013,
+                "posterUrl": "/assets/f3f9….jpg", "backdropUrl": null },
+      "continue": { "episodeId": "caminandes.s01e02", "season": 1, "number": 2, "title": "Gran Dillama", "label": null,
+                    "index": 1, "count": 3, "positionMs": 0, "durationMs": 146050, "status": "new" },
+      "newEpisodes": 0 },
+    { "item": { "id": "news-24", "kind": "live", "title": "News 24", "year": null, "posterUrl": "/assets/7b0e….png",
+                "backdropUrl": null },
+      "continue": null, "newEpisodes": 0 }
   ],
-  "homeSections": [
-    { "id": "untitled", "title": null, "layout": "grid", "itemIds": ["caminandes"] },
-    { "id": "Hq7cP2xd", "title": "Channels", "layout": "row", "itemIds": ["news-24"] }
-  ]
+  "homeSections": [ { "id": "untitled", "title": null, "layout": "grid", "itemIds": ["caminandes"] },
+                    { "id": "Hq7cP2xd", "title": "Channels", "layout": "row", "itemIds": ["news-24"] } ]
 }
 ```
 
-- `version`: the device's state version. It increases whenever something the TV shows changes (home list,
-  settings, cursor, catalog reload, a stopped/finished episode); the TV re-fetches this document when a `state`
-  event announces a higher one.
+- `version`: the device's state version, increased whenever something the TV shows changes (home list, settings,
+  cursor, catalog reload, a stopped/finished episode); the TV re-fetches when a `state` event announces a higher one.
 - `device.uiLanguage` and `preferredAudioLanguage` are **effective** values: the device's own setting, else the
   server's `defaults`, else the catalog's `defaults` hints, else `"en"` / null. `subtitlesLanguage` is the device's
   own setting (no fallback); null means subtitles off.
@@ -143,44 +130,37 @@ Everything the home screen needs:
   the first tile; the TV decides what "last" is) starts after a 10-second countdown that any key stops.
 - `device.homeColumns` (3–6, default 4) and `device.homeRows` (1–4, default 2), owner settings: Home is a grid of
   16:9 cards, `homeColumns` per row and `homeRows` rows per screen; the rest of the list scrolls.
-- `home`: the owner's list in the owner's order (≤ 200, a safety limit), without items that left the catalog or cannot
-  be played (no `playbackAllowed` episode; a channel with `playbackAllowed: false`). With
-  [sections](#home-sections) it is the sections' items, section after section: Home order. `posterUrl` and `backdropUrl`
-  (the catalog's optional landscape image) are relative to the server's base URL, each null without its image;
-  without a backdrop the TV crops the poster to a landscape band.
+- `home`: the owner's list (≤ 200, a safety limit) in [Home order](#home-sections), without items that left the
+  catalog or cannot be played (no `playbackAllowed` episode; a channel with `playbackAllowed: false`). `posterUrl` and
+  `backdropUrl` (the catalog's optional landscape image) are relative to the server's base URL, each null without its
+  image; without a backdrop the TV crops the poster to a landscape band.
 - `continue`: what OK plays, the item's cursor episode ([Play order](#play-order-and-the-cursor)). `status`: `new`
   (never started), `watching` (`positionMs` is the saved position), `finished` (`positionMs` 0: it starts over).
-  `index`/`count`: the position in the item's play order. `continue` is null for a channel (`item.kind: "live"`): OK
-  resolves it by `itemId` at its live edge.
-- `newEpisodes` (0 when none): `playbackAllowed` episodes that entered the catalog (a reload that first carried
-  them) after the later of the TV's last progress report on this item and the moment the item was put on this home
-  list. Episodes present when the server first loaded this catalog never count. Back to 0 as soon as the TV reports
-  progress on any episode of the item. Always 0 for a channel.
-- `homeSections`: how `home` is cut into [sections](#home-sections), in display order, each with `id`, `title`
-  (null for the untitled section), `layout` (`grid`: rows of `homeColumns` cards; `row`: one line of cards that
-  scrolls sideways) and `itemIds`, the ids of its entries in `home`, in order. Only sections with at least one entry
-  in `home` are listed, so `homeSections` is empty when `home` is, and the `itemIds` of all sections, one after
-  another, are exactly the ids of `home` in its order. A TV that ignores `homeSections` shows `home` as one grid.
-  Clients MUST treat an unknown `layout` as `grid`.
+  `index`/`count`: the position in the item's play order. Null for a channel: OK resolves it by `itemId`.
+- `newEpisodes`: `playbackAllowed` episodes that entered the catalog (a reload that first carried them) after the
+  later of the TV's last progress report on this item and the moment the item was put on this home list (episodes
+  present when the server first loaded this catalog never count); 0 once the TV reports progress on any episode of
+  the item, and always for a channel.
+- `homeSections`: how `home` is cut into [sections](#home-sections), in display order, each with `id`, `title` (null
+  for the untitled section), `layout` and `itemIds` (its entries in `home`, in order). Only sections with an entry in
+  `home` are listed, so the `itemIds` of all sections, one after another, are exactly the ids of `home`. A TV that
+  ignores `homeSections` shows `home` as one grid; clients MUST treat an unknown `layout` as `grid`.
 
 ### `GET /api/v1/tv/events`
 
 Server-sent events (`text/event-stream`, `X-Accel-Buffering: no`; reverse proxies must not buffer it).
 
-- On connect: `event: state` `{"version": n}` (id `s<n>`, `retry: 5000`), then `event: app` when a TV app APK is
-  stored, then every unacknowledged command younger than 2 minutes. Later, `event: state` whenever the state
-  version changes.
-- `event: app` `{"versionCode": 300}` (id `a<versionCode>`): a TV app APK is on offer
-  ([`GET /tv/app`](#get-apiv1tvapp)), sent to every open TV stream whenever the stored APK changes (an upload, a fetch from
-  GitHub) and on connect. A TV whose own versionCode is lower updates as [TV app updates](#tv-app-updates) says; TVs
-  ignore event types they do not know. `{"versionCode": 0}` (id `a0`) is sent to every open stream when the owner
-  removes the APK: nothing is on offer any more (`GET /tv/app` answers `204`). Nothing is sent on connect while no APK
-  is stored.
+- On connect: `event: state` `{"version": n}` (id `s<n>`, `retry: 5000`), then `event: app` if an APK is stored,
+  then every unacknowledged command younger than 2 minutes; later `event: state` whenever the state version changes.
+- `event: app` `{"versionCode": 300}` (id `a<versionCode>`): an APK is on offer ([`GET /tv/app`](#get-apiv1tvapp)),
+  sent on connect and to every open stream whenever the stored APK changes (an upload, a fetch from GitHub); a TV
+  whose own versionCode is lower updates as [TV app updates](#tv-app-updates) says. When the owner removes the APK,
+  every open stream gets `{"versionCode": 0}` (id `a0`): nothing is on offer (`GET /tv/app` answers `204`).
 - `event: command` `{"id": 12, "type": "play", "payload": {"itemId": "…", "episodeId": "…"}}` (id `c<id>`), one of
   the [commands](#commands). The TV acknowledges every command it receives, also those it ignores, with
   `POST /tv/commands/:id/ack`; unacknowledged ones are replayed on reconnect for 2 minutes (deleted after 7 days).
 - A `: ping` comment every 20 seconds. The TV should treat 60 s of silence as a dead connection, reconnect with
-  backoff, and also poll `/tv/state` every 60 s and when it comes to the foreground.
+  backoff, poll `/tv/state` every 60 s and in the foreground, and ignore event types it does not know.
 
 #### Commands
 
@@ -189,13 +169,13 @@ the TV gets `{"id", "type", "payload"}`. What a command does is the TV's busines
 
 | `type` | Request fields | `payload` | On the TV |
 |---|---|---|---|
-| `play` | `episodeId` (allowed episode) or `itemId`, see [Remote play](#remote-play-and-command-results) | `{"itemId", "episodeId"}`; `episodeId` is null for a channel | plays that episode (from its saved position), or the channel at its live edge |
+| `play` | `episodeId` (allowed episode) or `itemId`, `positionMs`?, see [Remote play](#remote-play-and-command-results) | `{"itemId", "episodeId", "positionMs"?}` | plays that episode (from its saved position), or the channel |
 | `stop` | | `{}` | saves and goes home |
-| `pause` / `resume` | | `{}` | pauses / plays on; on a channel ignored (reason `live`): a channel is never paused |
+| `pause` / `resume` | | `{}` | pauses / plays on; on a channel ignored (reason `live`) |
 | `seek` | exactly one of `deltaMs` (integer −3 600 000…3 600 000) and `positionMs` (integer 0…10¹²) | `{"deltaMs"}` or `{"positionMs"}` | jumps by `deltaMs` (negative: back), or to `positionMs`; on a channel ignored (reason `live`) |
-| `next` / `previous` | | `{}` | switches to the nearest `playbackAllowed` episode after / before the current one in play order, if any; while a channel plays, loads or shows its error screen, to the channel after / before it on the TV's home list, in Home order without wrap-around (ignored, reason `no_channel`, at the ends) |
+| `next` / `previous` | | `{}` | switches to the nearest `playbackAllowed` episode after / before the current one in play order, if any; while a channel plays, loads or shows its error screen, to the channel after / before it in the TV's Home order, without wrap-around (ignored, reason `no_channel`, at the ends) |
 | `message` | `text` (1–200 characters with a non-space; trimmed), `durationSec`? (integer 3–120, default 15) | `{"text", "durationSec"}` (default applied by the server) | shows `text` as a large banner, on Home and in the player, for `durationSec` seconds |
-| `update` | | `{"versionCode"}` (the stored APK's; `409 no_apk` when none is stored) | installs the stored TV app APK now, guided on the screen when the TV cannot install silently, see [TV app updates](#tv-app-updates) |
+| `update` | | `{"versionCode"}` (the stored APK's; `409 no_apk` when none is stored) | installs the stored APK now, see [TV app updates](#tv-app-updates) |
 
 The transport commands (`stop`, `pause`, `resume`, `seek`, `next`, `previous`) act only while the TV is in the
 player; otherwise they are acknowledged and ignored. A TV also acknowledges and ignores command types it does not
@@ -203,9 +183,8 @@ know, so new types can be added within v1; the server refuses unknown types (`40
 
 ### `GET /api/v1/tv/app`
 
-The TV app APK on offer: `200 {"versionName": "0.3.0", "versionCode": 300, "sha256": "<64 hex>", "size": 12345678,
-"auto": true}`, or `204` (no body) when none is stored. `auto` is the config's `appUpdates.auto`: whether a TV that
-can install silently does so by itself.
+The APK on offer: `200 {"versionName": "0.3.0", "versionCode": 300, "sha256": "<64 hex>", "size": 12345678,
+"auto": true}`, or `204` when none is stored. `auto` (`appUpdates.auto`): a TV that can install silently does so.
 
 ### `GET /api/v1/tv/app/apk`
 
@@ -215,18 +194,14 @@ checks the size and sha256 against `GET /tv/app` before installing; Android chec
 
 #### TV app updates
 
-- A TV learns of an APK from `event: app` (live or on connect) and from `GET /tv/app`; it compares `versionCode`
-  with its own. `versionCode: 0` means the APK was removed: nothing is on offer.
-- `auto: true` and a `silent` TV: it downloads, verifies and installs the APK by itself while idle (on Home, not
-  playing); the owner sees `Device.app.update: "pending"` until the TV reports the new version.
-- A `guided` TV (or `auto: false`): nothing happens on its own; the owner sends the [`update` command](#commands)
-  when someone is at the TV (`Device.app.update: "needs_install_now"`), and the TV shows Android's install screen
-  (a TV that can install silently installs at once).
+- A TV learns of an APK from `event: app` and `GET /tv/app` and compares `versionCode` with its own.
+- `auto: true` and a `silent` TV: it downloads, verifies and installs the APK by itself while idle (on Home).
+- A `guided` TV (or `auto: false`): the owner sends the [`update` command](#commands) when someone is at the TV,
+  which shows Android's install screen (a TV that can install silently installs at once).
 - `update` results ([command results](#remote-play-and-command-results)): `done` with `installing` or `prompted`
   (Android's install screen is up); `ignored` with `up_to_date`, `not_newer`, `busy`, `not_ready`, `declined` or
   `timeout`; `failed` with `download`, `too_large`, `verify`, `wrong_package`, `bad_archive` or `install_<status>`
-  (Android's install status in lower case, e.g. `install_failure_incompatible`). The new version shows up in the
-  TV's next User-Agent.
+  (Android's install status in lower case, e.g. `install_failure_incompatible`). The TV's next User-Agent shows it.
 
 ### `GET /api/v1/tv/items/:itemId`
 
@@ -235,55 +210,47 @@ The hidden menu's episode list, for any catalog item (`404 unknown_item`).
 ```json
 {
   "item": { "id", "kind", "title", "year", "posterUrl", "backdropUrl", "originalTitle", "synopsis", "genres" },
-  "cursorEpisodeId": "show.e2",
-  "episodes": [
+  "cursorEpisodeId": "show.e2", "episodes": [
     { "id": "show.e1", "index": 0, "season": 1, "number": 1, "title": "Pilot", "label": null, "durationMs": 1200000,
-      "playbackAllowed": true,
-      "progress": { "positionMs": 1190000, "durationMs": 1200000, "status": "finished", "updatedAt": "…" },
+      "playbackAllowed": true, "progress": { "positionMs": 1190000, "durationMs": 1200000, "status": "finished",
+                                         "updatedAt": "…" },
       "sources": [ { "id": "tr-dub", "label": null, "languages": { "audio": ["tr"], "subtitles": [] } } ] }
   ]
 }
 ```
 
-A channel (`item.kind: "live"`) has no episodes and no cursor: it answers
-`"channel": {"playbackAllowed", "sources": [{"id", "label", "languages"}]}` instead of `cursorEpisodeId` and
-`episodes`.
+A channel answers `"channel": {"playbackAllowed", "sources": [{"id", "label", "languages"}]}` instead of
+`cursorEpisodeId` and `episodes`.
 
 ### `POST /api/v1/tv/resolve`
 
-`{"episodeId": "…", "sourceId"?: "…", "exclude"?: ["sourceId", …], "trigger"?: "…", "commandId"?: 12}` → what to
-play. A channel is resolved by its item id, `{"itemId": "…", …}` with the same other fields: a body names exactly one
-of `episodeId` and `itemId`, and `itemId` must name a channel. `exclude` holds at most 64 ids. `trigger` (`viewer`,
-`autoplay`, `next`, `command`) and `commandId` (integer ≥ 1, with `trigger: "command"`) tell the
-[viewing history](#viewing-history) what started the playback; a `commandId` that is not a `play`, `next` or
-`previous` command of this TV is ignored, and the viewing gets trigger `command` with the TV as its actor. A request
-the TV aborts answers `503 aborted`.
+`{"episodeId": "…", "sourceId"?: "…", "exclude"?: ["sourceId", …], "trigger"?: "…", "commandId"?: 12}`, or
+`{"itemId": "…", …}` for a channel (exactly one of `episodeId` and `itemId`) → what to play. `exclude` holds at most
+64 ids. `trigger` (`viewer`, `autoplay`, `next`, `command`) and `commandId` (integer ≥ 1, with `trigger: "command"`)
+tell the [viewing history](#viewing-history) what started the playback; a `commandId` that is not a `play`, `next` or
+`previous` command of this TV is ignored (the viewing gets trigger `command` with the TV as its actor). An aborted
+request answers `503 aborted`.
 
 ```json
 {
-  "sessionId": "Q8m…",
-  "sourceId": "tr-dub",
-  "media": { "kind": "hls", "url": "https://…/master.m3u8" },
+  "sessionId": "Q8m…", "sourceId": "tr-dub", "media": { "kind": "hls", "url": "https://…/master.m3u8" },
   "subtitleTracks": [ { "url": "https://…/tr.vtt", "language": "tr", "format": "vtt", "label": null } ],
-  "languages": { "audio": ["tr"], "subtitles": [] },
-  "alternatives": ["multi", "unknown"],
+  "languages": { "audio": ["tr"], "subtitles": [] }, "alternatives": ["multi", "unknown"],
   "next": { "episodeId": "show.e2", "season": 1, "number": 2, "title": "Season finale", "label": null },
   "item": { "id", "kind", "title", "year", "posterUrl", "backdropUrl" },
-  "episode": { "id": "show.e1", "index": 0, "count": 5, "season": 1, "number": 1, "title": "Pilot", "label": null, "durationMs": 1200000 },
-  "resume": { "positionMs": 90000, "durationMs": 1200000 },
-  "expiresAt": null
+  "episode": { "id": "show.e1", "index": 0, "count": 5, "season": 1, "number": 1, "title": "Pilot", "label": null,
+               "durationMs": 1200000 },
+  "resume": { "positionMs": 90000, "durationMs": 1200000 }, "expiresAt": null
 }
 ```
 
-A channel's response has `item.kind: "live"` and `"next": null, "episode": null, "resume": null`: it plays at its
-live edge. `media.kind` is `hls`, `dash`, `mp4` or `ts` (progressive MPEG-TS over HTTP, an endless response for a
-channel; [Source](catalog-bundle-v1.md#source)).
+A channel's response has `"next": null, "episode": null, "resume": null`. `media.kind` is `hls`, `dash`, `mp4` or
+`ts` (progressive MPEG-TS over HTTP, an endless response for a channel; [Source](catalog-bundle-v1.md#source)).
 
 Source selection:
 
 1. `403 not_allowed` when the episode's (or the channel's) `playbackAllowed` is false; `404 unknown_episode` /
-   `unknown_item` / `unknown_source`; `400 has_episodes` (name an episode of this item) when `itemId` names an item
-   that is played through its episodes.
+   `unknown_item` / `unknown_source`; `400 has_episodes` when `itemId` names an item played through its episodes.
 2. Candidates are the episode's (or the channel's) sources minus `exclude` (or only `sourceId` when given), in
    bundle order, stable-sorted by the device's preferred audio language: **match** (some `languages.audio` tag has the
    same primary subtag, or `audio: []` = no dialogue, or no preference) **> unknown** (`audio: null`) **> known
@@ -293,42 +260,38 @@ Source selection:
    budget for the whole request (`resolver.budgetMs`, 30 s), so a TV should allow ~35 s for this call. An adapter
    source that fails is skipped (and moved last for 10 minutes) and the next candidate is tried.
 4. A plain URL without upstream headers goes to the TV as-is. Media that needs upstream `headers` (bundle
-   `media.headers` or an adapter result's `headers`) and inline playlists come back as a **server-relative** proxy
-   URL, `/p/<token>/index.m3u8` (HLS), `/p/<token>/video.mp4` (MP4) or `/p/<token>/stream.ts` (MPEG-TS), which the
-   TV resolves against its server base URL; upstream headers never leave the server. Subtitle tracks that need
-   headers come back as `/p/<token>/sub/<n>.<ext>`. With `proxy.always`, every HLS/MP4/MPEG-TS stream and subtitle
-   track is proxied. DASH is never proxied in v1, so DASH that needs headers cannot be served. An inline playlist is
-   served as given for the whole session, so it suits VOD only: a channel's adapter returns a `url`
-   ([ResolveResult](resolver-module-v1.md#resolveresult)).
+   `media.headers` or an adapter result's `headers`) and inline playlists (VOD only,
+   [ResolveResult](resolver-module-v1.md#resolveresult)) come back as a **server-relative** proxy URL,
+   `/p/<token>/index.m3u8` (HLS), `/p/<token>/video.mp4` (MP4) or `/p/<token>/stream.ts` (MPEG-TS), which the TV
+   resolves against its server base URL; upstream headers never leave the server. Subtitle tracks that need headers
+   come back as `/p/<token>/sub/<n>.<ext>`. With `proxy.always`, every HLS/MP4/MPEG-TS stream and subtitle track is
+   proxied. DASH is never proxied in v1, so DASH that needs headers cannot be served.
 5. Nothing playable → `502 no_playable_source` with `tried: [{sourceId, code, adapterId?, name?}]`. Codes:
    `adapter_unavailable` (no resolver module provides the adapter), `unsupported` (DASH that needs headers),
    `timeout`, `abort`, `error`, `empty` (the adapter returned no result). `name` is the error's class name (never
-   its message): `InvalidResult` for a result that fails validation, `BudgetExhausted` for sources skipped because
-   the request's time budget ran out.
+   its message): `InvalidResult` for a result that fails validation, `BudgetExhausted` once the budget ran out.
 
 - `alternatives`: the remaining playable candidates in order (sources that cannot be served at all, such as a
   missing adapter or DASH that needs headers, left out). On a player error the TV re-resolves with the failed
   source in `exclude` and continues at the same position (a channel: at its live edge).
 - `next`: the episode auto-next would start (next `playbackAllowed` episode in play order), or null at the end of
-  the item or when the episode (or item) has `autoAdvance: false`; always null for a channel.
+  the item or when the episode (or item) has `autoAdvance: false`.
 - `resume`: the saved position when the episode is being watched (the TV applies its own resume threshold), else
-  null (always for a channel). `sessionId` identifies this playback in progress reports.
-- `expiresAt`: the adapter's validity hint for the stream (ISO 8601), or null. `languages` and `subtitleTracks` are
-  the adapter result's when it gives them, else the bundle source's.
+  null. `sessionId` identifies this playback in progress reports.
+- `expiresAt`: the adapter's validity hint for the stream, or null. `languages` and `subtitleTracks` are the adapter
+  result's when it gives them, else the bundle source's.
 
 ## Media proxy
 
 `GET /p/<token>/…` serves header-bound and inline-playlist streams. The token (32 random bytes, base64url) is the
 credential; the TV's media player sends no device token. Sessions live in memory only and slide with use
-(`proxy.sessionTtlSec`, 6 h) up to 12 h; an owner keeps at most two (resolving a third ends the oldest). Owners are a
-TV (its device id) and, separately, a TV's [Listen along](#listen-along) scope, so the phone never ends the TV's
-sessions.
+(`proxy.sessionTtlSec`, 6 h) up to 12 h; an owner (a TV, and separately its [Listen along](#listen-along) scope, so
+the phone never ends the TV's sessions) keeps at most two: resolving a third ends the oldest.
 
 | Route | |
 |---|---|
 | `GET /p/<token>/index.m3u8` | the session's HLS playlist: fetched upstream with the session's headers (or the adapter's inline text), every URI rewritten |
-| `GET /p/<token>/video.mp4` | the session's MP4, streamed; `Range` is forwarded and `206`/`Content-Range` pass back |
-| `GET /p/<token>/stream.ts` | the session's MPEG-TS stream (media kind `ts`), streamed; `Range` is forwarded and `206`/`Content-Range` pass back |
+| `GET /p/<token>/video.mp4`, `/p/<token>/stream.ts` | the session's MP4 or MPEG-TS stream (media kind `ts`), streamed; `Range` is forwarded and `206`/`Content-Range` pass back |
 | `GET /p/<token>/u/<ref>` | a URI from a rewritten playlist: another playlist (rewritten in turn) or a segment, key, init section or subtitle segment (streamed, `Range` forwarded) |
 | `GET /p/<token>/sub/<n>.<vtt\|srt\|ttml>` | subtitle track `n` of the resolve response, with that track's headers |
 
@@ -337,24 +300,20 @@ sessions.
   are resolved against the playlist's own URL (after redirects) or the inline `baseUrl` and written as relative
   `u/<ref>` links. `data:` and other non-HTTP URIs are left alone. DASH manifests are not rewritten (v1).
 - **`<ref>`** = `<p|r>.<base64url of the URL>.<HMAC>[.<extension>]`, signed with a per-session key: only URLs the
-  proxy wrote itself can be fetched. A wrong or foreign ref answers `404`. The extension is a hint for players that
-  infer the format from the path.
-- **Destinations:** upstream playlist text and redirects name the URLs the proxy fetches, so every upstream request
-  (the session's URL, each URL a playlist names, each redirect) is checked first. The server resolves the host
-  itself and connects only to an address it checked. Loopback, private (RFC 1918, unique-local `fc00::/7`),
-  link-local (`169.254.0.0/16`, the cloud metadata address, `fe80::/10`), CGNAT (`100.64.0.0/10`), multicast,
-  reserved and unspecified addresses, the same addresses inside IPv4-mapped or NAT64 IPv6, and IP literals in these
-  ranges are refused with `502 {"error":"egress_denied"}`, unless the owner lists the upstream in
-  `proxy.privateUpstreams` ([Configuration](#configuration)). So are URLs with credentials (`user:pass@`) and
-  non-HTTP schemes. The proxy follows redirects (`301`/`302`/`303`/`307`/`308`) itself, at most 5 per request, each
-  `Location` checked like the first URL; one more answers `502 upstream_error`. Credential-type request headers
-  (`Authorization`, `Cookie`, and names containing `token`, `secret`, `passw`, `api-key`/`apikey` or `session`) go
-  only to the origin of the session's own URL (the adapter's inline `baseUrl`; a subtitle track's own URL for
-  `/sub/`); the other headers (`Referer`, `User-Agent`, …) go with every request of the session.
+  proxy wrote itself can be fetched; a wrong or foreign ref answers `404`. The extension is a hint for players.
+- **Destinations:** every upstream request (the session's URL, each URL a playlist names, each redirect) is checked
+  first; the server resolves the host itself and connects only to an address it checked. Loopback, private (RFC 1918,
+  unique-local `fc00::/7`), link-local (`169.254.0.0/16`, the cloud metadata address, `fe80::/10`), CGNAT
+  (`100.64.0.0/10`), multicast, reserved and unspecified addresses, the same inside IPv4-mapped or NAT64 IPv6, and IP
+  literals in these ranges are refused with `502 {"error":"egress_denied"}`, unless the owner lists the upstream in
+  [`proxy.privateUpstreams`](#configuration). So are URLs with credentials (`user:pass@`) and non-HTTP schemes. The
+  proxy follows redirects (`301`/`302`/`303`/`307`/`308`) itself, at most 5 per request, each `Location` checked like
+  the first URL. Credential-type request headers (`Authorization`, `Cookie`, and names containing `token`, `secret`,
+  `passw`, `api-key`/`apikey` or `session`) go only to the origin of the session's own URL (the adapter's inline
+  `baseUrl`; a subtitle track's own URL for `/sub/`); the others (`Referer`, `User-Agent`, …) with every request.
 - **Streaming:** segments, MP4 and MPEG-TS bodies pass through as they arrive, never buffered (a channel's
   `stream.ts` never ends); a TV that disconnects cancels the upstream request. Only `Content-Type`,
-  `Content-Length`, `Content-Range`, `Accept-Ranges`, `Last-Modified` and `ETag` are passed back; cookies, redirects
-  and other upstream headers are not.
+  `Content-Length`, `Content-Range`, `Accept-Ranges`, `Last-Modified` and `ETag` are passed back.
 - **Errors:** a malformed token, an entry file of another kind than the session's, or an unknown subtitle track
   `404 not_found`; unknown or expired session `410 {"error":"gone"}`. An upstream `401`/`403`/`410` marks the session
   **stale**: this and every later request answer `410 {"error":"stale"}`, so the TV re-resolves (the same source
@@ -366,38 +325,30 @@ sessions.
 - **Channels:** a channel left on for more than 12 h outlives its session and gets `410 gone`; the TV re-resolves
   (the same source first) and its [viewing](#viewing-history) continues.
 - **`proxy.alignTsSegments`** (off by default): for segments of proxied HLS (no `Range`, not
-  `.m4s/.mp4/.aac/.vtt/…`), junk before the first MPEG-TS packet (up to 4 KiB, recognized by five 0x47 sync bytes
-  188 bytes apart) is cut off and the type set to `video/mp2t`. Some sites prefix segments with such bytes; Media3
-  rejects segments with more than a few hundred junk bytes ("Cannot find sync byte"). It applies to proxied HLS
-  segments only, never to `stream.ts`.
+  `.m4s/.mp4/.aac/.vtt/…`; never `stream.ts`), junk before the first MPEG-TS packet (up to 4 KiB, recognized by five
+  0x47 sync bytes 188 bytes apart) is cut off and the type set to `video/mp2t`. Some sites prefix segments with such
+  bytes, and Media3 rejects segments with more than a few hundred ("Cannot find sync byte").
 
 ### `POST /api/v1/tv/progress`
 
 `{"sessionId"?: "…", "episodeId": "…", "positionMs": 90000, "durationMs"?: 1200000, "status": "playing",
-"playing"?: true, "ageMs"?: 0}` → `{"ok": true, "version": 8}`; `404 unknown_episode`.
-
-A channel's report names its item and carries no position: `{"sessionId"?: "…", "itemId": "…", "status": "playing",
-"playing"?: true, "ageMs"?: 0}` → `{"ok": true, "version": 8}`, with no `positionMs` or `durationMs`, and `status`
-`playing` or `stopped` only (a channel is never paused and never finishes); `404 unknown_item`, `400 has_episodes`
-(the item is played through its episodes).
+"playing"?: true, "ageMs"?: 0}` → `{"ok": true, "version": 8}`; `404 unknown_episode`. A channel's report is
+`{"sessionId"?, "itemId", "status", "playing"?, "ageMs"?}`, with no position and `status` `playing` or `stopped`
+only; `404 unknown_item`, `400 has_episodes` (the item is played through its episodes).
 
 - `status`: `playing`, `paused`, `stopped` (left the player) or `finished` (ended, or stopped within the TV's end
   threshold). The TV reports every 15 s while playing and on pause, seek, stop, end, every rebuffer stall and its
-  end, and when the app goes to the background.
+  end, leaving a channel, and when the app goes to the background.
 - `playing` (default `status === "playing"`): whether the player was actually advancing when it sampled
   `positionMs` (a rebuffer stall is `status: "playing", playing: false`). `ageMs` (0–60000): how long before sending
-  the position was sampled (a queued report). They anchor the TV's timeline for [Listen along](#listen-along):
-  `anchor.atMs = receipt time − ageMs`.
+  the position was sampled (a queued report). They anchor the TV's timeline for [Listen along](#listen-along).
 - An episode's `playing`/`paused`/`stopped` reports save the position (status `watching`) and point the item's cursor
-  at this episode.
-- `finished` marks the episode finished and moves the cursor to the next `playbackAllowed` episode in play order,
-  regardless of `autoAdvance` (which only governs automatic playback), wrapping to the first allowed episode after
-  the last one (a wrapped cursor, see [Play order](#play-order-and-the-cursor)).
+  at this episode. `finished` marks the episode finished and moves the cursor to the next `playbackAllowed` episode
+  in play order, regardless of `autoAdvance` (which only governs automatic playback), wrapping to the first allowed
+  episode after the last one (a wrapped cursor, see [Play order](#play-order-and-the-cursor)).
 - `stopped` and `finished` reports of an episode and cursor moves bump the state version; plain heartbeats do not.
-- A channel's report saves no position, moves no cursor and never bumps the state version (`version` is the current
-  one). It writes now playing with null positions ([`GET …/now`](#devices)) and is the heartbeat of the TV's running
-  [viewing](#viewing-history). The TV reports a channel every 15 s while playing, on every rebuffer stall and its
-  end, and when it leaves the channel or the app goes to the background.
+- A channel's report saves no position, moves no cursor and never bumps the state version; it writes now playing
+  ([`GET …/now`](#devices)) and is the heartbeat of the TV's running [viewing](#viewing-history).
 
 ### `POST /api/v1/tv/commands/:id/ack`
 
@@ -417,32 +368,30 @@ owner sees it on the admin page ([Problem reports](#problem-reports)).
 → `202 {"ok": true}`; `429 too_many_problems` (more than 30 reports in 10 minutes from one TV; `Retry-After`). A
 report for an item or episode the catalog does not have is stored all the same.
 
-- Required: `kind` (`playback`, `resolve`, `network` or `other`) and `code` (1–64 characters of
-  `A-Z a-z 0-9 _ . : -`).
-- Optional, no other fields and no `null`s: `ageMs` (0–86 400 000: how long ago it happened, for a queued report;
-  stored time = receipt − `ageMs`), `itemId`, `episodeId`, `sourceId` (catalog ids), `sessionId` (≤ 64 characters:
-  the resolve's `sessionId`; when it names this TV's playback session, a missing `episodeId`/`sourceId` is taken
-  from it, and when it names a channel's session, a missing `itemId`/`sourceId`), `positionMs` (≥ 0), `httpStatus`
-  (100–599), `detail` (≤ 500 characters), `appVersion` (≤ 40 characters).
+- Required: `kind` (`playback`, `resolve`, `network` or `other`) and `code` (1–64 of `A-Z a-z 0-9 _ . : -`).
+- Optional, no other fields and no `null`s: `ageMs` (0–86 400 000: how long ago it happened; stored time = receipt −
+  `ageMs`), `itemId`, `episodeId`, `sourceId` (catalog ids), `sessionId` (≤ 64 characters: the resolve's
+  `sessionId`; when it names this TV's playback session, a missing `episodeId`/`sourceId`, or for a channel's
+  session a missing `itemId`/`sourceId`, is taken from it), `positionMs` (≥ 0), `httpStatus` (100–599), `detail`
+  (≤ 500 characters), `appVersion` (≤ 40 characters).
 - `code`, `detail` and `appVersion` are redacted before they are stored: URLs become `<url host>`, runs of 20 or more
   letters, digits, `_` and `-` become `<token>` unless they read as an identifier (`SCREAMING_SNAKE`, `snake_case`,
   `CamelCase` without digits, such as player error names).
 
 ## Play order and the cursor
 
-Each device has, per item, a **cursor**: the episode OK plays (with the one exception below). The server maintains
-it from progress reports and the owner can overwrite it (`PUT …/cursor`). Without a cursor, OK plays the first
-allowed episode that is not finished (or the first allowed one when all are). A cursor on an episode that is no
-longer allowed moves to the next allowed one. Episode array order in the bundle is the play order; `season`/`number`
-are display only. Channels have no cursor and no saved position: OK plays a channel at its live edge.
+Each device has, per item, a **cursor**: the episode OK plays. The server maintains it from progress reports and the
+owner can overwrite it (`PUT …/cursor`). Without a cursor, OK plays the first allowed episode that is not finished
+(or the first allowed one when all are). A cursor on an episode that is no longer allowed moves to the next allowed
+one. Episode array order in the bundle is the play order; `season`/`number` are display only.
 
 **Episodes appended to a finished item.** A cursor the server placed by wrapping (a `finished` report on the item's
 last allowed episode) marks the item as watched to the end. When a later catalog reload adds episodes to the item
-(episodes that first entered the catalog after the wrap), OK plays the first of them in play order that has
-`playbackAllowed` instead of the cursor episode; when there is none, the cursor episode. `continue` in
-[`GET /tv/state`](#get-apiv1tvstate), `cursorEpisodeId` in [`GET /tv/items/:itemId`](#get-apiv1tvitemsitemid) and
-`continue` on the admin device page follow this rule. Any other progress report on the item, or the owner's
-`PUT …/cursor`, makes the cursor an ordinary one again.
+(first entering the catalog after the wrap), OK plays the first of them in play order that has `playbackAllowed`
+instead of the cursor episode (when there is none, the cursor episode). `continue` in
+[`GET /tv/state`](#get-apiv1tvstate) and on the admin device page and `cursorEpisodeId` in
+[`GET /tv/items/:itemId`](#get-apiv1tvitemsitemid) follow this rule. Any other progress report on the item, or the
+owner's `PUT …/cursor`, makes the cursor an ordinary one again.
 
 ## Admin API
 
@@ -451,22 +400,22 @@ last allowed episode) marks the item as watched to the end. When a later catalog
 | Route | Body | Response |
 |---|---|---|
 | `GET /api/v1/admin/devices` | | `{"devices": [Device & {"homeCount"}]}` |
-| `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "backdropUrl", "missing", "playable", "continue", "newEpisodes"}], "homeMax": 200, "sections": [Section], "sectionsMax": 20}` (`home` in Home order, see [Home sections](#home-sections)); `playable` (boolean): the item has a `playbackAllowed` episode, or is a channel with `playbackAllowed: true` (false for a missing item); `continue` and `newEpisodes` as in [`GET /tv/state`](#get-apiv1tvstate) (`null` and 0 for a missing item and for a channel) |
+| `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "backdropUrl", "missing", "playable", "continue", "newEpisodes"}], "homeMax": 200, "sections": [Section], "sectionsMax": 20}` (`home` in [Home order](#home-sections)); `playable`: the item has a `playbackAllowed` episode, or is a channel with `playbackAllowed: true` (false for a missing item); `continue` and `newEpisodes` as in [`GET /tv/state`](#get-apiv1tvstate) (`null` and 0 for a missing item) |
 | `PATCH /api/v1/admin/devices/:id` | any of `name`, `uiLanguage` (`"tr"`/`"en"`/null), `preferredAudioLanguage` (tag/null), `subtitlesLanguage` (tag/null = off), `autoplayOnStart` (boolean), `homeColumns` (integer 3–6), `homeRows` (integer 1–4) | `{"device": Device}` |
 | `DELETE /api/v1/admin/devices/:id` | | `204`; the TV must pair again |
 | `PUT /api/v1/admin/devices/:id/home` | `{"itemIds": [...]}` (≤ 200, in display order) or `{"sections": [...]}`, see [Home sections](#home-sections) | `{"version", "home", "sections"}` |
 | `PUT /api/v1/admin/devices/:id/cursor` | `{"itemId", "episodeId"}` | `{"version"}` |
-| `GET /api/v1/admin/devices/:id/progress` | | `{"cursors": [...], "progress": [...]}` with `itemTitle`, `kind`, `season`, `number`, `episodeTitle` (or `missing: true`); channels have neither and are never listed |
-| `GET /api/v1/admin/devices/:id/now?seq=&wait=` | | `{"online", "serverNowMs", "seq", "nowPlaying": {itemId, itemKind, episodeId, sourceId, itemTitle, episodeTitle, positionMs, durationMs, state, updatedAt, playing, viewingId} \| null, "anchor": {positionMs, atMs, playing, rate} \| null}`; for a channel (`itemKind: "live"`) `episodeId`, `episodeTitle`, `positionMs` and `durationMs` are null, `state` is `starting`, `playing` or `stopped`, and `anchor` is null; with `seq` equal to the current `seq` and `wait` (0–25 s, default 0) the answer waits for the next resolve or progress report (long-poll), see [Listen along](#listen-along) |
-| `POST /api/v1/admin/devices/:id/commands` | `{"type": "play", "episodeId" \| "itemId"}` (a channel by its `itemId`, see [Remote play](#remote-play-and-command-results)), `{"type": "stop"}`, `pause`, `resume`, `next`, `previous`, `{"type": "seek", "deltaMs" \| "positionMs"}`, `{"type": "message", "text", "durationSec"?}`, `{"type": "update"}`, see [Commands](#commands) | `202 {"id", "online"}`; `online: false`: queued, the TV gets it if it connects within 2 minutes |
+| `GET /api/v1/admin/devices/:id/progress` | | `{"cursors": [...], "progress": [...]}` with `itemTitle`, `kind`, `season`, `number`, `episodeTitle` (or `missing: true`); channels are never listed |
+| `GET /api/v1/admin/devices/:id/now?seq=&wait=` | | `{"online", "serverNowMs", "seq", "nowPlaying": {itemId, itemKind, episodeId, sourceId, itemTitle, episodeTitle, positionMs, durationMs, state, updatedAt, playing, viewingId} \| null, "anchor": {positionMs, atMs, playing, rate} \| null}`; for a channel `state` is `starting`, `playing` or `stopped` and `anchor` is null; with `seq` equal to the current `seq` and `wait` (0–25 s, default 0) the answer waits for the next resolve or progress report, see [Listen along](#listen-along) |
+| `POST /api/v1/admin/devices/:id/commands` | `{"type", …}`, see [Commands](#commands) | `202 {"id", "online"}`; `online: false`: queued, the TV gets it if it connects within 2 minutes |
 | `GET /api/v1/admin/devices/:id/problems?limit=` | | `{"problems": [Problem]}`, newest first (`limit` default 50, at most 100), see [Problem reports](#problem-reports) |
 | `DELETE /api/v1/admin/devices/:id/problems` | | `204`; forgets the TV's problems |
 
 `Device` = `{"id", "name", "status": "pending"|"active", "online", "createdAt", "lastSeenAt", "stateVersion",
-"settings": {stored values, null = default}, "effective": {resolved values}, "problems": {"recent", "lastAt"}}`.
-`settings`/`effective` hold `uiLanguage`, `preferredAudioLanguage`, `subtitlesLanguage`, `autoplayOnStart` (boolean,
-false by default) and `homeColumns`/`homeRows` (4 and 2 by default); with no server default, both show the stored value.
-`problems.recent`: problems in the last 24 hours; `lastAt`: when the latest stored one happened (ISO, or null). `app` =
+"settings": {stored values, null = default}, "effective": {resolved values}, "problems": {"recent", "lastAt"}, "app"}`.
+`settings`/`effective` hold `uiLanguage`, `preferredAudioLanguage`, `subtitlesLanguage`, `autoplayOnStart` (false by
+default) and `homeColumns`/`homeRows` (4 and 2 by default); with no server default, both show the stored value.
+`problems.recent`: problems in the last 24 hours; `lastAt`: when the latest stored one happened (or null). `app` =
 `{"version", "versionCode", "androidSdk", "capability": "silent"|"guided", "reportedAt", "update"}` as the TV's
 [User-Agent](#tv-api) last reported it (each null until it does; `reportedAt`: when it first reported these values),
 with `update`: `unknown` (never reported, or no APK stored), `up_to_date` (its versionCode ≥ the stored APK's),
@@ -474,15 +423,13 @@ with `update`: `unknown` (never reported, or no APK stored), `up_to_date` (its v
 app on a `guided` TV, or `auto` off: send [`update`](#commands)).
 
 Errors. Home list: `400 too_many_items` (`max`), `duplicate_item`, `unknown_item`, `not_playable` (`itemId`: no
-`playbackAllowed` episode, or a channel with `playbackAllowed: false`), checked only for items not already on the
-list: one a catalog reload left missing or unplayable may stay, so the list can still be reordered or shortened.
-Cursor: `404 unknown_item`,
-`400 unknown_episode` (not in this item; always for a channel, which has no cursor), `400 not_allowed`; setting the
-cursor also forgets that episode's saved position, so "continue from episode X" starts X from the beginning.
-Commands: `400 unknown_episode`, `400 not_allowed`, `404 unknown_item`, `400 not_playable` (play, see
-[Remote play](#remote-play-and-command-results)), `400 invalid_request` (unknown type, a seek with both or neither
-field, a blank or too long message, `durationSec` out of range), `409 no_apk` (update). Every `:id` route:
-`404 unknown_device`.
+`playbackAllowed` episode, or a channel with `playbackAllowed: false`), the last two checked only for items not
+already on the list, so one a catalog reload left missing or unplayable may stay and the list can still be reordered
+or shortened. Cursor: `404 unknown_item`, `400 unknown_episode` (not in this item; always for a channel),
+`400 not_allowed`; setting the cursor also forgets that episode's saved position, so "continue from episode X" starts
+X from the beginning. Commands: `400 unknown_episode`, `400 not_allowed`, `404 unknown_item`, `400 not_playable`
+(play, see [Remote play](#remote-play-and-command-results)), `400 invalid_request` (unknown type, a seek with both or
+neither field, a bad message or `durationSec`), `409 no_apk` (update). Every `:id` route: `404 unknown_device`.
 
 Every change that affects the TV bumps the device's state version and emits a `state` event.
 
@@ -501,16 +448,13 @@ What went wrong on a TV, kept for the owner: the TV's own reports (`origin: "tv"
 | `proxy` · `not_a_playlist` / `playlist_too_large` | the upstream sent something else than a playlist (`detail` gives its media type), or more than 4 MiB, or one the rewrite cannot keep in bounds (more than 250,000 lines, more than 16 MiB rewritten, or a URI longer than 4096 characters) | |
 | `proxy` · `egress_denied` | a URL or redirect of the session named a destination the [proxy refuses](#media-proxy) | `detail`: what was requested and why (`segment: private address`, `credentials in url`, `scheme`); never the URL |
 
-Server-origin proxy problems are recorded at most once per TV and code a minute, so a flapping upstream cannot flood
-the list. [Listen along](#listen-along) resolves and companion proxy sessions are never recorded: they are not the
-TV's problems. `kind` values overall: `playback`, `resolve`, `proxy`, `network`, `other`.
+Server-origin proxy problems are recorded at most once per TV and code a minute; [Listen along](#listen-along)'s
+resolves and proxy sessions never. `kind` values overall: `playback`, `resolve`, `proxy`, `network`, `other`.
 
 `Problem` = `{"id", "at", "origin": "tv"|"server", "kind", "code", "itemId", "itemTitle", "itemKind", "episodeId",
 "episodeTitle", "season", "number", "sourceId", "positionMs", "httpStatus", "detail", "appVersion", "missing"}`:
-`at` is when it happened (ISO); titles come from the current catalog; `missing: true` (with null titles) when the
-episode is not in the catalog (any more). A channel's problem has `itemKind: "live"` and null `episodeId`,
-`episodeTitle`, `season`, `number` and `positionMs`; `missing` then means that the item left the catalog. Each TV
-keeps its newest 100 problems; problems older than 30 days are deleted.
+`at` is when it happened; titles come from the current catalog; `missing: true` (with null titles) when the episode
+(for a channel: the item) is not in the catalog (any more). Each TV keeps its newest 100, for at most 30 days.
 
 ### Catalog
 
@@ -518,8 +462,8 @@ keeps its newest 100 problems; problems older than 30 days are deleted.
 |---|---|
 | `GET /api/v1/admin/catalog` | `{"id", "buildId", "builtAt", "name", "loadedAt", "stats", "adapters", "warnings", "resolver", "server", "builds", "changes", "facets"}`: `resolver` is `{"sha256", "adapters"}` of the loaded module, or null; `server` is `{"version"}` of the running server; `builds` is the loaded catalog's [history](#catalog-history), `[Build]` newest first, at most 50; `changes` is the `Changes` of the newest build that is not the baseline, or null; `facets` is `{"kinds": {"movie", "series", "live"}, "genres": [{"name", "count"}], "years": {"min", "max"} \| null}` over the whole catalog: genres matched case- and accent-insensitively under the first spelling the catalog uses, most common first; `years` null when no film or series has one |
 | `GET /api/v1/admin/catalog/builds/:buildId` | `{"build": Build, "changes": Changes}` for any build in the loaded catalog's history (also one beyond the 50 listed); `404 unknown_build` |
-| `GET /api/v1/admin/catalog/search?q=&kind=&genre=&yearFrom=&yearTo=&playable=&since=&notOnDevice=&sort=&offset=&limit=` | `{"items": [{"id", "kind", "title", "year", "posterUrl", "backdropUrl", "episodeCount", "playableCount", "playable", "firstSeenAt", "newEpisodes"}], "total", "offset"}`: `total` counts every match, `items` is the page from `offset` (default 0), at most `limit` (1–200, default 50; other values fall back to it). `q` (cut to 200 characters) matches title, original title and id, case-, accent- and dotless-ı-insensitively (empty: everything); `kind` a comma list of `movie`, `series`, `live`; `genre` a comma list (any of them, matched like `q`); `yearFrom`/`yearTo` leave out items without a year (channels); `playable=true` only what OK can play; `since` (ISO 8601, UTC without an offset, or epoch ms) items first seen at or after it, or with an episode first seen at or after it; `notOnDevice` leaves out that TV's home list (`404 unknown_device`). `sort` is `title` (default), `year` (newest first, none last) or `newest` (newest in the catalog first); ties by title, then id. `playable` (boolean) as on the [device's home list](#devices); `episodeCount` and `playableCount` null for a channel; `firstSeenAt` when the item first appeared ([catalog history](#catalog-history); null for what the baseline carried); `newEpisodes` the episodes first seen at or after `since` (0 without it, null for a channel). Anything else in a parameter is `400 invalid_request` |
-| `GET /api/v1/admin/catalog/items/:id` | `{"item"}`: the item with all episodes; a channel instead `{…, "kind": "live", "playbackAllowed", "sources": [...]}`, with no `episodes`; sources as `{id, type, label, languages, kind, needsProxy}` (`kind` may be `ts`) or `{…, adapter}`; upstream URLs, headers and refs are not exposed |
+| `GET /api/v1/admin/catalog/search?q=&kind=&genre=&yearFrom=&yearTo=&playable=&since=&notOnDevice=&sort=&offset=&limit=` | `{"items": [{"id", "kind", "title", "year", "posterUrl", "backdropUrl", "episodeCount", "playableCount", "playable", "firstSeenAt", "newEpisodes"}], "total", "offset"}`: `total` counts every match, `items` is the page from `offset` (default 0), at most `limit` (1–200, default 50; other values fall back to it). `q` (cut to 200 characters) matches title, original title and id, case-, accent- and dotless-ı-insensitively (empty: everything); `kind` a comma list of `movie`, `series`, `live`; `genre` a comma list (any of them, matched like `q`); `yearFrom`/`yearTo` leave out items without a year (channels); `playable=true` only what OK can play; `since` (ISO 8601, UTC without an offset, or epoch ms) items first seen at or after it, or with an episode first seen at or after it; `notOnDevice` leaves out that TV's home list (`404 unknown_device`). `sort` is `title` (default), `year` (newest first, none last) or `newest` (newest in the catalog first); ties by title, then id. `playable` as on the [device's home list](#devices); `episodeCount` and `playableCount` null for a channel; `firstSeenAt` when the item first appeared ([catalog history](#catalog-history); null for what the baseline carried); `newEpisodes` the episodes first seen at or after `since` (0 without it, null for a channel). Anything else in a parameter is `400 invalid_request` |
+| `GET /api/v1/admin/catalog/items/:id` | `{"item"}`: the item with all episodes; a channel instead `{…, "kind": "live", "playbackAllowed", "sources": [...]}`; sources as `{id, type, label, languages, kind, needsProxy}` or `{…, adapter}`; upstream URLs, headers and refs are not exposed |
 | `POST /api/v1/admin/catalog/reload` | re-reads the bundle from `catalog.dir` (a symlink there is followed anew on each reload): `200 {"catalog"}` (the object `GET /admin/catalog` returns), or `422 {"error": "invalid_catalog", "issues"}` and the previous catalog stays active (also when the bundle needs an adapter the resolver module does not provide). The whole bundle is validated, including a hash of every poster, so a large catalog takes a while. `SIGHUP` does the same. After a successful reload all devices get a new state version. The resolver module is not re-read: a new module needs a restart. |
 
 #### Catalog history
@@ -528,19 +472,18 @@ The server records each build of a catalog id that it loads, at start and on eve
 recorded last (a restart, a reload of the same bundle) records nothing.
 
 `Build` = `{"buildId", "builtAt", "loadedAt", "baseline", "counts": {"items", "episodes"}, "added": {"items",
-"episodes"}, "removed": {"items", "episodes"}}`: `builtAt` comes from the bundle, `loadedAt` (ISO) is when this
-server loaded it; `counts` is what the build holds, `added`/`removed` what changed against the build loaded before it
-(exact counts). `baseline: true` marks the first build the server loaded for this catalog id: everything in it was
-already there, nothing counts as new, and its `added`/`removed` are 0.
+"episodes"}, "removed": {"items", "episodes"}}`: `builtAt` comes from the bundle, `loadedAt` is when this server
+loaded it; `counts` is what the build holds, `added`/`removed` what changed against the build loaded before it (exact
+counts). `baseline: true` marks the first build the server loaded for this catalog id: nothing in it counts as new,
+and its `added`/`removed` are 0.
 
 `Changes` = `{"items": {"added": [{"id", "title", "kind"}], "removed": [{"id", "title"}]}, "episodes": {"added":
 [{"id", "itemId", "itemTitle", "season", "number", "label", "playbackAllowed"}], "removed": [{"id", "itemId",
 "itemTitle"}]}}`, each list at most 500 entries. Added ones are in catalog order (play order within an item), removed
 ones by item id, then episode id. An item counts as added when none of its episodes was in the catalog before (also
-when it comes back); an episode that comes back is not listed as added. Channels count by their item id in
-`counts.items`, `added`/`removed.items` and the `items` lists (a channel is added when its id was not in the catalog
-before), never in the episode counts or lists. A removed entry's `title`/`itemTitle` is null when the catalog loaded
-before was not in memory (a restart onto a changed bundle). The baseline's lists are empty.
+when it comes back); an episode that comes back is not listed as added. Channels count by their item id among the
+items (added when the id was not in the catalog before), never among the episodes. A removed entry's
+`title`/`itemTitle` is null when the catalog loaded before was not in memory (a restart onto a changed bundle).
 
 ### Diagnostics
 
@@ -562,8 +505,8 @@ header values, refs or playlist text.
                "playlist": { "master": true, "variants": 1, "renditions": 3, "segments": 0, "endList": false } } } ] }
 ```
 
-For a channel `"episodeId": null`. `delivery` is `direct`, `proxy` or `unsupported`. Errors: `404 unknown_episode`,
-`404 unknown_item`, `400 has_episodes` (`itemId` names an item played through its episodes), `404 unknown_source`.
+`delivery` is `direct`, `proxy` or `unsupported`. Errors: `404 unknown_episode`, `404 unknown_item`,
+`400 has_episodes`, `404 unknown_source`.
 
 ### Listen along
 
@@ -581,15 +524,14 @@ language inside the same multi-audio stream) in sync with the picture, from the 
   The companion target is `rate · tv + offsetMs`. Earphone latency is a per-phone nudge kept in the browser.
 - **Companion media is always proxied** (`/p/<token>/…`, under the owner key `companion:<deviceId>` with its own
   two-session limit), so the page only loads same-origin media (plus `blob:` object URLs when hls.js feeds the element
-  through Media Source Extensions). DASH cannot be proxied and is refused. A companion resolve never writes
-  `now_playing`, creates no TV playback session and never penalizes a source for the TV.
-- **Channels are not covered** (they have no timeline to sync to): while a channel plays, `GET …/companion` answers
-  `nowPlaying` with `itemKind: "live"` and `episodeId: null`, and `candidates: []`; the other routes take episodes
-  only.
+  through Media Source Extensions). DASH and MPEG-TS are refused. A companion resolve never writes now playing,
+  creates no TV playback session and never penalizes a source for the TV.
+- **Channels are not covered** (no timeline to sync to): while a channel plays, `GET …/companion` answers `nowPlaying`
+  with `itemKind: "live"` and `candidates: []`; the other routes take episodes only.
 
 | Route | Body | Response |
 |---|---|---|
-| `GET /api/v1/admin/devices/:id/companion` | | `{"nowPlaying": {itemId, itemKind, episodeId, sourceId, itemTitle, episodeTitle, state} \| null, "candidates": [{sourceId, type, kind, label, languages, current, supported, reason, link}]}`: the sources of the episode now playing (`kind` for direct sources, `supported: false, reason: "dash"` for DASH, `supported: false, reason: "ts"` for MPEG-TS, which the browser cannot play), each with its stored link or the defaults; no URLs, headers or refs |
+| `GET /api/v1/admin/devices/:id/companion` | | `{"nowPlaying": {itemId, itemKind, episodeId, sourceId, itemTitle, episodeTitle, state} \| null, "candidates": [{sourceId, type, kind, label, languages, current, supported, reason, link}]}`: the sources of the episode now playing (`kind` for direct sources; `supported: false` with `reason` `dash` or `ts`, which the browser cannot play), each with its stored link or the defaults; no URLs, headers or refs |
 | `POST /api/v1/admin/devices/:id/companion/resolve` | `{"episodeId", "sourceId", "language"?}` | `{"episodeId", "sourceId", "media": {"kind", "url": "/p/…"}, "languages", "expiresAt", "link"}` |
 | `PUT /api/v1/admin/companion/links/:episodeId/:sourceId` | `{"offsetMs", "rate", "language"?}` | `{"link": {episodeId, sourceId, offsetMs, rate, language, updatedAt}}` |
 | `POST /api/v1/admin/companion/links/:episodeId/:sourceId/copy-to-item` | | `{"updated", "episodeIds"}`: the same values written for every other episode of the item that has a source with that id |
@@ -601,11 +543,10 @@ language inside the same multi-audio stream) in sync with the picture, from the 
 ### TV app
 
 The server keeps one TV app APK, the **current** one, and offers it to every TV ([TV app updates](#tv-app-updates)).
-It comes from the owner's uploads, or with `appUpdates.source: "github"` (the default, [Configuration](#configuration))
-from the latest release of `appUpdates.repo`: a minute after the server starts, then every `checkIntervalHours`, and
-on demand. The server never downloads or updates its own code, catalogs or resolvers; this APK is the one thing it
-fetches, for the TVs, and only verified against the release's `SHA256SUMS`. It does not check the APK's signature:
-Android refuses an update not signed like the installed app.
+It comes from the owner's uploads, or with `appUpdates.source: "github"` ([Configuration](#configuration)) from the
+latest release of `appUpdates.repo`: a minute after the server starts, then every `checkIntervalHours`, and on
+demand. This APK is the one thing the server fetches, and only verified against the release's `SHA256SUMS`. It does
+not check the APK's signature: Android refuses an update not signed like the installed app.
 
 | Route | Scope | Body | Response |
 |---|---|---|---|
@@ -617,14 +558,13 @@ Android refuses an update not signed like the installed app.
 `StoredApk` = `{"versionName", "versionCode", "sha256", "size", "source": "github"|"upload", "releaseTag": "v0.3.0" |
 null, "storedAt"}`. `versionCode` comes from the file name as the app's build computes it (`X·10000 + Y·100 + Z`,
 a `-suffix` ignored). Storing an APK (upload or fetch) replaces the previous one and sends `event: app` to every TV.
-`source`, `repo`, `auto` and `checkIntervalHours` are the server's `appUpdates` [configuration](#configuration).
+`source`, `repo`, `auto` and `checkIntervalHours` are the server's `appUpdates` configuration.
 
 - **Upload:** the file name must be `izle-tv-X.Y.Z[-suffix].apk`
   (`^izle-tv-(0|[1-9]\d*)\.([1-9]?\d)\.([1-9]?\d)(-[0-9A-Za-z.-]+)?\.apk$`, at most 128 characters), else
   `400 invalid_filename`; another media type `400 unsupported_media_type`; a body that does not start like a zip
   (`PK\x03\x04`) `400 not_an_apk`; more than 64 MiB `413 apk_too_large` (`maxBytes`). A body refused part-way is still
-  read to its end (up to `maxBytes` more bytes), so a client that is still sending gets the answer. This is the only
-  route whose body may exceed 64 KiB.
+  read to its end (up to `maxBytes` more bytes), so a client that is still sending gets the answer.
 - **Check:** `GET /repos/<repo>/releases/latest` (GitHub's API, `User-Agent: izle-server/<version>`, 30 s); the release
   must not be a prerelease, its tag must be `vX.Y.Z`, and it must carry the assets `izle-tv-X.Y.Z.apk` (never the
   `-debug` build) and `SHA256SUMS` (≤ 16 KiB, `<sha256>  <name>` lines). When the listed sha256 is the stored APK's, the
@@ -641,15 +581,15 @@ a `-suffix` ignored). Storing an APK (upload or fetch) replaces the previous one
 
 ## Remote management
 
-The viewer only watches; the TV is run from elsewhere: by the owner on the admin page, by the owner's own apps, or by
-AI agents. They all use these routes. An MCP server for agents is a thin wrapper around them with an
-[access token](#access-tokens); it is not part of the server. One family per server: every token sees every TV of the
-server. Whether an agent must ask before acting is decided where the agent is set up, not by the server.
+The viewer only watches; the TV is run from elsewhere, by the owner on the admin page, the owner's own apps or AI
+agents, all through these routes (an MCP server for agents is a thin wrapper with an [access token](#access-tokens),
+not part of the server). One family per server: every token sees every TV. Whether an agent must ask before acting
+is decided where the agent is set up, not by the server.
 
 ### Access tokens
 
-The admin token (the **owner token**) keeps full access. The owner creates named **access tokens** for an agent or
-an app, each with one scope, and revokes them at any time:
+The admin token (the **owner token**) keeps full access. The owner creates named **access tokens**, each with one
+scope, and revokes them at any time:
 
 | Scope | Allows |
 |---|---|
@@ -659,8 +599,8 @@ an app, each with one scope, and revokes them at any time:
 
 Every other route needs the owner token: pairing approval and clearing a code, deleting a TV, deleting and adopting
 history, [diagnostics](#diagnostics), [Listen along](#listen-along) resolves and links, and the access tokens themselves
-(every method). A request whose token does not cover the route answers `403 insufficient_scope` with `required` (the
-scope it needs, or `owner`); it does not count as a failed sign-in.
+(every method). A token that does not cover the route gets `403 insufficient_scope` with `required` (the scope it
+needs, or `owner`); it does not count as a failed sign-in.
 
 | Route | Body | Response |
 |---|---|---|
@@ -668,15 +608,13 @@ scope it needs, or `owner`); it does not count as a failed sign-in.
 | `POST /api/v1/admin/tokens` | `{"name", "scope"}` (`name`: 1–60 characters, trimmed, unique) | `201 {"token": AccessToken, "secret": "izat_…"}`; the secret is shown only here |
 | `DELETE /api/v1/admin/tokens/:id` | | `204`; requests with that token answer `401` from now on, and an [event stream](#events) it has open ends at once (a long-poll answers `401`) |
 
-`AccessToken` = `{"id", "name", "scope", "createdAt", "lastUsedAt"}` (`id`: 12 alphanumeric characters, like a device
-id; `lastUsedAt` is written at most once a minute). The secret is `izat_` and 32 random bytes base64url (the prefix
-lets secret scanners recognize it, and the server tell it from the owner token); the server keeps its sha256, never
-logs it, and the admin sign-in throttle ([Authentication model](#authentication-model)) counts a wrong or revoked one
-like a wrong owner token. An app that keeps sending a revoked token therefore locks its address out of the admin API
-for 10 minutes: stop the app before revoking. Errors: `409 duplicate_name`, `404 unknown_token`.
-`izle-server token create <name> --scope <scope>` (prints the secret once), `token list` and `token revoke <id>` call
-these routes on the running server, like `pair approve`. The access log records the token's id, never the secret
-([Logging](#logging)).
+`AccessToken` = `{"id", "name", "scope", "createdAt", "lastUsedAt"}` (`id`: 12 alphanumeric characters;
+`lastUsedAt` is written at most once a minute). The secret is `izat_` and 32 random bytes base64url (the prefix lets
+secret scanners recognize it, and the server tell it from the owner token); the server keeps its sha256. The admin
+sign-in throttle ([Authentication model](#authentication-model)) counts a wrong or revoked one like a wrong owner
+token, so an app that keeps sending a revoked token locks its address out for 10 minutes: stop the app before
+revoking. Errors: `409 duplicate_name`, `404 unknown_token`. `izle-server token create <name> --scope <scope>`
+(prints the secret once), `token list` and `token revoke <id>` call these routes on the running server.
 
 `Actor` (who caused a change or an event) = `{"type": "owner"}`, `{"type": "token", "tokenId", "name"}` (the name at
 that moment), `{"type": "tv", "deviceId"}` (the viewer, with the remote; also what the TV reports and its
@@ -688,19 +626,17 @@ start). Consumers MUST ignore unknown actor types.
 `GET /api/v1/admin/status` → `{"serverNowMs", "server": {"version"}, "catalog": {"id", "buildId"},
 "pairing": {"pending"}, "devices": [{"id", "name", "online", "lastSeenAt", "nowPlaying"}], "lastEventId"}`: every
 active TV in one call. `nowPlaying` is the object of [`GET …/now`](#devices) while the TV has a running
-[viewing](#viewing-history), else null (`GET …/now` itself keeps answering the last report, with its `state`). Its
-`viewingId` (here and in `GET …/now`) is the running viewing, or null once it ended. `lastEventId` is read before
-the rest, so reading the status and then the [events](#events) after `lastEventId` misses nothing (a change in
-between shows twice, never not at all).
+[viewing](#viewing-history), else null (`GET …/now` itself keeps answering the last report, with its `state`); its
+`viewingId` (here and in `GET …/now`) is the running viewing, or null once it ended. `lastEventId` is read first, so
+the [events](#events) after it miss nothing (a change in between shows twice).
 
 **Online.** A TV is online while it has an event stream open, and for 60 s after its last one closed (a reconnect does
-not flap). `online` in `Device`, in the answer to a command and here all follow this rule; at start every TV is
-offline until it connects.
+not flap). `online` everywhere follows this rule; at start every TV is offline until it connects.
 
 ### Events
 
-Everything worth reacting to is appended to a stored event log, kept for `events.retentionDays` (config, default
-7, 1–90). The event log is for live consumers; the [viewing history](#viewing-history) is the permanent record.
+Everything worth reacting to is appended to a stored event log, kept for `events.retentionDays`; the
+[viewing history](#viewing-history) is the permanent record.
 
 `Event` = `{"id": 1234, "at": "…", "type": "playback.started", "deviceId": "…" | null, "actor": Actor, "data": {…}}`.
 `id` increases strictly, in the order the changes were stored (an event is written in the transaction of its change).
@@ -709,22 +645,20 @@ Events carry no URLs, headers, refs, tokens, message texts or problem details.
 - **Stream:** `GET /api/v1/admin/events/stream?after=&devices=&types=`, server-sent events as for
   [`/tv/events`](#get-apiv1tvevents): each event as `id: <id>`, `event: <type>`, `data: <Event>`, starting after
   `after`, else after `Last-Event-ID` (without either: new events only); `retry: 5000`, a `: ping` comment every
-  20 s. The token goes in the `Authorization` header as on every admin route, never in the query string (a browser's
-  `EventSource` cannot set it; the admin page reads the stream with `fetch`). A replay sends at most the newest 500
-  events; when more were stored after `after`, it starts with `event: gap` (`oldest`: the first id it sends). A
-  client that stops reading while events keep coming is disconnected (it reconnects with `Last-Event-ID`). At most
-  10 streams are open at once per access token, and per client address for the owner token; one more answers
-  `429 too_many_streams` (`Retry-After`).
+  20 s. The token goes in the `Authorization` header, never in the query string (the admin page reads the stream
+  with `fetch`, since `EventSource` cannot set it). A replay sends at most the newest 500 events; when more were
+  stored after `after`, it starts with `event: gap`. A client that stops reading while events keep coming is
+  disconnected (it reconnects with `Last-Event-ID`). At most 10 streams are open at once per access token, and per
+  client address for the owner token; one more answers `429 too_many_streams` (`Retry-After`).
 - **Long-poll:** `GET /api/v1/admin/events?after=&wait=&limit=&devices=&types=` → `{"events": [Event], "last",
   "gap"}`, oldest first (`limit` ≤ 500, default 100); with no event after `after` it waits up to `wait` seconds (0–25,
-  default 0). For clients that cannot keep a stream open: MCP tools, scripts. `last` is the id of the last event
-  returned, else `after`; without `after` the answer is empty at once and `last` is the newest id, where following
-  starts.
-- **Filters:** `devices`: device ids, comma-separated (events without a device pass the filter); `types`: types or
-  prefixes ending in `.`, comma-separated (`playback.,command.result`).
+  default 0), for clients that cannot keep a stream open (MCP tools, scripts). `last` is the id of the last event
+  returned, else `after`; without `after` the answer is empty at once and `last` is the newest id, to follow from.
+- **Filters:** `devices`: device ids, comma-separated (events without a device pass); `types`: types or prefixes
+  ending in `.`, comma-separated (`playback.,command.result`).
 - **Gap:** when `after` is older than the oldest kept event, events were lost: `gap: true` and the kept events from
-  the oldest on (the stream sends `event: gap` `{"oldest"}` first). The consumer re-reads [`/admin/status`](#status)
-  and what it needs from the history.
+  the oldest on (the stream sends `event: gap` `{"oldest"}`, the first id it sends). The consumer re-reads
+  [`/admin/status`](#status) and what it needs from the history.
 
 | `type` | `data` |
 |---|---|
@@ -734,15 +668,15 @@ Events carry no URLs, headers, refs, tokens, message texts or problem details.
 | `device.updated` / `device.removed` | `{"fields"}` (names of the settings the `PATCH` sent, `name` included) / `{"name"}` |
 | `device.app_version` | `{"from", "to", "versionCode", "androidSdk", "capability"}`: the TV's [User-Agent](#tv-api) reports another app version, Android version or capability (`from`: the version before, null the first time); the TV is the actor |
 | `app.uploaded` / `app.fetched` | `{"versionName", "versionCode", "source": "upload"}` / `{"versionName", "versionCode", "source": "github", "releaseTag"}`: a new [TV app](#tv-app) APK is on offer |
-| `app.removed` / `app.check_failed` | `{"versionName"}` / `{"reason"}` (a GitHub check failed, see [TV app](#tv-app); the server is the actor of a scheduled check) |
-| `pairing.pending` | `{"code", "expiresAt"}`: a TV shows a new pairing code |
+| `app.removed` / `app.check_failed` | `{"versionName"}` / `{"reason"}` (a GitHub check failed; the server is the actor of a scheduled check) |
+| `pairing.pending` | `{"code", "expiresAt"}`: a TV shows a new pairing code; the server is the actor (the TV has no id yet) |
 | `pairing.cancelled` | `{"code"}`: the owner cleared a waiting code ([`DELETE …/pair/pending/:code`](#delete-apiv1adminpairpendingcode)) |
-| `playback.started` | `{"viewingId", "itemId", "itemKind", "itemTitle", "episodeId", "episodeTitle", "season", "number", "sourceId", "positionMs", "trigger"}`: a [viewing](#viewing-history) starts (its first resolve; the re-resolves that continue it send nothing); `positionMs` is where it will start; for a channel `episodeId`, `episodeTitle`, `season`, `number` and `positionMs` are null |
+| `playback.started` | `{"viewingId", "itemId", "itemKind", "itemTitle", "episodeId", "episodeTitle", "season", "number", "sourceId", "positionMs", "trigger"}`: a [viewing](#viewing-history) starts (its first resolve; the re-resolves that continue it send nothing); `positionMs` is where it will start |
 | `playback.paused` / `playback.resumed` | `{"viewingId", "positionMs"}`: a `paused` report / a `playing` report after one; never for a channel |
 | `playback.seeked` | `{"viewingId", "fromMs", "toMs"}`: a report's position is more than 10 s from where playback should be (see [`coveredFraction`](#viewing-history)); never for a channel |
-| `playback.stalled` / `playback.recovered` | `{"viewingId", "positionMs"}`: a `playing` report with `playing: false` / the next one with `playing: true` (a `paused` report in between is a pause, not a recovery); `positionMs` null for a channel |
-| `playback.ended` | `{"viewingId", "endReason", "seen", "positionMs", "watchedMs", "dropped"}`; `dropped: true`: the viewing was too short to keep, its id is gone; for a channel `positionMs` is null, `seen` false and `endReason` never `finished` |
-| `episode.seen` | `{"viewingId", "itemId", "episodeId", "firstTime", "itemFinished"}`: a viewing ended [seen](#viewing-history) (never a channel's); `firstTime`: the episode was not seen before (by any TV, or a mark); `itemFinished`: every playable episode of the item in the current catalog is now seen (false when the item left it) |
+| `playback.stalled` / `playback.recovered` | `{"viewingId", "positionMs"}`: a `playing` report with `playing: false` / the next one with `playing: true` (a `paused` report in between is a pause, not a recovery) |
+| `playback.ended` | `{"viewingId", "endReason", "seen", "positionMs", "watchedMs", "dropped"}`; `dropped: true`: the viewing was too short to keep, its id is gone |
+| `episode.seen` | `{"viewingId", "itemId", "episodeId", "firstTime", "itemFinished"}`: a viewing ended [seen](#viewing-history); `firstTime`: the episode was not seen before (by any TV, or a mark); `itemFinished`: every playable episode of the item in the current catalog is now seen (false when the item left it) |
 | `command.sent` / `command.delivered` | `{"commandId", "type", "online"}` / `{"commandId"}` (the TV acknowledged it) |
 | `command.result` | `{"commandId", "type", "result", "reason"}`, see [Remote play and command results](#remote-play-and-command-results) |
 | `home.changed` | `{"itemIds", "added", "removed"}` (`itemIds` in Home order; the ids that came and went; a reorder, a move to another section and a change of [sections](#home-sections) alone have both empty) |
@@ -753,59 +687,52 @@ Events carry no URLs, headers, refs, tokens, message texts or problem details.
 
 Ordering within one change: when a resolve replaces a running viewing, `playback.ended` comes before
 `playback.started`; `episode.seen` follows its `playback.ended`. New types and fields are added within v1; consumers
-MUST ignore those they do not know. The `pairing.pending` event has the server as its actor: the TV has no id
-yet.
+MUST ignore those they do not know.
 
 ### Viewing history
 
-A **viewing** is one playback of one episode or one channel on one TV. A TV has at most one running viewing. It
-starts with a successful TV resolve and ends with a `stopped` or `finished` report, with the TV resolving something
-else, or with silence. Pauses and seeks (skipping an intro, a recap or the credits) stay within the viewing. A resolve
-of the same episode (or channel) by the same TV while its viewing runs continues it: the TV re-resolves after a
-player error, for an expired stream (a channel also after 12 h, see [Media proxy](#media-proxy)) and for "Try
-again", and goes on at the same position (a channel: at its live edge). A viewing never reopens once it ended. The
-server records viewings from the TV's resolve and progress reports; a report is applied to the TV's running viewing
-when it names that viewing's episode (or channel), and otherwise ignored by the history (the saved position and the
-cursor take it all the same). Viewings are **never deleted automatically**, and they outlive catalog builds and the
-removal of the TV: each keeps a copy of the titles it was watched under. Like every stored reference, the history is
-scoped by `catalogId`: its lists, summaries, marks and deletions cover the loaded catalog's viewings only.
+A **viewing** is one playback of one episode or channel on one TV; a TV has at most one running viewing. It starts
+with a successful TV resolve and ends with a `stopped` or `finished` report, with the TV resolving something else, or
+with silence. Pauses and seeks (skipping an intro, a recap or the credits) stay within the viewing. A resolve of the
+same item and episode by the same TV while its viewing runs continues it (the re-resolves after a player error, for an
+expired stream, a channel's after 12 h and "Try again" go on at the same position, a channel at its live edge); a
+viewing never reopens once it ended. A report is applied to the TV's running viewing when it names that viewing's
+episode (or channel), and otherwise ignored by the history (the saved position and the cursor take it all the same).
+Viewings are **never deleted automatically** and outlive catalog builds and the removal of the TV: each keeps a copy
+of the titles it was watched under. Like every stored reference, the history is scoped by `catalogId`: its lists,
+summaries, marks and deletions cover the loaded catalog's viewings only.
 
 `Viewing` = `{"id", "deviceId", "deviceName", "itemId", "itemKind", "itemTitle", "episodeId", "episodeTitle",
 "season", "number", "sourceId", "startedAt", "endedAt", "startPositionMs", "endPositionMs", "durationMs",
 "watchedMs", "endReason", "seen", "trigger", "actor", "commandId"}`:
 
-- `id` is an integer. Titles, `season`, `number`, `itemKind` and `deviceName` are copied when the viewing starts.
-  `sourceId` is the source played last (a re-resolve may change it). `durationMs` is the reports' duration, else the
-  catalog's, else null.
+- `id` is an integer. Titles, `season`, `number`, `itemKind` and `deviceName` are copied when the viewing starts;
+  `sourceId` is the source played last; `durationMs` is the reports' duration, else the catalog's, else null.
 - `startPositionMs`: the position of the first report (until it arrives, the resume position the server offered);
   `endPositionMs`: the position of the last report (a `finished` report: the duration).
 - `watchedMs`: how long the player actually advanced: for each two consecutive reports of which the first had
   `playing: true`, the time between them (by the reports' anchors, `receipt − ageMs`), at most 60 s.
 - `endReason`: `finished` (a `finished` report), `stopped` (a `stopped` report), `replaced` (the TV resolved another
   episode or channel), `lost` (silence: no report for 2 minutes while the last one said `playing` or none came yet,
-  or the TV offline for 2 minutes whatever the last report said; a power cut, a dead app. A paused TV that stays
-  online keeps its viewing running). A lost viewing ends at its last report (or its resolve). `endedAt` and
-  `endReason` are null while the viewing runs.
-- `seen`: the viewing reached the end of the episode (see below); false while it runs.
+  or the TV offline for 2 minutes whatever the last report said; a paused TV that stays online keeps its viewing
+  running). A lost viewing ends at its last report (or its resolve). `endedAt` and `endReason` are null while it runs.
+- `seen`: the viewing reached the end of the episode (see below); false while it runs, and for a channel.
 - `trigger`: `viewer` (OK on Home, the episode list or Start over in the menu), `autoplay` (autoplay on start),
   `next` (auto-next, Up next's Play now, CH+/CH− between episodes or between channels), `command` (a remote `play`,
   `next` or `previous`; `actor` is who sent it and `commandId` names it) or `unknown` (a TV that does not say). Try
-  again, like the re-resolves after a player error or for an expired stream, repeats the trigger of the playback it
-  continues. The TV says it in [`POST /tv/resolve`](#post-apiv1tvresolve). `actor` is `{"type": "tv", "deviceId"}`
-  and `commandId` null unless the trigger is a command.
+  again and the re-resolves repeat the trigger of the playback they continue. The TV says it in
+  [`POST /tv/resolve`](#post-apiv1tvresolve). Other triggers have the TV as `actor` and a null `commandId`.
 - A viewing that ends not `seen` with `watchedMs` under 10 s is dropped (a mis-press; a source that failed straight
-  away is in the [problem reports](#problem-reports)). Its `playback.ended` event says `dropped: true`.
-- A channel's viewing (`itemKind: "live"`) records when it started and ended and its `watchedMs`, by the same rule
-  (consecutive reports, the first with `playing: true`); `episodeId`, `episodeTitle`, `season`, `number`,
-  `startPositionMs`, `endPositionMs` and `durationMs` are null, `seen` is false and `endReason` is `stopped`,
-  `replaced` or `lost`. It has no played ranges. The 10 s drop rule and the `lost` rule apply as to an episode.
+  away is in the [problem reports](#problem-reports)); its `playback.ended` event says `dropped: true`.
+- A channel's viewing has no played ranges, and its `endReason` is never `finished`; `watchedMs`, the drop rule and
+  the `lost` rule apply as to an episode.
 
 A viewing is **seen** when it ends with a `finished` report, or ends (`stopped`, `replaced`, `lost`) at 90 % of
 `durationMs` or later. The TV reports `finished` at the end of the stream and when the viewer leaves within its
 credits allowance (the last 2 minutes or 5 % of the duration, whichever is longer, at most 10 %); the 90 % rule also
-catches the longer credits of films. Parts skipped on the way (an intro, a recap, a scene) do not matter: reaching
-the end is what counts. The 90 % rule is the history's only: the TV's tiles and resume position follow its own
-`finished` reports, and a mark changes nothing on the TV (that is `PUT …/cursor`).
+catches the longer credits of films. Parts skipped on the way do not matter: reaching the end is what counts. The
+90 % rule is the history's only: the TV's tiles and resume position follow its own `finished` reports, and a mark
+changes nothing on the TV (that is `PUT …/cursor`).
 
 An episode is **seen** when one of its viewings is seen, unless the owner marked it otherwise (a mark wins). A movie
 is its single episode. The history covers all TVs of the server (the family) unless a route is given `device`; marks
@@ -817,8 +744,8 @@ are the family's, so `device` narrows the viewings and the counts, not `seen`.
 | `GET /api/v1/admin/history/viewings/:id` | | `{"viewing": Viewing, "ranges": [[fromMs, toMs], …]}`: the ranges played at least once, merged, in position order (empty for a channel's); `404 unknown_viewing` |
 | `GET /api/v1/admin/history/titles?device=&status=&sort=&limit=` | | `{"titles": [TitleSummary]}`: titles with a viewing or a mark; `sort`: `recent` (default, last watched first), `watched` (most `watchedMs`), `title` (as the catalog search orders); `status`: one or more statuses, comma-separated; `limit` ≤ 500 (default 100) |
 | `GET /api/v1/admin/history/titles/:itemId?device=` | | `{"title": TitleSummary, "episodes": [EpisodeHistory]}` (`episodes: []` for a channel); `404 unknown_item` (never in the catalog nor the history) |
-| `GET /api/v1/admin/history/days?device=&from=&to=&tz=` | | `{"days": [{"date", "watchedMs", "viewings", "items": [{"itemId", "title", "watchedMs"}]}]}`: one entry per calendar day with a viewing, in `tz` (an IANA zone, default the server's), a viewing counted on the day it started (a channel's like an episode's, by its `watchedMs`); `from`/`to` are dates, default the last 30 days, at most 366 days; `400 invalid_request` for an unknown zone |
-| `POST /api/v1/admin/history/marks` | `{"episodeIds": [...], "seen": true \| false \| null}` (1–500 ids, each in the catalog or the history) | `{"updated"}`; `null` removes the marks; `400 unknown_episode` (`episodeId`; a channel's item id is no episode id: channels are never marked) |
+| `GET /api/v1/admin/history/days?device=&from=&to=&tz=` | | `{"days": [{"date", "watchedMs", "viewings", "items": [{"itemId", "title", "watchedMs"}]}]}`: one entry per calendar day with a viewing, in `tz` (an IANA zone, default the server's), a viewing counted on the day it started; `from`/`to` are dates, default the last 30 days, at most 366 days; `400 invalid_request` for an unknown zone |
+| `POST /api/v1/admin/history/marks` | `{"episodeIds": [...], "seen": true \| false \| null}` (1–500 ids, each in the catalog or the history) | `{"updated"}`; `null` removes the marks; `400 unknown_episode` (`episodeId`; channels are never marked) |
 | `DELETE /api/v1/admin/history?device=&olderThan=` | | `{"deleted"}`: viewings (of that TV, started before `olderThan`, ISO; without them, all) are deleted, running ones too; owner token only |
 | `DELETE /api/v1/admin/history/viewings/:id` | | `204`; `404 unknown_viewing`; owner token only |
 
@@ -832,21 +759,17 @@ are the family's, so `device` narrows the viewings and the counts, not `seen`.
   `season` (null: episodes without one), series only.
 - `status`: `finished` (every playable episode seen), `new_episodes` (every unseen playable episode entered the
   catalog after `lastWatchedAt`, by the [catalog history](#catalog-history)), `watching` (else, with a viewing in the
-  last 30 days), `idle` (else: nothing watched for 30 days and nothing new, which is also a show between seasons, so
-  it says nothing about the viewer's interest).
+  last 30 days), `idle` (else: nothing watched for 30 days and nothing new, which is also a show between seasons).
 - `rewatches`: seen viewings of an episode beyond its first seen one (marks do not count). `shortViewings`: ended
-  viewings that are not seen, with `watchedMs` under 10 minutes, a hint that the title did not hold the viewer's
-  attention.
-- A channel (`kind: "live"`): `episodes` is null, `seasons` is `[]`, `rewatches` is 0 and `status` is `watching` or
-  `idle`, by the 30-day rule.
+  viewings that are not seen, with `watchedMs` under 10 minutes (a hint that the title did not hold the viewer).
+- A channel: `episodes` is null, `seasons` `[]`, `rewatches` 0 and `status` `watching` or `idle`, by the 30-day rule.
 
 `EpisodeHistory` = `{"episodeId", "season", "number", "title", "inCatalog", "seen", "seenAt", "mark", "viewings",
 "watchedMs", "coveredFraction", "lastWatchedAt", "lastPositionMs"}`, in play order, then the episodes that left the
 catalog:
 
 - `seenAt`: when the episode was first seen: the end of its first seen viewing, or the time of a `true` mark when
-  that is earlier; null while not seen.
-- `mark`: `true`, `false` or null (none).
+  that is earlier; null while not seen. `mark`: `true`, `false` or null (none).
 - `coveredFraction`: the share of the episode's duration played at least once, over all its viewings (0–1, two
   decimals): the union of the position ranges between consecutive reports while the player advanced. Where playback
   should be at a report is the previous report's position, plus the time since its anchor when it said
@@ -856,16 +779,14 @@ catalog:
 
 ### Remote play and command results
 
-- **Any catalog item plays**, on the TV's home list or not: [`play`](#commands) only needs a playable episode, or a
+- **Any catalog item plays**, on the TV's home list or not: [`play`](#commands) needs a playable episode, or a
   channel with `playbackAllowed: true`. The item does not join the home list; Back returns to Home as always.
 - **`play` by item:** `{"type": "play", "itemId"}` plays what OK would play for that item on this TV
-  ([Play order](#play-order-and-the-cursor)), resolved by the server when the command is sent; the payload is
-  `{"itemId", "episodeId"}`. A channel's `itemId` plays the channel at its live edge: its payload has
-  `episodeId: null`. One of `itemId` and `episodeId` is required; with both, the episode must belong to the item
-  (`400 unknown_episode`). `404 unknown_item`, `400 not_playable` (no playable episode, or a channel with
-  `playbackAllowed: false`).
+  ([Play order](#play-order-and-the-cursor)), resolved by the server when the command is sent, or a channel. One of
+  `itemId` and `episodeId` is required; with both, the episode must belong to the item (`400 unknown_episode`).
+  `404 unknown_item`, `400 not_playable` (no playable episode, or a channel with `playbackAllowed: false`).
 - **`play` at a position:** optional `positionMs` (integer 0…10¹²; `0` starts over) instead of the saved position;
-  the payload carries it. A channel has no position: a `positionMs` sent with it is left out of its payload.
+  the payload carries it, except for a channel.
 - **Results:** after acting on a command (or deciding not to) the TV reports
   `POST /api/v1/tv/commands/:id/result` `{"result": "done" | "ignored" | "failed", "reason"?}` → `{"ok": true}`;
   `404 unknown_command` (not this TV's), `409 already_reported`. `play` reports `done` once playback runs and
@@ -873,14 +794,12 @@ catalog:
   of `A-Z a-z 0-9 _ . : -`): `not_in_player` (a transport command without video showing), `not_ready` (the TV is on
   the pairing or server address screen), `no_episode` (`next`/`previous` at the end of the item), `live` (`pause`,
   `resume` or `seek` while a channel plays), `no_channel` (`next`/`previous` with no channel after / before the
-  playing one on the TV's home list), `unknown_type`, `no_playable_source` (the resolve found nothing) or
-  `playback_error`; consumers MUST accept others. The acknowledgement stays separate and immediate, so a slow start
-  is never replayed; the result is sent with the same retries as a final progress report, and stays null when it
-  never arrives.
+  playing one), `unknown_type`, `no_playable_source` (the resolve found nothing) or `playback_error`; consumers MUST
+  accept others. The acknowledgement stays separate and immediate, so a slow start is never replayed; the result is
+  sent with the same retries as a final progress report, and stays null when it never arrives.
 - `GET /api/v1/admin/devices/:id/commands/:commandId` → `{"command": {"id", "type", "payload", "actor",
   "createdAt", "deliveredAt", "result", "reason", "resultAt"}}` while the command is stored (7 days);
-  `404 unknown_command`. `deliveredAt` is when the TV acknowledged it; `result` stays null with a TV that does not
-  report results.
+  `404 unknown_command`. `deliveredAt` is when the TV acknowledged it.
 
 ### Home list changes
 
@@ -892,14 +811,13 @@ Single changes, so that two editors (the owner, an agent) do not overwrite each 
 | `PATCH /api/v1/admin/devices/:id/home/items/:itemId` | `{"position"?, "sectionId"?}`, at least one (`sectionId`: move it to that section; `position` 0-based within the section it ends up in, clamped to its end; default the end when the section changes) | `{"version", "home", "sections"}` |
 | `DELETE /api/v1/admin/devices/:id/home/items/:itemId` | | `{"version", "home", "sections"}` |
 
-Errors as for `PUT …/home` (`400 too_many_items`, `duplicate_item`, `unknown_item`, `not_playable`, also for a channel
-with `playbackAllowed: false`), plus `404 not_on_home` and `404 unknown_section`. `PUT …/home` takes an optional
-`expected` (what the caller saw, in the shape of the body: the `itemIds`, or the `sections`): `409 home_changed`
-(with the current `itemIds` and `sections`) when the list is no longer that. Every change emits `home.changed`.
+Errors as for `PUT …/home`, plus `404 not_on_home` and `404 unknown_section`; every change emits `home.changed`.
+`PUT …/home` takes an optional `expected` (what the caller saw, in the shape of the body: the `itemIds`, or the
+`sections`): `409 home_changed` (with the current `itemIds` and `sections`) when the list is no longer that.
 
 ### Home sections
 
-A TV's Home list is cut into **sections**, in an order the owner sets. Every item on the list is in exactly one
+A TV's Home list is cut into **sections**, in an order the owner sets; every item on the list is in exactly one
 section. `Section` = `{"id", "title", "layout", "itemIds"}`:
 
 - `id`: 8 alphanumeric characters, made by the server; `untitled` for the untitled section.
@@ -910,11 +828,10 @@ section. `Section` = `{"id", "title", "layout", "itemIds"}`:
   [state](#get-apiv1tvstate) leaves them out, and with them the sections left empty).
 
 There is always exactly one **untitled section** (`"id": "untitled"`, `"title": null`). It holds what was put on Home
-without a section: it cannot be titled or deleted, and it is moved and given a layout like any other. A new TV, and
-every Home from before sections, has only the untitled section (layout `grid`); a new section goes after the existing
-ones. Besides the untitled section a Home has at most 20 (`sectionsMax`). **Home order** is the sections in order,
-each with its items in order: the order of `home` in the TV's state and on the admin page, of `itemIds` in
-`home.changed`, and of CH+/CH− among channels.
+without a section: it cannot be titled or deleted, and it is moved and given a layout like any other. A new TV has
+only the untitled section (layout `grid`); a new section goes after the existing ones. Besides the untitled section a
+Home has at most 20 (`sectionsMax`). **Home order** is the sections in order, each with its items in order: the order
+of `home` in the TV's state and on the admin page, of `itemIds` in `home.changed`, and of CH+/CH− among channels.
 
 | Route | Body | Response |
 |---|---|---|
@@ -968,18 +885,17 @@ fields whose name contains a word like `url`, `uri`, `href`, `header(s)`, `autho
 `scheme://…` and protocol-relative `//host…` in strings become `<url host>`; runs of 20 or more base64url characters
 become `<token>`; errors are reduced to their class name (an identifier of at most 60 characters, else `Error`) and a
 short `code`. The access log records the **route template** (e.g. `/api/v1/tv/items/:itemId`), status, duration and
-device id, never the raw path or query; health checks and successful proxy requests (a steady stream of segments) at
-`debug` level only, proxy errors at `info`. Commands are logged with their type and ids (never a message's text),
-problem reports with their kind and code (never their detail). A request made with an [access token](#access-tokens) is
-logged with the token's id (field `actorId`: a key containing the word `token` would be dropped by the redaction), never
-the secret. The TV app APK is logged with its version, size, source and the first 12 hex digits of its sha256
-(`sha256Prefix`), never the whole digest, a file path or a download URL; a failed GitHub check with its `reason` and
-`repo`.
+device id, never the raw path or query; health checks and successful proxy requests at `debug` level only, proxy
+errors at `info`. Commands are logged with their type and ids (never a message's text), problem reports with their
+kind and code (never their detail), a request made with an [access token](#access-tokens) with the token's id (field
+`actorId`, since a key containing `token` would be dropped), never the secret. The TV app APK is logged with its
+version, size, source and the first 12 hex digits of its sha256 (`sha256Prefix`), never the whole digest, a file path
+or a download URL; a failed GitHub check with its `reason` and `repo`.
 
 ## Configuration
 
-`izle-server --config izle.json`; every key is optional, unknown keys are errors, and relative paths resolve against
-the file's directory:
+`izle-server --config izle.json`; every key is optional, unknown keys are errors, relative paths resolve against the
+file's directory:
 
 ```json
 {
@@ -999,37 +915,30 @@ the file's directory:
 ```
 
 Without a file the server listens on `0.0.0.0:8787`, serves the sample catalog shipped with it and keeps its data
-in `./data` (`izle.db`, `admin.token`). Deployment (systemd, Caddy, Docker): [self-hosting](../deploy/self-hosting.md).
+in `./data` (`izle.db`, `admin.token`). Deployment: [self-hosting](../deploy/self-hosting.md).
 
-- `publicUrl` (default null): the address izle is reached at; `izle-server admin-token --link` builds the admin
-  sign-in link on it.
-- `trustedProxies` (default `[]`): IP addresses or CIDR ranges (IPv4 or IPv6) of reverse proxies in front of the
-  server. For a request whose socket address is in the list, the client address is taken from `X-Forwarded-For`,
-  walking from the right past further trusted hops; entries left of the first untrusted hop are ignored. The client
-  address is used only for the `pair/start` rate limit and the admin sign-in throttle. Without the setting the header
-  is ignored, so behind a proxy all clients share one limit (and one admin lockout).
-- `catalog.dir` (default: the sample catalog): the bundle directory, read from a local path only.
-- `resolver` (default null): `module` is a **local path** to the owner's resolver module (never downloaded);
-  `config` is handed to it as `ctx.config` and never logged; `deadlineMs` (default 12000) bounds one adapter call,
-  `budgetMs` (default 30000) one TV resolve request, both 100–120000. The module gets `<dataDir>/resolver` as its own
-  directory.
+The example's values are the defaults, except the samples for `publicUrl`, `trustedProxies` (default `[]`),
+`resolver` (its `deadlineMs` and `budgetMs` are the defaults) and `defaults`, which otherwise are null.
+
+- `publicUrl`: the address izle is reached at, base of the `admin-token --link` sign-in link.
+- `trustedProxies`: IP addresses or CIDR ranges (IPv4 or IPv6) of reverse proxies in front of the server. For a
+  request whose socket address is listed, the client address is taken from `X-Forwarded-For`, walking from the right
+  past further trusted hops. It is used only for the `pair/start` limits and the admin sign-in throttle; without the
+  setting, all clients behind a proxy share them.
+- `catalog.dir` (default: the sample catalog) and `resolver.module` are local paths, never downloaded;
+  `resolver.config` is handed to the module as `ctx.config` (never logged), which gets `<dataDir>/resolver` as its
+  own directory; `deadlineMs` and `budgetMs` (100–120000) bound one adapter call and one TV resolve request.
 - `admin.tokenFile` (default `<dataDir>/admin.token`); `IZLE_ADMIN_TOKEN` in the environment wins over it.
-- `proxy.always` sends every HLS/MP4/MPEG-TS stream through the proxy (the TV never contacts upstream hosts);
-  `proxy.sessionTtlSec` (60–86400) is the sliding session lifetime; `proxy.alignTsSegments`: see
-  [Media proxy](#media-proxy). `proxy.privateUpstreams` (default `[]`, at most 64): the loopback, private or
-  link-local upstreams the proxy may reach anyway (see Destinations under [Media proxy](#media-proxy)), each a host
-  name (`nas.lan`, any address it resolves to), an IP address or CIDR range (`192.168.1.20`, `10.0.0.0/8`), or one
-  of those with a port (`127.0.0.1:8788`, `[::1]:9000`, `nas.lan:8080`), which then matches that port only. Public
-  upstreams need no entry.
-- `defaults` (default null each): `uiLanguage` (`tr`/`en`) and `preferredAudioLanguage` (a language tag) for devices
-  without their own setting; null falls back to the catalog's hints.
-- `log.level`: `debug`, `info` (default), `warn` or `error`.
-- `events.retentionDays` (1–90, default 7): how long the [event log](#events) is kept; the housekeeping that runs
-  every 10 minutes deletes older events.
-- `appUpdates` ([TV app](#tv-app)): `source` `github` (default: the latest release of `repo`, checked a minute after
-  the start and every `checkIntervalHours`) or `manual` (only the owner's uploads; the server makes no request);
-  `repo` (`owner/name`, default `mickeiik/izle`); `checkIntervalHours` (1–168, default 24); `auto` (default true):
-  TVs that can install silently update by themselves when idle.
+- `proxy.always` sends every HLS/MP4/MPEG-TS stream through the proxy; `proxy.sessionTtlSec` (60–86400) is the
+  sliding session lifetime; `proxy.privateUpstreams` (at most 64): the loopback, private or link-local upstreams the
+  proxy may reach anyway, each a host name (`nas.lan`, any address it resolves to), an IP address or CIDR range
+  (`192.168.1.20`, `10.0.0.0/8`), or one of those with a port (`127.0.0.1:8788`, `[::1]:9000`, `nas.lan:8080`),
+  which then matches that port only.
+- `defaults`: `uiLanguage` (`tr`/`en`) and `preferredAudioLanguage` (a language tag) for devices without their own;
+  null falls back to the catalog's hints. `log.level`: `debug`, `info`, `warn` or `error`.
+- `events.retentionDays` (1–90): the housekeeping that runs every 10 minutes deletes older events.
+- `appUpdates` ([TV app](#tv-app)): `source` `github` or `manual` (only uploads; no request); `repo` (`owner/name`);
+  `checkIntervalHours` (1–168); `auto`: TVs that can install silently update by themselves when idle.
 
 ## Changelog
 
@@ -1037,5 +946,4 @@ in `./data` (`izle.db`, `admin.token`). Deployment (systemd, Caddy, Docker): [se
 - **v1, before the first deployment (2026-10-11 to 2026-10-22)** — changed in place, some changes breaking
   (pre-release): Listen along, remote management (access tokens, status, events, viewing history, command results,
   single home changes, replacing a TV), TV app updates, proxy destinations, the pairing pool, the home grid and
-  backdrops, live channels, catalog browsing and home sections. [CHANGELOG.md](../../CHANGELOG.md) says which release
-  brought what.
+  backdrops, live channels, catalog browsing and home sections ([CHANGELOG.md](../../CHANGELOG.md) has the releases).
