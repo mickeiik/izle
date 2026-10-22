@@ -27,9 +27,16 @@ class HomeSectionsTest {
     }
 
     @Test
-    fun onlyTheUntitledSectionIsHomeWithoutSectionsEvenAsALine() {
+    fun onlyTheUntitledSectionKeepsItsLayout() {
+        // A grid: Home without sections.
         assertEquals(listOf("-:abcde"), HomeSections.of(home, listOf(section("untitled", null, "a", "b", "c", "d", "e"))).shape())
-        assertEquals(listOf("-:abcde"), HomeSections.of(home, listOf(section("untitled", null, "a", "b", "c", "d", "e", layout = "row"))).shape())
+        // A row: one line without a title.
+        assertEquals(listOf("-~:abcde"), HomeSections.of(home, listOf(section("untitled", null, "a", "b", "c", "d", "e", layout = "row"))).shape())
+        // Even with titled sections that hold nothing on Home; every entry of Home is in it.
+        assertEquals(
+            listOf("-~:abcde"),
+            HomeSections.of(home, listOf(section("untitled", null, "a", "b", layout = "row"), section("Empty123", "Empty", "gone"))).shape(),
+        )
     }
 
     @Test

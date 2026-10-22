@@ -17,8 +17,9 @@ object HomeSections {
      * The sections to draw, in order, from the state's flat [home] (Home order) and its [sections]. Ids that are not
      * in [home] (or already in an earlier section) are left out, and so are the sections left empty; an entry of
      * [home] that no section holds goes to the end of the untitled section (one is added at the end if there is
-     * none), so every entry is drawn once. Without a titled section the result is one untitled grid with all of
-     * [home] in its order, which is Home without sections exactly. An unknown layout is a grid.
+     * none), so every entry is drawn once. Without a titled section the result is the untitled section with all of
+     * [home] in its order, in its own layout: as a grid (or without sections at all) it is Home without sections
+     * exactly, as a row one line without a title. An unknown layout is a grid.
      */
     fun of(home: List<HomeEntry>, sections: List<HomeSectionInfo>): List<HomeSection> {
         if (home.isEmpty()) return emptyList()
@@ -32,7 +33,10 @@ object HomeSections {
                 entries = s.itemIds.mapNotNull { id -> byId[id]?.takeIf { placed.add(id) } },
             )
         }.filter { it.entries.isNotEmpty() }.toMutableList()
-        if (drawn.none { it.title != null }) return listOf(HomeSection(UNTITLED_ID, null, row = false, entries = home))
+        if (drawn.none { it.title != null }) {
+            val untitled = drawn.firstOrNull()
+            return listOf(HomeSection(untitled?.id ?: UNTITLED_ID, null, row = untitled?.row == true, entries = home))
+        }
 
         val rest = home.filter { it.item.id !in placed }
         if (rest.isNotEmpty()) {

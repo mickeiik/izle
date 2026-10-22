@@ -50,6 +50,28 @@ class HomeLayoutTest {
     }
 
     @Test
+    fun anUntitledLineAloneIsOneLineWithoutATitle() {
+        for ((columns, rows) in listOf(4 to 2, 4 to 3, 6 to 4, 3 to 1)) {
+            val g = HomeGrid.compute(columns, rows, 864f, 486f, 32f)
+            val l = layout(columns, rows, row(11))
+            // No title, nothing set aside: today's card size and viewport.
+            assertEquals(g, l.grid)
+            assertEquals(0f, l.titleReserve)
+            assertEquals(g.viewportHeight, l.viewportHeight, 0f)
+            // One line, its cards at the padding from the top; Home does not scroll.
+            assertEquals(1, l.lines.size)
+            assertEquals(14f, l.lines.single().cardTop)
+            assertEquals(0f, l.lines.single().top)
+            assertEquals(listOf(Row(0, 14f)), l.slots)
+            assertEquals(14f + g.cellHeight + 14f, l.contentHeight, 0.001f)
+            assertEquals(0f, l.maxScroll)
+            assertEquals(0f, l.scrollFor(0, current = 0f))
+            assertNull(l.vertical(0, 5, 1) { 3 })
+            assertEquals(6, l.horizontal(0, 5, 1))
+        }
+    }
+
+    @Test
     fun aTitleSetsItsHeightAsideFromTheCardSize() {
         // 4 × 3: two title lines would leave smaller cards, as without sections, but the cards are now 146 wide.
         val l = layout(4, 3, grid(4, title = true), grid(4))

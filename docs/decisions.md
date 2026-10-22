@@ -459,7 +459,6 @@ The server side of the specification above, in one change (the admin page and th
   scale while that animates, and the target must not move with it.
 - When the sections change, the card that had the focus gets it back and its line is brought into view: moving a
   card to another section disposes its old place, and Compose hands the focus to another card first.
-- Only the untitled section (even as a row) draws as Home without sections; an entry of `home` that no section
-  holds is drawn at the end of the untitled section. The scroll bar is viewport / content height (as the admin
+- An entry of `home` that no section holds is drawn at the end of the untitled section. The scroll bar is viewport / content height (as the admin
   mirror), a fraction of a dp from the former rows / total rows. The line's centre is rounded halves up, as the
   admin page's `Math.round`.

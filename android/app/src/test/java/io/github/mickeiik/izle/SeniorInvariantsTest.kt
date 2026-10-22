@@ -533,6 +533,29 @@ class SeniorInvariantsTest {
     }
 
     @Test
+    fun anUntitledLineAloneIsOneScrollingLineWithoutATitle() {
+        columns = 4
+        home = listOf("a", "b", "c", "d", "e", "f")
+        sections = """[{"id":"untitled","title":null,"layout":"row","itemIds":["a","b","c","d","e","f"]}]"""
+        onTv { tv ->
+            // E, the card after those in view, peeks into the margin; F comes once the line slides.
+            waitUntil("the line") { exists(hasClickAction() and hasText("Show E")) }
+            val name = { title: String -> laidOut(compose.onNode(hasText(title) and !hasClickAction()).fetchSemanticsNode()) }
+            // One line: E follows D on it (not a second row), and nothing but the cards is drawn.
+            assertEquals(name("Show A").top, name("Show E").top, 0.5f)
+            assertEquals(emptySet<String>(), allTexts().toSet() - home.map { "Show ${it.uppercase()}" }.toSet() - string(R.string.badge_new))
+            val start = name("Show A").left
+            val pitch = name("Show B").left - start
+            repeat(4) { tv.press(KeyEvent.KEYCODE_DPAD_RIGHT) }
+            assertFocusedTile("Show E")
+            // It slid by one card.
+            assertEquals(start + 3 * pitch, name("Show E").left, 0.5f)
+            tv.press(KeyEvent.KEYCODE_DPAD_DOWN)
+            assertFocusedTile("Show E")
+        }
+    }
+
+    @Test
     fun anUntitledGridUnderATitledOneStartsItsOwnRowAtTheSameCardSize() {
         columns = 4
         home = listOf("a", "b", "c", "d")
