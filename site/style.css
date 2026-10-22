@@ -8,16 +8,10 @@
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
+  :root {
     --bg: #f6f4ee; --surface: #ffffff; --line: #e3dfd3; --text: #16181d; --muted: #545b68;
-    --blue-soft: #1d4e89; --green: #146639;
-    color-scheme: light;
+    --blue-soft: #1d4e89; --green: #146639; color-scheme: light;
   }
-}
-:root[data-theme="light"] {
-  --bg: #f6f4ee; --surface: #ffffff; --line: #e3dfd3; --text: #16181d; --muted: #545b68;
-  --blue-soft: #1d4e89; --green: #146639;
-  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -27,6 +21,7 @@ a { color: var(--blue-soft); text-underline-offset: 0.18em; }
 h1, h2, h3 { line-height: 1.1; margin: 0 0 0.6em; letter-spacing: -0.02em; }
 p { margin: 0 0 1em; }
 code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.85em; }
+.tv-demo figcaption b, .rules b, .steps b, .foot b { color: var(--text); }
 
 main, .top, .foot { max-width: var(--page-w); margin: 0 auto; padding: 0 1.25rem; }
 
@@ -77,14 +72,12 @@ h1 { font-size: clamp(3rem, 7vw, 5.4rem); font-weight: 850; letter-spacing: -0.0
 @keyframes pulse { 50% { box-shadow: 0 0 0 6px #3a3d48, 0 4px 0 6px #121318, 0 0 0 16px rgb(255 210 90 / 18%); } }
 @media (prefers-reduced-motion: reduce) { .key.ok { animation: none; } }
 .tv-demo figcaption { margin-top: 1.6rem; color: var(--muted); font-size: 0.95rem; }
-.tv-demo figcaption b { color: var(--text); }
 
 /* --- rules ----------------------------------------------------------------------------------------------------- */
 .rules { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; padding: 1rem 0 5rem; }
 .rules > div { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.6rem; }
 .rules .big { display: block; font-size: 2.6rem; font-weight: 900; color: var(--yellow); line-height: 1; margin-bottom: 0.8rem; }
 .rules p { margin: 0; color: var(--muted); font-size: 1.05rem; }
-.rules b { color: var(--text); }
 
 /* --- split sections -------------------------------------------------------------------------------------------- */
 .split { display: grid; grid-template-columns: 1fr 1.2fr; gap: 3.5rem; align-items: center; padding: 3rem 0; }
@@ -111,13 +104,11 @@ h2 { font-size: clamp(1.9rem, 3.6vw, 2.7rem); font-weight: 800; }
   border-radius: 14px; padding: 1rem 1.2rem 1rem 3.8rem; color: var(--muted); }
 .steps li::before { content: counter(step); position: absolute; left: 1.1rem; top: 0.9rem; width: 1.8rem; height: 1.8rem;
   border-radius: 50%; background: var(--yellow); color: var(--on-yellow); font-weight: 900; display: grid; place-items: center; }
-.steps b { color: var(--text); }
 .steps code { display: block; margin-top: 0.5rem; padding: 0.6rem 0.8rem; background: var(--bg); border-radius: 8px;
   color: var(--text); overflow-x: auto; white-space: nowrap; }
 
 /* --- footer ---------------------------------------------------------------------------------------------------- */
 .foot { border-top: 1px solid var(--line); padding-top: 2rem; padding-bottom: 3rem; color: var(--muted); font-size: 0.92rem; }
-.foot b { color: var(--text); }
 
 /* --- narrow ---------------------------------------------------------------------------------------------------- */
 @media (max-width: 860px) {

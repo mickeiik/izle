@@ -1,9 +1,9 @@
 # AGENTS.md
 
-Guidance for coding agents (and humans) working in this repository. The specs in [docs/spec/](docs/spec/) and the
-UX rules in [docs/ux/senior-tv.md](docs/ux/senior-tv.md) (the TV) and [docs/ux/admin-home.md](docs/ux/admin-home.md)
-(a TV's Home on the admin page) describe what the software does. Append a few lines to
-[docs/decisions.md](docs/decisions.md) only for a choice that the code, the specs and this file do not explain.
+Guidance for coding agents (and humans) working in this repository. What the software does: the specs in
+[docs/spec/](docs/spec/), the UX rules in [docs/ux/senior-tv.md](docs/ux/senior-tv.md) (the TV) and
+[docs/ux/admin-home.md](docs/ux/admin-home.md) (a TV's Home on the admin page). Append a line or two to
+[docs/decisions.md](docs/decisions.md) only for a choice that the code, the docs and this file do not explain.
 
 ## Product principles
 
@@ -54,9 +54,8 @@ the same commit.
 
 - `contract/`: `npm test -w contract`, `npx izle-validate <bundleDir> [--probe]`
 - `server/`: `npm test -w server`, `npm run -w server dev -- --config server/izle.dev.json` (sample catalog on :8787,
-  state in `server/data/`), `npm run -s -w server dev -- admin-token [--link] --config server/izle.dev.json`,
-  `npm run -s -w server dev -- pair approve <code> [name] --config server/izle.dev.json`,
-  `npm run -s -w server dev -- check-resolver --config <file>`
+  state in `server/data/`; a curl walkthrough is in [README.md](README.md#try-the-api-with-curl)), and
+  `npm run -s -w server dev -- admin-token [--link] | pair approve <code> [name] | check-resolver --config <file>`
 - Resolver module + proxy end to end: [server/examples/resolver-example/](server/examples/resolver-example/README.md)
   (`make-media.sh` needs ffmpeg; `upstream.js` is the local stand-in site; `izle.example.json` the server config,
   state in `server/data/example/`)
