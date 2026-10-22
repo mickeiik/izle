@@ -4,8 +4,6 @@ How the owner arranges one TV's Home on the admin page (`/admin/`, a TV's **Home
 is in [Senior TV experience](senior-tv.md#home); the routes are in the
 [server API](../spec/server-api-v1.md#home-sections).
 
-Status: sections are **specified, not implemented** (2026-10-22); the rest describes the tab as it is.
-
 ## The screen
 
 - The tab draws the TV's Home to scale (960 × 540 dp, scaled to the page's width) from the TV app's own numbers:

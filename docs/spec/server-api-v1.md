@@ -904,7 +904,7 @@ with `playbackAllowed: false`), plus `404 not_on_home` and `404 unknown_section`
 
 ### Home sections
 
-Status: **draft, not implemented** (specified 2026-10-22; the server, admin page and TV app follow). Additive within
+Status: **draft, implemented** (server, admin page and TV app; Unreleased). Additive within
 v1: a TV that does not know sections shows the Home list as one grid, in Home order.
 
 A TV's Home list is cut into **sections**, in an order the owner sets. Every item on the list is in exactly one
@@ -994,7 +994,7 @@ know all of this:
 - Media kind `ts` (progressive MPEG-TS over HTTP, played as `video/mp2t`), direct or as `/p/<token>/stream.ts`. A
   channel whose proxy session answers `410` is resolved again, the same source first.
 
-**Home sections** (additive; not implemented yet): [`GET /tv/state`](#get-apiv1tvstate) carries `homeSections`, and
+**Home sections** (additive; implemented in the TV app, Unreleased): [`GET /tv/state`](#get-apiv1tvstate) carries `homeSections`, and
 Home draws them as the [Senior TV experience](../ux/senior-tv.md#sections) describes (titles, the line between two
 sections, `row` sections that scroll sideways). Nothing else changes for the TV: `home` stays the one list in Home
 order, which is what autoplay's first tile and CH+/CH− among channels go by, and a TV that ignores `homeSections`
