@@ -534,6 +534,7 @@ class AppViewModelTest {
         assertEquals(listOf(7), installer.abandoned)
         assertEquals(Screen.Home, vm.screen.value)
         assertEquals(UpdateCapability.Guided, app.graph.updater.capability.value)
+        assertEquals("what the next requests say", userAgent("guided"), app.graph.updater.userAgent)
         waitUntil("the problem report") { count("/api/v1/tv/problems") == 1 }
         assertTrue(problemBodies().last().contains("\"code\":\"update_needs_user_action\""))
         waitUntil("the stored refusal") { runBlocking { app.graph.deviceStore.current().updateSilentRefused } }

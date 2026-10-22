@@ -65,6 +65,7 @@ test("home routes: each answers version, home and sections; bodies and ids are c
   const detail = (await s.admin("GET", `/devices/${tv.deviceId}`)).json;
   assert.deepEqual([detail.sections, detail.sectionsMax], [[{ id: "untitled", title: null, layout: "grid", itemIds: [] }], 20]);
   const v0 = detail.device.stateVersion;
+  const after = (await s.admin("GET", "/events")).json.last;
 
   const created = await home("POST", "/sections", { title: " Kanallar ", layout: "row", position: 0 });
   const ch = created.json.sectionId;
@@ -86,6 +87,11 @@ test("home routes: each answers version, home and sections; bodies and ids are c
     assert.equal(r.status, 200, `${method} ${route}`);
     assert.deepEqual(shape(r), [v0 + i + 2, ids, sections], `${method} ${route}`);
   }
+  const changed = (await s.admin("GET", `/events?after=${after}&types=home.changed`)).json.events;
+  assert.deepEqual(changed.map((e: Json) => [e.data.added, e.data.removed]), [
+    [[], []], [["show", "film"], []], [["news"], []], [["silent"], []], [[], []], [[], []], [[], ["silent"]],
+    [[], []], [[], []],
+  ], "every change emits home.changed and says what came and went; a section alone, nothing");
   const current = (await s.admin("GET", `/devices/${tv.deviceId}`)).json;
   assert.deepEqual(current.sections, [{ id: "untitled", title: null, layout: "grid", itemIds: ["film", "show", "news"] }], "the device page agrees");
 
@@ -96,7 +102,9 @@ test("home routes: each answers version, home and sections; bodies and ids are c
     ["PATCH", "/items/show", {}, 400, "invalid_request"],
     ["PATCH", "/items/show", { position: 1.5 }, 400, "invalid_request"],
     ["PATCH", "/items/silent", { position: 0 }, 404, "not_on_home"],
+    ["DELETE", "/items/silent", undefined, 404, "not_on_home"],
     ["DELETE", "/items/not-an-id!", undefined, 404, "not_on_home"],
+    ["POST", "/items", { itemId: "silent", sectionId: "nope1234" }, 404, "unknown_section"],
     ["POST", "/sections", { title: "   " }, 400, "invalid_request"],
     ["POST", "/sections", { title: "x".repeat(41) }, 400, "invalid_request"],
     ["POST", "/sections", { title: "Ok", layout: "carousel" }, 400, "invalid_request"],
@@ -107,12 +115,15 @@ test("home routes: each answers version, home and sections; bodies and ids are c
     ["PATCH", "/sections/untitled", { title: "More" }, 400, "untitled_section"],
     ["PATCH", "/sections/not-an-id!", { layout: "row" }, 404, "unknown_section"],
     ["DELETE", "/sections/not-an-id!", undefined, 404, "unknown_section"],
+    ["DELETE", "/sections/untitled", undefined, 400, "untitled_section"],
     ["PUT", "", { sections: [{ id: "untitled", itemIds: [] }, { title: "", itemIds: [] }] }, 400, "invalid_request"],
     ["PUT", "", { sections: [{ id: "untitled", itemIds: [], layout: "carousel" }] }, 400, "invalid_request"],
     ["PUT", "", { itemIds: [], sections: [{ id: "untitled", itemIds: [] }] }, 400, "invalid_request"],
     ["PUT", "", { itemIds: [], expected: [{ id: "untitled", itemIds: [] }] }, 400, "invalid_request"],
     ["PUT", "", { sections: [{ id: "untitled", itemIds: [] }], expected: ["show"] }, 400, "invalid_request"],
     ["PUT", "", { itemIds: [], expected: ["show", "film", "news"] }, 409, "home_changed"],
+    ["PUT", "", { sections: [{ id: "untitled", itemIds: [] }], expected: [{ id: "untitled", itemIds: [] }] },
+      409, "home_changed"],
   ];
   for (const [method, route, body, status, error] of refused) {
     const r = await home(method, route, body);

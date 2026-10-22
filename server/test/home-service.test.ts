@@ -86,6 +86,8 @@ test("setCursor: forgets the episode's saved position and bumps the version; a c
   const cont = home.continueFor(device.id, catalog.item("show") as EpisodicItem);
   assert.deepEqual([cont?.episodeId, cont?.positionMs, cont?.status], ["show.e4", 0, "new"], "starts over");
   refuses(() => home.setCursor(device.id, "news", "news", OWNER), 400, "unknown_episode");
+  refuses(() => home.setCursor(device.id, "show", "film.main", OWNER), 400, "unknown_episode");
+  refuses(() => home.setCursor(device.id, "nope", "x", OWNER), 404, "unknown_item");
   refuses(() => home.setCursor(device.id, "show", "show.e3", OWNER), 400, "not_allowed");
   assert.equal(version(), v0 + 1);
 });
@@ -150,6 +152,9 @@ test("PUT {sections} replaces the whole Home: new, kept and left-out sections, e
   const refusals: Array<[object[], number, string]> = [
     [[{ id: "untitled", itemIds: [] }, { id: "untitled", itemIds: [] }], 400, "untitled_section"],
     [[{ id: "untitled", title: "More", itemIds: [] }], 400, "untitled_section"],
+    [[{ id: "untitled", itemIds: [] }, { id: fresh, title: "A", itemIds: [] }, { id: fresh, title: "A", itemIds: [] }],
+      400, "duplicate_section"],
+    [[{ id: "untitled", itemIds: [] }, { id: b, title: "B", itemIds: [] }], 404, "unknown_section"],
     [[{ id: "untitled", itemIds: [] }, { title: null, itemIds: [] }], 400, "invalid_request"],
     [[{ id: "untitled", itemIds: [] }, { id: fresh, itemIds: [] }], 400, "invalid_request"],
     [[{ id: "untitled", itemIds: ["locked"] }], 400, "not_playable"],
