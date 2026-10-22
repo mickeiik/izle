@@ -22,13 +22,9 @@ export async function main(argv: string[]): Promise<number> {
     return 2;
   }
   const { values, positionals } = parsed;
-  if (values.help) {
-    out(USAGE);
-    return 0;
-  }
-  if (positionals.length !== 1) {
-    process.stderr.write(`${USAGE}\n`);
-    return 2;
+  if (values.help || positionals.length !== 1) {
+    (values.help ? process.stdout : process.stderr).write(`${USAGE}\n`);
+    return values.help ? 0 : 2;
   }
   const dir = positionals[0]!;
   const result = await validateBundle(dir);

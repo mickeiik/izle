@@ -4,34 +4,23 @@
       "id": "caminandes",
       "kind": "series",
       "title": "Caminandes",
-      "originalTitle": null,
       "year": 2013,
       "synopsis": "Koro the llama keeps finding new obstacles on the windy plains of Patagonia, and new ways to get past them.",
-      "genres": [
-        "animation",
-        "comedy",
-        "family"
-      ],
-      "rating": null,
+      "genres": ["animation", "comedy", "family"],
       "poster": "assets/f3f96e5fd8d3ff2cd858d79269d5284637c323bc1d617dc85a1c33026d8de334.jpg",
-      "autoAdvance": true,
       "episodes": [
         {
           "id": "caminandes.s01e01",
           "season": 1,
           "number": 1,
           "title": "Llama Drama",
-          "label": null,
           "durationMs": 90000,
           "playbackAllowed": true,
           "sources": [
             {
               "id": "mp4-1080p",
               "label": "MP4 1080p",
-              "languages": {
-                "audio": [],
-                "subtitles": []
-              },
+              "languages": { "audio": [], "subtitles": [] },
               "type": "direct",
               "media": {
                 "kind": "mp4",
@@ -45,17 +34,13 @@
           "season": 1,
           "number": 2,
           "title": "Gran Dillama",
-          "label": null,
           "durationMs": 146050,
           "playbackAllowed": true,
           "sources": [
             {
               "id": "mp4-1080p",
               "label": "MP4 1080p",
-              "languages": {
-                "audio": [],
-                "subtitles": []
-              },
+              "languages": { "audio": [], "subtitles": [] },
               "type": "direct",
               "media": {
                 "kind": "mp4",
@@ -69,17 +54,13 @@
           "season": 1,
           "number": 3,
           "title": "Llamigos",
-          "label": null,
           "durationMs": 150150,
           "playbackAllowed": true,
           "sources": [
             {
               "id": "mp4-1080p",
               "label": "MP4 1080p",
-              "languages": {
-                "audio": [],
-                "subtitles": []
-              },
+              "languages": { "audio": [], "subtitles": [] },
               "type": "direct",
               "media": {
                 "kind": "mp4",
@@ -94,14 +75,9 @@
       "id": "tears-of-steel",
       "kind": "movie",
       "title": "Tears of Steel",
-      "originalTitle": null,
       "year": 2012,
       "synopsis": "In a future Amsterdam, a small group of scientists and warriors tries to undo a breakup that went very wrong.",
-      "genres": [
-        "science fiction",
-        "short film"
-      ],
-      "rating": null,
+      "genres": ["science fiction", "short film"],
       "poster": "assets/8322bebe5ec209103291f0e1d3b052ee90b1023184c4ff7c01870508425e69dc.jpg",
       "episodes": [
         {
@@ -112,13 +88,7 @@
             {
               "id": "hls-multi-audio",
               "label": "HLS · English and Italian audio",
-              "languages": {
-                "audio": [
-                  "en",
-                  "it"
-                ],
-                "subtitles": []
-              },
+              "languages": { "audio": ["en", "it"], "subtitles": [] },
               "type": "direct",
               "media": {
                 "kind": "hls",
@@ -128,18 +98,7 @@
             {
               "id": "hls-subtitles",
               "label": "HLS · five subtitle languages",
-              "languages": {
-                "audio": [
-                  "en"
-                ],
-                "subtitles": [
-                  "de",
-                  "en",
-                  "fr",
-                  "ru",
-                  "es"
-                ]
-              },
+              "languages": { "audio": ["en"], "subtitles": ["de", "en", "fr", "ru", "es"] },
               "type": "direct",
               "media": {
                 "kind": "hls",
@@ -149,17 +108,9 @@
             {
               "id": "hls-alt",
               "label": "HLS · alternative host",
-              "languages": {
-                "audio": [
-                  "en"
-                ],
-                "subtitles": null
-              },
+              "languages": { "audio": ["en"], "subtitles": null },
               "type": "direct",
-              "media": {
-                "kind": "hls",
-                "url": "https://test-streams.mux.dev/tos_ismc/main.m3u8"
-              }
+              "media": { "kind": "hls", "url": "https://test-streams.mux.dev/tos_ismc/main.m3u8" }
             }
           ]
         }
@@ -169,15 +120,9 @@
       "id": "big-buck-bunny",
       "kind": "movie",
       "title": "Big Buck Bunny",
-      "originalTitle": null,
       "year": 2008,
       "synopsis": "A gentle giant of a rabbit has had enough of three forest bullies and plans a very elaborate revenge.",
-      "genres": [
-        "animation",
-        "comedy",
-        "family"
-      ],
-      "rating": null,
+      "genres": ["animation", "comedy", "family"],
       "poster": "assets/a38c688030c93ec66007f916485aadb4bda4cea267640423042a37987b009bde.jpg",
       "episodes": [
         {
@@ -188,28 +133,16 @@
             {
               "id": "hls",
               "label": "HLS",
-              "languages": {
-                "audio": [],
-                "subtitles": []
-              },
+              "languages": { "audio": [], "subtitles": [] },
               "type": "direct",
-              "media": {
-                "kind": "hls",
-                "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
-              }
+              "media": { "kind": "hls", "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8" }
             },
             {
               "id": "dash",
               "label": "DASH",
-              "languages": {
-                "audio": [],
-                "subtitles": []
-              },
+              "languages": { "audio": [], "subtitles": [] },
               "type": "direct",
-              "media": {
-                "kind": "dash",
-                "url": "https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd"
-              }
+              "media": { "kind": "dash", "url": "https://dash.akamaized.net/akamai/bbb_30fps/bbb_30fps.mpd" }
             }
           ]
         }
@@ -219,15 +152,9 @@
       "id": "sintel",
       "kind": "movie",
       "title": "Sintel",
-      "originalTitle": null,
       "year": 2010,
       "synopsis": "A young woman crosses a cold, dangerous world to find the baby dragon she once rescued and raised.",
-      "genres": [
-        "animation",
-        "fantasy",
-        "short film"
-      ],
-      "rating": null,
+      "genres": ["animation", "fantasy", "short film"],
       "poster": "assets/ce1974a460b8f1f5fd2ae25fc5b0d2d5de9cf93188e2c160da158842e504ecfc.jpg",
       "episodes": [
         {
@@ -239,42 +166,18 @@
               "id": "dash-subtitles",
               "label": "DASH · ten subtitle languages",
               "languages": {
-                "audio": [
-                  "en"
-                ],
-                "subtitles": [
-                  "nl",
-                  "en",
-                  "fr",
-                  "de",
-                  "it",
-                  "pl",
-                  "pt",
-                  "ru",
-                  "es",
-                  "vi"
-                ]
+                "audio": ["en"],
+                "subtitles": ["nl", "en", "fr", "de", "it", "pl", "pt", "ru", "es", "vi"]
               },
               "type": "direct",
-              "media": {
-                "kind": "dash",
-                "url": "https://storage.googleapis.com/shaka-demo-assets/sintel/dash.mpd"
-              }
+              "media": { "kind": "dash", "url": "https://storage.googleapis.com/shaka-demo-assets/sintel/dash.mpd" }
             },
             {
               "id": "mp4",
               "label": "MP4",
-              "languages": {
-                "audio": [
-                  "en"
-                ],
-                "subtitles": []
-              },
+              "languages": { "audio": ["en"], "subtitles": [] },
               "type": "direct",
-              "media": {
-                "kind": "mp4",
-                "url": "https://archive.org/download/Sintel/sintel-2048-stereo.mp4"
-              }
+              "media": { "kind": "mp4", "url": "https://archive.org/download/Sintel/sintel-2048-stereo.mp4" }
             }
           ]
         }
@@ -284,15 +187,9 @@
       "id": "elephants-dream",
       "kind": "movie",
       "title": "Elephants Dream",
-      "originalTitle": null,
       "year": 2006,
       "synopsis": "Two men explore a vast, strange machine; the older one insists he knows its rules, the younger one is not so sure.",
-      "genres": [
-        "animation",
-        "science fiction",
-        "short film"
-      ],
-      "rating": null,
+      "genres": ["animation", "science fiction", "short film"],
       "poster": "assets/a63a4a7a79e8b50841781d2096731e497de58877fae794d33ca4042ae338be87.jpg",
       "episodes": [
         {
@@ -303,32 +200,16 @@
             {
               "id": "mp4",
               "label": "MP4",
-              "languages": {
-                "audio": [
-                  "en"
-                ],
-                "subtitles": []
-              },
+              "languages": { "audio": ["en"], "subtitles": [] },
               "type": "direct",
-              "media": {
-                "kind": "mp4",
-                "url": "https://archive.org/download/ElephantsDream/ed_hd.mp4"
-              }
+              "media": { "kind": "mp4", "url": "https://archive.org/download/ElephantsDream/ed_hd.mp4" }
             },
             {
               "id": "mov-720p",
               "label": "QuickTime 720p",
-              "languages": {
-                "audio": [
-                  "en"
-                ],
-                "subtitles": []
-              },
+              "languages": { "audio": ["en"], "subtitles": [] },
               "type": "direct",
-              "media": {
-                "kind": "mp4",
-                "url": "https://download.blender.org/ED/elephantsdream-720-h264-st-aac.mov"
-              }
+              "media": { "kind": "mp4", "url": "https://download.blender.org/ED/elephantsdream-720-h264-st-aac.mov" }
             }
           ]
         }
@@ -338,14 +219,9 @@
       "id": "his-girl-friday",
       "kind": "movie",
       "title": "His Girl Friday",
-      "originalTitle": null,
       "year": 1940,
       "synopsis": "A newspaper editor uses every trick he knows to keep his star reporter, who is also his ex-wife, from leaving the paper.",
-      "genres": [
-        "comedy",
-        "romance"
-      ],
-      "rating": null,
+      "genres": ["comedy", "romance"],
       "poster": "assets/b1944ab41794c18ae64975a5561b124e30576ad9ee7f24dfe0524644a3a10060.jpg",
       "episodes": [
         {
@@ -356,17 +232,9 @@
             {
               "id": "mp4",
               "label": "MP4",
-              "languages": {
-                "audio": [
-                  "en"
-                ],
-                "subtitles": []
-              },
+              "languages": { "audio": ["en"], "subtitles": [] },
               "type": "direct",
-              "media": {
-                "kind": "mp4",
-                "url": "https://archive.org/download/his_girl_friday/his_girl_friday.mp4"
-              }
+              "media": { "kind": "mp4", "url": "https://archive.org/download/his_girl_friday/his_girl_friday.mp4" }
             }
           ]
         }

@@ -1,22 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { makeBundle } from "./helpers.ts";
 
 const BIN = fileURLToPath(new URL("../bin/izle-validate.js", import.meta.url));
 const SAMPLE = fileURLToPath(new URL("../../sample-catalog", import.meta.url));
 
-async function run(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-  try {
-    const { stdout, stderr } = await promisify(execFile)(process.execPath, [BIN, ...args]);
-    return { code: 0, stdout, stderr };
-  } catch (err) {
-    const e = err as { code: number; stdout: string; stderr: string };
-    return { code: e.code, stdout: e.stdout, stderr: e.stderr };
-  }
-}
+const run = async (args: string[]) => {
+  const { status: code, stdout, stderr } = spawnSync(process.execPath, [BIN, ...args], { encoding: "utf8" });
+  return { code, stdout, stderr };
+};
 
 test("izle-validate exits 0 with a summary for a valid bundle, or JSON with --json", async () => {
   const r = await run([SAMPLE]);

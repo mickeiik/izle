@@ -34,15 +34,13 @@ Each video also has a **channel view**: the video played in a loop as if it were
   agrees on "now" and a player that comes back starts at the live edge.
 - `?format=ts` answers a signed URL of `stream.ts`, the same channel as one endless MPEG-TS response: the playlist's
   five segments at once (the player's buffer), then one every 6 seconds, until the client goes away. `Range` is
-  ignored (`200`): an endless stream has no byte position to go back to. The signature is checked when the request
-  starts, so a running stream outlives its URL.
-- `?delivery=inline` with `live=1` answers `400 inline_is_vod_only`. A live playlist moves on every 6 seconds and
-  izle serves inline text as it is for the whole session, so a channel's playlist must come as a URL, which izle's
-  proxy fetches anew on every request.
+  ignored (`200`). The signature is checked when the request starts, so a running stream outlives its URL.
+- `?delivery=inline` with `live=1` answers `400 inline_is_vod_only`: izle serves inline text as it is for the whole
+  session, so a playlist that moves on every 6 seconds must come as a URL, which izle's proxy fetches anew each time.
 - The channel view loops the video's 360p rendition, so it is silent and has no subtitles; it answers no
   `languages`, and the catalog's facts stand. Where the loop starts over, the playlist has an
-  `#EXT-X-DISCONTINUITY` (the video's timestamps go back). `stream.ts` has no such tag, so the upstream moves the
-  timestamps and continuity counters of every round on, as one long broadcast would have them.
+  `#EXT-X-DISCONTINUITY`; `stream.ts` has no such tag, so the upstream moves the timestamps and continuity counters
+  of every round on, as one long broadcast would have them.
 
 Without `--media` it serves small synthetic files (not decodable video — enough for the tests).
 
@@ -67,9 +65,8 @@ Refs it understands (opaque to izle; their shape is the module's own business):
 ```
 
 The last two are for a channel (its request has `episodeId: null`): the live playlist and the raw MPEG-TS stream.
-`live: true` never asks for an inline playlist, and a ref with both `live` and `inline` throws a `TypeError`. izle
-resolves a channel again at `expiresAt`, when its proxy session ends and after a player error; each call asks the
-upstream anew and gets the channel as it is now, so the TV goes on at the live edge.
+A ref with both `live` and `inline` throws a `TypeError`. izle resolves a channel again at `expiresAt`, when its
+proxy session ends and after a player error; each call gets the channel as it is now, at the live edge.
 
 ## Run it
 
@@ -91,13 +88,12 @@ through the 10-minute video, to watch the TV recover (the proxy answers 410, the
 The channel "Live demo" plays the live playlist (source `signed-live-hls`) at its live edge: the clock in the
 picture runs on and starts over with the loop every 10 minutes. Its second source, `raw-ts`, is the raw stream,
 which the TV falls back to when the first fails; to watch it, put it first in `catalog/items.json` and reload the
-catalog (admin page, Catalog → Reload from disk). `--token-ttl 330` also makes the channel's playlist URL expire: the
-TV resolves the channel again a minute before (or on the proxy's 410) and goes on at the live edge, in the same
-viewing of the history.
+catalog (admin page, Catalog → Reload from disk). With `--token-ttl 330` the TV resolves the channel again a minute
+before its URL expires (or on the proxy's 410) and goes on at the live edge, in the same viewing of the history.
 
-The example configuration turns on `proxy.alignTsSegments`, because one of its shows ("Junk before segments")
-only plays with it. The server default is off. It also lists the stand-in site in `proxy.privateUpstreams`
-(`127.0.0.1:8788`): the media proxy refuses loopback and private addresses unless the owner lists them.
+The example configuration turns on `proxy.alignTsSegments`, which the series' "Junk before segments" episode needs
+(the server default is off), and lists the stand-in site in `proxy.privateUpstreams` (`127.0.0.1:8788`): the media
+proxy refuses loopback and private addresses unless the owner lists them.
 
 ## Writing your own
 

@@ -10,8 +10,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -35,46 +34,61 @@ const POSTERS = {
 
 const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
 const readJson = (file) => JSON.parse(readFileSync(path.join(DIR, file), "utf8"));
-const writeJson = (file, value) => writeFileSync(path.join(DIR, file), `${JSON.stringify(value, null, 2)}\n`);
+const writeJson = (file, value) => writeFileSync(path.join(DIR, file), `${toJson(value)}\n`);
 
-function encode(src, focusX, quality) {
-  const [w, h] = execFileSync("magick", ["identify", "-format", "%w %h", `${src}[0]`], { encoding: "utf8" }).split(" ").map(Number);
+/** JSON indented by two; scalar arrays and objects of those stay on one line when it fits in 120 columns. */
+function toJson(value, indent = "", column = 0) {
+  const scalar = (v) => typeof v !== "object" || v === null;
+  const leaf = (v) => scalar(v) || (Array.isArray(v) && v.every(scalar));
+  const entries = (o) => Object.entries(o).map(([k, v]) => [JSON.stringify(k), v]);
+  const oneLine = (v) => {
+    if (scalar(v)) return JSON.stringify(v);
+    if (Array.isArray(v)) return `[${v.map(oneLine).join(", ")}]`;
+    return Object.keys(v).length ? `{ ${entries(v).map(([k, x]) => `${k}: ${oneLine(x)}`).join(", ")} }` : "{}";
+  };
+  if (scalar(value)) return JSON.stringify(value);
+  const flat = leaf(value) || (!Array.isArray(value) && Object.values(value).every(leaf));
+  if (flat && column + oneLine(value).length < 120) return oneLine(value);
+  const inner = `${indent}  `;
+  const lines = Array.isArray(value)
+    ? value.map((v) => toJson(v, inner, inner.length))
+    : entries(value).map(([k, v]) => `${k}: ${toJson(v, inner, inner.length + k.length + 2)}`);
+  const [open, close] = Array.isArray(value) ? ["[", "]"] : ["{", "}"];
+  return `${open}\n${inner}${lines.join(`,\n${inner}`)}\n${indent}${close}`;
+}
+
+/** The poster as a 400×600 JPEG; `image` is the downloaded file's bytes. */
+function encode(image, focusX, quality) {
+  const magick = (args, opts) => execFileSync("magick", args, { input: image, maxBuffer: 16 * 1024 * 1024, ...opts });
+  const [w, h] = magick(["identify", "-format", "%w %h", "-[0]"], { encoding: "utf8" }).split(" ").map(Number);
   const scale = Math.max(400 / w, 600 / h);
   const sw = Math.round(w * scale);
   const sh = Math.round(h * scale);
   const x = Math.min(Math.max(Math.round(sw * focusX - 200), 0), sw - 400);
   const y = Math.max(Math.round((sh - 600) / 2), 0);
-  const args = [
-    `${src}[0]`, "-resize", `${sw}x${sh}!`, "-crop", `400x600+${x}+${y}`, "+repage",
+  return magick([
+    "-[0]", "-resize", `${sw}x${sh}!`, "-crop", `400x600+${x}+${y}`, "+repage",
     "-strip", "-interlace", "Plane", "-sampling-factor", "4:2:0", "-quality", String(quality), "jpg:-",
-  ];
-  return execFileSync("magick", args, { maxBuffer: 16 * 1024 * 1024 });
+  ]);
 }
 
 async function buildPosters(items) {
-  const tmp = mkdtempSync(path.join(tmpdir(), "izle-posters-"));
-  try {
-    for (const item of items) {
-      const spec = POSTERS[item.id];
-      if (!spec) {
-        item.poster = null;
-        continue;
-      }
-      const res = await fetch(spec.url, { headers: { "User-Agent": UA } });
-      if (!res.ok) throw new Error(`${item.id}: poster download failed with HTTP ${res.status}`);
-      const src = path.join(tmp, `${item.id}${path.extname(new URL(spec.url).pathname) || ".img"}`);
-      writeFileSync(src, Buffer.from(await res.arrayBuffer()));
-
-      let quality = 85;
-      let jpg = encode(src, spec.focusX ?? 0.5, quality);
-      while (jpg.length > MAX_BYTES && quality > 40) jpg = encode(src, spec.focusX ?? 0.5, (quality -= 5));
-      const name = `${sha256(jpg)}.jpg`;
-      writeFileSync(path.join(ASSETS, name), jpg);
-      item.poster = `assets/${name}`;
-      console.log(`${item.id}: ${name} (${Math.round(jpg.length / 1024)} KB, q${quality})`);
+  for (const item of items) {
+    const spec = POSTERS[item.id];
+    if (!spec) {
+      item.poster = null;
+      continue;
     }
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    const res = await fetch(spec.url, { headers: { "User-Agent": UA } });
+    if (!res.ok) throw new Error(`${item.id}: poster download failed with HTTP ${res.status}`);
+    const image = Buffer.from(await res.arrayBuffer());
+    let quality = 85;
+    let jpg = encode(image, spec.focusX ?? 0.5, quality);
+    while (jpg.length > MAX_BYTES && quality > 40) jpg = encode(image, spec.focusX ?? 0.5, (quality -= 5));
+    const name = `${sha256(jpg)}.jpg`;
+    writeFileSync(path.join(ASSETS, name), jpg);
+    item.poster = `assets/${name}`;
+    console.log(`${item.id}: ${name} (${Math.round(jpg.length / 1024)} KB, q${quality})`);
   }
 
   const referenced = new Set(items.flatMap((i) => [i.poster, i.backdrop]).filter(Boolean));

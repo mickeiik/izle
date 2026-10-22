@@ -16,11 +16,10 @@ export interface ValidationIssue {
 }
 
 export interface BundleStats {
-  /** movies + series + live. */
+  /** movies + series + live (channels). */
   items: number;
   movies: number;
   series: number;
-  /** Live items (channels). */
   live: number;
   episodes: number;
   playableEpisodes: number;
@@ -89,12 +88,10 @@ function matching<T>(value: unknown, check: ValidateFunction<T>, file: string, i
 function isValidDateTime(value: string): boolean {
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-](\d{2}):(\d{2}))$/.exec(value);
   if (!m) return false;
-  const [y, mo, d, h, mi, s = "0", oh = "0", om = "0"] = m.slice(1);
-  const daysInMonth = new Date(Date.UTC(Number(y), Number(mo), 0)).getUTCDate();
-  return (
-    Number(mo) >= 1 && Number(mo) <= 12 && Number(d) >= 1 && Number(d) <= daysInMonth &&
-    Number(h) <= 23 && Number(mi) <= 59 && Number(s) <= 59 && Number(oh) <= 23 && Number(om) <= 59
-  );
+  const [y, mo, d, h, mi, s, oh, om] = m.slice(1).map((n) => Number(n ?? 0));
+  const date = new Date(Date.UTC(y, mo - 1, d));
+  const sameDay = date.getUTCMonth() === mo - 1 && date.getUTCDate() === d;
+  return sameDay && h <= 23 && mi <= 59 && s <= 59 && oh <= 23 && om <= 59;
 }
 
 /** Validates a bundle directory: JSON Schema plus the semantic rules of catalog-bundle-v1. */
