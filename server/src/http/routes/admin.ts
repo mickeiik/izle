@@ -1,9 +1,7 @@
-// The admin API: pairing approval, the TVs (list, page, settings, deletion, adopting a deleted TV's history,
-// "continue from", what each has watched and is playing, remote commands and their results, problem reports; the
-// home list's changes are admin-home.ts's),
-// the catalog (what is loaded and its builds, the browser, an item's details, the "test this episode or channel" diagnostics, the
-// reload), and "Listen along" (companion audio on the owner's phone: the candidate sources of what a TV plays,
-// resolving one for the phone, the timing links).
+// The admin API: pairing approval; the TVs (settings, deletion, adopting a deleted TV's history, "continue from",
+// progress, what each is playing, remote commands, problem reports; the Home list is admin-home.ts's); the catalog
+// (builds, the browser, an item, diagnostics, reload); and "Listen along" (companion audio on the owner's phone).
+
 import type { Context, Hono } from "hono";
 import { buildJson, catalogInfo, catalogItemJson, reloadCatalog, searchHitJson } from "../../catalog-admin.ts";
 import { BROWSE_SORTS, ITEM_KINDS, type BrowseQuery, type BrowseSort, type ItemKind } from "../../catalog-browse.ts";
@@ -21,17 +19,16 @@ import { adoptBody, approveBody, commandBody, companionLinkBody, companionResolv
 import type { Env } from "../middleware.ts";
 
 /** The device a `/admin/devices/:id` route names; 404 `unknown_device` otherwise. */
-export function requireDevice(store: Store, id: string): Device {
-  const d = isId(id) ? store.getDevice(id) : null;
+export function requireDevice(store: Store, id: string | undefined): Device {
+  const d = id !== undefined && isId(id) ? store.getDevice(id) : null;
   if (!d) throw new HttpError(404, "unknown_device");
   return d;
 }
 
-/** The browser's page size by default, and the most one request gets. */
 const BROWSE_DEFAULT = 50;
 const BROWSE_MAX = 200;
 
-/** `GET /admin/catalog/search`'s query: text, kinds, genres, years, playable, new since, not on a TV's Home, order and page. */
+/** `GET /admin/catalog/search`'s query. */
 function browseQuery(c: Context, ctx: AppContext): BrowseQuery {
   const sort = c.req.query("sort") || "title";
   if (!BROWSE_SORTS.includes(sort as BrowseSort)) throw new HttpError(400, "invalid_request", `sort must be one of ${BROWSE_SORTS.join(", ")}`);
@@ -55,6 +52,7 @@ function browseQuery(c: Context, ctx: AppContext): BrowseQuery {
 
 export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
   const { store, home, pairing, devices, catalog, companion, playing } = ctx;
+  const device = (c: Context) => requireDevice(store, c.req.param("id"));
 
   app.post("/api/v1/admin/pair/approve", async (c) => {
     const body = await parseBody(c, approveBody);
@@ -65,7 +63,7 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
     c.json({ codes: pairing.listOpen().map((p) => ({ code: p.code, createdAt: iso(p.createdAt), expiresAt: iso(p.expiresAt), approved: p.approved })) }),
   );
 
-  // Clears a code the owner's TV does not show; owner only (not in ROUTE_SCOPES: every non-GET route defaults to owner).
+  // Clears a code the owner's TV does not show.
   app.delete("/api/v1/admin/pair/pending/:code", (c) => {
     const code = c.req.param("code");
     if (!PAIR_CODE.test(code) || !pairing.cancel(code, c.get("actor"))) throw new HttpError(404, "unknown_code", "no open pairing code with this value");
@@ -75,54 +73,50 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
   app.get("/api/v1/admin/devices", (c) => c.json({ devices: devices.list() }));
 
   app.get("/api/v1/admin/devices/:id", (c) => {
-    const d = requireDevice(store, c.req.param("id"));
+    const d = device(c);
     return c.json({ device: devices.view(d), home: devices.home(d), homeMax: HOME_MAX_ITEMS, sections: home.sections(d.id), sectionsMax: HOME_MAX_SECTIONS });
   });
 
   app.patch("/api/v1/admin/devices/:id", async (c) => {
-    const d = requireDevice(store, c.req.param("id"));
-    const body = await parseBody(c, devicePatchBody);
-    return c.json({ device: devices.view(devices.update(d, body, c.get("actor"))) });
+    const d = device(c);
+    return c.json({ device: devices.view(devices.update(d, await parseBody(c, devicePatchBody), c.get("actor"))) });
   });
 
   app.delete("/api/v1/admin/devices/:id", (c) => {
-    devices.remove(requireDevice(store, c.req.param("id")), c.get("actor"));
+    devices.remove(device(c), c.get("actor"));
     return c.body(null, 204);
   });
 
   app.post("/api/v1/admin/devices/:id/history/adopt", async (c) => {
-    const d = requireDevice(store, c.req.param("id"));
-    const body = await parseBody(c, adoptBody);
-    return c.json({ moved: devices.adoptHistory(d, body.fromDeviceId, c.get("actor")) });
+    const d = device(c);
+    return c.json({ moved: devices.adoptHistory(d, (await parseBody(c, adoptBody)).fromDeviceId, c.get("actor")) });
   });
 
   app.put("/api/v1/admin/devices/:id/cursor", async (c) => {
-    const d = requireDevice(store, c.req.param("id"));
+    const d = device(c);
     const body = await parseBody(c, cursorBody);
     return c.json({ version: home.setCursor(d.id, body.itemId, body.episodeId, c.get("actor")) });
   });
 
-  app.get("/api/v1/admin/devices/:id/progress", (c) => c.json(devices.progress(requireDevice(store, c.req.param("id")))));
+  app.get("/api/v1/admin/devices/:id/progress", (c) => c.json(devices.progress(device(c))));
 
   // `?seq=<n>&wait=<s>` long-polls until the row changes (the phone's "Listen along" follows the TV with it).
   app.get("/api/v1/admin/devices/:id/now", async (c) => {
-    const d = requireDevice(store, c.req.param("id"));
+    const d = device(c);
     const seq = intQuery(c.req.query("seq"), "seq", 0) ?? null;
     const waitSec = parseWait(c.req.query("wait"), 0, MAX_NOW_WAIT_MS / 1000);
-    const n = await playing.waitCurrent(d.id, seq, waitSec * 1000, c.req.raw.signal);
-    return c.json(devices.now(d, n));
+    return c.json(devices.now(d, await playing.waitCurrent(d.id, seq, waitSec * 1000, c.req.raw.signal)));
   });
 
   app.post("/api/v1/admin/devices/:id/commands", async (c) => {
-    const d = requireDevice(store, c.req.param("id"));
-    const body = await parseBody(c, commandBody);
-    const { command, online } = ctx.commands.send(d.id, body, c.get("actor"));
+    const d = device(c);
+    const { command, online } = ctx.commands.send(d.id, await parseBody(c, commandBody), c.get("actor"));
     return c.json({ id: command.id, online }, 202);
   });
 
   // A command while it is stored (7 days): when the TV acknowledged it, and what it made of it.
   app.get("/api/v1/admin/devices/:id/commands/:commandId", (c) => {
-    const d = requireDevice(store, c.req.param("id"));
+    const d = device(c);
     const id = intParam(c.req.param("commandId"), "unknown_command");
     const cmd = store.getCommand(d.id, id);
     if (!cmd) throw new HttpError(404, "unknown_command");
@@ -131,12 +125,12 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
   });
 
   app.get("/api/v1/admin/devices/:id/problems", (c) => {
-    const d = requireDevice(store, c.req.param("id"));
+    const d = device(c);
     return c.json({ problems: ctx.problems.list(d.id, limitQuery(c.req.query("limit"), PROBLEM_LIST_DEFAULT, PROBLEM_LIST_MAX)) });
   });
 
   app.delete("/api/v1/admin/devices/:id/problems", (c) => {
-    ctx.problems.clear(requireDevice(store, c.req.param("id")).id);
+    ctx.problems.clear(device(c).id);
     return c.body(null, 204);
   });
 
@@ -166,23 +160,19 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
 
   app.post("/api/v1/admin/catalog/reload", async (c) => {
     const r = await reloadCatalog(ctx, c.get("actor"));
-    if (!r.ok) {
-      return c.json({ error: "invalid_catalog", issues: r.issues.map((i) => ({ severity: i.severity, file: i.file, path: i.path, message: i.message })) }, 422);
-    }
-    return c.json({ catalog: catalogInfo(ctx) });
+    if (r.ok) return c.json({ catalog: catalogInfo(ctx) });
+    return c.json({ error: "invalid_catalog", issues: r.issues.map(({ severity, file, path, message }) => ({ severity, file, path, message })) }, 422);
   });
 
-  app.get("/api/v1/admin/devices/:id/companion", (c) => c.json(companion.candidates(requireDevice(store, c.req.param("id")))));
+  app.get("/api/v1/admin/devices/:id/companion", (c) => c.json(companion.candidates(device(c))));
 
   app.post("/api/v1/admin/devices/:id/companion/resolve", async (c) => {
-    const d = requireDevice(store, c.req.param("id"));
-    const body = await parseBody(c, companionResolveBody);
-    return c.json(await companion.resolve(d, body, c.req.raw.signal));
+    const d = device(c);
+    return c.json(await companion.resolve(d, await parseBody(c, companionResolveBody), c.req.raw.signal));
   });
 
   const linkParams = (c: Context) => {
-    const episodeId = c.req.param("episodeId") ?? "";
-    const sourceId = c.req.param("sourceId") ?? "";
+    const { episodeId = "", sourceId = "" } = c.req.param();
     if (!isId(episodeId)) throw new HttpError(404, "unknown_episode");
     if (!isId(sourceId)) throw new HttpError(404, "unknown_source");
     return { episodeId, sourceId };
@@ -190,8 +180,7 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
 
   app.put("/api/v1/admin/companion/links/:episodeId/:sourceId", async (c) => {
     const { episodeId, sourceId } = linkParams(c);
-    const body = await parseBody(c, companionLinkBody);
-    return c.json({ link: companion.putLink(episodeId, sourceId, body) });
+    return c.json({ link: companion.putLink(episodeId, sourceId, await parseBody(c, companionLinkBody)) });
   });
 
   app.post("/api/v1/admin/companion/links/:episodeId/:sourceId/copy-to-item", (c) => {

@@ -43,13 +43,9 @@ export const devicePatchBody = ajv.compile<DevicePatch>({
 
 export const tokenBody = ajv.compile<{ name: string; scope: Scope }>(object({ name: NAME, scope: { enum: SCOPES } }, ["name", "scope"]));
 
-/** One branch's own fields, and which of them it requires. */
 type Branch = { properties?: object; required?: string[] };
 
-/**
- * A body naming an episode by its id or a channel by its item id, with the `shared` fields on both branches and
- * each branch's own extras. Each branch forbids the other's id, so a body matches one.
- */
+/** A body naming an episode or a channel (by item id), with `shared` and each branch's own fields: it matches one. */
 const episodeOrChannel = (shared: object, episode: Branch = {}, channel: Branch = {}) => ({
   oneOf: [
     object({ episodeId: ID, ...shared, ...episode.properties }, ["episodeId", ...(episode.required ?? [])]),
@@ -62,13 +58,13 @@ const POSITION = { type: "integer", minimum: 0 };
 
 const SECTION_TITLE = { type: "string", minLength: 1, maxLength: SECTION_TITLE_MAX, pattern: "\\S" };
 const LAYOUT = { enum: SECTION_LAYOUTS };
-/** Sections of `PUT …/home` (or what the caller saw); up to 100, so that a Home with too many answers `too_many_sections`. */
+/** Up to 100 sections, so that a Home with too many answers `too_many_sections`. */
 const sectionList = (required: string[]) => ({
   type: "array", maxItems: 100, items: object({ id: ID, title: { anyOf: [SECTION_TITLE, NULL] }, layout: LAYOUT, itemIds: ITEM_IDS }, required),
 });
 
 /** `PUT …/home`: the items (sections kept) or the whole Home in sections, each with `expected` in its own shape. */
-export type HomeBody = { itemIds: string[]; expected?: string[] } | { sections: SectionInput[]; expected?: ExpectedSection[] };
+type HomeBody = { itemIds: string[]; expected?: string[] } | { sections: SectionInput[]; expected?: ExpectedSection[] };
 
 export const homeBody = ajv.compile<HomeBody>({
   oneOf: [
@@ -166,7 +162,6 @@ export const companionResolveBody = ajv.compile<CompanionResolveInput>(
   object({ episodeId: ID, sourceId: ID, language: LANGUAGE_TAG_OR_NULL }, ["episodeId", "sourceId"]),
 );
 
-/** Parses and validates a JSON request body, answering 400 with readable details otherwise. */
 export async function parseBody<T>(c: Context, validate: ValidateFunction<T>): Promise<T> {
   let body: unknown;
   try {
@@ -182,7 +177,6 @@ export function isId(value: string): boolean {
   return ID_PATTERN.test(value);
 }
 
-/** The `wait=<seconds>` query parameter of the long-poll routes. */
 export function parseWait(param: string | undefined, defaultSec: number, maxSec: number): number {
   const sec = param === undefined ? defaultSec : Number(param);
   if (!Number.isInteger(sec) || sec < 0 || sec > maxSec) throw new HttpError(400, "invalid_request", `wait must be an integer between 0 and ${maxSec}`);
@@ -220,10 +214,7 @@ export function listQuery(value: string | undefined, name: string, ok: (v: strin
 
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?)?$/;
 
-/**
- * An optional instant query parameter: an ISO 8601 date-time or epoch ms (a non-negative integer), as epoch ms. A
- * date-time without an offset is UTC, as a date alone is (not the server's local time).
- */
+/** An optional ISO 8601 date-time or epoch ms, as epoch ms; without an offset it is UTC (not the server's zone). */
 export function timeQuery(value: string | undefined, name: string): number | undefined {
   if (value === undefined || value === "") return undefined;
   const utc = value.includes("T") && !/(Z|[+-]\d{2}:\d{2})$/.test(value) ? `${value}Z` : value;

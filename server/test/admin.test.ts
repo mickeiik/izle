@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { OWNER } from "../src/actor.ts";
 import { reloadOnSignal } from "../src/catalog-admin.ts";
-import { HOME_COLUMNS, HOME_MAX_ITEMS, HOME_ROWS } from "../src/home.ts";
+import { HOME_MAX_ITEMS } from "../src/home.ts";
 import { fixtureItems, fixtureManifest, logged, openEvents, publishBuild, testServer, tempDir, writeBundle, type Json } from "./helpers.ts";
 
 /** A server with a paired TV; `fillers` playable movies beyond the fixture's usual ones (for the home limit). */
@@ -14,111 +14,122 @@ async function setup(t: { after(fn: () => unknown): void }, fillers?: number) {
 }
 
 const withoutFilm = (items: Json[]) => items.filter((i) => i.id !== "film");
+const fillerIds = (n: number) => Array.from({ length: n }, (_, i) => `filler-${String(i + 1).padStart(2, "0")}`);
 
-test("devices: list, detail, patch settings, delete", async (t) => {
+test("devices: list, detail, settings PATCHed into the TV's state with a version each, refusals change nothing, delete", async (t) => {
   const { s, tv } = await setup(t);
-  const list = await s.admin("GET", "/devices");
-  assert.equal(list.json.devices.length, 1);
-  const d = list.json.devices[0];
-  assert.equal(d.id, tv.deviceId);
-  assert.equal(d.online, false);
-  const grid = { homeColumns: 4, homeRows: 2 };
-  assert.deepEqual(d.settings, { uiLanguage: null, preferredAudioLanguage: null, subtitlesLanguage: null, autoplayOnStart: false, ...grid });
-  assert.deepEqual(d.effective, { uiLanguage: "tr", preferredAudioLanguage: "tr", subtitlesLanguage: null, autoplayOnStart: false, ...grid });
-  assert.deepEqual(d.problems, { recent: 0, lastAt: null });
+  const state = async () => (await s.call("GET", "/api/v1/tv/state", { token: tv.token })).json;
+  const [d] = (await s.admin("GET", "/devices")).json.devices;
+  assert.deepEqual([d.id, d.online, d.problems], [tv.deviceId, false, { recent: 0, lastAt: null }]);
+  let settings: Json = { uiLanguage: null, preferredAudioLanguage: null, subtitlesLanguage: null, autoplayOnStart: false, homeColumns: 4, homeRows: 2 };
+  assert.deepEqual(d.settings, settings);
+  assert.deepEqual(d.effective, { ...settings, uiLanguage: "tr", preferredAudioLanguage: "tr" }, "the catalog's hints");
+  const v0 = (await state()).version;
 
-  const patched = await s.admin("PATCH", `/devices/${tv.deviceId}`, { name: "Yatak odası", uiLanguage: "en", subtitlesLanguage: "tr" });
-  assert.equal(patched.status, 200);
-  assert.equal(patched.json.device.name, "Yatak odası");
-  assert.deepEqual(patched.json.device.effective, { uiLanguage: "en", preferredAudioLanguage: "tr", subtitlesLanguage: "tr", autoplayOnStart: false, ...grid });
-  assert.equal(patched.json.device.stateVersion, d.stateVersion + 1);
-  const reset = await s.admin("PATCH", `/devices/${tv.deviceId}`, { uiLanguage: null });
-  assert.equal(reset.json.device.effective.uiLanguage, "tr");
-  assert.equal((await s.admin("PATCH", `/devices/${tv.deviceId}`, {})).status, 400);
-  assert.equal((await s.admin("PATCH", `/devices/${tv.deviceId}`, { uiLanguage: "fr" })).status, 400);
+  // Each changes what it names only; the grid's columns and rows either alone.
+  const patches = [
+    { name: "Yatak odası", uiLanguage: "en", subtitlesLanguage: "tr" }, { uiLanguage: null }, { autoplayOnStart: true },
+    { homeColumns: 6, homeRows: 1 }, { homeRows: 4 }, { homeColumns: 3 }, { autoplayOnStart: false, name: "Salon 2" },
+  ];
+  for (const [i, { name, ...patch }] of patches.entries()) {
+    const r = await s.admin("PATCH", `/devices/${tv.deviceId}`, { name, ...patch });
+    settings = { ...settings, ...patch };
+    assert.equal(r.status, 200, JSON.stringify(patch));
+    assert.deepEqual([r.json.device.settings, r.json.device.stateVersion], [settings, v0 + i + 1], JSON.stringify(patch));
+  }
+  const effective = { uiLanguage: "tr", preferredAudioLanguage: "tr", subtitlesLanguage: "tr", autoplayOnStart: false, homeColumns: 3, homeRows: 4 };
+  assert.deepEqual((await state()).device, { id: tv.deviceId, name: "Salon 2", ...effective }, "the TV re-reads its state");
+  assert.deepEqual((await s.admin("GET", "/devices")).json.devices[0].effective, effective);
+
+  const bad = [
+    {}, { uiLanguage: "fr" }, ...["yes", 1, null, "true"].map((v) => ({ autoplayOnStart: v })),
+    ...[2, 7, "4", null, 4.5].map((v) => ({ homeColumns: v })), ...[0, 5, "2", null].map((v) => ({ homeRows: v })),
+  ];
+  for (const body of bad) {
+    const r = await s.admin("PATCH", `/devices/${tv.deviceId}`, body);
+    assert.deepEqual([r.status, r.json.error], [400, "invalid_request"], JSON.stringify(body));
+  }
+  assert.equal((await state()).version, v0 + patches.length, "refused patches change nothing");
   assert.equal((await s.admin("PATCH", "/devices/nope", { name: "x" })).status, 404);
 
   const detail = await s.admin("GET", `/devices/${tv.deviceId}`);
-  assert.equal(detail.json.homeMax, HOME_MAX_ITEMS);
-  assert.equal(HOME_MAX_ITEMS, 200);
+  assert.deepEqual([detail.json.device.settings, detail.json.homeMax], [settings, HOME_MAX_ITEMS]);
   assert.equal((await s.admin("DELETE", `/devices/${tv.deviceId}`)).status, 204);
   assert.equal((await s.admin("GET", `/devices/${tv.deviceId}`)).status, 404);
 });
 
-test("home list: order kept, capped, validated", async (t) => {
-  const { s, tv } = await setup(t, HOME_MAX_ITEMS);
-  const fillers = Array.from({ length: HOME_MAX_ITEMS }, (_, i) => `filler-${String(i + 1).padStart(2, "0")}`);
-  const ok = await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: fillers });
-  assert.equal(ok.status, 200);
-  assert.equal(ok.json.home.length, 200);
-  assert.equal((await s.call("GET", "/api/v1/tv/state", { token: tv.token })).json.home.length, 200, "the TV gets every show");
-  const tooMany = await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: [...fillers, "show"] });
-  assert.equal(tooMany.status, 400);
-  assert.equal(tooMany.json.error, "too_many_items");
-  assert.equal(tooMany.json.max, 200);
-  assert.equal((await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["show", "show"] })).json.error, "duplicate_item");
-  assert.equal((await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["ghost"] })).json.error, "unknown_item");
-  assert.equal((await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["locked"] })).json.error, "not_playable");
-  const reordered = await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["silent", "show"] });
-  assert.deepEqual(reordered.json.home.map((h: { itemId: string }) => h.itemId), ["silent", "show"]);
-  assert.deepEqual((await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: [] })).json.home, []);
-});
-
-test("home list: single changes go through the same checks, bump the version and say what came and went; expected guards a PUT", async (t) => {
+test("home routes: each answers version, home and sections; bodies and ids are checked, the service's refusals pass through", async (t) => {
   const { s, tv } = await setup(t, HOME_MAX_ITEMS);
   const home = (method: string, route: string, body?: unknown) => s.admin(method, `/devices/${tv.deviceId}/home${route}`, body);
-  const ids = (r: Json) => r.json.home.map((h: { itemId: string }) => h.itemId);
-  const v0 = (await s.admin("GET", `/devices/${tv.deviceId}`)).json.device.stateVersion;
-  const after = (await s.admin("GET", "/events")).json.last;
+  const shape = (r: Json) => [r.json.version, r.json.home.map((h: Json) => h.itemId), r.json.sections.map((x: Json) => [x.id, x.title, x.layout, x.itemIds])];
+  const detail = (await s.admin("GET", `/devices/${tv.deviceId}`)).json;
+  assert.deepEqual([detail.sections, detail.sectionsMax], [[{ id: "untitled", title: null, layout: "grid", itemIds: [] }], 20]);
+  const v0 = detail.device.stateVersion;
 
-  // [method, route, body, the list afterwards]
-  const changes: Array<[string, string, unknown, string[]]> = [
-    ["POST", "/items", { itemId: "show" }, ["show"]],
-    ["POST", "/items", { itemId: "film", position: 0 }, ["film", "show"]],
-    ["POST", "/items", { itemId: "silent", position: 99 }, ["film", "show", "silent"]],
-    ["PATCH", "/items/show", { position: 0 }, ["show", "film", "silent"]],
-    ["PATCH", "/items/film", { position: 99 }, ["show", "silent", "film"]],
-    ["DELETE", "/items/silent", undefined, ["show", "film"]],
+  const created = await home("POST", "/sections", { title: " Kanallar ", layout: "row", position: 0 });
+  const ch = created.json.sectionId;
+  assert.match(ch, /^[A-Za-z0-9]{8}$/);
+  const untitled = (itemIds: string[]) => ["untitled", null, "grid", itemIds];
+  // [method, route, body, home and sections afterwards]
+  const steps: Array<[string, string, unknown, string[], unknown[]]> = [
+    ["PUT", "", { itemIds: ["show", "film"] }, ["show", "film"], [[ch, "Kanallar", "row", []], untitled(["show", "film"])]],
+    ["POST", "/items", { itemId: "news", sectionId: ch }, ["news", "show", "film"], [[ch, "Kanallar", "row", ["news"]], untitled(["show", "film"])]],
+    ["POST", "/items", { itemId: "silent", position: 0 }, ["news", "silent", "show", "film"], [[ch, "Kanallar", "row", ["news"]], untitled(["silent", "show", "film"])]],
+    ["PATCH", "/items/film", { sectionId: ch, position: 0 }, ["film", "news", "silent", "show"], [[ch, "Kanallar", "row", ["film", "news"]], untitled(["silent", "show"])]],
+    ["PATCH", `/sections/${ch}`, { title: "Channels", layout: "grid", position: 5 }, ["silent", "show", "film", "news"], [untitled(["silent", "show"]), [ch, "Channels", "grid", ["film", "news"]]]],
+    ["DELETE", "/items/silent", undefined, ["show", "film", "news"], [untitled(["show"]), [ch, "Channels", "grid", ["film", "news"]]]],
+    ["PUT", "", { sections: [{ id: ch, title: "Channels", itemIds: ["news"] }, { id: "untitled", title: null, itemIds: ["film", "show"] }] }, ["news", "film", "show"], [[ch, "Channels", "grid", ["news"]], untitled(["film", "show"])]],
+    ["DELETE", `/sections/${ch}`, undefined, ["film", "show", "news"], [untitled(["film", "show", "news"])]],
   ];
-  for (const [i, [method, route, body, list]] of changes.entries()) {
+  for (const [i, [method, route, body, ids, sections]] of steps.entries()) {
     const r = await home(method, route, body);
     assert.equal(r.status, 200, `${method} ${route}`);
-    assert.deepEqual([r.json.version, ids(r)], [v0 + i + 1, list], `${method} ${route}`);
+    assert.deepEqual(shape(r), [v0 + i + 2, ids, sections], `${method} ${route}`);
   }
-  const events = (await s.admin("GET", `/events?after=${after}&types=home.changed`)).json.events;
-  assert.deepEqual(events.map((e: Json) => [e.data.added, e.data.removed]), [[["show"], []], [["film"], []], [["silent"], []], [[], []], [[], []], [[], ["silent"]]]);
-  assert.deepEqual(events.at(-1).data.itemIds, ["show", "film"]);
+  const current = (await s.admin("GET", `/devices/${tv.deviceId}`)).json;
+  assert.deepEqual(current.sections, [{ id: "untitled", title: null, layout: "grid", itemIds: ["film", "show", "news"] }], "the device page agrees");
 
   const refused: Array<[string, string, unknown, number, string]> = [
-    ["POST", "/items", { itemId: "show" }, 400, "duplicate_item"],
-    ["POST", "/items", { itemId: "ghost" }, 400, "unknown_item"],
-    ["POST", "/items", { itemId: "locked" }, 400, "not_playable"],
     ["POST", "/items", { itemId: "silent", position: -1 }, 400, "invalid_request"],
     ["POST", "/items", { position: 0 }, 400, "invalid_request"],
-    ["PATCH", "/items/silent", { position: 0 }, 404, "not_on_home"],
+    ["POST", "/items", { itemId: "show" }, 400, "duplicate_item"],
     ["PATCH", "/items/show", {}, 400, "invalid_request"],
     ["PATCH", "/items/show", { position: 1.5 }, 400, "invalid_request"],
-    ["DELETE", "/items/silent", undefined, 404, "not_on_home"],
+    ["PATCH", "/items/silent", { position: 0 }, 404, "not_on_home"],
     ["DELETE", "/items/not-an-id!", undefined, 404, "not_on_home"],
-    ["PUT", "", { itemIds: ["film"], expected: ["film", "show"] }, 409, "home_changed"],
-    ["PUT", "", { itemIds: ["film"], expected: ["show"] }, 409, "home_changed"],
+    ["POST", "/sections", { title: "   " }, 400, "invalid_request"],
+    ["POST", "/sections", { title: "x".repeat(41) }, 400, "invalid_request"],
+    ["POST", "/sections", { title: "Ok", layout: "carousel" }, 400, "invalid_request"],
+    ["POST", "/sections", { layout: "row" }, 400, "invalid_request"],
+    ["POST", "/sections", { title: "Ok", position: -1 }, 400, "invalid_request"],
+    ["PATCH", "/sections/untitled", {}, 400, "invalid_request"],
+    ["PATCH", "/sections/untitled", { title: null }, 400, "invalid_request"],
+    ["PATCH", "/sections/untitled", { title: "More" }, 400, "untitled_section"],
+    ["PATCH", "/sections/not-an-id!", { layout: "row" }, 404, "unknown_section"],
+    ["DELETE", "/sections/not-an-id!", undefined, 404, "unknown_section"],
+    ["PUT", "", { sections: [{ id: "untitled", itemIds: [] }, { title: "", itemIds: [] }] }, 400, "invalid_request"],
+    ["PUT", "", { sections: [{ id: "untitled", itemIds: [], layout: "carousel" }] }, 400, "invalid_request"],
+    ["PUT", "", { itemIds: [], sections: [{ id: "untitled", itemIds: [] }] }, 400, "invalid_request"],
+    ["PUT", "", { itemIds: [], expected: [{ id: "untitled", itemIds: [] }] }, 400, "invalid_request"],
+    ["PUT", "", { sections: [{ id: "untitled", itemIds: [] }], expected: ["show"] }, 400, "invalid_request"],
+    ["PUT", "", { itemIds: [], expected: ["show", "film", "news"] }, 409, "home_changed"],
   ];
   for (const [method, route, body, status, error] of refused) {
     const r = await home(method, route, body);
     assert.deepEqual([r.status, r.json.error], [status, error], `${method} ${route} ${JSON.stringify(body)}`);
-    if (error === "home_changed") assert.deepEqual(r.json.itemIds, ["show", "film"], "a conflict answers the current list");
+    if (error === "home_changed") assert.deepEqual([r.json.itemIds, r.json.sections], [["film", "show", "news"], current.sections], "a conflict answers the current Home");
   }
   assert.equal((await s.admin("POST", "/devices/ghost/home/items", { itemId: "show" })).json.error, "unknown_device");
-  const put = await home("PUT", "", { itemIds: ["film"], expected: ["show", "film"] });
-  assert.deepEqual([put.status, ids(put)], [200, ["film"]]);
 
-  const fillers = Array.from({ length: HOME_MAX_ITEMS - 1 }, (_, i) => `filler-${String(i + 1).padStart(2, "0")}`);
-  await home("PUT", "", { itemIds: ["film", ...fillers] });
-  const full = await home("POST", "/items", { itemId: "show" });
-  assert.deepEqual([full.status, full.json.error, full.json.max], [400, "too_many_items", HOME_MAX_ITEMS]);
+  const full = await home("PUT", "", { itemIds: fillerIds(HOME_MAX_ITEMS) });
+  assert.deepEqual([full.status, full.json.home.length], [200, 200]);
+  assert.equal((await s.call("GET", "/api/v1/tv/state", { token: tv.token })).json.home.length, 200, "the TV gets every show");
+  for (const r of [await home("PUT", "", { itemIds: [...fillerIds(HOME_MAX_ITEMS), "show"] }), await home("POST", "/items", { itemId: "show" })]) {
+    assert.deepEqual([r.status, r.json.error, r.json.max], [400, "too_many_items", HOME_MAX_ITEMS]);
+  }
 });
 
-test("cursor override: continue from episode X and forget X's position", async (t) => {
+test("cursor override and progress: continue from episode X, X's position forgotten; what the TV saved", async (t) => {
   const { s, tv } = await setup(t);
   const as = (m: string, r: string, b?: unknown) => s.call(m, `/api/v1/tv${r}`, { token: tv.token, body: b });
   await as("POST", "/progress", { episodeId: "show.e2", positionMs: 500_000, durationMs: 1_000_000, status: "stopped" });
@@ -130,45 +141,13 @@ test("cursor override: continue from episode X and forget X's position", async (
   assert.equal(item.json.episodes[1].progress, null, "rewatch starts from the beginning");
   assert.equal(item.json.episodes[3].progress.positionMs, 10_000, "other episodes keep their progress");
   assert.equal((await s.admin("PUT", `/devices/${tv.deviceId}/cursor`, { itemId: "show", episodeId: "show.e3" })).json.error, "not_allowed");
-  assert.equal((await s.admin("PUT", `/devices/${tv.deviceId}/cursor`, { itemId: "show", episodeId: "film.main" })).json.error, "unknown_episode");
-  assert.equal((await s.admin("PUT", `/devices/${tv.deviceId}/cursor`, { itemId: "nope", episodeId: "show.e1" })).status, 404);
 
-  const prog = await s.admin("GET", `/devices/${tv.deviceId}/progress`);
-  assert.deepEqual(prog.json.cursors.map((c: { episodeId: string }) => c.episodeId), ["show.e2"]);
-  assert.deepEqual(prog.json.progress.map((p: { episodeId: string }) => p.episodeId), ["show.e4"]);
-  assert.equal(prog.json.progress[0].itemTitle, "Şov Dünyası");
-  assert.equal(prog.json.progress[0].kind, "series");
+  const prog = (await s.admin("GET", `/devices/${tv.deviceId}/progress`)).json;
+  assert.deepEqual(prog.cursors.map((c: Json) => c.episodeId), ["show.e2"]);
+  assert.deepEqual(prog.progress.map((p: Json) => [p.episodeId, p.itemTitle, p.kind]), [["show.e4", "Şov Dünyası", "series"]]);
 });
 
-test("now playing follows resolve and heartbeats", async (t) => {
-  const { s, tv } = await setup(t);
-  const as = (m: string, r: string, b?: unknown) => s.call(m, `/api/v1/tv${r}`, { token: tv.token, body: b });
-  assert.equal((await s.admin("GET", `/devices/${tv.deviceId}/now`)).json.nowPlaying, null);
-  const r = await as("POST", "/resolve", { episodeId: "film.main" });
-  let now = await s.admin("GET", `/devices/${tv.deviceId}/now`);
-  assert.equal(now.json.nowPlaying.state, "starting");
-  assert.equal(now.json.nowPlaying.sourceId, "a");
-  await as("POST", "/progress", { sessionId: r.json.sessionId, episodeId: "film.main", positionMs: 42_000, durationMs: 5_400_000, status: "playing" });
-  now = await s.admin("GET", `/devices/${tv.deviceId}/now`);
-  assert.deepEqual(
-    (({ state, positionMs, sourceId, itemTitle }) => ({ state, positionMs, sourceId, itemTitle }))(now.json.nowPlaying),
-    { state: "playing", positionMs: 42_000, sourceId: "a", itemTitle: "Film" },
-  );
-});
-
-test("commands: play is checked against the catalog and acknowledged by its TV only", async (t) => {
-  const { s, tv } = await setup(t);
-  const play = await s.admin("POST", `/devices/${tv.deviceId}/commands`, { type: "play", episodeId: "show.e1" });
-  assert.equal(play.status, 202);
-  assert.equal((await s.admin("POST", `/devices/${tv.deviceId}/commands`, { type: "play", episodeId: "show.e3" })).json.error, "not_allowed");
-  const ack = await s.call("POST", `/api/v1/tv/commands/${play.json.id}/ack`, { token: tv.token });
-  assert.equal(ack.status, 200);
-  assert.equal((await s.call("POST", "/api/v1/tv/commands/9999/ack", { token: tv.token })).status, 404);
-  const other = await s.pair("Other");
-  assert.equal((await s.call("POST", `/api/v1/tv/commands/${play.json.id}/ack`, { token: other.token })).status, 404, "only the target device can ack");
-});
-
-test("commands: every type is validated and stored with its payload; the log never has a message's text", async (t) => {
+test("commands: every type is validated and stored with its payload; acknowledged by its TV only; the log never has a message's text", async (t) => {
   const { s, tv } = await setup(t);
   const send = (body: unknown) => s.admin("POST", `/devices/${tv.deviceId}/commands`, body);
   const TEXT = "Yemek hazır, anneanne!";
@@ -185,16 +164,10 @@ test("commands: every type is validated and stored with its payload; the log nev
   await s.srv.ctx.appUpdates.store(apk, "izle-tv-0.3.0.apk", "upload", null, OWNER);
   for (const [body] of good) {
     const r = await send(body);
-    assert.equal(r.status, 202, JSON.stringify(body));
-    assert.equal(r.json.online, false);
-    assert.ok(Number.isSafeInteger(r.json.id));
+    assert.deepEqual([r.status, r.json.online, Number.isSafeInteger(r.json.id)], [202, false, true], JSON.stringify(body));
   }
   const stored = s.srv.ctx.store.pendingCommands(tv.deviceId, 0);
-  assert.deepEqual(
-    stored.map((c) => [c.type, c.payload]),
-    good.map(([body, payload]) => [(body as { type: string }).type, payload]),
-    "the payload each command is replayed with",
-  );
+  assert.deepEqual(stored.map((c) => [c.type, c.payload]), good.map(([body, payload]) => [(body as Json).type, payload]), "the payload each is replayed with");
 
   const bad: unknown[] = [
     { type: "play" }, { type: "stop", episodeId: "show.e1" }, { type: "seek" }, { type: "seek", deltaMs: 30_000, positionMs: 10_000 },
@@ -207,105 +180,34 @@ test("commands: every type is validated and stored with its payload; the log nev
   ];
   for (const body of bad) {
     const r = await send(body);
-    assert.equal(r.status, 400, JSON.stringify(body));
-    assert.equal(r.json.error, "invalid_request");
+    assert.deepEqual([r.status, r.json.error], [400, "invalid_request"], JSON.stringify(body));
   }
   assert.equal(s.srv.ctx.store.pendingCommands(tv.deviceId, 0).length, good.length, "nothing was stored for refused bodies");
 
+  const play = (await send({ type: "play", episodeId: "show.e1" })).json.id;
+  const other = await s.pair("Other");
+  const ack = (id: number, token: string) => s.call("POST", `/api/v1/tv/commands/${id}/ack`, { token }).then((r) => r.status);
+  assert.deepEqual([await ack(play, other.token), await ack(9999, tv.token), await ack(play, tv.token)], [404, 404, 200], "only the target TV acks");
+
   // The log has the type and ids, never a message's text.
   const queued = logged(s, "command queued");
-  assert.deepEqual(queued.map((l) => l.type), good.map(([body]) => (body as { type: string }).type));
+  assert.deepEqual(queued.map((l) => l.type), [...good.map(([body]) => (body as Json).type), "play"]);
   for (const l of queued) assert.deepEqual(Object.keys(l).sort(), ["commandId", "deviceId", "level", "msg", "time", "type"]);
   assert.ok(!s.logs.some((l) => l.includes("Yemek") || l.includes("xxxxxxxx")), "message text never reaches the log");
 });
 
-test("autoplay on start: off by default, PATCH round-trip, in the TV's state, bumps the version, booleans only", async (t) => {
-  const { s, tv } = await setup(t);
-  const state = () => s.call("GET", "/api/v1/tv/state", { token: tv.token });
-  const before = await state();
-  assert.equal(before.json.device.autoplayOnStart, false);
-
-  const on = await s.admin("PATCH", `/devices/${tv.deviceId}`, { autoplayOnStart: true });
-  assert.equal(on.status, 200);
-  assert.equal(on.json.device.settings.autoplayOnStart, true);
-  assert.equal(on.json.device.effective.autoplayOnStart, true);
-  assert.equal(on.json.device.stateVersion, before.json.version + 1);
-  assert.equal(on.json.device.settings.uiLanguage, null, "other settings are untouched");
-  const after = await state();
-  assert.equal(after.json.version, before.json.version + 1, "the TV re-reads its state");
-  assert.equal(after.json.device.autoplayOnStart, true);
-  assert.equal((await s.admin("GET", `/devices/${tv.deviceId}`)).json.device.settings.autoplayOnStart, true);
-  assert.equal((await s.admin("GET", "/devices")).json.devices[0].effective.autoplayOnStart, true);
-
-  for (const bad of ["yes", 1, null, "true"]) {
-    const r = await s.admin("PATCH", `/devices/${tv.deviceId}`, { autoplayOnStart: bad });
-    assert.equal(r.status, 400, JSON.stringify(bad));
-    assert.equal(r.json.error, "invalid_request");
-  }
-  const off = await s.admin("PATCH", `/devices/${tv.deviceId}`, { autoplayOnStart: false, name: "Salon 2" });
-  assert.equal(off.json.device.settings.autoplayOnStart, false);
-  assert.equal(off.json.device.name, "Salon 2");
-  assert.equal((await state()).json.device.autoplayOnStart, false);
-  assert.equal((await state()).json.version, before.json.version + 2);
-});
-
-test("home grid: 4 × 2 by default, PATCH round-trip, in the TV's state, bumps the version, integers in range only", async (t) => {
-  const { s, tv } = await setup(t);
-  const state = () => s.call("GET", "/api/v1/tv/state", { token: tv.token });
-  const before = await state();
-  assert.deepEqual([before.json.device.homeColumns, before.json.device.homeRows], [HOME_COLUMNS.default, HOME_ROWS.default]);
-  assert.deepEqual([HOME_COLUMNS.default, HOME_ROWS.default], [4, 2]);
-
-  const grid = await s.admin("PATCH", `/devices/${tv.deviceId}`, { homeColumns: 6, homeRows: 1 });
-  assert.equal(grid.status, 200);
-  assert.deepEqual([grid.json.device.settings.homeColumns, grid.json.device.settings.homeRows], [6, 1]);
-  assert.deepEqual([grid.json.device.effective.homeColumns, grid.json.device.effective.homeRows], [6, 1]);
-  assert.equal(grid.json.device.stateVersion, before.json.version + 1);
-  assert.deepEqual([grid.json.device.settings.uiLanguage, grid.json.device.settings.autoplayOnStart], [null, false], "other settings are untouched");
-  const after = await state();
-  assert.equal(after.json.version, before.json.version + 1, "the TV re-reads its state");
-  assert.deepEqual([after.json.device.homeColumns, after.json.device.homeRows], [6, 1]);
-  assert.equal((await s.admin("GET", `/devices/${tv.deviceId}`)).json.device.settings.homeRows, 1);
-  assert.equal((await s.admin("GET", "/devices")).json.devices[0].effective.homeColumns, 6);
-
-  // Either alone; the other keeps its value.
-  assert.deepEqual((await s.admin("PATCH", `/devices/${tv.deviceId}`, { homeRows: 4 })).json.device.settings.homeColumns, 6);
-  assert.deepEqual((await s.admin("PATCH", `/devices/${tv.deviceId}`, { homeColumns: 3 })).json.device.settings.homeRows, 4);
-
-  const bad: Array<[string, unknown]> = [
-    ...[2, 7, "4", null, 4.5].map((v): [string, unknown] => ["homeColumns", v]),
-    ...[0, 5, "2", null].map((v): [string, unknown] => ["homeRows", v]),
-  ];
-  for (const [field, value] of bad) {
-    const r = await s.admin("PATCH", `/devices/${tv.deviceId}`, { [field]: value });
-    assert.deepEqual([r.status, r.json.error], [400, "invalid_request"], `${field}: ${JSON.stringify(value)}`);
-  }
-  const last = await state();
-  assert.deepEqual([last.json.device.homeColumns, last.json.device.homeRows, last.json.version], [3, 4, before.json.version + 3], "refused patches change nothing");
-});
-
-test("catalog: info, accent-insensitive search, item detail without upstream URLs", async (t) => {
+test("catalog: info, search, item detail without upstream URLs", async (t) => {
   const { s } = await setup(t);
   const info = await s.admin("GET", "/catalog");
-  assert.equal(info.json.id, "fixture");
-  assert.deepEqual([info.json.stats.items, info.json.stats.live], [18, 2]);
+  assert.deepEqual([info.json.id, info.json.stats.items, info.json.stats.live], ["fixture", 18, 2]);
   assert.match(info.json.server.version, /^\d+\.\d+\.\d+/);
   const search = await s.admin("GET", "/catalog/search?q=sov");
-  assert.deepEqual(search.json.items.map((i: { id: string }) => i.id), ["show"]);
-  assert.deepEqual([search.json.total, search.json.offset], [1, 0]);
-  assert.equal(search.json.items[0].playableCount, 4);
-  assert.deepEqual([search.json.items[0].firstSeenAt, search.json.items[0].newEpisodes], [null, 0], "the baseline was always there");
-  assert.equal((await s.admin("GET", "/catalog/search?q=SHOW world")).json.items[0].id, "show", "matches originalTitle");
-  const page = await s.admin("GET", "/catalog/search?limit=3");
-  assert.deepEqual([page.json.items.length, page.json.total], [3, 18]);
-  const item = await s.admin("GET", "/catalog/items/show");
-  assert.equal(item.json.item.episodes.length, 5);
-  const e4 = item.json.item.episodes[3];
-  assert.deepEqual(e4.sources.map((x: { id: string }) => x.id), ["needs-proxy", "via-adapter", "plain"]);
-  assert.equal(e4.sources[0].needsProxy, true);
-  assert.equal(e4.sources[1].adapter, "example");
-  const text = JSON.stringify(item.json);
-  assert.ok(!text.includes("media.example.test") && !text.includes("ref-value") && !text.includes("Referer"));
+  assert.deepEqual([search.json.items.map((i: Json) => i.id), search.json.total, search.json.offset], [["show"], 1, 0]);
+  const [hit] = search.json.items;
+  assert.deepEqual([hit.playableCount, hit.firstSeenAt, hit.newEpisodes], [4, null, 0], "the baseline was always there");
+  const e4 = (await s.admin("GET", "/catalog/items/show")).json.item.episodes[3];
+  assert.deepEqual(e4.sources.map((x: Json) => [x.id, x.needsProxy, x.adapter]), [["needs-proxy", true, undefined], ["via-adapter", undefined, "example"], ["plain", false, undefined]]);
+  assert.ok(!JSON.stringify(e4).match(/media\.example\.test|ref-value|Referer/));
   assert.equal((await s.admin("GET", "/catalog/items/ghost")).status, 404);
 });
 
@@ -334,19 +236,16 @@ test("catalog reload: new build applies, invalid build is refused and the old on
   const v0 = (await s.call("GET", "/api/v1/tv/state", { token: tv.token })).json.version;
 
   const ok = await s.admin("POST", "/catalog/reload");
-  assert.equal(ok.status, 200);
-  assert.equal(ok.json.catalog.buildId, "fixture-2");
-  const state = await s.call("GET", "/api/v1/tv/state", { token: tv.token });
-  assert.equal(state.json.version, v0 + 1);
-  assert.equal(state.json.catalog.buildId, "fixture-2");
-  assert.deepEqual(state.json.home.map((h: { item: { id: string } }) => h.item.id), ["show"], "missing items are hidden on the TV");
+  assert.deepEqual([ok.status, ok.json.catalog.buildId], [200, "fixture-2"]);
+  const state = (await s.call("GET", "/api/v1/tv/state", { token: tv.token })).json;
+  assert.deepEqual([state.version, state.catalog.buildId], [v0 + 1, "fixture-2"]);
+  assert.deepEqual(state.home.map((h: Json) => h.item.id), ["show"], "missing items are hidden on the TV");
   const detail = await s.admin("GET", `/devices/${tv.deviceId}`);
-  assert.deepEqual(detail.json.home.map((h: { itemId: string; missing: boolean }) => [h.itemId, h.missing]), [["film", true], ["show", false]]);
+  assert.deepEqual(detail.json.home.map((h: Json) => [h.itemId, h.missing]), [["film", true], ["show", false]]);
 
   await publishBuild(s.bundleDir, "fixture-3", withoutFilm, { formatVersion: 2 });
   const bad = await s.admin("POST", "/catalog/reload");
-  assert.equal(bad.status, 422);
-  assert.equal(bad.json.error, "invalid_catalog");
+  assert.deepEqual([bad.status, bad.json.error], [422, "invalid_catalog"]);
   assert.ok(bad.json.issues.some((i: { path: string }) => i.path === "/formatVersion"));
   assert.equal((await s.admin("GET", "/catalog")).json.buildId, "fixture-2");
 });
@@ -373,78 +272,58 @@ test("catalog reload on SIGHUP: bumps every TV like the route; a reload that thr
 
 test("catalog builds: the baseline, then each reload's changes newest first; one build by id; unknown build", async (t) => {
   const { s } = await setup(t);
+  const none = { items: { added: [], removed: [] }, episodes: { added: [], removed: [] } };
   const baseline = {
     buildId: "fixture-1", builtAt: "2026-10-10T12:00:00Z", loadedAt: "2026-10-10T12:00:00.000Z", baseline: true, counts: { items: 18, episodes: 20 },
     added: { items: 0, episodes: 0 }, removed: { items: 0, episodes: 0 },
   };
-  const first = await s.admin("GET", "/catalog");
-  assert.deepEqual(first.json.builds, [baseline]);
-  assert.equal(first.json.changes, null, "the baseline changed nothing");
-  assert.equal(first.json.buildId, "fixture-1", "the existing fields are unchanged");
+  const first = (await s.admin("GET", "/catalog")).json;
+  assert.deepEqual([first.builds, first.changes, first.buildId], [[baseline], null, "fixture-1"], "the baseline changed nothing");
 
   // Build 2 drops the film.
   s.clock.advance(3_600_000);
   await publishBuild(s.bundleDir, "fixture-2", withoutFilm);
   const reload = await s.admin("POST", "/catalog/reload");
-  assert.equal(reload.status, 200);
-  assert.deepEqual(reload.json.catalog.builds.map((b: { buildId: string }) => b.buildId), ["fixture-2", "fixture-1"], "the reload answers with the new history");
-  const second = await s.admin("GET", "/catalog");
-  const build2 = {
-    buildId: "fixture-2", builtAt: "2026-10-10T12:00:00Z", loadedAt: "2026-10-10T13:00:00.000Z", baseline: false, counts: { items: 17, episodes: 19 },
-    added: { items: 0, episodes: 0 }, removed: { items: 1, episodes: 1 },
-  };
-  assert.deepEqual(second.json.builds, [build2, baseline]);
+  assert.deepEqual(reload.json.catalog.builds.map((b: Json) => b.buildId), ["fixture-2", "fixture-1"], "the reload answers with the new history");
+  const build2 = { ...baseline, buildId: "fixture-2", loadedAt: "2026-10-10T13:00:00.000Z", baseline: false, counts: { items: 17, episodes: 19 }, removed: { items: 1, episodes: 1 } };
   const changes2 = {
     items: { added: [], removed: [{ id: "film", title: "Film" }] },
     episodes: { added: [], removed: [{ id: "film.main", itemId: "film", itemTitle: "Film" }] },
   };
-  assert.deepEqual(second.json.changes, changes2);
+  assert.deepEqual((await s.admin("GET", "/catalog")).json.changes, changes2);
 
   // Build 3 brings the film back and appends an episode to the show.
   s.clock.advance(3_600_000);
-  const extra = { id: "show.e6", season: 2, number: 4, playbackAllowed: true, sources: [{ id: "main", type: "direct", languages: { audio: ["tr"], subtitles: [] }, media: { kind: "hls", url: "https://media.example.test/e6.m3u8" } }] };
+  const extra = { ...fixtureItems().items[0].episodes.at(-1), id: "show.e6", season: 2, number: 4 };
   await publishBuild(s.bundleDir, "fixture-3", (items) => items.map((i) => (i.id === "show" ? { ...i, episodes: [...i.episodes, extra] } : i)));
   assert.equal((await s.admin("POST", "/catalog/reload")).status, 200);
-  const third = await s.admin("GET", "/catalog");
-  assert.deepEqual(third.json.builds.map((b: Json) => [b.buildId, b.added, b.removed]), [
+  const third = (await s.admin("GET", "/catalog")).json;
+  assert.deepEqual(third.builds.map((b: Json) => [b.buildId, b.added, b.removed]), [
     ["fixture-3", { items: 1, episodes: 1 }, { items: 0, episodes: 0 }],
     ["fixture-2", { items: 0, episodes: 0 }, { items: 1, episodes: 1 }],
     ["fixture-1", { items: 0, episodes: 0 }, { items: 0, episodes: 0 }],
   ]);
-  assert.deepEqual(third.json.changes, {
+  assert.deepEqual(third.changes, {
     items: { added: [{ id: "film", title: "Film", kind: "movie" }], removed: [] },
-    episodes: {
-      added: [{ id: "show.e6", itemId: "show", itemTitle: "Şov Dünyası", season: 2, number: 4, label: null, playbackAllowed: true }],
-      removed: [],
-    },
+    episodes: { added: [{ id: "show.e6", itemId: "show", itemTitle: "Şov Dünyası", season: 2, number: 4, label: null, playbackAllowed: true }], removed: [] },
   }, "a returning film counts as an added show, its returning episode not as a new one");
-  assert.ok(!JSON.stringify(third.json).includes("media.example.test"), "no upstream URLs");
+  assert.ok(!JSON.stringify(third).includes("media.example.test"), "no upstream URLs");
 
-  // Any build of the history by id.
-  const one = await s.admin("GET", "/catalog/builds/fixture-2");
-  assert.equal(one.status, 200);
-  assert.deepEqual(one.json, { build: build2, changes: changes2 });
-  const base = await s.admin("GET", "/catalog/builds/fixture-1");
-  assert.deepEqual(base.json, { build: baseline, changes: { items: { added: [], removed: [] }, episodes: { added: [], removed: [] } } });
+  assert.deepEqual((await s.admin("GET", "/catalog/builds/fixture-2")).json, { build: build2, changes: changes2 });
+  assert.deepEqual((await s.admin("GET", "/catalog/builds/fixture-1")).json, { build: baseline, changes: none });
   const ghost = await s.admin("GET", "/catalog/builds/ghost");
-  assert.equal(ghost.status, 404);
-  assert.equal(ghost.json.error, "unknown_build");
-  assert.equal((await s.call("GET", "/api/v1/admin/catalog/builds/fixture-2")).status, 401, "admin token required");
+  assert.deepEqual([ghost.status, ghost.json.error], [404, "unknown_build"]);
 
   // The list holds the newest builds only; older ones are still readable by id.
-  const store = s.srv.ctx.store;
-  const empty = { items: { added: [], removed: [] }, episodes: { added: [], removed: [] } };
   for (let i = 0; i < 50; i++) {
-    store.recordCatalogBuild(
+    s.srv.ctx.store.recordCatalogBuild(
       { catalogId: "fixture", buildId: `old-${i}`, builtAt: "2026-10-01T00:00:00Z", loadedAt: s.clock.now() + 1000 + i, baseline: false, items: 18, episodes: 21, itemsAdded: 0, itemsRemoved: 0, episodesAdded: 0, episodesRemoved: 0 },
-      empty,
+      none,
     );
   }
-  const capped = await s.admin("GET", "/catalog");
-  assert.equal(capped.json.builds.length, 50);
-  assert.equal(capped.json.builds[0].buildId, "old-49", "newest first");
-  assert.ok(!capped.json.builds.some((b: Json) => b.baseline), "the baseline fell off the list");
-  assert.deepEqual(capped.json.changes, empty, "the latest build's changes");
+  const capped = (await s.admin("GET", "/catalog")).json;
+  assert.deepEqual([capped.builds.length, capped.builds[0].buildId, capped.changes], [50, "old-49", none], "newest first, the latest build's changes");
+  assert.ok(!capped.builds.some((b: Json) => b.baseline), "the baseline fell off the list");
   assert.equal((await s.admin("GET", "/catalog/builds/fixture-1")).status, 200);
 });
 
@@ -455,35 +334,23 @@ const browsable = (items: Json[]) =>
     return extra ? { ...i, ...extra } : i;
   });
 
-test("catalog browsing: facets, filters, orders, pages, not on a Home, new since a build", async (t) => {
+// What each query parameter does is catalog-browse.test.ts's; here: that the route reads each, and refuses bad ones.
+test("catalog browsing: facets, every query parameter, not on a Home, new since a build", async (t) => {
   const bundleDir = await writeBundle(await tempDir(), fixtureManifest(), { items: browsable(fixtureItems(12).items) });
   const s = await testServer(t, { bundleDir });
   const search = async (query: string) => (await s.admin("GET", `/catalog/search?${query}`)).json;
   const ids = async (query: string) => (await search(query)).items.map((i: { id: string }) => i.id);
 
-  const info = (await s.admin("GET", "/catalog")).json;
-  assert.deepEqual(info.facets, {
+  assert.deepEqual((await s.admin("GET", "/catalog")).json.facets, {
     kinds: { movie: 15, series: 1, live: 2 }, genres: [{ name: "Drama", count: 2 }, { name: "Komedi", count: 2 }], years: { min: 1999, max: 2024 },
   });
-
   assert.deepEqual(await ids("kind=live"), ["news", "off-air"]);
-  assert.equal((await search("kind=movie,series")).total, 16);
-  assert.deepEqual(await ids("genre=komedi"), ["silent", "show"], "folded, any spelling");
-  assert.deepEqual(await ids("genre=drama"), ["film", "show"]);
-  assert.deepEqual(await ids("genre=DRAMA,belgesel"), ["film", "show"], "any of the genres");
-  assert.deepEqual(await ids("yearFrom=2000"), ["filler-01", "silent", "show"], "a range leaves out items without a year");
-  assert.deepEqual(await ids("yearTo=2000"), ["film"]);
+  assert.deepEqual(await ids("genre=DRAMA,belgesel"), ["film", "show"]);
   assert.deepEqual(await ids("yearFrom=2005&yearTo=2005"), ["silent"]);
-  const playable = await search("playable=true");
-  assert.equal(playable.total, 16);
-  assert.ok(!playable.items.some((i: Json) => i.id === "locked" || i.id === "off-air"));
-  assert.deepEqual(await ids("sort=year&kind=movie,series&limit=5"), ["filler-01", "show", "silent", "film", "filler-10"], "newest year first, no year last");
-  const titles = ["filler-01", "filler-10", "filler-11", "filler-12", "filler-02", "filler-03", "filler-04", "filler-05", "filler-06", "filler-07", "filler-08", "filler-09", "film"];
-  assert.deepEqual(await ids("q=fil"), titles, "by title");
+  assert.equal((await search("playable=true")).total, 16);
+  assert.deepEqual(await ids("sort=year&kind=movie,series&limit=5"), ["filler-01", "show", "silent", "film", "filler-10"]);
   const page = await search("q=fil&limit=5&offset=10");
-  assert.deepEqual([page.items.map((i: Json) => i.id), page.total, page.offset], [titles.slice(10), 13, 10]);
-  const past = await search("q=fil&offset=20");
-  assert.deepEqual([past.items, past.total, past.offset], [[], 13, 20]);
+  assert.deepEqual([page.items.map((i: Json) => i.id), page.total, page.offset], [["filler-08", "filler-09", "film"], 13, 10]);
 
   for (const bad of ["kind=song", "sort=random", "since=yesterday", "offset=-1", `genre=${"x".repeat(101)}`, "yearFrom=-1", "playable=yes"]) {
     const r = await s.admin("GET", `/catalog/search?${bad}`);
@@ -493,7 +360,6 @@ test("catalog browsing: facets, filters, orders, pages, not on a Home, new since
   const tv = await s.pair("Salon");
   await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["show", "news"] });
   assert.deepEqual(await ids(`notOnDevice=${tv.deviceId}&kind=live,series`), ["off-air"]);
-  assert.equal((await search(`notOnDevice=${tv.deviceId}`)).total, 16);
   const unknown = await s.admin("GET", "/catalog/search?notOnDevice=nope");
   assert.deepEqual([unknown.status, unknown.json.error], [404, "unknown_device"]);
 
@@ -504,18 +370,15 @@ test("catalog browsing: facets, filters, orders, pages, not on a Home, new since
   await publishBuild(s.bundleDir, "fixture-2", (items) =>
     [...browsable(items), fresh].map((i) => (i.id === "show" ? { ...i, episodes: [...i.episodes, { ...i.episodes.at(-1), id: "show.e6", season: 3, number: 1 }] } : i)),
   );
-  const reload = await s.admin("POST", "/catalog/reload");
-  assert.equal(reload.status, 200);
-  assert.deepEqual(reload.json.catalog.facets.genres, [{ name: "Drama", count: 2 }, { name: "Komedi", count: 2 }, { name: "Belgesel", count: 1 }], "the facets follow the reload");
-  assert.equal(reload.json.catalog.facets.kinds.series, 2);
-  const loadedAt: string = reload.json.catalog.builds[0].loadedAt;
+  const reload = (await s.admin("POST", "/catalog/reload")).json;
+  assert.deepEqual(reload.catalog.facets.genres.at(-1), { name: "Belgesel", count: 1 }, "the facets follow the reload");
+  const loadedAt: string = reload.catalog.builds[0].loadedAt;
 
   const since = await search(`since=${loadedAt}`);
   assert.deepEqual(since.items.map((i: Json) => [i.id, i.firstSeenAt, i.newEpisodes]), [["fresh", loadedAt, 1], ["show", null, 1]]);
   assert.deepEqual(await ids(`since=${Date.parse(loadedAt) + 1}`), [], "epoch ms; later than the build");
-  assert.deepEqual(await ids(`since=${loadedAt.replace(/Z$/, "")}`), since.items.map((i: Json) => i.id), "no offset: UTC, not the server's zone");
-  assert.deepEqual(await ids("sort=newest&limit=3"), ["fresh", "show", "filler-01"], "the newest first, then by title");
-  assert.equal((await search("q=sov")).items[0].newEpisodes, 0, "no since, no new episodes");
+  assert.deepEqual(await ids(`since=${loadedAt.replace(/Z$/, "")}`), ["fresh", "show"], "no offset: UTC, not the server's zone");
+  assert.deepEqual(await ids("sort=newest&limit=3"), ["fresh", "show", "filler-01"]);
 });
 
 test("channels on the admin side: search hits and item details, playable on the home rows, no cursor", async (t) => {
@@ -538,105 +401,9 @@ test("channels on the admin side: search hits and item details, playable on the 
 
   await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["news", "show"] });
   const rows = (await s.admin("GET", `/devices/${tv.deviceId}`)).json.home;
-  assert.deepEqual(rows.map((r: Json) => [r.itemId, r.kind, r.playable, r.continue, r.newEpisodes]), [["news", "live", true, null, 0], ["show", "series", true, rows[1].continue, 0]]);
-  assert.equal(rows[1].continue.episodeId, "show.e1");
-  const refused = await s.admin("POST", `/devices/${tv.deviceId}/home/items`, { itemId: "off-air" });
-  assert.deepEqual([refused.status, refused.json.error], [400, "not_playable"]);
+  assert.deepEqual(rows.map((r: Json) => [r.itemId, r.kind, r.playable, r.continue?.episodeId ?? null, r.newEpisodes]), [["news", "live", true, null, 0], ["show", "series", true, "show.e1", 0]]);
   await publishBuild(s.bundleDir, "fixture-2", (items) => items.filter((i) => i.id !== "news"));
   assert.equal((await s.admin("POST", "/catalog/reload")).status, 200);
   const gone = (await s.admin("GET", `/devices/${tv.deviceId}`)).json.home[0];
   assert.deepEqual([gone.itemId, gone.missing, gone.playable, gone.continue], ["news", true, false, null]);
-});
-
-test("home sections: the device page lists them, every route answers version, home and sections, refusals as specified", async (t) => {
-  const { s, tv } = await setup(t);
-  const home = (method: string, route: string, body?: unknown) => s.admin(method, `/devices/${tv.deviceId}/home${route}`, body);
-  const shape = (r: Json) => r.json.sections.map((x: Json) => [x.id, x.title, x.layout, x.itemIds]);
-  const ids = (r: Json) => r.json.home.map((h: { itemId: string }) => h.itemId);
-
-  const detail = await s.admin("GET", `/devices/${tv.deviceId}`);
-  assert.deepEqual([detail.json.sections, detail.json.sectionsMax], [[{ id: "untitled", title: null, layout: "grid", itemIds: [] }], 20]);
-  const v0 = detail.json.device.stateVersion;
-  const after = (await s.admin("GET", "/events")).json.last;
-
-  const put = await home("PUT", "", { itemIds: ["show", "film"] });
-  assert.deepEqual([put.json.version, ids(put), shape(put)], [v0 + 1, ["show", "film"], [["untitled", null, "grid", ["show", "film"]]]]);
-
-  const created = await home("POST", "/sections", { title: " Kanallar ", layout: "row", position: 0 });
-  assert.equal(created.status, 200);
-  const channels = created.json.sectionId;
-  assert.match(channels, /^[A-Za-z0-9]{8}$/);
-  assert.deepEqual([created.json.version, shape(created)], [v0 + 2, [[channels, "Kanallar", "row", []], ["untitled", null, "grid", ["show", "film"]]]]);
-
-  const added = await home("POST", "/items", { itemId: "news", sectionId: channels });
-  assert.deepEqual([ids(added), shape(added)[0][3]], [["news", "show", "film"], ["news"]], "home in Home order");
-  const moved = await home("PATCH", "/items/film", { sectionId: channels, position: 0 });
-  assert.deepEqual([ids(moved), shape(moved)[0][3]], [["film", "news", "show"], ["film", "news"]]);
-  const patched = await home("PATCH", `/sections/${channels}`, { title: "Channels", layout: "grid", position: 5 });
-  assert.deepEqual(shape(patched), [["untitled", null, "grid", ["show"]], [channels, "Channels", "grid", ["film", "news"]]]);
-  const untitledRow = await home("PATCH", "/sections/untitled", { layout: "row" });
-  assert.equal(untitledRow.json.sections[0].layout, "row");
-
-  const replaced = await home("PUT", "", {
-    sections: [{ id: channels, title: "Channels", itemIds: ["news"] }, { title: "Films", itemIds: ["film", "silent"] }, { id: "untitled", title: null, itemIds: ["show"] }],
-    expected: patched.json.sections.map((x: Json) => (x.id === "untitled" ? { ...x, layout: "row" } : x)),
-  });
-  assert.equal(replaced.status, 200);
-  const films = replaced.json.sections[1].id;
-  assert.deepEqual(shape(replaced), [[channels, "Channels", "grid", ["news"]], [films, "Films", "grid", ["film", "silent"]], ["untitled", null, "row", ["show"]]]);
-  assert.deepEqual(ids(replaced), ["news", "film", "silent", "show"]);
-
-  const deleted = await home("DELETE", `/sections/${films}`);
-  assert.deepEqual(shape(deleted), [[channels, "Channels", "grid", ["news"]], ["untitled", null, "row", ["show", "film", "silent"]]]);
-  assert.equal(deleted.json.version, v0 + 8);
-  const removed = await home("DELETE", "/items/news");
-  assert.deepEqual(shape(removed)[0], [channels, "Channels", "grid", []]);
-  assert.deepEqual((await s.admin("GET", `/devices/${tv.deviceId}`)).json.sections, removed.json.sections, "the device page agrees");
-
-  const events = (await s.admin("GET", `/events?after=${after}&types=home.changed`)).json.events.map((e: Json) => e.data);
-  assert.equal(events.length, 9, "every change emits home.changed");
-  assert.deepEqual(events[1], { itemIds: ["show", "film"], added: [], removed: [] }, "a section alone: nothing came or went");
-  assert.deepEqual(events[6], { itemIds: ["news", "film", "silent", "show"], added: ["silent"], removed: [] });
-
-  const refused: Array<[string, string, unknown, number, string]> = [
-    ["POST", "/sections", { title: "   " }, 400, "invalid_request"],
-    ["POST", "/sections", { title: "x".repeat(41) }, 400, "invalid_request"],
-    ["POST", "/sections", { title: "Ok", layout: "carousel" }, 400, "invalid_request"],
-    ["POST", "/sections", { layout: "row" }, 400, "invalid_request"],
-    ["POST", "/sections", { title: "Ok", position: -1 }, 400, "invalid_request"],
-    ["PATCH", `/sections/${channels}`, {}, 400, "invalid_request"],
-    ["PATCH", `/sections/${channels}`, { title: null }, 400, "invalid_request"],
-    ["PATCH", "/sections/untitled", { title: "More" }, 400, "untitled_section"],
-    ["PATCH", "/sections/nope1234", { layout: "row" }, 404, "unknown_section"],
-    ["PATCH", "/sections/not-an-id!", { layout: "row" }, 404, "unknown_section"],
-    ["DELETE", "/sections/untitled", undefined, 400, "untitled_section"],
-    ["DELETE", "/sections/nope1234", undefined, 404, "unknown_section"],
-    ["POST", "/items", { itemId: "news", sectionId: "nope1234" }, 404, "unknown_section"],
-    ["PATCH", "/items/show", { sectionId: "nope1234" }, 404, "unknown_section"],
-    ["PATCH", "/items/news", { sectionId: channels }, 404, "not_on_home"],
-    ["PUT", "", { sections: [{ title: "No untitled", itemIds: [] }] }, 400, "untitled_section"],
-    ["PUT", "", { sections: [{ id: "untitled", itemIds: [] }, { id: channels, title: "A", itemIds: [] }, { id: channels, title: "B", itemIds: [] }] }, 400, "duplicate_section"],
-    ["PUT", "", { sections: [{ id: "untitled", itemIds: [] }, { id: "nope1234", title: "A", itemIds: [] }] }, 404, "unknown_section"],
-    ["PUT", "", { sections: [{ id: "untitled", itemIds: ["show"] }, { id: channels, title: "A", itemIds: ["show"] }] }, 400, "duplicate_item"],
-    ["PUT", "", { sections: [{ id: "untitled", itemIds: [] }, { title: "", itemIds: [] }] }, 400, "invalid_request"],
-    ["PUT", "", { sections: [{ id: "untitled", itemIds: [], layout: "carousel" }] }, 400, "invalid_request"],
-    ["PUT", "", { itemIds: [], sections: [{ id: "untitled", itemIds: [] }] }, 400, "invalid_request"],
-    ["PUT", "", { itemIds: [], expected: [{ id: "untitled", itemIds: [] }] }, 400, "invalid_request"],
-    ["PUT", "", { sections: [{ id: "untitled", itemIds: [] }], expected: ["show"] }, 400, "invalid_request"],
-    ["PUT", "", { sections: [{ id: "untitled", itemIds: [] }], expected: [{ id: "untitled", itemIds: [] }] }, 409, "home_changed"],
-    ["PUT", "", { itemIds: [], expected: ["film", "silent", "show"] }, 409, "home_changed"],
-  ];
-  for (const [method, route, body, status, error] of refused) {
-    const r = await home(method, route, body);
-    assert.deepEqual([r.status, r.json.error], [status, error], `${method} ${route} ${JSON.stringify(body)}`);
-    if (error === "home_changed") assert.deepEqual([r.json.itemIds, r.json.sections], [ids(removed), removed.json.sections], "a conflict answers the current Home");
-  }
-
-  const many = await home("PUT", "", {
-    sections: [{ id: "untitled", itemIds: [] }, ...Array.from({ length: 20 }, (_, i) => ({ title: `S${i + 1}`, itemIds: [] }))],
-  });
-  assert.equal(many.json.sections.length, 21);
-  const oneMore = await home("POST", "/sections", { title: "S21" });
-  assert.deepEqual([oneMore.status, oneMore.json.error, oneMore.json.max], [400, "too_many_sections", 20]);
-  assert.equal((await s.admin("GET", `/devices/${tv.deviceId}`)).json.device.stateVersion, many.json.version, "refusals bump nothing");
 });

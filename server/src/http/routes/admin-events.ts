@@ -1,5 +1,5 @@
-// The event log for live consumers: a server-sent event stream (the admin page, with the token in a header, so it
-// reads it with fetch), and a long-poll for clients that cannot keep a stream open (MCP tools, scripts).
+// The event log for live consumers: a server-sent event stream (the admin page reads it with fetch, the token in a
+// header), and a long-poll for clients that cannot keep a stream open (MCP tools, scripts).
 
 import type { Context, Hono } from "hono";
 import type { StreamingApi } from "hono/utils/stream";
@@ -8,23 +8,18 @@ import { limiterKey } from "../../clientip.ts";
 import type { AppContext } from "../../context.ts";
 import { tooManyRequests, unauthorized } from "../../errors.ts";
 import { EVENT_LIST_DEFAULT, EVENT_LIST_MAX, EVENT_REPLAY_MAX, EVENT_TYPE, MAX_EVENT_WAIT_MS, type Event } from "../../eventlog.ts";
-import type { EventFilter } from "../../store.ts";
 import { intQuery, isId, limitQuery, listQuery, parseWait } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
 
-/** The `devices` and `types` filters of both routes. */
-function filters(c: Context): Pick<EventFilter, "devices" | "types"> {
-  return {
-    devices: listQuery(c.req.query("devices"), "device ids", isId),
-    types: listQuery(c.req.query("types"), "event types", (t) => EVENT_TYPE.test(t) && t.length <= 60),
-  };
-}
+const filters = (c: Context) => ({
+  devices: listQuery(c.req.query("devices"), "device ids", isId),
+  types: listQuery(c.req.query("types"), "event types", (t) => EVENT_TYPE.test(t) && t.length <= 60),
+});
 
-/** Whether a live event passes the request's filters. */
-function passes(e: Event, f: Pick<EventFilter, "devices" | "types">): boolean {
+/** Whether a live event passes the request's filters (a type ending in "." is a prefix). */
+function passes(e: Event, f: ReturnType<typeof filters>): boolean {
   if (f.devices && e.deviceId !== null && !f.devices.includes(e.deviceId)) return false;
-  if (f.types && !f.types.some((t) => (t.endsWith(".") ? e.type.startsWith(t) : e.type === t))) return false;
-  return true;
+  return !f.types || f.types.some((t) => (t.endsWith(".") ? e.type.startsWith(t) : e.type === t));
 }
 
 /** Frames a stream may have waiting for a reader that fell behind before it is closed (it reconnects and replays). */
@@ -32,10 +27,7 @@ export const MAX_QUEUED_FRAMES = 2 * EVENT_REPLAY_MAX;
 /** Event streams open at once per access token, and for the owner token per client address. */
 export const MAX_ADMIN_STREAMS = 10;
 
-/**
- * One writer for a stream's frames, in the order they were queued. When more than `max` wait (the reader stopped
- * reading), the stream is aborted instead of queuing without bound.
- */
+/** One writer for a stream's frames, in order; aborts the stream once more than `max` wait instead of queuing on. */
 export function frameWriter(stream: Pick<StreamingApi, "abort" | "aborted">, max: number): (frame: () => Promise<unknown>) => void {
   let queue: Promise<unknown> = Promise.resolve();
   let waiting = 0;
@@ -51,7 +43,6 @@ export function frameWriter(stream: Pick<StreamingApi, "abort" | "aborted">, max
 
 export function registerAdminEvents(app: Hono<Env>, ctx: AppContext, clientKey: (c: Context) => string): void {
   const { eventLog } = ctx;
-  /** Open streams per access token id, or per client address for the owner. */
   const open = new Map<string, number>();
 
   app.get("/api/v1/admin/events", async (c) => {
@@ -97,11 +88,10 @@ export function registerAdminEvents(app: Hono<Env>, ctx: AppContext, clientKey: 
       const closed = new Promise<void>((resolve) => stream.onAbort(resolve));
       const write = frameWriter(stream, MAX_QUEUED_FRAMES);
       const send = (e: Event) => write(() => stream.writeSSE({ id: String(e.id), event: e.type, data: JSON.stringify(e) }));
-      // The stored events are read and the live subscription made in one synchronous run (the store is synchronous,
-      // so nothing is committed in between): no event is missed, none is sent twice.
+      // Replay and subscription in one synchronous run (the store is synchronous): no event missed or sent twice.
       const replay = after === undefined ? null : eventLog.replay({ after, limit: EVENT_REPLAY_MAX, ...f });
       const unsubscribe = eventLog.subscribe((e) => void (passes(e, f) && send(e)));
-      // Revoking the access token the stream was opened with ends it at once; each ping checks again.
+      // Revoking the stream's access token ends it at once; each ping checks again.
       const unregister = tokenId === null ? () => {} : ctx.tokens.onRevoke(tokenId, () => stream.abort());
       try {
         write(() => stream.write("retry: 5000\n\n"));

@@ -38,29 +38,27 @@ export function secretsEqual(a: string, b: string): boolean {
   return timingSafeEqual(createHash("sha256").update(a).digest(), createHash("sha256").update(b).digest());
 }
 
-/** Extracts the token from an `Authorization: Bearer <token>` header. */
+/** The token of an `Authorization: Bearer <token>` header. */
 export function bearerToken(header: string | undefined | null): string | null {
-  const m = /^Bearer\s+(\S+)\s*$/i.exec(header ?? "");
-  return m ? m[1]! : null;
+  return /^Bearer\s+(\S+)\s*$/i.exec(header ?? "")?.[1] ?? null;
 }
 
 function checkLength(token: string, source: string): string {
-  if (token.length < MIN_ADMIN_TOKEN_LENGTH) {
-    throw new ConfigError(`admin token from ${source} is shorter than ${MIN_ADMIN_TOKEN_LENGTH} characters`);
-  }
+  if (token.length >= MIN_ADMIN_TOKEN_LENGTH) return token;
+  throw new ConfigError(`admin token from ${source} is shorter than ${MIN_ADMIN_TOKEN_LENGTH} characters`);
+}
+
+function writeNewToken(file: string): string {
+  const token = newToken();
+  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+  writeFileSync(file, `${token}\n`, { mode: 0o600 });
   return token;
 }
 
-function writeTokenFile(file: string, token: string): void {
-  mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  writeFileSync(file, `${token}\n`, { mode: 0o600 });
-}
-
 /**
- * Returns the admin token: IZLE_ADMIN_TOKEN if set (with `warnShadowed`, warning when a token file exists too), else the content of `admin.tokenFile`, creating the file with a
- * new random token on first start (unless `create` is false). `rotate` replaces the file's token, and is refused
- * while IZLE_ADMIN_TOKEN is set (the old token would stay the one in use). Refuses tokens shorter than 24
- * characters. The token itself is never logged.
+ * The admin token: IZLE_ADMIN_TOKEN if set, else the content of `admin.tokenFile`, created with a new random token on
+ * first start (unless `create` is false). `rotate` replaces the file's token, and is refused while IZLE_ADMIN_TOKEN
+ * is set (the old token would stay the one in use). The token itself is never logged.
  */
 export function loadAdminToken(
   config: ServerConfig,
@@ -72,8 +70,7 @@ export function loadAdminToken(
     if (config.admin.token) {
       throw new ConfigError("IZLE_ADMIN_TOKEN is set and overrides the token file, so --rotate would not replace the token in use; change or remove the variable instead");
     }
-    const token = newToken();
-    writeTokenFile(file, token);
+    const token = writeNewToken(file);
     log.info("admin token rotated", { file });
     return { token, source: "file" };
   }
@@ -91,8 +88,7 @@ export function loadAdminToken(
   }
   if (existing !== null) return { token: checkLength(existing, file), source: "file" };
   if (opts.create === false) throw new ConfigError(`admin token file ${file} does not exist`);
-  const token = newToken();
-  writeTokenFile(file, token);
+  const token = writeNewToken(file);
   log.info("admin token created; print it with `izle-server admin-token`", { file });
   return { token, source: "file" };
 }

@@ -1,6 +1,5 @@
-// The TV app APK the server offers its TVs (admin API): what is stored and where it comes from, an upload by the
-// owner (the one route whose body may exceed the API's 64 KiB, streamed to disk with its own cap), removal, and a
-// GitHub check on demand.
+// The TV app APK the server offers its TVs: what is stored and where it comes from, the owner's upload (streamed
+// to disk with its own size cap), removal, and a GitHub check on demand.
 
 import type { Hono } from "hono";
 import { APK_MEDIA_TYPE, ApkRejected, apkJson, parseApkName } from "../../app-updates.ts";
@@ -26,8 +25,7 @@ export function registerAdminApp(app: Hono<Env>, ctx: AppContext): void {
     if (Number(c.req.header("Content-Length")) > appUpdates.maxBytes) throw tooLarge();
     const body = c.req.raw.body;
     try {
-      const apk = await appUpdates.store(body, name, "upload", null, c.get("actor"));
-      return c.json({ apk: apkJson(apk) });
+      return c.json({ apk: apkJson(await appUpdates.store(body, name, "upload", null, c.get("actor"))) });
     } catch (err) {
       if (!(err instanceof ApkRejected)) throw err;
       // The rest of the body is read, so the client (still sending) gets the answer instead of a dropped connection.
@@ -48,7 +46,7 @@ export function registerAdminApp(app: Hono<Env>, ctx: AppContext): void {
   });
 }
 
-/** Reads and drops what is left of a request body, at most `max` more bytes; then cancels it. */
+/** Reads and drops at most `max` more bytes of a request body, then cancels it. */
 async function drain(body: ReadableStream<Uint8Array> | null, max: number): Promise<void> {
   if (!body || body.locked) return;
   const reader = body.getReader();

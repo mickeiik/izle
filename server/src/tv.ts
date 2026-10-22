@@ -7,7 +7,7 @@ import type { Notifier } from "./events.ts";
 import type { HomeService } from "./home.ts";
 import { requireEpisode, requireItem, requirePlayableRef } from "./lookup.ts";
 import { autoNextIndex, cursorAfterReport } from "./playback.ts";
-import type { EpisodeProgressInput, LiveReportInput, PlayingService, ProgressInput } from "./playing.ts";
+import type { EpisodeProgressInput, PlayingService, ProgressInput } from "./playing.ts";
 import { episodeDetails, episodeSummary, iso, itemCard, itemDetails, tvSource } from "./presenters.ts";
 import { noPlayableDetail, triedDetail, type ProblemService } from "./problems.ts";
 import type { ResolvedStream, ResolveInput, ResolveService, Tried } from "./resolve.ts";
@@ -20,17 +20,12 @@ interface TvDeps {
   notifier: Notifier;
   resolver: ResolveService;
   problems: ProblemService;
-  /** The home list the state shows, and what OK plays on each item. */
   home: HomeService;
-  /** What each TV is playing: a resolve starts a playback, a report goes on to it. */
   playing: PlayingService;
   now: () => number;
 }
 
-/**
- * What the TV sees and reports: home state, item details, resolve and progress. The home list and the owner's
- * operations on it are home.ts's; what a TV is playing is playing.ts's.
- */
+/** What the TV sees and reports: home state, item details, resolve and progress. */
 export class TvService {
   private readonly s: TvDeps;
 
@@ -79,7 +74,7 @@ export class TvService {
     };
   }
 
-  /** The TV's resolve, recording for the owner what went wrong on the way (problem reports). */
+  /** The TV's resolve, recording for the owner what went wrong on the way. */
   private async resolveRecordingProblems(device: Device, input: ResolveInput, signal: AbortSignal | undefined): Promise<ResolvedStream> {
     let r: ResolvedStream;
     try {
@@ -102,10 +97,7 @@ export class TvService {
     return r;
   }
 
-  /**
-   * The TV's resolve: what to play and how, with the episode's resume position and auto-next, or for a channel
-   * (`episode`, `next` and `resume` null) the stream at its live edge. The playback starts (or goes on) in playing.ts.
-   */
+  /** What to play and how, with an episode's resume position and auto-next (null for a channel, at its live edge). */
   async resolve(device: Device, input: ResolveInput, signal?: AbortSignal) {
     const r = await this.resolveRecordingProblems(device, input, signal);
     const { ref } = r;
@@ -131,27 +123,17 @@ export class TvService {
     };
   }
 
-  /**
-   * Heartbeat from the player: an episode's report (recordEpisodeProgress) or a channel's (recordLiveReport);
-   * `version` is the device's state version after it.
-   */
+  /** A heartbeat from the player; `version` is the device's state version after it. */
   recordProgress(device: Device, input: ProgressInput): { version: number } {
-    return input.itemId !== undefined ? this.recordLiveReport(device, input) : this.recordEpisodeProgress(device, input);
-  }
-
-  /**
-   * A channel's report. A channel has no position, cursor or end, so nothing the TV shows changes: no progress row
-   * is written and the state version is not bumped; playing.ts hears it.
-   */
-  private recordLiveReport(device: Device, input: LiveReportInput): { version: number } {
+    if (input.itemId === undefined) return this.recordEpisodeProgress(device, input);
+    // A channel has no position, cursor or end: no progress row, no state version bump; playing.ts hears it.
     this.s.playing.reported(device, requirePlayableRef(this.s.catalog, { itemId: input.itemId }, 404), input);
     return { version: this.s.notifier.version(device) };
   }
 
   /**
-   * An episode's report. Saves the position, keeps the item's cursor on the episode being watched, and on
-   * `finished` moves the cursor to the next allowed episode (wrapping to the first after the last). Only that wrap
-   * stores a wrapped cursor; every other report makes it an ordinary one. playing.ts hears it in the same
+   * Saves the position and keeps the cursor on the episode, or on `finished` moves it to the next allowed one
+   * (wrapping to the first after the last; only that wrap stores a wrapped cursor). playing.ts hears it in the same
    * transaction.
    */
   private recordEpisodeProgress(device: Device, input: EpisodeProgressInput): { version: number } {
