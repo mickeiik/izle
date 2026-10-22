@@ -409,3 +409,18 @@ The server side of the specification above, in one change (the admin page and th
   can be moved, since the owner may want a titled section such as "Channels" first.
 - `layout` is an enum (`grid`, `row`) rather than a boolean, so a later layout is additive; the TV treats an unknown
   one as `grid`.
+
+## Home sections, admin page (2026-10-22)
+
+- With a titled section the viewport is HomeGrid's viewport for the reduced height plus the 44 dp title block, centred
+  as before: "the viewport as today" read so that one screen holds a title and that many rows, as senior-tv.md says.
+  The scroll bar sits where HomeScreen.kt puts it (22 dp from the screen's edge), not where the prototype drew it.
+- An empty titled section's dashed band fills its whole cell (card and title lines), so the line under it has no
+  unused title line to count. When the TV shows nothing at all, the mirror shows "Nothing here yet" as the TV does;
+  empty sections are then only in the Sections list.
+- Choosing a section in the list scrolls the screen without moving the selection, and the screen stays there across
+  refreshes until a card is selected again: the owner is editing that section.
+- A title or layout edit made while another change is saving waits for it instead of being dropped (the field would
+  otherwise show an unsaved title); moves and adds are still ignored, as each was computed from what the owner saw.
+- ▼ in a grid section moves the card to the nearest place in the next row (the last card when that row is shorter);
+  a show added to the untitled section reads "added to Home", "added to No title" being no sentence.

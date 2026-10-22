@@ -43,8 +43,10 @@ function checkbox(text, checked) {
  *   notOnDevice?: string | null,
  *   initial?: BrowseFilters,
  *   onFilters?: (f: BrowseFilters) => void,
+ *   above?: HTMLElement,
  * }} o `label` names the search box (shown as a heading with `heading`, else for screen readers only);
- *   `notOnDevice` offers "Not on this Home" for that TV; `onFilters` hears every change of the filters
+ *   `notOnDevice` offers "Not on this Home" for that TV; `onFilters` hears every change of the filters; `above` goes
+ *   between the filters and the results (a TV's "Add to")
  */
 export function catalogBrowser(scope, o) {
   /** @type {BrowseFilters} */
@@ -203,7 +205,7 @@ export function catalogBrowser(scope, o) {
 
   const filterBar = h("div", { class: "filters" }, kind, genre, years, since, sort, playable.label, notOnHome?.label, reset);
   const head = o.heading ? h("h3", null, h("label", { for: searchId }, o.label)) : null;
-  const element = h("div", { class: "browser" }, head, search, filterBar, summary, resultsArea, moreBox);
+  const element = h("div", { class: "browser" }, head, search, filterBar, o.above, summary, resultsArea, moreBox);
 
   return {
     element,
