@@ -33,11 +33,7 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Changed
 
-- **Breaking (pre-release): a data directory from 0.4.0 or earlier is refused.** The database now starts from one
-  schema instead of a chain of migrations, so the server no longer upgrades a database (or a backup) made by 0.4.0 or
-  earlier; it stops and says so. Move the data directory away (or delete it), start the server and pair the TVs again.
-  A viewing in the API no longer has `imported`: the viewings made from saved positions at the upgrade to 0.3.0 go
-  with the old data.
+- **Breaking (pre-release):** a viewing in the API no longer has `imported`.
 - **Admin page:** a TV's page is split into tabs (Now playing, Home screen, Listen along, History, Settings,
   Problems with a count), kept in the address (`#/devices/<id>/settings`). Settings holds the TV app's version and
   "Install now", the TV's settings and "Forget this TV".

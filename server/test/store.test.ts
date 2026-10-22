@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
-import { DatabaseVersionError, SCHEMA_VERSION, Store } from "../src/store.ts";
-import { INITIAL_VERSION } from "../src/store/schema.ts";
+import { DatabaseVersionError, Store } from "../src/store.ts";
+import { MIGRATIONS } from "../src/store/schema.ts";
 import { tempDir, untitled } from "./helpers.ts";
 
 /** A database file left at schema version `version` by another izle. */
@@ -33,11 +33,10 @@ function versionAndJournal(file: string): [number, string] {
   }
 }
 
-test("a new database gets the initial schema and its version, and opens again as it is", async () => {
-  assert.equal(INITIAL_VERSION, 11, "the schema without the pre-release migrations' leftovers; it never changes");
+test("a new database gets every migration, and opens again as it is", async () => {
   const file = path.join(await tempDir(), "data", "izle.db");
   const a = new Store(file);
-  assert.equal(a.schemaVersion, SCHEMA_VERSION);
+  assert.equal(a.schemaVersion, MIGRATIONS.length);
   a.createDevice({ id: "d1", name: "TV", tokenHash: "h", now: 1 });
   a.close();
   const raw = new DatabaseSync(file);
@@ -48,25 +47,15 @@ test("a new database gets the initial schema and its version, and opens again as
     "events", "home_entries", "home_sections", "item_cursor", "now_playing", "pair_codes", "problems", "progress", "viewing_ranges", "viewings",
   ]);
   const b = new Store(file);
-  assert.equal(b.schemaVersion, SCHEMA_VERSION);
+  assert.equal(b.schemaVersion, MIGRATIONS.length);
   assert.equal(b.getDevice("d1")?.name, "TV");
   b.close();
 });
 
-test("refuses a database from an older pre-release izle, and leaves it as it is", async () => {
-  for (const version of [1, INITIAL_VERSION - 1]) {
-    const file = await databaseAt(version);
-    const message = `${file} was made by an older pre-release izle (schema version ${version}) and cannot be upgraded: ` +
-      `move the data directory ${path.dirname(file)} away (or delete it), then start the server and pair the TVs again`;
-    assert.throws(() => new Store(file), (err) => err instanceof DatabaseVersionError && err.message === message);
-    assert.deepEqual(versionAndJournal(file), [version, "delete"], "nothing was migrated or written");
-  }
-});
-
 test("refuses a database written by a newer server", async () => {
-  const file = await databaseAt(SCHEMA_VERSION + 1);
+  const file = await databaseAt(MIGRATIONS.length + 1);
   assert.throws(() => new Store(file), (err) => err instanceof DatabaseVersionError && /newer than this server/.test(err.message));
-  assert.deepEqual(versionAndJournal(file), [SCHEMA_VERSION + 1, "delete"]);
+  assert.deepEqual(versionAndJournal(file), [MIGRATIONS.length + 1, "delete"]);
 });
 
 test("deleting a device cascades to its rows; transactions roll back on error", async () => {

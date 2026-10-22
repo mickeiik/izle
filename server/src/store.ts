@@ -6,11 +6,9 @@ import type { CommandResult, CommandType } from "./commands.ts";
 import type { ProgressReportStatus } from "./playback.ts";
 import type { ProblemKind } from "./problems.ts";
 import type { Scope } from "./tokens.ts";
-import { INITIAL_VERSION, MIGRATIONS, SCHEMA, SCHEMA_VERSION } from "./store/schema.ts";
+import { MIGRATIONS } from "./store/schema.ts";
 
-export { SCHEMA_VERSION } from "./store/schema.ts";
-
-/** A database this server cannot open: made by an older pre-release izle, or by a newer server. */
+/** A database made by a newer server, which this one cannot open. */
 export class DatabaseVersionError extends Error {
   override name = "DatabaseVersionError";
 }
@@ -389,21 +387,13 @@ export class Store {
     this.db.exec("PRAGMA busy_timeout = 5000");
     // The version is checked before anything is written, so a refused database is left as it was.
     const current = this.schemaVersion;
-    if (current > SCHEMA_VERSION) {
+    if (current > MIGRATIONS.length) {
       this.close();
-      throw new DatabaseVersionError(`database schema version ${current} is newer than this server (${SCHEMA_VERSION})`);
-    }
-    if (current > 0 && current < INITIAL_VERSION) {
-      this.close();
-      throw new DatabaseVersionError(
-        `${file} was made by an older pre-release izle (schema version ${current}) and cannot be upgraded: ` +
-          `move the data directory ${path.dirname(file)} away (or delete it), then start the server and pair the TVs again`,
-      );
+      throw new DatabaseVersionError(`database schema version ${current} is newer than this server (${MIGRATIONS.length})`);
     }
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
-    if (current === 0) this.transaction(() => this.db.exec(`${SCHEMA}; PRAGMA user_version = ${INITIAL_VERSION}`));
-    for (let v = Math.max(current, INITIAL_VERSION); v < SCHEMA_VERSION; v++) {
-      this.transaction(() => this.db.exec(`${MIGRATIONS[v - INITIAL_VERSION]!}; PRAGMA user_version = ${v + 1}`));
+    for (let v = current; v < MIGRATIONS.length; v++) {
+      this.transaction(() => this.db.exec(`${MIGRATIONS[v]!}; PRAGMA user_version = ${v + 1}`));
     }
   }
 

@@ -472,10 +472,8 @@ journalctl -u izle -n 5 -o cat                  # "listening" with the new versi
 ```
 
 A new version may upgrade the database on start, and an older server refuses a database a newer one has upgraded: to
-go back, install the older package **and** restore the copy taken before the update (`before-X.Y.Z.db`). A database
-made by izle 0.4.0 or earlier (a pre-release), or a backup of one, is refused: move the data directory away (or
-delete it), start the server and pair the TVs again. The admin page's
-Catalog tab shows the running server version. Update the server before the TVs: a newer app may report fields an
+go back, install the older package **and** restore the copy taken before the update (`before-X.Y.Z.db`). The admin
+page's Catalog tab shows the running server version. Update the server before the TVs: a newer app may report fields an
 older server rejects (the app then falls back, but the first report after each start is lost).
 
 **Update the TVs** from the admin page's **TV app** tab, as § 8 ("Updating the TV app") describes.

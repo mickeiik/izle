@@ -7,7 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { main } from "../src/cli.ts";
 import { localServerUrl } from "../src/config.ts";
 import { linkBase, qrCode, signInLink } from "../src/shell.ts";
-import { SCHEMA_VERSION } from "../src/store.ts";
+import { MIGRATIONS } from "../src/store/schema.ts";
 import { ADMIN_TOKEN, testServer, tempDir } from "./helpers.ts";
 
 // The CLI reads the admin token the way the server does; the test server runs with the token from the environment.
@@ -232,7 +232,7 @@ test("cli: backup copies the running server's database; an existing file needs -
   assert.equal(end, "");
   assert.equal(statSync(target).mode & 0o777, 0o600, "only the owner can read the copy");
   // The running server holds the database open in WAL mode; what it wrote is in the copy.
-  assert.deepEqual(readBackup(target), { schemaVersion: SCHEMA_VERSION, devices: [[tv.deviceId, "Salon"]], home: ["show", "film"] });
+  assert.deepEqual(readBackup(target), { schemaVersion: MIGRATIONS.length, devices: [[tv.deviceId, "Salon"]], home: ["show", "film"] });
 
   await refused(["backup", target, ...cfg], 1, /already exists; pass --force to replace it/);
   assert.equal((await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["film"] })).status, 200, "the server keeps working");
@@ -264,20 +264,15 @@ test("cli: backup without a database says so and creates nothing", async () => {
   assert.deepEqual(readdirSync(dir), ["izle.json"]);
 });
 
-test("cli: the server refuses a data directory from an older pre-release izle and says what to do", async () => {
-  const dir = await tempDir("izle-old-");
+test("cli: the server refuses a database made by a newer server", async () => {
+  const dir = await tempDir("izle-newer-");
   const config = path.join(dir, "izle.json");
   await writeFile(config, JSON.stringify({ listen: { host: "127.0.0.1", port: 0 }, dataDir: "./data", appUpdates: { source: "manual" } }));
   mkdirSync(path.join(dir, "data"));
-  const file = path.join(dir, "data", "izle.db");
-  const old = new DatabaseSync(file);
-  old.exec("CREATE TABLE devices (id TEXT PRIMARY KEY); PRAGMA user_version = 3");
-  old.close();
+  const newer = new DatabaseSync(path.join(dir, "data", "izle.db"));
+  newer.exec(`PRAGMA user_version = ${MIGRATIONS.length + 1}`);
+  newer.close();
   const r = await run(["--config", config]);
   assert.equal(r.code, 1);
-  assert.equal(
-    r.err,
-    `izle-server: ${file} was made by an older pre-release izle (schema version 3) and cannot be upgraded: ` +
-      `move the data directory ${path.join(dir, "data")} away (or delete it), then start the server and pair the TVs again\n`,
-  );
+  assert.equal(r.err, `izle-server: database schema version ${MIGRATIONS.length + 1} is newer than this server (${MIGRATIONS.length})\n`);
 });

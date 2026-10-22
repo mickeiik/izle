@@ -1,9 +1,7 @@
-// The database schema. A new database gets SCHEMA and PRAGMA user_version = INITIAL_VERSION; a later change is
-// appended to MIGRATIONS (never edit one once released), and user_version counts INITIAL_VERSION plus the migrations
-// that ran. A database below INITIAL_VERSION was made by a pre-release izle and is refused, not migrated.
-export const INITIAL_VERSION = 11;
-
-export const SCHEMA = `
+// The database schema as migrations, applied in order; user_version counts the ones that ran. A released migration
+// is never edited: a change appends a new one.
+export const MIGRATIONS: string[] = [
+  `
   CREATE TABLE devices (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -255,9 +253,5 @@ export const SCHEMA = `
     release_tag TEXT,                       -- the GitHub release it came from; NULL for an upload
     stored_at INTEGER NOT NULL
   );
-`;
-
-/** Schema changes after the initial schema, applied in order: MIGRATIONS[i] takes a database to INITIAL_VERSION + i + 1. */
-export const MIGRATIONS: string[] = [];
-
-export const SCHEMA_VERSION = INITIAL_VERSION + MIGRATIONS.length;
+`,
+];
