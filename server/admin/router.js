@@ -8,51 +8,41 @@ import { api, isAborted } from "./api.js";
 import { errorText } from "./lib.js";
 
 /**
- * What a job does when it fails: `retry` runs it again at once (a Retry button).
+ * `retry` runs a failed job again at once (a Retry button). A job's `now()` runs it at once, then on schedule again;
+ * a call while it runs makes it run once more afterwards.
  * @typedef {(err: unknown, retry: () => Promise<void>) => void} OnError
- * @typedef {{ now: () => Promise<void> }} Job `now()` runs it at once, then on schedule again; a call while it runs
- *   makes it run once more afterwards
+ * @typedef {{ now: () => Promise<void> }} Job
  */
 
 /**
+ * `read`: a GET below /api/v1/admin that ends with the view; `poll` calls `fn` now and every `ms` while the page is
+ * visible; `note`: "Not updated since …" while a poll that had worked keeps failing (the view places it).
  * @typedef {object} Scope
- * @property {AbortSignal} signal aborted when the view ends
- * @property {(path: string) => Promise<any>} read a GET below /api/v1/admin that ends with the view
- * @property {() => boolean} alive whether the view is still the one shown
- * @property {(fn: () => Promise<void>, ms: number, onError?: OnError) => Job} poll calls `fn` now and every `ms`
- *   while the page is visible
- * @property {(fn: () => Promise<void>, onError?: OnError) => Job} load calls `fn` once
- * @property {(fn: () => void, ms: number) => void} later a timeout that ends with the view
+ * @property {AbortSignal} signal
+ * @property {(path: string) => Promise<any>} read
+ * @property {() => boolean} alive
+ * @property {(fn: () => Promise<void>, ms: number, onError?: OnError) => Job} poll
+ * @property {(fn: () => Promise<void>, onError?: OnError) => Job} load
+ * @property {(fn: () => void, ms: number) => void} later
  * @property {(fn: () => void) => void} onCleanup runs `fn` when the view ends (at once if it already has)
- * @property {(hash: string) => void} go navigates, unless the view already ended
- * @property {HTMLElement} note "Not updated since …" while a poll that had worked keeps failing; the view places it
+ * @property {(hash: string) => void} go
+ * @property {HTMLElement} note
  */
 
-/**
- * The scope of one rendered view. A job failure is reported to `onError` (a view shows the error and Retry in
- * place of what never loaded) and, for a job that had worked before, in the scope's note.
- */
+/** The scope of one rendered view; a job's failure goes to `onError` and, when it had worked before, to the note. */
 function createScope() {
   const controller = new AbortController();
   /** @type {Array<() => void>} */
   const cleanups = [];
-  /** @type {Set<{ lastOk: number, error: unknown }>} jobs with their last success and current error (null: fine) */
+  /** @type {Set<{ lastOk: number, error: unknown }>} each job's last success and current error (null: fine) */
   const jobs = new Set();
   let ended = false;
   // A live region that stays in the page (empty while fresh), so the note is announced when it appears.
   const note = h("p", { class: "stale", role: "status" });
 
   const updateNote = () => {
-    let since = Infinity;
-    /** @type {unknown} */
-    let why = null;
-    for (const j of jobs) {
-      if (j.error !== null && j.lastOk > 0 && j.lastOk < since) {
-        since = j.lastOk;
-        why = j.error;
-      }
-    }
-    const text = since === Infinity ? "" : `Not updated since ${new Date(since).toLocaleTimeString()}. ${errorText(why)} Retrying…`;
+    const failing = [...jobs].filter((j) => j.error !== null && j.lastOk > 0).sort((a, b) => a.lastOk - b.lastOk)[0];
+    const text = failing ? `Not updated since ${new Date(failing.lastOk).toLocaleTimeString()}. ${errorText(failing.error)} Retrying…` : "";
     if (note.textContent !== text) note.textContent = text;
   };
 
@@ -63,10 +53,8 @@ function createScope() {
     const handle = { now: async () => {} };
     if (ended) return handle;
     jobs.add(state);
-    /** @type {ReturnType<typeof setTimeout> | undefined} */
-    let timer;
-    /** @type {Promise<void> | null} */
-    let running = null;
+    let timer = /** @type {ReturnType<typeof setTimeout> | undefined} */ (undefined);
+    let running = /** @type {Promise<void> | null} */ (null);
     let again = false;
     const once = async () => {
       try {
@@ -151,17 +139,14 @@ function createScope() {
 }
 
 /**
- * Starts the router: on every hash change the current view's scope ends and the next view renders in `app`; the
- * focus moves to its heading (`h1`, made focusable), so keyboard and screen reader users start at the top. `pick`
- * returns the view and the main nav link to mark current (without one the nav is hidden). It gets the hash's path
- * parts (`#/catalog/items/x` → `["catalog", "items", "x"]`, decoded) and its query (after the first `?`, as in
- * `#/catalog?q=pro`; empty without one), which a view may keep its state in.
+ * Starts the router: on every hash change the current view's scope ends and the next view renders in `app`, the focus
+ * on its heading. `pick` gets the hash's decoded path parts (`#/catalog/items/x` → `["catalog", "items", "x"]`) and
+ * its query (after the first `?`), and returns the view and the nav link to mark current (none: the nav is hidden).
  * @param {{ app: HTMLElement, nav: HTMLElement, before: () => Promise<void>,
  *   pick: (parts: string[], query: URLSearchParams) => { view: (scope: Scope) => HTMLElement, nav?: string } }} o
  */
 export function startRouter({ app, nav, before, pick }) {
-  /** @type {(Scope & { end(): void }) | null} */
-  let current = null;
+  let current = /** @type {(Scope & { end(): void }) | null} */ (null);
   let seq = 0;
   let first = true;
   const decode = (/** @type {string} */ part) => {
@@ -177,10 +162,8 @@ export function startRouter({ app, nav, before, pick }) {
     current = null;
     await before();
     if (mine !== seq) return; // another navigation came in meanwhile
-    const raw = location.hash.replace(/^#/, "");
-    const mark = raw.indexOf("?");
-    const path = (mark < 0 ? raw : raw.slice(0, mark)) || "/devices";
-    const r = pick(path.split("/").filter(Boolean).map(decode), new URLSearchParams(mark < 0 ? "" : raw.slice(mark + 1)));
+    const [path, query = ""] = location.hash.replace(/^#/, "").split(/\?(.*)/s);
+    const r = pick((path || "/devices").split("/").filter(Boolean).map(decode), new URLSearchParams(query));
     nav.hidden = r.nav === undefined;
     for (const a of nav.querySelectorAll("a")) {
       if (a.getAttribute("href") === r.nav) a.setAttribute("aria-current", "page");

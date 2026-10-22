@@ -19,8 +19,7 @@ export function devicesView(scope) {
   /** The active TVs, for the "replaces" choice of a pending code. @type {Array<{ id: string, name: string }>} */
   let active = [];
 
-  /** One form per open code. @param {any} c */
-  const pendingRow = (c) => {
+  const pendingRow = (/** @type {any} */ c) => {
     const code = formatCode(c.code);
     const name = h("input", { type: "text", maxlength: 60, placeholder: "Name (optional), e.g. Living room", "aria-label": `Name for the TV showing ${code}` });
     // "Replaces": the new TV takes over an existing one (its name, settings, home screen and history) instead of
@@ -35,11 +34,6 @@ export function devicesView(scope) {
       if (r.ok) await job.now();
     });
     const element = h("form", { class: "row pair" }, h("div", { class: "code" }, srOnly("Code "), code), h("div", { class: "grow" }, name, replaces, countdown), h("div", { class: "buttons" }, approve, clear));
-    const fillReplaces = () => {
-      const current = replaces.value;
-      replaces.replaceChildren(h("option", { value: "", selected: current === "" }, "A new TV"), ...active.map((d) => h("option", { value: d.id, selected: d.id === current }, `Replaces “${d.name}”`)));
-      replaces.hidden = active.length === 0;
-    };
     replaces.addEventListener("change", () => (name.hidden = replaces.value !== ""));
     onSubmit(element, approve, () => {
       const n = name.value.trim();
@@ -56,32 +50,31 @@ export function devicesView(scope) {
       element,
       /** @param {any} next */
       update(next) {
-        name.disabled = next.approved;
-        replaces.disabled = next.approved;
-        fillReplaces();
+        name.disabled = replaces.disabled = next.approved;
+        const current = replaces.value;
+        replaces.replaceChildren(h("option", { value: "", selected: current === "" }, "A new TV"), ...active.map((d) => h("option", { value: d.id, selected: d.id === current }, `Replaces “${d.name}”`)));
+        replaces.hidden = active.length === 0;
         setOff(approve, next.approved);
         countdown.textContent = next.approved ? "Approved — waiting for the TV to pick it up" : `Expires in ${formatCountdown(next.expiresAt)}`;
       },
     };
   };
 
-  /** @param {any} d */
-  const deviceRow = (d) => {
+  const deviceRow = (/** @type {any} */ d) => {
     const name = h("strong");
     const meta = h("div", { class: "muted" });
     const chips = h("div", { class: "chips" });
-    const element = h("a", { class: "row link", href: `#/devices/${encodeURIComponent(d.id)}` }, h("div", { class: "grow" }, name, meta), chips);
     return {
-      element,
+      element: h("a", { class: "row link", href: `#/devices/${encodeURIComponent(d.id)}` }, h("div", { class: "grow" }, name, meta), chips),
       /** @param {any} next */
       update(next) {
         name.textContent = next.name;
         const version = next.app?.version ? ` · app ${next.app.version}` : "";
         meta.textContent = `${plural(next.homeCount, "show")} on Home · seen ${formatRelative(next.lastSeenAt)}${version}`;
         const n = next.problems?.recent ?? 0;
+        // Only an update that asks for the owner: one on its way, or one that needs Install now (the TV app page).
+        const u = ["pending", "needs_install_now"].includes(next.app?.update) ? appUpdateChip(next.app) : null;
         const problems = n > 0 ? chip(`${plural(n, "problem")} in 24 h`, "warn") : null;
-        // Only what asks for the owner: an update on its way, or one that needs Install now (the TV app page).
-        const u = next.app?.update === "pending" || next.app?.update === "needs_install_now" ? appUpdateChip(next.app) : null;
         const update = u ? chip(u.text, u.tone) : null;
         chips.replaceChildren(...[problems, update, statusChip(next)].filter((c) => c !== null));
       },
@@ -105,7 +98,6 @@ export function devicesView(scope) {
     pendingSlot.fail(err, job.now, "Could not load the TVs.");
     devicesSlot.fail(err, null, "Could not load the TVs.");
   });
-  // TVs coming and going, codes appearing: at once, not at the next poll.
   watchEvents(scope, { types: ["device.", "pairing.", "problem.recorded"] }, () => void job.now());
 
   return page(

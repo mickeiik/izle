@@ -3,7 +3,7 @@
 // shown once, right after it is created, and never again (the server keeps only its hash).
 
 import { api, attempt } from "./api.js";
-import { actionButton, card, chip, h, keyedRows, onSubmit, page, slot, toast } from "./dom.js";
+import { actionButton, card, chip, h, keyedRows, onSubmit, options, page, slot, toast } from "./dom.js";
 import { SCOPES, formatRelative, scopeLabel } from "./lib.js";
 
 /** @param {import("./router.js").Scope} scope */
@@ -12,8 +12,7 @@ export function tokensView(scope) {
   const list = h("div", { class: "list" });
   const empty = h("p", { class: "muted" }, "No access token yet. An app or an agent that should see or run the TVs gets one below; the admin page itself always uses the owner token.");
 
-  /** @param {any} t */
-  const tokenRow = (t) => {
+  const tokenRow = (/** @type {any} */ t) => {
     const name = h("strong");
     const meta = h("div", { class: "muted" });
     const scopeChip = chip("");
@@ -22,9 +21,8 @@ export function tokensView(scope) {
       const r = await attempt(() => api("DELETE", `/tokens/${encodeURIComponent(t.id)}`), `“${t.name}” revoked.`);
       if (r.ok) await job.now();
     });
-    const element = h("div", { class: "row" }, h("div", { class: "grow" }, name, meta), scopeChip, revoke);
     return {
-      element,
+      element: h("div", { class: "row" }, h("div", { class: "grow" }, name, meta), scopeChip, revoke),
       /** @param {any} next */
       update(next) {
         name.textContent = next.name;
@@ -43,9 +41,8 @@ export function tokensView(scope) {
   };
   const job = scope.poll(refresh, 30_000, (err) => listSlot.fail(err, job.now, "Could not load the tokens."));
 
-  // Create ---------------------------------------------------------------------------------------------------------
   const name = h("input", { type: "text", id: "t-name", maxlength: 60, required: true, placeholder: "e.g. Home assistant", autocomplete: "off" });
-  const scopeSelect = h("select", { id: "t-scope", "aria-describedby": "t-scope-hint" }, SCOPES.map(([value, label]) => h("option", { value, selected: value === "read" }, label)));
+  const scopeSelect = h("select", { id: "t-scope", "aria-describedby": "t-scope-hint" }, options(SCOPES.map(([value, label]) => [value, label]), "read"));
   const scopeHint = h("p", { class: "hint", id: "t-scope-hint" });
   const describe = () => (scopeHint.textContent = SCOPES.find(([s]) => s === scopeSelect.value)?.[2] ?? "");
   scopeSelect.addEventListener("change", describe);
@@ -65,7 +62,7 @@ export function tokensView(scope) {
     };
   });
 
-  /** The secret, once: a code box to copy from, with a Copy button. @param {any} token @param {string} secret */
+  /** The secret, once, with a Copy button. @param {any} token @param {string} secret */
   const showSecret = (token, secret) => {
     const code = h("code", { class: "secret-value", tabindex: "0" }, secret);
     const copy = actionButton("Copy", { "aria-label": `Copy the secret of ${token.name}` }, async () => {

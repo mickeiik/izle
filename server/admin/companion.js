@@ -14,63 +14,51 @@ const LONG_POLL_SEC = 25;
 const CLOCK_SAMPLE_MS = 60_000;
 /** Stop listening when the TV has not reported for this long. */
 const IDLE_STOP_MS = 2 * 60_000;
-/** After a seek, let the player settle before judging the error again. */
+/** After a seek the player settles before the error is judged again; it seeks a little ahead (the seek takes time). */
 const SEEK_HOLD_MS = 1000;
-/** Seek a little ahead of the target: the seek itself takes time. */
 const SEEK_LEAD_MS = 150;
 const RE_RESOLVE_BEFORE_EXPIRY_MS = 60_000;
 const MAX_RECOVERIES = 3;
+const SWITCHED = "The TV switched to a channel; listening ended.";
 
 const sleep = (/** @type {number} */ ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Where the timing of a source for an episode is kept. @param {string} episodeId @param {string} sourceId */
+/** @param {string} episodeId @param {string} sourceId */
 const linkPath = (episodeId, sourceId) => `/companion/links/${encodeURIComponent(episodeId)}/${encodeURIComponent(sourceId)}`;
 
 /**
- * The "Listen along" card of a TV's page. `stop` ends listening (the page calls it when the owner leaves).
- * @param {{ deviceId: string, signal: AbortSignal }} o `signal`: the page's, it cancels the card's reads
- * @returns {import("./view-device.js").Section & { stop(): void }}
+ * The "Listen along" card; `stop` ends listening (when the owner leaves the page, whose `signal` cancels the reads).
+ * @param {{ deviceId: string, signal: AbortSignal }} o @returns {import("./view-device.js").Section & { stop(): void }}
  */
 export function companionCard({ deviceId, signal }) {
   const base = devicePath(deviceId);
   const choiceKey = (/** @type {string} */ itemId) => `izle.companion.choice.${deviceId}.${itemId}`;
 
-  // --- state ---------------------------------------------------------------------------------------------------
-  /** @type {any} */
-  let candidates = null; // last /companion answer
+  /** @type {any} the last /companion answer */
+  let candidates = null;
   let candidatesKey = "";
-  /** @type {"idle" | "starting" | "listening"} */
-  let phase = "idle";
+  let phase = /** @type {"idle" | "starting" | "listening"} */ ("idle");
   /** @type {{ episodeId: string, sourceId: string, language: string | null, link: import("./lib.js").LinkTiming, expiresAt: string | null, transport: string } | null} */
   let playing = null;
-  /** @type {import("./companion-player.js").Attached | null} */
-  let stream = null;
-  /** @type {import("./lib.js").Anchor | null} */
-  let anchor = null;
+  let stream = /** @type {import("./companion-player.js").Attached | null} */ (null);
+  let anchor = /** @type {import("./lib.js").Anchor | null} */ (null);
   let tvActive = false;
   let lastActiveAt = Date.now();
   let seq = 0;
-  /** @type {import("./lib.js").ClockSample[]} */
-  let samples = [];
-  /** @type {number | null} */
-  let offset = null;
+  let samples = /** @type {import("./lib.js").ClockSample[]} */ ([]);
+  let offset = /** @type {number | null} */ (null);
   let bestRtt = Infinity;
   let nudgeMs = Number(readStored(NUDGE_KEY) ?? 0) || 0;
   let seekHoldUntil = 0;
   let recoveries = 0;
   let lastReResolveAt = 0;
-  /** Bumped by stop(): work that awaited across it drops its result. */
+  /** Bumped by stop() and by every load(): work that awaited across one drops its result. */
   let generation = 0;
-  /** Bumped by every load(): a load that another one overtook drops its result. */
   let loadSeq = 0;
-  /** @type {ReturnType<typeof setInterval> | undefined} */
-  let loopTimer;
-  /** @type {ReturnType<typeof setInterval> | undefined} */
-  let clockTimer;
-  /** @type {AbortController | null} */
-  let poll = null;
+  let loopTimer = /** @type {ReturnType<typeof setInterval> | undefined} */ (undefined);
+  let clockTimer = /** @type {ReturnType<typeof setInterval> | undefined} */ (undefined);
+  let poll = /** @type {AbortController | null} */ (null);
 
-  // --- DOM -----------------------------------------------------------------------------------------------------
   const audio = /** @type {HTMLAudioElement} */ (h("audio", { preload: "auto", playsinline: true }));
   const select = h("select", { id: "cp-source" });
   const offsetInput = h("input", { type: "number", id: "cp-offset", step: "0.001", inputmode: "decimal" });
@@ -104,7 +92,6 @@ export function companionCard({ deviceId, signal }) {
     error.hidden = !text;
   };
 
-  // --- candidates ----------------------------------------------------------------------------------------------
   const chosen = () => parseCandidate(select.value);
 
   const fillTiming = () => {
@@ -115,7 +102,7 @@ export function companionCard({ deviceId, signal }) {
     rateInput.value = String(link.rate);
   };
 
-  /** The timing the inputs currently show (what the loop uses while listening). */
+  /** The timing the inputs show, which the loop uses while listening. */
   const timingFromInputs = () => {
     const offsetSec = Number(offsetInput.value);
     const rate = Number(rateInput.value);
@@ -127,7 +114,7 @@ export function companionCard({ deviceId, signal }) {
     const n = candidates?.nowPlaying;
     if (!n) return body.show(nothing);
     if (n.itemKind === "live") {
-      if (phase !== "idle") end("The TV switched to a channel; listening ended.", "info");
+      if (phase !== "idle") end(SWITCHED, "info");
       channel.textContent = `“${n.itemTitle ?? n.itemId}” is a channel. Listen along is not available for a channel: it has no timeline to follow.`;
       return body.show(channel);
     }
@@ -141,10 +128,7 @@ export function companionCard({ deviceId, signal }) {
     body.show(form);
   };
 
-  /**
-   * Re-reads the candidates of what the TV plays and shows them when they changed (`force`: in any case); called
-   * by the page's poll, after a save and after the TV changes episode.
-   */
+  /** Re-reads the candidates of what the TV plays and shows them when they changed (`force`: in any case). */
   const refresh = async (force = false) => {
     if (force) candidatesKey = "";
     const r = await api("GET", `${base}/companion`, undefined, { signal });
@@ -185,15 +169,13 @@ export function companionCard({ deviceId, signal }) {
   const applyToAll = async () => {
     const n = candidates?.nowPlaying;
     if (!n) return;
-    const { sourceId } = chosen();
-    const r = await attempt(() => api("POST", `${linkPath(n.episodeId, sourceId)}/copy-to-item`));
+    const r = await attempt(() => api("POST", `${linkPath(n.episodeId, chosen().sourceId)}/copy-to-item`));
     if (r.ok) toast(r.value.updated === 0 ? "No other episode has that source." : `Timing copied to ${plural(r.value.updated, "other episode")}.`);
   };
 
-  // --- following the TV ----------------------------------------------------------------------------------------
   const serverNow = () => Date.now() + (offset ?? 0);
 
-  /** One `/now` call; long-polls on `seq` when asked. Returns the answer, and keeps the clock offset fresh. */
+  /** One `/now` call (with `wait`, a long-poll on `seq`), which keeps the clock offset fresh. */
   const readNow = async (/** @type {boolean} */ wait, /** @type {AbortSignal | undefined} */ signal) => {
     const sentAt = Date.now();
     const query = wait ? `?seq=${seq}&wait=${LONG_POLL_SEC}` : "?wait=0";
@@ -221,7 +203,7 @@ export function companionCard({ deviceId, signal }) {
     while (!controller.signal.aborted) {
       try {
         const r = await readNow(true, controller.signal);
-        if (playing && r.nowPlaying?.itemKind === "live") end("The TV switched to a channel; listening ended.", "info");
+        if (playing && r.nowPlaying?.itemKind === "live") end(SWITCHED, "info");
         else if (playing && r.nowPlaying?.episodeId && r.nowPlaying.episodeId !== playing.episodeId) await follow(r.nowPlaying.episodeId);
         else if (Date.now() - lastActiveAt > IDLE_STOP_MS) end("The TV stopped; listening ended.", "info");
       } catch (err) {
@@ -232,7 +214,6 @@ export function companionCard({ deviceId, signal }) {
     }
   };
 
-  // --- the player ----------------------------------------------------------------------------------------------
   const detach = () => {
     stream?.destroy();
     stream = null;
@@ -252,16 +233,12 @@ export function companionCard({ deviceId, signal }) {
       // The source is attached but nothing is loaded yet: play once it can.
       else if (name === "NotSupportedError" && audio.currentSrc) audio.addEventListener("canplay", () => void audio.play().catch(() => {}), { once: true });
       // A pause() from the loop (the TV is not advancing) or a new load interrupted this play(): the next tick decides.
-      else if (name === "AbortError") return;
-      else throw err;
+      else if (name !== "AbortError") throw err;
     }
   };
   startAudio.addEventListener("click", () => void playOrAsk().catch((err) => showError(String(err?.message ?? err))));
 
-  /**
-   * Resolves the chosen source for `episodeId` and loads it; the loop re-seeks on its own. Only the latest call
-   * counts: a load that was overtaken by another one, or by Stop, drops its result. Returns whether it took effect.
-   */
+  /** Resolves and loads the chosen source for `episodeId` (the loop seeks); whether it took effect, not overtaken. */
   const load = async (/** @type {string} */ episodeId) => {
     if (phase === "idle") return false;
     const my = ++loadSeq;
@@ -282,9 +259,10 @@ export function companionCard({ deviceId, signal }) {
     }
     playing = { episodeId, sourceId, language, link, expiresAt: r.expiresAt ?? null, transport: stream.transport };
     seekHoldUntil = 0;
-    if ("mediaSession" in navigator && candidates?.nowPlaying) {
+    const n = candidates?.nowPlaying;
+    if ("mediaSession" in navigator && n) {
       try {
-        navigator.mediaSession.metadata = new MediaMetadata({ title: candidates.nowPlaying.itemTitle ?? "izle", artist: candidates.nowPlaying.episodeTitle ?? "Listen along" });
+        navigator.mediaSession.metadata = new MediaMetadata({ title: n.itemTitle ?? "izle", artist: n.episodeTitle ?? "Listen along" });
       } catch {
         // optional
       }
@@ -336,12 +314,8 @@ export function companionCard({ deviceId, signal }) {
   const restart = async () => {
     const episodeId = candidates?.nowPlaying?.episodeId;
     if (!playing || !episodeId) return;
-    try {
-      playing = null;
-      await load(episodeId);
-    } catch (err) {
-      showError(errorText(err));
-    }
+    playing = null;
+    await load(episodeId).catch((err) => showError(errorText(err)));
   };
 
   const tick = () => {
@@ -351,23 +325,20 @@ export function companionCard({ deviceId, signal }) {
     if (tvPos === null) return;
     const target = companionTarget(tvPos, playing.link, nudgeMs);
     const actual = audio.currentTime * 1000;
-    const durationMs = Number.isFinite(audio.duration) ? audio.duration * 1000 : null;
     // The companion is shorter than the TV's cut: stay silent at its end instead of restarting from 0 on play().
-    const pastEnd = durationMs !== null && target >= durationMs;
+    const pastEnd = Number.isFinite(audio.duration) && target >= audio.duration * 1000;
     const d = syncDecision({ targetMs: target, actualMs: actual, tvPlaying: Boolean(anchor?.playing) && tvActive && !pastEnd, nominalRate: playing.link.rate });
     if (pastEnd) d.state = "past the end";
-    if (Date.now() >= seekHoldUntil) {
-      if (d.action === "seek") {
-        audio.currentTime = Math.max(0, (d.toMs ?? target) + SEEK_LEAD_MS) / 1000;
-        seekHoldUntil = Date.now() + SEEK_HOLD_MS;
-        if (audio.paused) void playOrAsk().catch(() => {});
-      } else if (d.action === "play") {
-        if (audio.paused) void playOrAsk().catch(() => {});
-        if (Math.abs(audio.playbackRate - d.rate) > 0.0005) audio.playbackRate = d.rate;
-      } else if (!audio.paused) {
-        audio.pause();
-      }
-    }
+    const settled = Date.now() >= seekHoldUntil;
+    if (settled && d.action === "seek") {
+      audio.currentTime = Math.max(0, (d.toMs ?? target) + SEEK_LEAD_MS) / 1000;
+      seekHoldUntil = Date.now() + SEEK_HOLD_MS;
+      if (audio.paused) void playOrAsk().catch(() => {});
+    } else if (settled && d.action === "play") {
+      if (audio.paused) void playOrAsk().catch(() => {});
+      if (Math.abs(audio.playbackRate - d.rate) > 0.0005) audio.playbackRate = d.rate;
+    } else if (settled && !audio.paused) audio.pause();
+
     const rtt = Number.isFinite(bestRtt) ? ` · clock ±${Math.round(bestRtt / 2)} ms` : "";
     status.textContent = `TV ${formatPosition(tvPos)} · phone ${formatPosition(actual)} · drift ${formatDrift(d.errorMs)} · ${d.state} · ${playing.transport}${rtt}`;
     status.classList.toggle("synced", d.state === "synced");
@@ -381,29 +352,21 @@ export function companionCard({ deviceId, signal }) {
 
   const start = async () => {
     const n = candidates?.nowPlaying;
-    if (!n?.episodeId || phase !== "idle") return;
-    const { sourceId } = chosen();
-    if (!sourceId) return;
+    if (!n?.episodeId || phase !== "idle" || !chosen().sourceId) return;
     phase = "starting";
     const gen = generation;
     listen.textContent = "Stop";
     listen.className = "danger";
     showError("");
     status.textContent = "Starting…";
-    recoveries = 0;
-    lastReResolveAt = 0;
-    samples = [];
-    offset = null;
-    bestRtt = Infinity;
-    seq = 0;
+    [recoveries, lastReResolveAt, samples, offset, bestRtt, seq] = [0, 0, [], null, Infinity, 0];
     try {
       // Three quick clock samples, then the stream (its play() still happens within this tap's activation).
       for (let i = 0; i < 3; i++) {
         await readNow(false, undefined);
         if (gen !== generation) return; // Stop was pressed meanwhile
       }
-      const loaded = await load(n.episodeId);
-      if (gen !== generation || !loaded) return;
+      if (!(await load(n.episodeId)) || gen !== generation) return;
       phase = "listening";
       void followLoop();
       loopTimer = setInterval(tick, TICK_MS);
@@ -431,7 +394,7 @@ export function companionCard({ deviceId, signal }) {
     status.classList.remove("synced");
   }
 
-  /** Stops listening and says why. @param {string} text @param {"error" | "info"} kind */
+  /** @param {string} text why listening stopped @param {"error" | "info"} kind */
   function end(text, kind) {
     stop();
     toast(text, kind);

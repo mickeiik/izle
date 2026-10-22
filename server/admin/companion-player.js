@@ -17,8 +17,7 @@ const playerError = (code) => Object.assign(new Error(code), { code });
  * @typedef {{ new (config: Record<string, unknown>): HlsInstance, isSupported(): boolean, Events: Record<string, string> }} HlsClass
  */
 
-/** @type {Promise<HlsClass> | null} */
-let hlsLoading = null;
+let hlsLoading = /** @type {Promise<HlsClass> | null} */ (null);
 
 /** Loads the vendored hls.js once (only browsers without a usable native HLS need it). */
 function loadHls() {
@@ -46,12 +45,9 @@ export function nativeHlsBroken() {
 /** @typedef {{ transport: "direct" | "native HLS" | "hls.js", destroy(): void }} Attached */
 
 /**
- * Loads a stream into the audio element, natively or through hls.js.
- * @param {HTMLAudioElement} audio
- * @param {{ kind: string, url: string }} media
- * @param {string | null} language audio language to pick inside the stream
- * @param {(what: string) => void} onFatal
- * @returns {Promise<Attached>}
+ * Loads a stream into the audio element, picking `language` inside it.
+ * @param {HTMLAudioElement} audio @param {{ kind: string, url: string }} media @param {string | null} language
+ * @param {(what: string) => void} onFatal @returns {Promise<Attached>}
  */
 export async function attach(audio, media, language, onFatal) {
   const url = new URL(media.url, location.href).toString();
@@ -74,17 +70,12 @@ export async function attach(audio, media, language, onFatal) {
   if (!Hls.isSupported()) throw playerError("hls_unsupported");
   // No worker: the page's CSP has no worker-src. Level 0 only: the video is decoded and thrown away.
   const hls = new Hls({ enableWorker: false, startLevel: 0, maxBufferLength: 30, backBufferLength: 10 });
-  hls.on(Hls.Events.MANIFEST_PARSED, () => {
-    hls.autoLevelCapping = 0;
-  });
+  hls.on(Hls.Events.MANIFEST_PARSED, () => (hls.autoLevelCapping = 0));
   hls.on(Hls.Events.AUDIO_TRACKS_UPDATED, () => {
-    if (!language) return;
-    const i = hls.audioTracks.findIndex((t) => sameLanguage(language, t.lang));
+    const i = language ? hls.audioTracks.findIndex((t) => sameLanguage(language, t.lang)) : -1;
     if (i >= 0) hls.audioTrack = i;
   });
-  hls.on(Hls.Events.ERROR, (_event, data) => {
-    if (data?.fatal) onFatal(`${data.type}: ${data.details}`);
-  });
+  hls.on(Hls.Events.ERROR, (_event, data) => data?.fatal && onFatal(`${data.type}: ${data.details}`));
   // play() needs the element to have its media source: wait until hls.js has attached it.
   const attached = new Promise((resolve) => hls.once(Hls.Events.MEDIA_ATTACHED, () => resolve(undefined)));
   hls.loadSource(url);

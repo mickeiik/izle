@@ -2,9 +2,8 @@
 // Pure helpers of the admin UI (no DOM): formatting, the texts views show, small list operations and the Listen
 // along maths. Unit-tested from node (server/test/admin-ui.test.ts).
 
-/** The server's home list cap (it enforces it): a safety limit, Home scrolls past one screen. */
+/** The server's limits (it enforces them): Home's items, and the grid's cards per row and rows per screen. */
 export const HOME_MAX = 200;
-/** The home grid a TV can be set to: cards per row and rows per screen (the server's HOME_COLUMNS, HOME_ROWS). */
 export const HOME_COLUMNS = [3, 4, 5, 6];
 export const HOME_ROWS = [1, 2, 3, 4];
 /** The TV resumes a saved position only from 30 s on (PlaybackPlan); earlier positions start over. */
@@ -44,10 +43,7 @@ export const formatCountdown = (iso, now = Date.now()) => formatClock(Math.max(0
 /** `123 456`: pairing codes read like they look on the TV. @param {string} code */
 export const formatCode = (code) => (code.length === 6 ? `${code.slice(0, 3)} ${code.slice(3)}` : code);
 
-/**
- * The admin token carried by a sign-in link (`…/admin/#token=<token>`), or null for any other fragment.
- * @param {string | null | undefined} hash `location.hash`
- */
+/** The admin token of a sign-in link (`…/admin/#token=<token>`), else null. @param {string | null | undefined} hash */
 export function tokenFromHash(hash) {
   const m = /^#token=(.+)$/.exec(hash ?? "");
   if (!m) return null;
@@ -58,10 +54,7 @@ export function tokenFromHash(hash) {
   }
 }
 
-/**
- * The address to type on a TV: the page's origin plus whatever path precedes `/admin/` (a reverse proxy's prefix).
- * @param {string} origin @param {string} pathname
- */
+/** What to type on a TV: the origin and a reverse proxy's prefix. @param {string} origin @param {string} pathname */
 export const serverAddress = (origin, pathname) => `${origin}${pathname.replace(/\/admin(\/.*)?$/, "")}`;
 
 /**
@@ -70,10 +63,9 @@ export const serverAddress = (origin, pathname) => `${origin}${pathname.replace(
  */
 
 /**
- * The catalog label, else "S2 · E5", else "Episode 5", plus the title. Movies have no number: their (optional) title
- * only, else "Film". A channel has no episode: "Live".
- * @param {EpisodeLike} e
- * @param {"movie" | "series" | "live" | string | null} [kind]
+ * The catalog label, else "S2 · E5", else "Episode 5", plus the title. A film: its title, else "Film"; a channel:
+ * "Live".
+ * @param {EpisodeLike} e @param {string | null} [kind]
  */
 export function episodeName(e, kind) {
   if (kind === "live") return "Live";
@@ -87,16 +79,14 @@ export function episodeName(e, kind) {
 
 /**
  * What OK plays for a home entry (`continue` of `GET /admin/devices/<id>`).
- * @typedef {EpisodeLike & { episodeId: string, status: "new" | "watching" | "finished", positionMs: number, durationMs: number | null }} ContinueInfo
+ * @typedef {EpisodeLike & { episodeId: string, status: "new" | "watching" | "finished", positionMs: number,
+ *   durationMs: number | null }} ContinueInfo
  */
 
 /** Whether OK on the TV continues where it was, not from the start. @param {ContinueInfo | null | undefined} c */
 export const resumes = (c) => c?.status === "watching" && c.positionMs >= RESUME_MIN_MS;
 
-/**
- * What OK does on the TV for a home entry; a channel (no `continue`) plays live.
- * @param {ContinueInfo | null | undefined} c @param {string | null} kind
- */
+/** What OK does on the TV for a home entry. @param {ContinueInfo | null | undefined} c @param {string | null} kind */
 export function continueText(c, kind) {
   if (kind === "live") return "Live";
   if (!c) return "Nothing playable";
@@ -105,8 +95,7 @@ export function continueText(c, kind) {
     return `${which}continues at ${formatClock(c.positionMs)}${c.durationMs ? ` of ${formatClock(c.durationMs)}` : ""}`;
   }
   if (c.status === "watching") return `${which}starts from the beginning`;
-  if (c.status === "finished") return `${which}watched — starts over`;
-  return `${which}new`;
+  return c.status === "finished" ? `${which}watched — starts over` : `${which}new`;
 }
 
 /** 0–100, or null when unknown. @param {number | null | undefined} position @param {number | null | undefined} duration
@@ -117,15 +106,16 @@ export function percent(position, duration) {
 }
 
 /**
- * The muted line under a show's title: Film or Series (with its episode count), the year, and with `playable` how
- * many of its episodes may be played when that is not all of them. A channel is "Channel", with `playable` marked
- * when the catalog does not allow it (its `playable` is false).
- * @param {{ kind: string, year?: number | null, episodeCount?: number | null, playableCount?: number | null, playable?: boolean }} item
+ * The muted line under a show's title: Film or Series (with its episode count) and the year; with `playable`, how many
+ * episodes may be played when not all, or a channel the catalog does not allow.
+ * @param {{ kind: string, year?: number | null, episodeCount?: number | null, playableCount?: number | null,
+ *   playable?: boolean }} item
  * @param {{ playable?: boolean }} [o]
  */
 export function showMeta(item, o = {}) {
   if (item.kind === "live") return o.playable && item.playable === false ? "Channel · not playable" : "Channel";
-  const parts = [item.kind === "series" ? (item.episodeCount !== undefined && item.episodeCount !== null ? `Series · ${plural(item.episodeCount, "episode")}` : "Series") : "Film"];
+  const episodes = typeof item.episodeCount === "number" ? ` · ${plural(item.episodeCount, "episode")}` : "";
+  const parts = [item.kind === "series" ? `Series${episodes}` : "Film"];
   if (item.year) parts.push(String(item.year));
   if (o.playable && typeof item.playableCount === "number" && typeof item.episodeCount === "number" && item.playableCount < item.episodeCount) {
     parts.push(item.playableCount === 0 ? "not playable" : `${item.playableCount} of ${item.episodeCount} playable`);
@@ -135,70 +125,46 @@ export function showMeta(item, o = {}) {
 
 // --- The catalog browser -----------------------------------------------------------------------------------------
 
-/** Shows per page of the catalog browser ("Show more" loads the next). */
 export const BROWSE_PAGE = 50;
-/** The catalog browser's orders: the `sort` value and its label. */
 export const BROWSE_SORTS = /** @type {const} */ ([
-  ["title", "By title"],
-  ["year", "Newest year first"],
-  ["newest", "Newest in the catalog first"],
+  ["title", "By title"], ["year", "Newest year first"], ["newest", "Newest in the catalog first"],
 ]);
 const BROWSE_KINDS = ["movie", "series", "live"];
-/** The bundle schema's bounds of a show's year. */
-const YEAR_MIN = 1870;
-const YEAR_MAX = 2200;
 
-/**
- * The catalog browser's filters as the owner set them. Strings hold the raw input text (the years too); `since` is a
- * build id ("": any time); `notOnHome` asks for the shows not on the Home of the TV the browser picks for.
- */
+/** The filters as typed (years too); `since` is a build id ("": any time). */
 export const DEFAULT_FILTERS = { q: "", kind: "", genre: "", yearFrom: "", yearTo: "", playable: false, notOnHome: false, since: "", sort: "title" };
 /** @typedef {typeof DEFAULT_FILTERS} BrowseFilters */
 /** @typedef {{ buildId: string, loadedAt: string, baseline: boolean }} BrowseBuild */
 
-/** Case-, accent- and dotless-ı-insensitive form of a text, as the server matches genres and titles. @param {string} text */
-export function foldText(text) {
-  return text.normalize("NFD").replace(/\p{M}/gu, "").replace(/ı/g, "i").toLowerCase();
-}
+/** Case-, accent- and dotless-ı-insensitive, as the server matches genres and titles. @param {string} text */
+export const foldText = (text) => text.normalize("NFD").replace(/\p{M}/gu, "").replace(/ı/g, "i").toLowerCase();
 
-/** A year box's value as a year (an integer the schema allows), or null. @param {string} text */
+/** A year box's value as a year within the bundle schema's bounds, or null. @param {string} text */
 export function yearValue(text) {
   const t = text.trim();
-  if (!/^\d+$/.test(t)) return null;
   const n = Number(t);
-  return n >= YEAR_MIN && n <= YEAR_MAX ? n : null;
+  return /^\d+$/.test(t) && n >= 1870 && n <= 2200 ? n : null;
 }
 
-/**
- * Whether any filter but the order narrows the list: a search text that is not only spaces, a year the server
- * would apply, a kind, genre, "new since", or a ticked box.
- * @param {BrowseFilters} f
- */
+/** Whether any filter but the order narrows the list. @param {BrowseFilters} f */
 export function isFiltered(f) {
   return f.q.trim() !== "" || f.kind !== "" || f.genre !== "" || yearValue(f.yearFrom) !== null || yearValue(f.yearTo) !== null || f.playable || f.notOnHome || f.since !== "";
 }
 
 /**
- * The time a "new since" choice stands for: the `loadedAt` of that build, or null for "any time", the baseline (the
- * first load: nothing in it is new) or a build no longer listed.
+ * The `loadedAt` of a "new since" build; null for any time, the baseline (nothing in it is new) or a build gone.
  * @param {string} buildId @param {BrowseBuild[]} builds
  */
 export function sinceAt(buildId, builds) {
-  if (buildId === "") return null;
   const b = builds.find((x) => x.buildId === buildId);
   return b && !b.baseline ? b.loadedAt : null;
 }
 
-/**
- * The "New" select's options: any time, then one per build after the baseline, newest first (in the given order).
- * @param {BrowseBuild[]} builds newest first, as `/catalog` lists them @param {number} [now]
- * @returns {Array<[string, string]>}
- */
+/** "New" options: any time, then the builds after the baseline. @param {BrowseBuild[]} builds @param {number} [now] */
 export function newSinceOptions(builds, now = Date.now()) {
   /** @type {Array<[string, string]>} */
   const options = [["", "Any time"]];
-  for (const b of builds) {
-    if (b.baseline) continue;
+  for (const b of builds.filter((x) => !x.baseline)) {
     const when = formatRelative(b.loadedAt, now);
     options.push([b.buildId, options.length === 1 ? `Since the latest build (${when})` : `Since build ${shortId(b.buildId)} (${when})`]);
   }
@@ -206,33 +172,29 @@ export function newSinceOptions(builds, now = Date.now()) {
 }
 
 /**
- * The search request for one page of the browser, with only the parameters that are set.
+ * The search request for one page, with only the parameters that are set.
  * @param {BrowseFilters} f
- * @param {{ offset: number, limit: number, sinceAt?: string | null, notOnDevice?: string | null }} o `sinceAt`: the
- *   chosen build's `loadedAt` (see `sinceAt`); `notOnDevice`: the TV whose Home shows are left out
+ * @param {{ offset: number, limit: number, sinceAt?: string | null, notOnDevice?: string | null }} o
  */
 export function browsePath(f, o) {
   const p = new URLSearchParams();
-  const q = f.q.trim();
-  if (q) p.set("q", q);
-  if (f.kind) p.set("kind", f.kind);
-  if (f.genre) p.set("genre", f.genre);
   const from = yearValue(f.yearFrom);
-  if (from !== null) p.set("yearFrom", String(from));
   const to = yearValue(f.yearTo);
-  if (to !== null) p.set("yearTo", String(to));
-  if (f.playable) p.set("playable", "true");
-  if (o.sinceAt !== undefined && o.sinceAt !== null) p.set("since", o.sinceAt);
-  if (o.notOnDevice) p.set("notOnDevice", o.notOnDevice);
-  if (f.sort !== "title") p.set("sort", f.sort);
-  if (o.offset > 0) p.set("offset", String(o.offset));
+  for (const [key, value] of /** @type {const} */ ([
+    ["q", f.q.trim()], ["kind", f.kind], ["genre", f.genre], ["yearFrom", from === null ? "" : String(from)],
+    ["yearTo", to === null ? "" : String(to)], ["playable", f.playable ? "true" : ""], ["since", o.sinceAt ?? ""],
+    ["notOnDevice", o.notOnDevice ?? ""], ["sort", f.sort === "title" ? "" : f.sort],
+    ["offset", o.offset > 0 ? String(o.offset) : ""],
+  ])) {
+    if (value) p.set(key, value);
+  }
   p.set("limit", String(o.limit));
   return `/catalog/search?${p}`;
 }
 
 /**
- * The line above the browser's results: `All 7 shows.`, `Showing 50 of 1,234 shows that match “pro” (filtered).`
- * @param {number} shown the results listed @param {number} total all that match @param {BrowseFilters} f
+ * The line above the results: `All 7 shows.`, `Showing 50 of 1,234 shows that match “pro” (filtered).`
+ * @param {number} shown @param {number} total @param {BrowseFilters} f
  */
 export function browseSummary(shown, total, f) {
   const filtered = isFiltered(f);
@@ -241,17 +203,14 @@ export function browseSummary(shown, total, f) {
   const others = isFiltered({ ...f, q: "" }) ? " (filtered)" : "";
   const n = (/** @type {number} */ x) => x.toLocaleString("en-US");
   if (shown >= total && total === 1) {
-    if (!filtered) return "The catalog's only show.";
-    return `1 show${q ? ` that matches “${q}”` : ""}${others}.`;
+    return filtered ? `1 show${q ? ` that matches “${q}”` : ""}${others}.` : "The catalog's only show.";
   }
   const suffix = `${q ? ` that match “${q}”` : ""}${others}`;
-  if (shown >= total) return `All ${n(total)} shows${suffix}.`;
-  return `Showing ${n(shown)} of ${n(total)} shows${suffix}.`;
+  return shown >= total ? `All ${n(total)} shows${suffix}.` : `Showing ${n(shown)} of ${n(total)} shows${suffix}.`;
 }
 
 /**
- * The browser's filters from the query of its hash (`#/catalog?q=pro&kind=series`), defaults for the rest; values
- * the browser cannot show are dropped.
+ * The filters in a hash's query (`#/catalog?q=pro&kind=series`), defaults for the rest and for what cannot be shown.
  * @param {URLSearchParams | string} query the query, with or without its `?`, or the whole `#/catalog?…` hash
  * @returns {BrowseFilters}
  */
@@ -262,48 +221,32 @@ export function parseBrowseHash(query) {
     p = new URLSearchParams(text);
   }
   const text = (/** @type {string} */ k) => p.get(k) ?? "";
-  const year = (/** @type {string} */ k) => {
-    const y = yearValue(text(k));
-    return y === null ? "" : String(y);
-  };
+  const year = (/** @type {string} */ k) => String(yearValue(text(k)) ?? "");
   const kind = text("kind");
   const sort = text("sort");
   return {
-    q: text("q"),
-    kind: BROWSE_KINDS.includes(kind) ? kind : "",
-    genre: text("genre"),
-    yearFrom: year("yearFrom"),
-    yearTo: year("yearTo"),
-    playable: text("playable") === "1",
-    notOnHome: text("notOnHome") === "1",
-    since: text("since"),
-    sort: BROWSE_SORTS.some(([s]) => s === sort) ? sort : "title",
+    q: text("q"), kind: BROWSE_KINDS.includes(kind) ? kind : "", genre: text("genre"), yearFrom: year("yearFrom"),
+    yearTo: year("yearTo"), playable: text("playable") === "1", notOnHome: text("notOnHome") === "1",
+    since: text("since"), sort: BROWSE_SORTS.some(([s]) => s === sort) ? sort : "title",
   };
 }
 
-/**
- * The hash that keeps the browser's filters (a reload or Back restores them): `#/catalog`, or `#/catalog?…` with
- * the filters that differ from the defaults (ticked boxes as `1`; years only when they are years).
- * @param {BrowseFilters} f
- */
+/** The hash of the filters that are not the defaults (ticked boxes as `1`, only years). @param {BrowseFilters} f */
 export function browseHash(f) {
   const p = new URLSearchParams();
   for (const key of /** @type {Array<keyof BrowseFilters>} */ (Object.keys(DEFAULT_FILTERS))) {
     const v = f[key];
     if (v === DEFAULT_FILTERS[key]) continue;
     if (typeof v === "boolean") p.set(key, "1");
-    else if (key === "yearFrom" || key === "yearTo") {
-      const y = yearValue(v);
-      if (y !== null) p.set(key, String(y));
-    } else p.set(key, v);
+    else if (key !== "yearFrom" && key !== "yearTo") p.set(key, v);
+    else if (yearValue(v) !== null) p.set(key, String(yearValue(v)));
   }
   const query = p.toString();
   return query ? `#/catalog?${query}` : "#/catalog";
 }
 
 /**
- * What a catalog holds, for the bundle's facts: `9 shows (7 films, 1 series, 1 channel) · 11 episodes, 11 playable ·
- * 13 sources`. "Show" is the page's word for any catalog item, a channel included.
+ * `9 shows (7 films, 1 series, 1 channel) · 11 episodes, 11 playable · 13 sources` ("show" is any catalog item).
  * @param {{ items: number, movies: number, series: number, live?: number, episodes: number, playableEpisodes: number,
  *   sources: number }} s the catalog's `stats`
  */
@@ -312,14 +255,13 @@ export function catalogContents(s) {
   return `${plural(s.items, "show")} (${kinds}) · ${plural(s.episodes, "episode")}, ${s.playableEpisodes} playable · ${plural(s.sources, "source")}`;
 }
 
-/** The media kinds as the owner reads them: `HLS`, `DASH`, `MP4`, `MPEG-TS` (`ts`). @param {string} kind */
+/** `HLS`, `DASH`, `MP4`, `MPEG-TS` (`ts`). @param {string} kind */
 export const mediaKindLabel = (kind) => (kind === "ts" ? "MPEG-TS" : kind.toUpperCase());
 
-/** @typedef {{ state: string, updatedAt: string }} NowPlaying what is read here of a now-playing record */
+/** @typedef {{ state: string, updatedAt: string }} NowPlaying */
 
 /**
- * Whether a now-playing record describes playback that is going on (a TV that stopped reporting for two minutes
- * is not playing any more, whatever its last state was).
+ * Whether playback is going on: a TV that stopped reporting for two minutes is not playing, whatever its last state.
  * @param {NowPlaying | null | undefined} n @param {boolean} online @param {number} [now]
  */
 export function isActive(n, online, now = Date.now()) {
@@ -328,23 +270,21 @@ export function isActive(n, online, now = Date.now()) {
 }
 
 /**
- * The now-playing chip: Playing, Paused or Starting while the TV's reports are recent, else Last played.
  * @param {NowPlaying} n @param {boolean} online @param {number} [now]
  * @returns {{ label: string, tone: "ok" | "", active: boolean }}
  */
 export function playbackState(n, online, now = Date.now()) {
   if (!isActive(n, online, now)) return { label: "Last played", tone: "", active: false };
-  if (n.state === "paused") return { label: "Paused", tone: "", active: true };
-  if (n.state === "starting") return { label: "Starting", tone: "", active: true };
-  return { label: "Playing", tone: "ok", active: true };
+  if (n.state === "playing") return { label: "Playing", tone: "ok", active: true };
+  return { label: n.state === "paused" ? "Paused" : "Starting", tone: "", active: true };
 }
 
-/** `14:05`: a time of day, in the browser's time zone. @param {string} iso */
+/** `14:05` in the browser's time zone. @param {string} iso */
 const clockTime = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 /**
- * The line under what a TV plays: `1:02 / 10:00 · source tr-dub`. A channel has no position or duration: when its
- * viewing started (`startedAt`, when known) and the source, `since 14:05 · source main`.
+ * `1:02 / 10:00 · source tr-dub`; a channel: when its viewing started (if known) and the source, `since 14:05 · source
+ * main`.
  * @param {{ itemKind?: string | null, positionMs: number | null, durationMs: number | null, sourceId: string | null }} n
  * @param {string | null} [startedAt] @param {(iso: string) => string} [formatTime]
  */
@@ -355,8 +295,7 @@ export function nowPlayingLine(n, startedAt = null, formatTime = clockTime) {
 }
 
 /**
- * Where and when a problem happened: show · episode · source · position · HTTP status · app. A channel has no
- * episode or position.
+ * Where and when a problem happened: show · episode · source · position · HTTP status · app.
  * @param {{ itemId: string | null, itemTitle: string | null, itemKind?: string | null, episodeId: string | null,
  *   episodeTitle: string | null, season: number | null, number: number | null, sourceId: string | null,
  *   positionMs: number | null, httpStatus: number | null, appVersion: string | null, missing: boolean }} p
@@ -376,28 +315,25 @@ export function problemContext(p) {
 }
 
 /**
- * What a catalog build changed: `+2 shows · +14 episodes · −1 episode`; `first load` for the baseline (the first
- * build the server loaded: nothing in it counts as new).
+ * `+2 shows · +14 episodes · −1 episode`; `first load` for the baseline (nothing in it counts as new).
  * @param {{ baseline: boolean, added: { items: number, episodes: number },
  *   removed: { items: number, episodes: number } }} b
  */
 export function buildSummary(b) {
   if (b.baseline) return "first load";
   const parts = [];
-  if (b.added.items > 0) parts.push(`+${plural(b.added.items, "show")}`);
-  if (b.added.episodes > 0) parts.push(`+${plural(b.added.episodes, "episode")}`);
-  if (b.removed.items > 0) parts.push(`−${plural(b.removed.items, "show")}`);
-  if (b.removed.episodes > 0) parts.push(`−${plural(b.removed.episodes, "episode")}`);
+  for (const [sign, counts] of /** @type {const} */ ([["+", b.added], ["−", b.removed]])) {
+    if (counts.items > 0) parts.push(`${sign}${plural(counts.items, "show")}`);
+    if (counts.episodes > 0) parts.push(`${sign}${plural(counts.episodes, "episode")}`);
+  }
   return parts.length ? parts.join(" · ") : "nothing added or removed";
 }
 
 /**
- * A build's added or removed episodes grouped by show, shows in the order they first appear. An episode is `S1 E7`,
- * else its label, else `E7`, else its id (removed episodes carry nothing more); one the catalog does not allow to
- * play is marked. A show without a title is named by its id.
+ * A build's episodes by show, in order of appearance: `S1 E7`, else the label, else `E7`, else the id; one the catalog
+ * does not allow to play is marked; a show without a title is named by its id.
  * @param {Array<{ id: string, itemId: string, itemTitle: string | null, season?: number | null, number?: number | null,
  *   label?: string | null, playbackAllowed?: boolean }>} list
- * @returns {Array<{ itemId: string, title: string, episodes: string[] }>}
  */
 export function groupEpisodeChanges(list) {
   /** @type {Map<string, { itemId: string, title: string, episodes: string[] }>} */
@@ -475,7 +411,7 @@ export function errorText(err) {
 export const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /**
- * What a home grid shows: "8 shows per screen", and how many rows of the TV's home list lie below the first screen.
+ * "8 shows per screen", and the rows of Home below the first screen.
  * @param {number} columns @param {number} rows @param {number} homeCount
  */
 export function gridSummary(columns, rows, homeCount) {
@@ -484,11 +420,9 @@ export function gridSummary(columns, rows, homeCount) {
 }
 
 /**
- * The TV's Home grid, in dp: HomeGrid.compute of the TV app (keep the two in step) on its 960 × 540 dp screen less the
- * safe margins (48 dp at the sides, 27 dp above and below). `columns` × `rows` 16:9 cards (clamped to 3–6 × 1–4) as
- * large as fit, each with its title (24 sp, 32 dp lines) under it, on two lines unless a second line makes the cards
- * smaller. The viewport is exactly `rows` rows tall; further rows scroll into it. `height` is the area's height: Home
- * with a titled section passes the safe area less `SECTION_HEADER` (see `tvHomeLayout`), as the TV app does.
+ * The TV's Home grid in dp, as HomeGrid.compute of the TV app (keep the two in step) on its safe area: `columns` ×
+ * `rows` 16:9 cards (clamped to 3–6 × 1–4) as large as fit, each with its title (32 dp lines) under it, on two lines
+ * unless that makes the cards smaller. `height`: the area, less `SECTION_HEADER` when Home shows a titled section.
  * @param {number} columns @param {number} rows @param {number} [height]
  */
 export function tvGrid(columns, rows, height = TV_H - 2 * TV_SAFE_Y) {
@@ -520,64 +454,52 @@ export const TV_W = 960;
 const TV_H = 540;
 const TV_SAFE_X = 48;
 const TV_SAFE_Y = 27;
-/** A section title's block: one 30 sp line (38 dp) and 6 dp under it. Set aside once when Home shows a titled section. */
+/** A section title's block: one 30 sp line (38 dp) and 6 dp under it, set aside once when Home has a titled section. */
 export const SECTION_HEADER = 44;
-/** The untitled section's fixed id. */
 export const UNTITLED = "untitled";
 /** A card title's line, in dp (24 sp bold). */
 const TITLE_LINE = 32;
-/** The scroll indicator in the right margin: 6 dp wide, 22 dp from the screen's edge (HomeScreen.kt). */
+/** The scroll indicator in the right margin (HomeScreen.kt). */
 const SCROLL_BAR_W = 6;
 const SCROLL_BAR_END = 22;
 
-/** A section's name on the admin page: its title, or "No title" for the untitled section. @param {{ title: string | null }} s */
+/** @param {{ title: string | null }} s */
 export const sectionName = (s) => s.title ?? "No title";
 
 /** "6 shows", "1 show", "Empty". @param {number} n */
 export const sectionCount = (n) => (n === 0 ? "Empty" : plural(n, "show"));
 
-/** The in-place question before a section is deleted. @param {string} title @param {number} n how many shows it holds */
+/** @param {string} title @param {number} n how many shows the section holds */
 export function deleteSectionText(title, n) {
   if (n === 0) return `Delete ${title}?`;
   return n === 1 ? `Delete ${title}? Its show moves to No title.` : `Delete ${title}? Its ${n} shows move to No title.`;
 }
 
 /**
- * One section for the mirror: `titles` are the names of the cards the TV shows in it, in order (none: the TV leaves
- * the section out).
+ * `titles`: the cards the TV shows in the section (none: it leaves the section out).
  * @typedef {{ id: string, title: string | null, layout: string, titles: string[] }} SectionInput
  */
 /**
- * One section as drawn, in content coordinates (y = 0 at the viewport's top). `row`: one scrolling line; `empty`: a
- * titled section the TV does not show, drawn as one dashed band; `count`: its cards on the TV; `top`: where the view
- * of its first line starts (its title, else its cards less PADDING); `rowTops`: each line's card top; `cellBottom`:
- * the bottom of its last line's cell (card and title lines); `lineY`: the centre of the line above it (null for the
- * first section).
- * @typedef {{
- *   id: string, title: string | null, row: boolean, empty: boolean, count: number,
- *   top: number, titleTop: number | null, rowTops: number[], cellBottom: number, lineY: number | null,
- * }} SectionBox
+ * A section as drawn, y = 0 at the viewport's top. `row`: one scrolling line; `empty`: a titled section the TV does
+ * not show (one dashed band); `top`: where its view starts (its title, else its cards less PADDING); `rowTops`: each
+ * line's card top; `cellBottom`: the bottom of its last line's cell; `lineY`: the centre of the line above it.
+ * @typedef {{ id: string, title: string | null, row: boolean, empty: boolean, count: number, top: number,
+ *   titleTop: number | null, rowTops: number[], cellBottom: number, lineY: number | null }} SectionBox
  */
 /**
- * Home as drawn. `pitch`: from one card's left edge to the next; `viewport`: where the cards scroll, on the screen;
- * `x0`: the first column's left edge on the screen; `contentWidth`: from it to the last column's right edge; `lines`:
- * the grid rows and scrolling lines of all sections.
- * @typedef {{
- *   grid: ReturnType<typeof tvGrid>, titled: boolean, pitch: number,
- *   viewport: { x: number, y: number, width: number, height: number },
- *   x0: number, contentWidth: number, contentHeight: number, lines: number, sections: SectionBox[],
- * }} HomeLayout
+ * `pitch`: from a card's left edge to the next; `viewport`: where the cards scroll, on the screen; `x0`: the first
+ * column's left edge on the screen; `lines`: the rows and scrolling lines of all sections.
+ * @typedef {{ grid: ReturnType<typeof tvGrid>, titled: boolean, pitch: number, viewport: { x: number, y: number,
+ *   width: number, height: number }, x0: number, contentWidth: number, contentHeight: number, lines: number,
+ *   sections: SectionBox[] }} HomeLayout
  */
 
 /**
- * Home with sections as the TV app draws it: one card size for all of Home, `tvGrid` with `SECTION_HEADER` set aside
- * when the TV shows a titled section (the viewport then holds that title and `rows` rows); each section starts where
- * a next row of the previous one would, a titled one with its title; a 2 dp line between two sections, centred in
- * the empty space above the next (the gap, and the second title line when no title of the last row uses it).
- * Sections without a card on the TV are left out, except a titled one: the admin page draws it in its place as one
- * row, its dashed "Empty" band, filling the cell.
- * @param {number} columns @param {number} rows
- * @param {SectionInput[]} sections in Home order
+ * Home with sections as the TV app draws it: one card size for all of Home; each section starts where a next row of
+ * the previous one would, a titled one with its title; a 2 dp line between two sections, centred in the empty space
+ * above the next (the gap, and the second title line when no title of the last row uses it). Sections without a card
+ * on the TV are left out, except a titled one: the admin page draws it as one row, its dashed band.
+ * @param {number} columns @param {number} rows @param {SectionInput[]} sections in Home order
  * @param {(title: string, cardWidth: number) => boolean} needsTwoLines whether a card title wraps at that width
  * @returns {HomeLayout}
  */
@@ -622,14 +544,14 @@ export function tvHomeLayout(columns, rows, sections, needsTwoLines) {
 }
 
 /**
- * Where a scrolling line starts once the focus is on its card `focus` of `n`: it moves only when the focus reaches
- * the edge of what is in view, and never past its ends.
- * @param {number} first the line's first card in view @param {number} focus @param {number} columns @param {number} n
+ * A scrolling line's first card in view once the focus is on its card `focus` of `n`: it moves only when the focus
+ * reaches the edge of what is in view, and never past its ends.
+ * @param {number} first @param {number} focus @param {number} columns @param {number} n
  */
 export const tvRowFirst = (first, focus, columns, n) => Math.max(0, Math.min(Math.max(first, focus - columns + 1), focus, Math.max(0, n - columns)));
 
 /**
- * The left edge on the screen of card `i` of section `s`; `first`: a scrolling line's first card in view.
+ * The left edge of card `i` of section `s`; `first`: a scrolling line's first card in view.
  * @param {HomeLayout} L @param {number} s @param {number} i @param {number} first
  */
 export function tvCardX(L, s, i, first) {
@@ -641,8 +563,8 @@ export function tvCardX(L, s, i, first) {
 export const tvLineOf = (L, s, i) => (L.sections[s]?.row ? 0 : Math.floor(i / L.grid.columns));
 
 /**
- * The vertical scroll that shows line `r` of section `s` whole, moving as little as possible from `offset`: with the
- * section's title when it is its first line, and at the top on Home's first line.
+ * The scroll that shows line `r` of section `s` whole, moving as little as possible from `offset`: with the section's
+ * title on its first line, and at the top on Home's first line.
  * @param {HomeLayout} L @param {number} s @param {number} r @param {number} offset
  */
 export function tvScroll(L, s, r, offset) {
@@ -651,19 +573,16 @@ export function tvScroll(L, s, r, offset) {
   if (!box || rowTop === undefined || (s === 0 && r === 0)) return 0;
   const p = L.grid.padding;
   const top = r === 0 ? box.top : rowTop - p;
-  const bottom = rowTop + L.grid.cellHeight + p;
-  const to = Math.min(Math.max(offset, bottom - L.viewport.height), top);
+  const to = Math.min(Math.max(offset, rowTop + L.grid.cellHeight + p - L.viewport.height), top);
   return Math.max(0, Math.min(to, L.contentHeight - L.viewport.height));
 }
 
 /**
- * What the screen shows after any redraw (a move of the focus, or an edit that moved the selected card, changed a
- * section or the grid): every scrolling line within its ends for the cards it has now; the selected card (section
- * `s`, card `i`, null: none) in view, its line moved by `tvRowFirst` as a focus move would and the screen scrolled to
- * its line; or, with `chosen` (a section's index, -1: none), the screen scrolled to that section's first line.
+ * What the screen shows after any redraw: every scrolling line within its ends; the selected card (`at`) in view, its
+ * line moved as a focus move would and the screen scrolled to it; or, with `chosen` (a section's index, -1: none),
+ * the screen scrolled to that section's first line.
  * @param {HomeLayout} L @param {Record<string, number>} firsts @param {{ s: number, i: number } | null} at
  * @param {number} chosen @param {number} offset
- * @returns {{ firsts: Record<string, number>, offset: number }}
  */
 export function tvView(L, firsts, at, chosen, offset) {
   const cols = L.grid.columns;
@@ -681,8 +600,7 @@ export function tvView(L, firsts, at, chosen, offset) {
  * Where the focus goes from card `i` of section `s` with an arrow key, as on the TV: ← → along the line, stopping at
  * its ends; ↑ ↓ to the previous or next line, across sections (an empty one has no card), onto the card whose left
  * edge is nearest (in a scrolling line, among the cards in view). Null: it stays.
- * @param {HomeLayout} L @param {Record<string, number>} firsts each scrolling line's first card in view (default 0)
- * @param {number} s @param {number} i @param {string} key
+ * @param {HomeLayout} L @param {Record<string, number>} firsts @param {number} s @param {number} i @param {string} key
  * @returns {{ s: number, i: number } | null}
  */
 export function tvMove(L, firsts, s, i, key) {
@@ -712,11 +630,7 @@ export function tvMove(L, firsts, s, i, key) {
   return { s: ts, i: best };
 }
 
-/**
- * The scroll indicator in the right margin while Home is taller than its viewport (null otherwise), on the screen:
- * the track level with the rows, the thumb the viewport's share of the content, at its place.
- * @param {HomeLayout} L @param {number} offset
- */
+/** The scroll indicator while Home is taller than its viewport. @param {HomeLayout} L @param {number} offset */
 export function tvScrollBar(L, offset) {
   const vh = L.viewport.height;
   if (L.contentHeight <= vh) return null;
@@ -728,8 +642,7 @@ export function tvScrollBar(L, offset) {
 }
 
 /**
- * Where a card is, for the selected card's panel: "Films · card 3 of 6 · row 1, column 3", "Channels · card 5 of 6"
- * in a scrolling line, "No title · card 2 of 3".
+ * "Films · card 3 of 6 · row 1, column 3"; "Channels · card 5 of 6" in a scrolling line.
  * @param {{ title: string | null, row: boolean }} section @param {number} i @param {number} count @param {number} columns
  */
 export function cardPlace(section, i, count, columns) {
@@ -737,25 +650,22 @@ export function cardPlace(section, i, count, columns) {
   return section.row ? where : `${where} · row ${Math.floor(i / columns) + 1}, column ${(i % columns) + 1}`;
 }
 
-/** Whether the TV shows a home entry: it leaves out what is missing from the catalog or cannot be played. @param {{ missing?: boolean, playable?: boolean }} e */
+/** Whether the TV shows an entry (in the catalog, playable). @param {{ missing?: boolean, playable?: boolean }} e */
 export const onTv = (e) => !e.missing && e.playable !== false;
 
 /**
  * Whether the TV resumes `c` (PlaybackPlan.resumePositionMs): watching, from 30 s on, and not within the credits
- * allowance of the end (5 % of the duration, at least 2 min, at most 10 %).
- * @param {ContinueInfo | null | undefined} c
+ * allowance of the end (5 % of the duration, at least 2 min, at most 10 %). @param {ContinueInfo} c
  */
 function tvResumes(c) {
-  if (!c || c.status !== "watching" || c.positionMs < RESUME_MIN_MS) return false;
+  if (c.status !== "watching" || c.positionMs < RESUME_MIN_MS) return false;
   const d = c.durationMs;
-  if (!d || d <= 0) return true;
-  return d - c.positionMs > Math.min(Math.max(120_000, d * 0.05), d * 0.1);
+  return !d || d <= 0 || d - c.positionMs > Math.min(Math.max(120_000, d * 0.05), d * 0.1);
 }
 
 /**
- * What a card on the TV's Home shows over its picture (EpisodeNames.badge, tileBadgeText and ActionChip): the chip at
- * the bottom (`tone` "live" for a channel, "new" for New, "resume" when OK resumes, else ""), the progress bar's
- * percent (null: none) and the "2 new" count at the top right (0: none).
+ * What a card on the TV's Home shows over its picture (EpisodeNames.badge, tileBadgeText and ActionChip): the chip
+ * (`tone` "live", "new", "resume" or ""), the progress bar's percent (null: none) and the "2 new" count (0: none).
  * @param {{ kind: string, continue: (ContinueInfo & { index?: number }) | null, newEpisodes?: number }} e
  */
 export function tvCard(e) {
@@ -766,8 +676,8 @@ export function tvCard(e) {
   const resume = tvResumes(c);
   const progress = resume && c.durationMs ? percent(c.positionMs, c.durationMs) : null;
   if (e.kind === "series") {
-    const label = c.label?.trim();
     const number = c.number ?? (c.index ?? 0) + 1;
+    const label = c.label?.trim();
     const name = label || (c.season !== null && c.season !== undefined && c.season > 1 ? `Season ${c.season}, Episode ${number}` : `Episode ${number}`);
     return { chip: resume ? `Continue · ${name}` : name, tone: resume ? "resume" : "", progress, newEpisodes };
   }
@@ -776,7 +686,7 @@ export function tvCard(e) {
   return { chip: "New", tone: "new", progress, newEpisodes };
 }
 
-/** What a failed source attempt means, for the diagnostics view. */
+/** What a failed source attempt means. */
 const TRIED = /** @type {Record<string, string>} */ ({
   empty: "the adapter found nothing to play",
   timeout: "timed out",
@@ -787,10 +697,9 @@ const TRIED = /** @type {Record<string, string>} */ ({
 });
 
 /**
- * One source of a diagnostics run (`POST /admin/diagnostics/resolve`): whether it worked (resolved, and its probe
- * passed when there was one), how it was tried, and what came back, a line each.
- * @param {any} s an entry of the answer's `sources`
- * @param {(iso: string) => string} [formatTime] how an expiry time is shown
+ * One source of `POST /admin/diagnostics/resolve`: whether it worked (resolved, and its probe passed), how it was
+ * tried, and what came back, a line each.
+ * @param {any} s an entry of the answer's `sources` @param {(iso: string) => string} [formatTime] for an expiry
  * @returns {{ ok: boolean, sourceId: string, how: string, lines: string[] }}
  */
 export function sourceReport(s, formatTime = (iso) => new Date(iso).toLocaleString()) {
@@ -810,18 +719,12 @@ export function sourceReport(s, formatTime = (iso) => new Date(iso).toLocaleStri
   if (p) {
     const pl = p.playlist;
     const found = pl ? (pl.master ? `${plural(pl.variants, "variant")}, ${plural(pl.renditions, "rendition")}` : plural(pl.segments, "segment")) : null;
-    lines.push(
-      p.ok
-        ? `probe ok (${[p.status ? `HTTP ${p.status}` : null, found, `${p.ms} ms`].filter(Boolean).join(", ")})`
-        : `probe failed: ${p.error ?? `HTTP ${p.status}`}${p.name ? ` (${p.name})` : ""}`,
-    );
+    lines.push(p.ok
+      ? `probe ok (${[p.status ? `HTTP ${p.status}` : null, found, `${p.ms} ms`].filter(Boolean).join(", ")})`
+      : `probe failed: ${p.error ?? `HTTP ${p.status}`}${p.name ? ` (${p.name})` : ""}`);
   }
-  return {
-    ok: Boolean(s.ok && (!p || p.ok)),
-    sourceId: s.sourceId,
-    how: `${s.type === "adapter" ? `adapter ${s.adapterId}` : "direct"} · ${s.ms} ms`,
-    lines,
-  };
+  const how = `${s.type === "adapter" ? `adapter ${s.adapterId}` : "direct"} · ${s.ms} ms`;
+  return { ok: Boolean(s.ok && (!p || p.ok)), sourceId: s.sourceId, how, lines };
 }
 
 /** Languages offered in the settings selects; any other BCP 47 tag the API accepts is shown as it is. */
@@ -837,22 +740,21 @@ export function languageLabel(tag, none = "–") {
   return known ? `${known[1]} (${tag})` : tag;
 }
 
-/** The language of a BCP 47 tag, lower case: `pt` for `pt-BR`. @param {string} tag */
+/** `pt` for `pt-BR`. @param {string} tag */
 const primarySubtag = (tag) => (tag.split("-")[0] ?? "").toLowerCase();
 
 /**
- * Whether a track's language is the one wanted (`en` matches `en-GB`); never for an unknown side.
+ * Whether a track's language is the one wanted (`en` matches `en-GB`).
  * @param {string | null | undefined} wanted @param {string | null | undefined} actual
  */
 export const sameLanguage = (wanted, actual) =>
   Boolean(wanted && actual && primarySubtag(wanted) === primarySubtag(actual));
 
 /**
- * The episode list with what the device did with each: watched, current (where OK continues), progress. A channel
- * has no episodes (`episodes` absent): an empty list.
+ * The episodes (a channel has none) with what the device did with each: watched, current (where OK continues),
+ * progress.
  * @template {{ id: string }} E
- * @param {E[] | null | undefined} episodes
- * @param {string | null} cursorEpisodeId
+ * @param {E[] | null | undefined} episodes @param {string | null} cursorEpisodeId
  * @param {Array<{ episodeId: string, status: string, positionMs: number, durationMs: number | null }>} progress
  */
 export function episodeStates(episodes, cursorEpisodeId, progress) {
@@ -865,10 +767,7 @@ export function episodeStates(episodes, cursorEpisodeId, progress) {
   });
 }
 
-/**
- * The chip of an episode in the "continue from" picker.
- * @param {{ episode: { playbackAllowed?: boolean }, current: boolean, watched: boolean, percent: number | null }} s
- */
+/** @param {{ episode: { playbackAllowed?: boolean }, current: boolean, watched: boolean, percent: number | null }} s */
 export function episodeStateLabel(s) {
   if (!s.episode.playbackAllowed) return "not allowed";
   if (s.current) return "next";
@@ -879,10 +778,8 @@ export function episodeStateLabel(s) {
 // --- events, history and access tokens ----------------------------------------------------------------------------
 
 /**
- * The complete server-sent events in `text` (messages end with a blank line) and the unfinished rest. Comment
- * lines (`: ping`) and `retry:` are skipped; a message without data is nothing.
- * @param {string} text
- * @returns {{ events: Array<{ id: string | null, event: string, data: string }>, rest: string }}
+ * The complete server-sent events in `text` and the unfinished rest; comments, `retry:` and messages without data are
+ * skipped. @param {string} text
  */
 export function parseSse(text) {
   const blocks = text.split(/\r?\n\r?\n/);
@@ -911,54 +808,41 @@ export function formatDuration(ms) {
   if (ms === null || ms === undefined || !Number.isFinite(ms) || ms < 0) return "–";
   const min = Math.round(ms / 60_000);
   if (min < 1) return "under a minute";
-  if (min < 60) return `${min} min`;
-  return `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, "0")} min`;
+  return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${String(min % 60).padStart(2, "0")} min`;
 }
 
-/**
- * Who an actor is, for a line of text: the owner (the admin page or the shell), a token by its name, the TV, or the
- * server.
- * @param {{ type: string, name?: string } | null | undefined} actor
- */
+/** Who an actor is, for a line of text. @param {{ type: string, name?: string } | null | undefined} actor */
 export function actorLabel(actor) {
   if (!actor) return "";
-  if (actor.type === "owner") return "the owner";
   if (actor.type === "token") return `token “${actor.name}”`;
-  if (actor.type === "tv") return "the TV";
-  if (actor.type === "server") return "the server";
-  return actor.type;
+  return new Map([["owner", "the owner"], ["tv", "the TV"], ["server", "the server"]]).get(actor.type) ?? actor.type;
 }
 
 /**
- * Who started a viewing: the viewer with the remote, autoplay, auto-next (a channel: CH+/CH− from the one before), or
- * whoever sent the command.
+ * Who started a viewing: the viewer, autoplay, auto-next (a channel: CH+/CH−), or whoever sent the command.
  * @param {{ trigger: string, itemKind?: string | null, actor?: { type: string, name?: string } | null }} v
  */
 export function triggerLabel(v) {
-  if (v.trigger === "viewer") return "the viewer";
-  if (v.trigger === "autoplay") return "autoplay";
   if (v.trigger === "next") return v.itemKind === "live" ? "CH+/CH−" : "auto-next";
   if (v.trigger === "command") return actorLabel(v.actor) || "a command";
-  return "";
+  return new Map([["viewer", "the viewer"], ["autoplay", "autoplay"]]).get(v.trigger) ?? "";
 }
 
 /**
- * How a viewing ended (or that it runs): `watched to the end`, `stopped at 12:34`, `switched away at 1:02`,
- * `lost at 0:40` (a power cut, a dead app); `· seen` when it counts as seen without a finished report. Without a
- * position (a channel's viewing): `stopped`, `switched away`, `lost`.
+ * How a viewing ended: `watched to the end`, `stopped at 12:34`, `switched away at 1:02`, `lost at 0:40` (a power cut,
+ * a dead app), without the position for a channel; `· seen` when it counts as seen without a finished report.
  * @param {{ endedAt: string | null, endReason: string | null, endPositionMs: number | null, seen: boolean }} v
  */
 export function viewingEnd(v) {
   if (v.endedAt === null) return "playing now";
   if (v.endReason === "finished") return "watched to the end";
   const at = v.endPositionMs === null || v.endPositionMs === undefined ? "" : ` at ${formatClock(v.endPositionMs)}`;
-  const how = v.endReason === "stopped" ? "stopped" : v.endReason === "replaced" ? "switched away" : v.endReason === "lost" ? "lost" : (v.endReason ?? "ended");
+  const how = v.endReason === "replaced" ? "switched away" : (v.endReason ?? "ended");
   return `${how}${at}${v.seen ? " · seen" : ""}`;
 }
 
 /**
- * When a viewing ran, in times of day: `14:05–14:52`, `since 14:05` while it runs. What tells a channel's viewings
- * apart (they have no position).
+ * `14:05–14:52`, `since 14:05` while it runs.
  * @param {{ startedAt: string, endedAt: string | null }} v @param {(iso: string) => string} [formatTime]
  */
 export function viewingSpan(v, formatTime = clockTime) {
@@ -966,28 +850,24 @@ export function viewingSpan(v, formatTime = clockTime) {
 }
 
 /**
- * A channel's viewing in one line, when and how long: `14:05–14:52 · 45 min · stopped`, `since 14:05 · 12 min ·
- * playing now` (the time is how long the picture actually ran, `watchedMs`).
- * @param {{ startedAt: string, endedAt: string | null, endReason: string | null, endPositionMs: number | null, seen: boolean,
- *   watchedMs: number | null }} v
+ * A channel's viewing: `14:05–14:52 · 45 min · stopped` (how long the picture actually ran, `watchedMs`).
+ * @param {{ startedAt: string, endedAt: string | null, endReason: string | null, endPositionMs: number | null,
+ *   seen: boolean, watchedMs: number | null }} v
  * @param {(iso: string) => string} [formatTime]
  */
 export function liveViewingLine(v, formatTime = clockTime) {
   return [viewingSpan(v, formatTime), formatDuration(v.watchedMs), viewingEnd(v)].join(" · ");
 }
 
-/** The chip of a title's history status. @param {string} status @returns {{ label: string, tone: "ok" | "info" | "warn" | "" }} */
+/** A title's history status. @param {string} status @returns {{ label: string, tone: "ok" | "info" | "" }} */
 export function titleStatusLabel(status) {
   if (status === "finished") return { label: "Finished", tone: "ok" };
   if (status === "new_episodes") return { label: "New episodes", tone: "info" };
-  if (status === "watching") return { label: "Watching", tone: "" };
-  if (status === "idle") return { label: "Idle", tone: "" };
-  return { label: status, tone: "" };
+  return { label: new Map([["watching", "Watching"], ["idle", "Idle"]]).get(status) ?? status, tone: "" };
 }
 
 /**
- * The muted line of a title in the history: `Series · 5 of 12 episodes seen · last watched 2 days ago · 3 h 20 min`.
- * A channel has no episodes to see: `Channel · 3 viewings · last watched …`.
+ * `Series · 5 of 12 episodes seen · last watched 2 days ago · 3 h 20 min`; a channel: `Channel · 3 viewings · …`.
  * @param {{ kind: string | null, inCatalog: boolean, episodes: { total: number, seen: number } | null, viewings?: number,
  *   lastWatchedAt: string | null, watchedMs: number }} t
  * @param {number} [now]
@@ -1006,8 +886,7 @@ export function titleLine(t, now = Date.now()) {
 }
 
 /**
- * What an episode's history says in a few words: `seen 2026-10-10 · 85% played · 3 viewings · 1 h 10 min`, or
- * `not seen · last at 12:34`.
+ * `seen 2026-10-10 · 85% played · 3 viewings · 1 h 10 min`, or `not seen · last at 12:34`.
  * @param {{ seen: boolean, seenAt: string | null, coveredFraction: number | null, viewings: number, watchedMs: number,
  *   lastPositionMs: number | null, mark: boolean | null }} e
  */
@@ -1050,26 +929,27 @@ const UPDATE_RESULTS = /** @type {Record<string, string>} */ ({
   install_failure_incompatible: "Update failed: different signing key (only a release APK installs over a release install)",
 });
 
+/** @param {string} reason */
+const words = (reason) => reason.replace(/_/g, " ");
+
 /** @param {{ result: string, reason: string | null }} d */
 function updateResultText(d) {
   const known = UPDATE_RESULTS[`${d.result}:${d.reason}`] ?? (d.reason ? UPDATE_RESULTS[d.reason] : undefined);
   if (known) return known;
-  if (d.reason?.startsWith("install_")) return `Update failed: the TV's installer refused (${d.reason.slice("install_".length).replace(/_/g, " ")})`;
+  if (d.reason?.startsWith("install_")) return `Update failed: the TV's installer refused (${words(d.reason.slice("install_".length))})`;
   if (d.result === "done") return "Update: done";
-  const why = d.reason ? ` (${d.reason.replace(/_/g, " ")})` : "";
+  const why = d.reason ? ` (${words(d.reason)})` : "";
   return d.result === "failed" ? `Update failed${why}` : `Update: ${d.result}${why}`;
 }
 
 /**
- * What became of a command, for a toast: `Play: done`, `Pause: ignored (nothing is playing)`, `Play: failed (the
- * player failed)`; an `update` in its own words (`Update: the TV is installing`).
+ * A command's result, for a toast: `Play: done`, `Pause: ignored (nothing is playing)`; an `update` in its own words.
  * @param {{ type: string, result: string, reason: string | null }} d a `command.result` event's data
  */
 export function commandResultText(d) {
   if (d.type === "update") return updateResultText(d);
-  const name = d.type.charAt(0).toUpperCase() + d.type.slice(1);
-  const why = d.reason ? ` (${REASONS[`${d.type}:${d.reason}`] ?? REASONS[d.reason] ?? d.reason.replace(/_/g, " ")})` : "";
-  return `${name}: ${d.result}${why}`;
+  const why = d.reason ? ` (${REASONS[`${d.type}:${d.reason}`] ?? REASONS[d.reason] ?? words(d.reason)})` : "";
+  return `${d.type.charAt(0).toUpperCase()}${d.type.slice(1)}: ${d.result}${why}`;
 }
 
 /** What a token scope allows, for the scope picker and the token list. */
@@ -1094,19 +974,13 @@ export function formatBytes(n) {
   const units = ["kB", "MB", "GB", "TB"];
   let v = n / 1000;
   let i = 0;
-  while (v >= 999.5 && i < units.length - 1) {
-    v /= 1000;
-    i++;
-  }
+  for (; v >= 999.5 && i < units.length - 1; i++) v /= 1000;
   return `${v >= 99.95 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 }
 
-/** The release APK's name, as the server requires it (`izle-tv-0.3.0.apk`). */
-const APK_NAME = /^izle-tv-(0|[1-9]\d*)\.([1-9]?\d)\.([1-9]?\d)(-[0-9A-Za-z.-]+)?\.apk$/;
-
-/** The version in a release APK's file name (`0.3.0`, `0.3.0-rc.1`), or null for any other name. @param {string} name */
+/** The version in a release APK's name, as the server requires it (`izle-tv-0.3.0.apk`). @param {string} name */
 export function apkVersion(name) {
-  const m = APK_NAME.exec(name);
+  const m = /^izle-tv-(0|[1-9]\d*)\.([1-9]?\d)\.([1-9]?\d)(-[0-9A-Za-z.-]+)?\.apk$/.exec(name);
   return m ? `${m[1]}.${m[2]}.${m[3]}${m[4] ?? ""}` : null;
 }
 
@@ -1116,12 +990,7 @@ export function apkVersion(name) {
  *   capability?: string | null, reportedAt?: string | null, update?: string | null }} DeviceApp
  */
 
-/**
- * The update chip of a TV: Up to date, Update available (it installs by itself when idle), Needs Install now (an
- * older TV: the owner starts it and someone at the TV presses OK), or Unknown.
- * @param {DeviceApp | null | undefined} app
- * @returns {{ text: string, tone: "ok" | "warn" | "info" | "" }}
- */
+/** @param {DeviceApp | null | undefined} app @returns {{ text: string, tone: "ok" | "warn" | "info" | "" }} */
 export function appUpdateChip(app) {
   switch (app?.update) {
     case "up_to_date": return { text: "Up to date", tone: "ok" };
@@ -1143,23 +1012,16 @@ export function androidText(sdk) {
   return ANDROID[sdk] ? `Android ${ANDROID[sdk]} (API ${sdk})` : `API ${sdk}`;
 }
 
-/**
- * How a TV takes an update, in a sentence.
- * @param {DeviceApp | null | undefined} app
- * @param {boolean} [auto] the server's `appUpdates.auto`; unknown (not read yet) counts as on
- */
+/** How a TV takes an update. @param {DeviceApp | null | undefined} app @param {boolean} [auto] on while unknown */
 export function capabilityText(app, auto = true) {
   if (app?.capability === "silent") {
     return auto
       ? "Installs updates by itself while nobody is watching."
       : "Can install updates by itself, but automatic installs are off on this server: an update needs Install now here.";
   }
-  if (app?.capability === "guided") {
-    const sdk = app.androidSdk;
-    const why = sdk !== null && sdk !== undefined && sdk >= 31 ? "The TV lacks the one-time permission to install apps, so" : "On Android 11 or older,";
-    return `${why} an update needs Install now here, and someone at the TV pressing OK when the screen appears.`;
-  }
-  return "Unknown: the TV has not said how it installs updates (an older app).";
+  if (app?.capability !== "guided") return "Unknown: the TV has not said how it installs updates (an older app).";
+  const why = (app.androidSdk ?? 0) >= 31 ? "The TV lacks the one-time permission to install apps, so" : "On Android 11 or older,";
+  return `${why} an update needs Install now here, and someone at the TV pressing OK when the screen appears.`;
 }
 
 /** The words of a failed check's reason. */
@@ -1178,12 +1040,11 @@ const CHECK_REASONS = /** @type {Record<string, string>} */ ({
   not_an_apk: "the download is not an APK",
 });
 
-/** Human words for why a check failed. @param {string | null | undefined} reason */
+/** @param {string | null | undefined} reason */
 export function appCheckReasonText(reason) {
   if (!reason) return "for an unknown reason";
   const http = /^http_(\d{3})$/.exec(reason);
-  if (http) return `GitHub answered HTTP ${http[1]}`;
-  return CHECK_REASONS[reason] ?? reason.replace(/_/g, " ");
+  return http ? `GitHub answered HTTP ${http[1]}` : CHECK_REASONS[reason] ?? words(reason);
 }
 
 /** `5 min`, `3 h`, `2 days`: how long until `iso`. @param {string} iso @param {number} now */
@@ -1197,27 +1058,22 @@ function formatUntil(iso, now) {
 }
 
 /**
- * The state of the server's checks for a new release, in one line: `Last check 2 h ago: up to date · next check in
- * 4 h`, `Last check failed just now: GitHub could not be reached`, `Checking now…`, `Checks disabled (manual
- * source)…`.
+ * The server's checks for a new release in one line: `Last check 2 h ago: up to date · next check in 4 h`.
  * @param {{ lastAt: string | null, nextAt: string | null, result: string | null, reason: string | null, running: boolean }
  *   | null | undefined} check
- * @param {string} source `github` or `manual`
- * @param {number} [now]
+ * @param {string} source `github` or `manual` @param {number} [now]
  */
 export function appCheckText(check, source, now = Date.now()) {
   if (source === "manual") return "Checks disabled (manual source): the server offers the APK uploaded here.";
   if (!check) return "";
-  const parts = [];
-  if (check.running) parts.push("checking now…");
-  else if (!check.lastAt) parts.push("not checked yet");
-  else {
-    const when = formatRelative(check.lastAt, now);
-    if (check.result === "failed") parts.push(`last check failed ${when}: ${appCheckReasonText(check.reason)}`);
-    else if (check.result === "fetched") parts.push(`last check ${when}: fetched a new version`);
-    else if (check.result === "up_to_date") parts.push(`last check ${when}: up to date`);
-    else parts.push(`last check ${when}`);
-  }
+  const when = formatRelative(check.lastAt, now);
+  const results = /** @type {Record<string, string>} */ ({
+    failed: `last check failed ${when}: ${appCheckReasonText(check.reason)}`,
+    fetched: `last check ${when}: fetched a new version`,
+    up_to_date: `last check ${when}: up to date`,
+  });
+  const last = results[check.result ?? ""] ?? `last check ${when}`;
+  const parts = [check.running ? "checking now…" : !check.lastAt ? "not checked yet" : last];
   if (check.nextAt && !check.running) {
     const ms = Date.parse(check.nextAt) - now;
     if (!Number.isNaN(ms)) parts.push(ms < 60_000 ? "next check soon" : `next check in ${formatUntil(check.nextAt, now)}`);
@@ -1226,11 +1082,7 @@ export function appCheckText(check, source, now = Date.now()) {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-/**
- * Who installs a new APK by themselves, after one was stored: with `appUpdates.auto` on, the TVs that can install
- * silently (when idle); with it off, none.
- * @param {boolean} auto
- */
+/** Who installs a new APK by themselves: with `appUpdates.auto`, the TVs that can (when idle). @param {boolean} auto */
 export function newApkText(auto) {
   return auto
     ? "TVs that install by themselves update when idle; the others need Install now."
@@ -1238,9 +1090,8 @@ export function newApkText(auto) {
 }
 
 /**
- * The toast after "Check now" (`POST /admin/app/check`).
- * @param {{ result: string, reason: string | null, apk: { versionName: string } | null }} r
- * @param {boolean} auto the server's `appUpdates.auto`
+ * The toast after "Check now".
+ * @param {{ result: string, reason: string | null, apk: { versionName: string } | null }} r @param {boolean} auto
  * @returns {{ text: string, kind: "ok" | "info" | "error" }}
  */
 export function checkResultText(r, auto) {
@@ -1250,16 +1101,14 @@ export function checkResultText(r, auto) {
 }
 
 /**
- * Why "Install now" is unavailable for a TV, or null when it may be pressed: no APK on the server, a TV not set up
- * or offline, or one that is up to date.
+ * Why "Install now" is unavailable for a TV, or null.
  * @param {{ status?: string, online?: boolean, app?: DeviceApp | null }} device @param {boolean} hasApk
  */
 export function installNowBlocked(device, hasApk) {
   if (!hasApk) return "No TV app is stored on the server.";
   if (device.status !== undefined && device.status !== "active") return "The TV is not set up yet.";
   if (!device.online) return "The TV is offline.";
-  if (device.app?.update === "up_to_date") return "The TV is up to date.";
-  return null;
+  return device.app?.update === "up_to_date" ? "The TV is up to date." : null;
 }
 
 // --- Listen along (companion audio on the owner's phone) ----------------------------------------------------------
@@ -1273,25 +1122,21 @@ export const SYNC = { seekMs: 1500, coarseMs: 300, fineMs: 40, coarseAdj: 0.05, 
  * @typedef {{ sentAt: number, receivedAt: number, serverNowMs: number }} ClockSample
  */
 
-/**
- * Where the TV is at `serverNowMs` (server clock): the anchor's position, advanced while it was playing.
- * @param {Anchor | null | undefined} anchor @param {number} serverNowMs
- */
+/** Where the TV is at `serverNowMs`. @param {Anchor | null | undefined} anchor @param {number} serverNowMs */
 export function tvPositionAt(anchor, serverNowMs) {
   if (!anchor) return null;
   return anchor.positionMs + (anchor.playing ? Math.max(0, serverNowMs - anchor.atMs) * (anchor.rate ?? 1) : 0);
 }
 
 /**
- * The companion position matching a TV position: `rate · tv + offset`, plus this phone's nudge for its own output
- * latency.
+ * `rate · tv + offset`, plus this phone's nudge for its output latency.
  * @param {number} tvPositionMs @param {LinkTiming} link @param {number} [nudgeMs]
  */
 export const companionTarget = (tvPositionMs, link, nudgeMs = 0) => link.rate * tvPositionMs + link.offsetMs + nudgeMs;
 
 /**
- * What the phone's player should do to stay on target: pause with the TV, seek when far off, otherwise play a
- * little faster or slower than the nominal rate until the error is within `SYNC.fineMs`.
+ * What the phone's player should do: pause with the TV, seek when far off, else play a little faster or slower than
+ * the nominal rate until the error is within `SYNC.fineMs`.
  * @param {{ targetMs: number, actualMs: number, tvPlaying: boolean, nominalRate: number }} p
  * @returns {{ action: "pause" | "seek" | "play", rate: number, state: string, errorMs: number, toMs?: number }}
  */
@@ -1306,24 +1151,22 @@ export function syncDecision({ targetMs, actualMs, tvPlaying, nominalRate }) {
 }
 
 /**
- * Server clock minus phone clock, from round trips measured on the phone: the sample with the shortest round
- * trip wins; long ones (a long-poll that waited) are ignored. Null without a usable sample.
- * @param {ClockSample[]} samples
+ * Server clock minus phone clock: the sample with the shortest round trip wins; long ones (a long-poll that waited)
+ * are ignored. Null without a usable sample. @param {ClockSample[]} samples
  */
 export function clockOffset(samples) {
   /** @type {ClockSample | null} */
   let best = null;
   for (const s of samples) {
     const rtt = s.receivedAt - s.sentAt;
-    if (rtt < 0 || rtt > SYNC.sampleMaxRttMs) continue;
-    if (!best || rtt < best.receivedAt - best.sentAt) best = s;
+    if (rtt >= 0 && rtt <= SYNC.sampleMaxRttMs && (!best || rtt < best.receivedAt - best.sentAt)) best = s;
   }
   return best ? best.serverNowMs - (best.sentAt + best.receivedAt) / 2 : null;
 }
 
 /**
- * Select options for the companion candidates: one per source, or one per audio language when a source has
- * several. `value` is `<sourceId>\u0000<language>` (see `parseCandidate`).
+ * Options for the companion candidates: one per source, or one per audio language when a source has several.
+ * `value` is `<sourceId>\u0000<language>` (see `parseCandidate`).
  * @param {Array<{ sourceId: string, label: string | null, current: boolean, supported: boolean, reason: string | null,
  *   languages: { audio: string[] | null, subtitles: string[] | null } }>} candidates
  */
@@ -1358,7 +1201,7 @@ export function formatDrift(ms) {
   return abs >= 1000 ? `${sign}${(abs / 1000).toFixed(1)} s` : `${sign}${Math.round(abs)} ms`;
 }
 
-/** `1:02:03.4`: a position with tenths of a second, for the sync status line. @param {number | null | undefined} ms */
+/** `1:02:03.4`, for the sync status line. @param {number | null | undefined} ms */
 export function formatPosition(ms) {
   if (ms === null || ms === undefined || !Number.isFinite(ms) || ms < 0) return "–";
   return `${formatClock(ms)}.${Math.floor((ms % 1000) / 100)}`;
