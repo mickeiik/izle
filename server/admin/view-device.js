@@ -102,7 +102,7 @@ export function deviceView(scope, id, tab) {
     seen.textContent = device.status === "active" ? `last seen ${formatRelative(device.lastSeenAt)}` : "approved, waiting for the TV to collect its token";
     now.setDevice(device);
     tvApp.setDevice(device);
-    home.update(d.home, device);
+    home.update(d, device);
   };
 
   // The TV first; once it is there, the tabs and their polls.

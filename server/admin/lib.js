@@ -462,6 +462,10 @@ const ERRORS = /** @type {Record<string, string>} */ ({
   unknown_command: "That command is not stored (any more).",
   home_changed: "The home screen changed meanwhile; it was reloaded. Try again.",
   not_on_home: "That show is not on the home screen.",
+  too_many_sections: "A Home holds at most 20 sections.",
+  unknown_section: "That section is not on this Home (any more).",
+  untitled_section: "The section without a title cannot be renamed or deleted.",
+  duplicate_section: "That section is listed twice.",
   device_exists: "That TV still exists; forget it first.",
   hls_unsupported: "This browser cannot play HLS.",
   hls_unavailable: "The HLS player did not load. Reload the page and try again.",
@@ -496,12 +500,12 @@ export function gridSummary(columns, rows, homeCount) {
  * The TV's Home grid, in dp: HomeGrid.compute of the TV app (keep the two in step) on its 960 × 540 dp screen less the
  * safe margins (48 dp at the sides, 27 dp above and below). `columns` × `rows` 16:9 cards (clamped to 3–6 × 1–4) as
  * large as fit, each with its title (24 sp, 32 dp lines) under it, on two lines unless a second line makes the cards
- * smaller. The viewport is exactly `rows` rows tall; further rows scroll into it.
- * @param {number} columns @param {number} rows
+ * smaller. The viewport is exactly `rows` rows tall; further rows scroll into it. `height` is the area's height: Home
+ * with a titled section passes the safe area less `SECTION_HEADER` (see `tvHomeLayout`), as the TV app does.
+ * @param {number} columns @param {number} rows @param {number} [height]
  */
-export function tvGrid(columns, rows) {
-  const width = 960 - 2 * 48;
-  const height = 540 - 2 * 27;
+export function tvGrid(columns, rows, height = TV_H - 2 * TV_SAFE_Y) {
+  const width = TV_W - 2 * TV_SAFE_X;
   const gap = 20;
   const padding = 14;
   const titleGap = 10;
@@ -521,6 +525,209 @@ export function tvGrid(columns, rows) {
     viewportWidth: cols * cardWidth + (cols - 1) * gap + 2 * padding,
     viewportHeight: rowsShown * cellHeight + (rowsShown - 1) * gap + 2 * padding,
   };
+}
+
+// --- Home sections on the TV: the TV app's Home geometry (docs/ux/senior-tv.md#sections), keep the two in step ------
+
+/** The TV's screen and safe margins, in dp. */
+export const TV_W = 960;
+export const TV_H = 540;
+export const TV_SAFE_X = 48;
+export const TV_SAFE_Y = 27;
+/** A section title's block: one 30 sp line (38 dp) and 6 dp under it. Set aside once when Home shows a titled section. */
+export const SECTION_HEADER = 44;
+/** The untitled section's fixed id. */
+export const UNTITLED = "untitled";
+/** A card title's line, in dp (24 sp bold). */
+const TITLE_LINE = 32;
+/** The scroll indicator in the right margin: 6 dp wide, 22 dp from the screen's edge (HomeScreen.kt). */
+const SCROLL_BAR_W = 6;
+const SCROLL_BAR_END = 22;
+
+/** A section's name on the admin page: its title, or "No title" for the untitled section. @param {{ title: string | null }} s */
+export const sectionName = (s) => s.title ?? "No title";
+
+/** "6 shows", "1 show", "Empty". @param {number} n */
+export const sectionCount = (n) => (n === 0 ? "Empty" : plural(n, "show"));
+
+/** The in-place question before a section is deleted. @param {string} title @param {number} n how many shows it holds */
+export function deleteSectionText(title, n) {
+  if (n === 0) return `Delete ${title}?`;
+  return n === 1 ? `Delete ${title}? Its show moves to No title.` : `Delete ${title}? Its ${n} shows move to No title.`;
+}
+
+/**
+ * One section for the mirror: `titles` are the names of the cards the TV shows in it, in order (none: the TV leaves
+ * the section out).
+ * @typedef {{ id: string, title: string | null, layout: string, titles: string[] }} SectionInput
+ */
+/**
+ * One section as drawn, in content coordinates (y = 0 at the viewport's top). `row`: one scrolling line; `empty`: a
+ * titled section the TV does not show, drawn as one dashed band; `count`: its cards on the TV; `top`: where the view
+ * of its first line starts (its title, else its cards less PADDING); `rowTops`: each line's card top; `cellBottom`:
+ * the bottom of its last line's cell (card and title lines); `lineY`: the centre of the line above it (null for the
+ * first section).
+ * @typedef {{
+ *   id: string, title: string | null, row: boolean, empty: boolean, count: number,
+ *   top: number, titleTop: number | null, rowTops: number[], cellBottom: number, lineY: number | null,
+ * }} SectionBox
+ */
+/**
+ * Home as drawn. `pitch`: from one card's left edge to the next; `viewport`: where the cards scroll, on the screen;
+ * `x0`: the first column's left edge on the screen; `contentWidth`: from it to the last column's right edge; `lines`:
+ * the grid rows and scrolling lines of all sections.
+ * @typedef {{
+ *   grid: ReturnType<typeof tvGrid>, titled: boolean, pitch: number,
+ *   viewport: { x: number, y: number, width: number, height: number },
+ *   x0: number, contentWidth: number, contentHeight: number, lines: number, sections: SectionBox[],
+ * }} HomeLayout
+ */
+
+/**
+ * Home with sections as the TV app draws it: one card size for all of Home, `tvGrid` with `SECTION_HEADER` set aside
+ * when the TV shows a titled section (the viewport then holds that title and `rows` rows); each section starts where
+ * a next row of the previous one would, a titled one with its title; a 2 dp line between two sections, centred in
+ * the empty space above the next (the gap, and the second title line when no title of the last row uses it).
+ * Sections without a card on the TV are left out, except a titled one: the admin page draws it in its place as one
+ * row, its dashed "Empty" band, filling the cell.
+ * @param {number} columns @param {number} rows
+ * @param {SectionInput[]} sections in Home order
+ * @param {(title: string, cardWidth: number) => boolean} needsTwoLines whether a card title wraps at that width
+ * @returns {HomeLayout}
+ */
+export function tvHomeLayout(columns, rows, sections, needsTwoLines) {
+  const titled = sections.some((s) => s.title !== null && s.titles.length > 0);
+  const reserve = titled ? SECTION_HEADER : 0;
+  const grid = tvGrid(columns, rows, TV_H - 2 * TV_SAFE_Y - reserve);
+  const { cardWidth, cellHeight, gap, padding, titleLines } = grid;
+  const width = grid.viewportWidth;
+  const height = grid.viewportHeight + reserve;
+  const viewport = { x: (TV_W - width) / 2, y: (TV_H - height) / 2, width, height };
+  /** @type {SectionBox[]} */
+  const out = [];
+  let cellBottom = 0;
+  let unused = 0;
+  let lines = 0;
+  for (const s of sections) {
+    const count = s.titles.length;
+    const empty = count === 0;
+    if (empty && s.title === null) continue;
+    const row = !empty && s.layout === "row";
+    const nRows = row || empty ? 1 : Math.ceil(count / grid.columns);
+    const first = out.length === 0;
+    const nextTop = first ? 0 : cellBottom + gap;
+    const lineY = first ? null : Math.round((cellBottom - unused * TITLE_LINE + nextTop) / 2);
+    const titleTop = s.title !== null ? nextTop : null;
+    // The cards: under the title block and PADDING; untitled, PADDING under Home's top, or right where a row would be.
+    const cardsTop = titleTop !== null ? nextTop + SECTION_HEADER + padding : first ? padding : nextTop;
+    const rowTops = Array.from({ length: nRows }, (_, r) => cardsTop + r * (cellHeight + gap));
+    cellBottom = cardsTop + (nRows - 1) * (cellHeight + gap) + cellHeight;
+    // The last line's second title line is empty space when none of its titles wraps; an empty band fills its cell.
+    const lastTitles = empty ? null : row ? s.titles : s.titles.slice((nRows - 1) * grid.columns);
+    const needed = lastTitles === null ? titleLines : Math.min(titleLines, lastTitles.some((t) => needsTwoLines(t, cardWidth)) ? 2 : 1);
+    unused = titleLines - needed;
+    lines += nRows;
+    out.push({ id: s.id, title: s.title, row, empty, count, top: titleTop ?? cardsTop - padding, titleTop, rowTops, cellBottom, lineY });
+  }
+  return {
+    grid, titled, pitch: cardWidth + gap, viewport, x0: viewport.x + padding, contentWidth: width - 2 * padding,
+    contentHeight: out.length ? cellBottom + padding : 0, lines, sections: out,
+  };
+}
+
+/**
+ * Where a scrolling line starts once the focus is on its card `focus` of `n`: it moves only when the focus reaches
+ * the edge of what is in view, and never past its ends.
+ * @param {number} first the line's first card in view @param {number} focus @param {number} columns @param {number} n
+ */
+export const tvRowFirst = (first, focus, columns, n) => Math.max(0, Math.min(Math.max(first, focus - columns + 1), focus, Math.max(0, n - columns)));
+
+/**
+ * The left edge on the screen of card `i` of section `s`; `first`: a scrolling line's first card in view.
+ * @param {HomeLayout} L @param {number} s @param {number} i @param {number} first
+ */
+export function tvCardX(L, s, i, first) {
+  const box = /** @type {SectionBox} */ (L.sections[s]);
+  return L.x0 + (box.row ? i - first : i % L.grid.columns) * L.pitch;
+}
+
+/** The line (0-based) of card `i` in section `s`. @param {HomeLayout} L @param {number} s @param {number} i */
+export const tvLineOf = (L, s, i) => (L.sections[s]?.row ? 0 : Math.floor(i / L.grid.columns));
+
+/**
+ * The vertical scroll that shows line `r` of section `s` whole, moving as little as possible from `offset`: with the
+ * section's title when it is its first line, and at the top on Home's first line.
+ * @param {HomeLayout} L @param {number} s @param {number} r @param {number} offset
+ */
+export function tvScroll(L, s, r, offset) {
+  const box = L.sections[s];
+  const rowTop = box?.rowTops[r];
+  if (!box || rowTop === undefined || (s === 0 && r === 0)) return 0;
+  const p = L.grid.padding;
+  const top = r === 0 ? box.top : rowTop - p;
+  const bottom = rowTop + L.grid.cellHeight + p;
+  const to = Math.min(Math.max(offset, bottom - L.viewport.height), top);
+  return Math.max(0, Math.min(to, L.contentHeight - L.viewport.height));
+}
+
+/**
+ * Where the focus goes from card `i` of section `s` with an arrow key, as on the TV: ← → along the line, stopping at
+ * its ends; ↑ ↓ to the previous or next line, across sections (an empty one has no card), onto the card whose left
+ * edge is nearest (in a scrolling line, among the cards in view). Null: it stays.
+ * @param {HomeLayout} L @param {Record<string, number>} firsts each scrolling line's first card in view (default 0)
+ * @param {number} s @param {number} i @param {string} key
+ * @returns {{ s: number, i: number } | null}
+ */
+export function tvMove(L, firsts, s, i, key) {
+  const box = L.sections[s];
+  if (!box || box.empty) return null;
+  const cols = L.grid.columns;
+  if (key === "ArrowLeft") return (box.row ? i > 0 : i % cols > 0) ? { s, i: i - 1 } : null;
+  if (key === "ArrowRight") return i + 1 < box.count && (box.row || i % cols < cols - 1) ? { s, i: i + 1 } : null;
+  if (key !== "ArrowUp" && key !== "ArrowDown") return null;
+  const dir = key === "ArrowDown" ? 1 : -1;
+  const firstOf = (/** @type {number} */ k) => firsts[L.sections[k]?.id ?? ""] ?? 0;
+  let ts = s;
+  let tr = tvLineOf(L, s, i) + dir;
+  if (tr < 0 || tr >= box.rowTops.length) {
+    do ts += dir;
+    while (L.sections[ts]?.empty);
+    const t = L.sections[ts];
+    if (!t) return null;
+    tr = dir > 0 ? 0 : t.rowTops.length - 1;
+  }
+  const t = /** @type {SectionBox} */ (L.sections[ts]);
+  const from = t.row ? firstOf(ts) : tr * cols;
+  const x = tvCardX(L, s, i, firstOf(s));
+  const distance = (/** @type {number} */ j) => Math.abs(tvCardX(L, ts, j, firstOf(ts)) - x);
+  let best = from;
+  for (let j = from + 1; j < Math.min(t.count, from + cols); j++) if (distance(j) < distance(best)) best = j;
+  return { s: ts, i: best };
+}
+
+/**
+ * The scroll indicator in the right margin while Home is taller than its viewport (null otherwise), on the screen:
+ * the track level with the rows, the thumb the viewport's share of the content, at its place.
+ * @param {HomeLayout} L @param {number} offset
+ */
+export function tvScrollBar(L, offset) {
+  const vh = L.viewport.height;
+  if (L.contentHeight <= vh) return null;
+  const track = vh - 2 * L.grid.padding;
+  return {
+    x: TV_W - SCROLL_BAR_END - SCROLL_BAR_W, y: L.viewport.y + L.grid.padding, width: SCROLL_BAR_W, height: track,
+    thumbTop: (offset / L.contentHeight) * track, thumbHeight: (vh / L.contentHeight) * track,
+  };
+}
+
+/**
+ * Where a card is, for the selected card's panel: "Films · card 3 of 6 · row 1, column 3", "Channels · card 5 of 6"
+ * in a scrolling line, "No title · card 2 of 3".
+ * @param {{ title: string | null, row: boolean }} section @param {number} i @param {number} count @param {number} columns
+ */
+export function cardPlace(section, i, count, columns) {
+  const where = `${sectionName(section)} · card ${i + 1} of ${count}`;
+  return section.row ? where : `${where} · row ${Math.floor(i / columns) + 1}, column ${(i % columns) + 1}`;
 }
 
 /** Whether the TV shows a home entry: it leaves out what is missing from the catalog or cannot be played. @param {{ missing?: boolean, playable?: boolean }} e */

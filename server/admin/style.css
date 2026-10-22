@@ -253,25 +253,70 @@ input[type="checkbox"] { width: 1.25rem; height: 1.25rem; min-height: 0; padding
 .grid-size label + select + label { margin-left: var(--space-2); }
 .grid-size button:first-of-type { margin-left: var(--space-2); }
 .tv { max-width: 48rem; margin: var(--space-3) auto 0; }
+/* The screen with the Sections list beside it; under it on a narrow page. */
+.home-bench { display: grid; grid-template-columns: minmax(0, 1fr) 17rem; gap: var(--space-4); align-items: start; margin-top: var(--space-3); }
+.home-bench .tv { margin: 0; max-width: none; }
+@media (max-width: 54rem) {
+  .home-bench { grid-template-columns: minmax(0, 1fr); }
+  .home-bench .tv { max-width: 48rem; margin: 0 auto; width: 100%; }
+}
+.sections-panel h3 { margin: 0 0 var(--space-1); }
+.sections-panel .hint { font-size: var(--text-sm); margin-bottom: var(--space-2); }
+.sections > li { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--space-2); padding-block: var(--space-2); }
+.sections > :first-child { padding-top: 0; }
+.sections .order { display: flex; flex-direction: column; gap: var(--space-1); }
+.sections .order button { min-height: 1.75rem; min-width: 2rem; padding: 0 var(--space-1); }
+.sections input[type="text"] { min-height: 2.25rem; padding: var(--space-1) var(--space-2); font-weight: 600; }
+.sections .untitled-name { padding: var(--space-1) 0; }
+.sections .untitled-name strong { font-weight: 600; }
+.sections .meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); margin-top: var(--space-1); font-size: var(--text-sm); }
+.sections .meta .check { gap: var(--space-2); font-weight: inherit; }
+.sections .meta button { min-height: 2rem; padding: var(--space-1) var(--space-2); margin-left: auto; }
+.sections .confirm { flex-basis: 100%; padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--danger-bg); }
+.sections .confirm p { margin: 0 0 var(--space-2); font-size: var(--text-sm); }
+.sections .confirm .buttons { justify-content: flex-start; }
+.add-section { margin-top: var(--space-3); padding-top: var(--space-2); border-top: 1px solid var(--line); }
+.add-section label { margin: 0 0 var(--space-1); }
+.add-section .row { gap: var(--space-2); }
+.add-section button { flex: none; }
+p.add-section { font-size: var(--text-sm); }
+.browser .add-to { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); }
+.browser .add-to label { margin: 0; }
+.browser .add-to select { width: auto; max-width: 100%; }
 /* content-box: the 16:9 is the picture's, inside the bezel. */
 .tv-screen {
   position: relative; box-sizing: content-box; aspect-ratio: 16 / 9; overflow: hidden; background: var(--tv-bg);
   border: 10px solid var(--tv-bezel); border-radius: var(--radius-lg); box-shadow: var(--shadow);
 }
-.tv-canvas { position: absolute; top: 0; left: 0; width: 960px; height: 540px; padding: 27px 48px; display: grid; place-items: center; transform-origin: 0 0; color: var(--tv-text); }
-.tv-empty { display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; font-size: 28px; color: var(--tv-dim); }
+/* Everything on the screen is placed in dp from lib.js (`tvHomeLayout`): the viewport spans the screen's width (a
+   scrolling line shows into the side margins) and clips above and below; its content and each scrolling line move by
+   transforms. */
+.tv-canvas { position: absolute; top: 0; left: 0; width: 960px; height: 540px; transform-origin: 0 0; color: var(--tv-text); }
+.tv-empty { position: absolute; inset: 27px 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; text-align: center; font-size: 28px; color: var(--tv-dim); }
 .tv-empty strong { font-size: 44px; color: var(--tv-text); }
-.tv-grid {
-  position: relative; display: grid; grid-template-columns: repeat(var(--columns), var(--card-w)); gap: 20px; padding: 14px;
-  align-content: start; overflow-y: auto; scrollbar-width: none;
+.tv-view { position: absolute; left: 0; width: 960px; overflow: hidden; overflow: clip; }
+.tv-view[aria-busy="true"] { cursor: progress; }
+.tv-content { position: absolute; top: 0; left: 0; width: 960px; transition: transform 0.2s ease-out; }
+.tv-section, .tv-cells { position: absolute; top: 0; left: 0; }
+.tv-cells { transition: transform 0.2s ease-out; }
+.tv-heading {
+  position: absolute; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font-size: 30px; line-height: 38px; font-weight: 700; color: var(--tv-dim);
 }
-.tv-grid::-webkit-scrollbar { display: none; }
-.tv-grid[aria-busy="true"] { cursor: progress; }
-.tv-tile { display: flex; flex-direction: column; gap: 10px; cursor: pointer; outline: none; }
+.tv-heading.on { color: var(--tv-text); }
+.tv-line { position: absolute; height: 2px; border-radius: 1px; background: rgb(255 255 255 / 18%); }
+.tv-band {
+  position: absolute; display: grid; place-items: center; padding: 8px; text-align: center;
+  border: 2px dashed rgb(255 255 255 / 35%); border-radius: 12px; color: var(--tv-dim); font-size: 24px; line-height: 32px;
+}
+.tv-scroll { position: absolute; border-radius: 3px; background: rgb(255 255 255 / 14%); }
+.tv-scroll > span { position: absolute; left: 0; width: 100%; border-radius: 3px; background: rgb(255 255 255 / 60%); transition: top 0.2s ease-out; }
+.tv-tile { position: absolute; width: var(--card-w); display: flex; flex-direction: column; gap: 10px; cursor: pointer; outline: none; }
+.tv-tile[aria-selected="true"] { z-index: 1; }
 .tv-card { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 12px; background: var(--tv-surface); filter: brightness(0.8); transition: transform 0.12s; }
 .tv-tile[aria-selected="true"] .tv-card { transform: scale(1.1); filter: none; box-shadow: 0 0 0 4px var(--tv-focus); z-index: 1; }
 .tv-tile:focus-visible .tv-card { box-shadow: 0 0 0 4px var(--tv-focus), 0 0 0 9px var(--focus); }
-@media (prefers-reduced-motion: reduce) { .tv-card { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .tv-card, .tv-content, .tv-cells, .tv-scroll > span { transition: none; } }
 .tv-picture, .tv-picture img { display: block; width: 100%; height: 100%; }
 .tv-picture img { object-fit: cover; }
 /* A portrait poster fills the card cut around its upper part, where posters keep faces and titles (as on the TV). */
@@ -304,6 +349,9 @@ input[type="checkbox"] { width: 1.25rem; height: 1.25rem; min-height: 0; padding
 .inspector h3 { margin: 0 0 var(--space-1); font-size: var(--text-lg); }
 .inspector .moves { justify-content: flex-start; align-items: center; margin-top: var(--space-3); }
 .inspector .moves > .muted { margin-right: var(--space-1); }
+.inspector .moves label { margin: 0 0 0 var(--space-2); font-weight: 500; }
+.inspector .moves select { width: auto; max-width: 14rem; }
+.hidden-on-tv .grow > .muted { font-size: var(--text-sm); }
 .picker { margin: var(--space-3) 0 0; padding: var(--space-2) var(--space-3); background: var(--surface); border-radius: var(--radius-md); }
 .picker > p { font-size: var(--text-sm); margin: 0 0 var(--space-2); }
 .episodes { list-style: none; padding: 0; margin: 0; }

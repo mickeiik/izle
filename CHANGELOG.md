@@ -23,6 +23,12 @@ contract share one version number. How to update (back up, update the server, th
   and `PUT …/home {"sections"}`; `PUT …/home {"itemIds"}` keeps each show in its section. A TV's page and every Home
   change answer `sections`, and the TV's state carries `homeSections` next to `home`, which now lists the shows
   section after section. Deleting a section moves its shows to the untitled one.
+- **Admin page: sections on a TV's Home.** The Home screen tab draws the TV's sections as the TV shows them: their
+  titles, the thin line between two sections and the lines that scroll sideways; a section the TV leaves out because
+  nothing in it can play is drawn as an empty band. A Sections list beside the screen adds, renames, reorders and
+  deletes sections and makes one a single scrolling line. The selected card moves within its section or to another
+  one, and "Add shows" adds to the section chosen in "Add to". Each edit is saved as one change, so an edit made
+  elsewhere at the same time is not undone.
 
 ### Changed
 

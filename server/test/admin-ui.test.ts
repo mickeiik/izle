@@ -13,6 +13,8 @@ import {
   problemContext, resumes, sameLanguage, scopeLabel, serverAddress, shortId, showMeta, sourceReport, syncDecision,
   titleLine, titleStatusLabel, tokenFromHash, triggerLabel, tvPositionAt, viewingEnd, viewingSpan,
   onTv, tvCard, tvGrid,
+  SECTION_HEADER, UNTITLED, cardPlace, deleteSectionText, sectionCount, sectionName, tvCardX, tvHomeLayout, tvLineOf, tvMove, tvRowFirst, tvScroll,
+  tvScrollBar,
 } from "../admin/lib.js";
 import { ADMIN_FILES, ADMIN_VENDOR_FILES } from "../src/admin-files.ts";
 import { HOME_COLUMNS as SERVER_COLUMNS, HOME_MAX_ITEMS, HOME_ROWS as SERVER_ROWS } from "../src/home.ts";
@@ -299,6 +301,115 @@ test("admin helpers: the TV's Home grid and what its cards show", () => {
     [card("movie", { status: "finished" }).chip, "Watch again"],
     [card("movie", { status: "new" }).tone, "new"],
     [[onTv({}), onTv({ playable: true }), onTv({ missing: true }), onTv({ playable: false })], [true, true, false, false]],
+  ]);
+});
+
+test("admin helpers: Home with sections, laid out as the TV app does", () => {
+  // A title wraps at the card's width when it is longer than 12 characters (the page measures the real font).
+  const wraps = (title: string) => title.length > 12;
+  const section = (id: string, title: string | null, titles: string[], layout = "grid") => ({ id, title, layout, titles });
+  const films = section("films", "Films", ["Tears of Steel", "Bunny", "Sintel", "Charade", "Elephants Dream", "The General"]);
+  const untitled = section(UNTITLED, null, ["Caminandes", "The Kid", "Sherlock Jr."]);
+  const channels = section("chan", "Channels", ["News", "Music", "Nature", "Kids", "Sport", "Classics"], "row");
+
+  // Only the untitled section: exactly today's grid, pixel for pixel.
+  const plain = tvHomeLayout(4, 2, [section(UNTITLED, null, ["a", "b", "c", "d", "e", "f"])], wraps);
+  const today = tvGrid(4, 2);
+  cases([
+    [plain.grid, today, "no titled section: no title reserve"],
+    [plain.viewport, { x: 48, y: (540 - today.viewportHeight) / 2, width: today.viewportWidth, height: today.viewportHeight }],
+    [plain.sections.map((s) => [s.top, s.titleTop, s.rowTops, s.lineY]), [[0, null, [14, 14 + today.cellHeight + 20], null]]],
+    [plain.contentHeight, today.viewportHeight, "two rows fill the viewport"],
+    [tvScrollBar(plain, 0), null, "nothing to scroll: no scroll bar"],
+  ]);
+
+  // Films (a titled grid), the untitled section, Channels (a scrolling line).
+  const L = tvHomeLayout(4, 2, [films, untitled, channels], wraps);
+  const pitch = L.grid.cellHeight + L.grid.gap;
+  const [f, u, c] = L.sections;
+  cases([
+    [L.grid, tvGrid(4, 2, 486 - SECTION_HEADER), "a titled section: the cards from the safe area less one title"],
+    [[L.titled, L.viewport.height, L.x0, L.contentWidth, L.pitch, L.lines], [true, L.grid.viewportHeight + 44, 62, 836, 214, 4]],
+    [[f.titleTop, f.rowTops, f.cellBottom, f.lineY, f.top], [0, [58, 58 + pitch], 444.25, null, 0], "title at 0, cards at 44 + 14"],
+    // The boundary takes exactly one row step: the untitled cards are where a third Films row would be.
+    [u.rowTops[0] - f.rowTops[1], pitch, "a boundary is one row step"],
+    [[u.titleTop, u.top, u.cellBottom], [null, 464.25 - 14, 647.375]],
+    // Films' last row has a title on two lines: the line is in the middle of the gap.
+    [u.lineY, Math.round((444.25 + 464.25) / 2)],
+    // No title in the untitled row wraps: its second title line counts as empty space above the line.
+    [c.lineY, Math.round((647.375 - 32 + 667.375) / 2)],
+    [[c.titleTop, c.rowTops, c.row, c.count], [667.375, [667.375 + 58], true, 6], "a titled section starts where a next row would"],
+    [L.contentHeight, c.cellBottom + 14],
+  ]);
+
+  // The vertical scroll: as little as shows the line whole, its section's title with its first line.
+  cases([
+    [tvScroll(L, 0, 0, 300), 0, "Home's first line: at the top"],
+    [tvScroll(L, 0, 1, 0), 0, "the title and two rows fit the first screen"],
+    [tvScroll(L, 2, 0, 0), L.contentHeight - L.viewport.height, "down to Channels, the end of Home"],
+    [tvScroll(L, 1, 0, 464.25), 450.25, "up to the untitled line: its top less PADDING"],
+    [tvScroll(L, 1, 0, 300), 300, "already in view: nothing moves"],
+  ]);
+  const bar = tvScrollBar(L, 464.25)!;
+  cases([
+    [[bar.x, bar.y, bar.width, bar.height], [932, L.viewport.y + 14, 6, L.viewport.height - 28]],
+    [bar.thumbHeight, (L.viewport.height / L.contentHeight) * bar.height],
+    [bar.thumbTop, (464.25 / L.contentHeight) * bar.height],
+  ]);
+
+  // A scrolling line moves only once the focus reaches the edge of what is in view, and never past its ends.
+  cases([
+    [tvRowFirst(0, 3, 4, 6), 0], [tvRowFirst(0, 4, 4, 6), 1], [tvRowFirst(0, 5, 4, 6), 2], [tvRowFirst(2, 3, 4, 6), 2, "in view: stays"],
+    [tvRowFirst(2, 1, 4, 6), 1, "back the same way"], [tvRowFirst(4, 2, 4, 3), 0, "fewer cards than columns"], [tvRowFirst(9, 5, 4, 6), 2],
+  ]);
+  cases([[tvCardX(L, 2, 5, 2), 62 + 3 * 214], [tvCardX(L, 2, 6, 2), 62 + 4 * 214, "the next card, in the margin"], [tvCardX(L, 0, 5, 0), 62 + 214]]);
+
+  // Focus moves: ← → along a line, ↑ ↓ line by line across sections, onto the nearest card.
+  cases([
+    [tvMove(L, {}, 0, 5, "ArrowDown"), { s: 1, i: 1 }, "Films row 2, column 2 → the untitled card 2"],
+    [tvMove(L, {}, 0, 3, "ArrowDown"), { s: 0, i: 5 }, "no card under it in Films' last row: the nearest one"],
+    [tvMove(L, {}, 1, 2, "ArrowDown"), { s: 2, i: 2 }],
+    [tvMove(L, { chan: 2 }, 2, 5, "ArrowUp"), { s: 1, i: 2 }, "from the line's last card (column 4) to the nearest untitled card"],
+    [tvMove(L, { chan: 2 }, 1, 0, "ArrowDown"), { s: 2, i: 2 }, "a scrolling line: among the cards in view"],
+    [tvMove(L, {}, 2, 0, "ArrowDown"), null, "the last line"],
+    [tvMove(L, {}, 0, 1, "ArrowUp"), null, "the first line"],
+    [tvMove(L, {}, 0, 4, "ArrowLeft"), null, "a grid row's start"],
+    [tvMove(L, {}, 0, 3, "ArrowRight"), null, "a grid row's end"],
+    [tvMove(L, {}, 2, 3, "ArrowRight"), { s: 2, i: 4 }, "a scrolling line goes on"],
+    [tvMove(L, {}, 2, 5, "ArrowRight"), null, "and stops at its end"],
+    [tvMove(L, {}, 0, 0, "Enter"), null],
+    [[tvLineOf(L, 0, 5), tvLineOf(L, 2, 5)], [1, 0]],
+  ]);
+
+  // An empty titled section is drawn where it is (one row: its band), and has no card to move to. The cards keep the
+  // TV's size: it shows no titled section here.
+  const empty = section("old", "Old films", []);
+  const E = tvHomeLayout(4, 2, [section(UNTITLED, null, ["a", "b"]), empty, section("x", null, ["c"])], wraps);
+  const [, band, after] = E.sections;
+  cases([
+    [E.grid, tvGrid(4, 2), "an empty section sets nothing aside"],
+    [[band.empty, band.count, band.titleTop, band.rowTops.length], [true, 0, E.sections[0].cellBottom + 20, 1]],
+    [band.lineY, Math.round((E.sections[0].cellBottom - 32 + band.titleTop!) / 2)],
+    [after.lineY, Math.round((band.cellBottom + after.rowTops[0]) / 2), "the band fills its cell"],
+    [tvMove(E, {}, 0, 1, "ArrowDown"), { s: 2, i: 0 }, "↓ skips the empty section"],
+    [tvMove(E, {}, 2, 0, "ArrowUp"), { s: 0, i: 0 }],
+    [tvHomeLayout(4, 2, [section(UNTITLED, null, []), section("f", "Films", ["a"])], wraps).sections.map((s) => [s.id, s.titleTop]), [["f", 0]], "an empty untitled section is not drawn"],
+    [tvHomeLayout(4, 2, [], wraps).contentHeight, 0],
+  ]);
+  // A title on two lines only where the grid has a second line: 6 × 4 has one.
+  const one = tvHomeLayout(6, 4, [section("a", "A", ["A very long title indeed"]), section("b", "B", ["b"])], wraps);
+  cases([[one.grid.titleLines, 1], [one.sections[1].lineY, Math.round((one.sections[0].cellBottom + one.sections[1].titleTop!) / 2)]]);
+
+  cases([
+    [cardPlace({ title: "Films", row: false }, 2, 6, 4), "Films · card 3 of 6 · row 1, column 3"],
+    [cardPlace({ title: "Channels", row: true }, 4, 6, 4), "Channels · card 5 of 6"],
+    [cardPlace({ title: null, row: false }, 5, 6, 4), "No title · card 6 of 6 · row 2, column 2"],
+    [[sectionName({ title: null }), sectionName({ title: "Films" })], ["No title", "Films"]],
+    [[sectionCount(0), sectionCount(1), sectionCount(6)], ["Empty", "1 show", "6 shows"]],
+    [deleteSectionText("Films", 6), "Delete Films? Its 6 shows move to No title."],
+    [deleteSectionText("Films", 1), "Delete Films? Its show moves to No title."],
+    [deleteSectionText("Films", 0), "Delete Films?"],
+    [errorText({ code: "too_many_sections" }), "A Home holds at most 20 sections."],
   ]);
 });
 
