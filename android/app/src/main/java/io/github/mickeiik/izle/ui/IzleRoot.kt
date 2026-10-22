@@ -12,13 +12,11 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.mickeiik.izle.ui.common.LocalizedContent
 import io.github.mickeiik.izle.ui.common.MessageBannerOverlay
-import io.github.mickeiik.izle.ui.hidden.HiddenMenu
-import io.github.mickeiik.izle.ui.hidden.MenuActions
+import io.github.mickeiik.izle.ui.hidden.*
 import io.github.mickeiik.izle.ui.home.AutoplayOverlay
 import io.github.mickeiik.izle.ui.home.HomeScreen
 import io.github.mickeiik.izle.ui.player.PlayerScreen
-import io.github.mickeiik.izle.ui.setup.PairingScreen
-import io.github.mickeiik.izle.ui.setup.SetupScreen
+import io.github.mickeiik.izle.ui.setup.*
 import io.github.mickeiik.izle.ui.theme.IzleColors
 import io.github.mickeiik.izle.ui.theme.IzleTheme
 import io.github.mickeiik.izle.ui.update.UpdateScreen
