@@ -1,5 +1,6 @@
 import type { AppUpdateService } from "./app-updates.ts";
 import type { CatalogService } from "./catalog.ts";
+import type { CatalogBrowser } from "./catalog-browse.ts";
 import type { CommandService } from "./commands.ts";
 import type { CompanionService } from "./companion.ts";
 import type { ServerConfig } from "./config.ts";
@@ -27,6 +28,8 @@ export interface AppContext {
   config: ServerConfig;
   store: Store;
   catalog: CatalogService;
+  /** The owner's catalog browser: filters, orders and facets over the loaded catalog. */
+  browse: CatalogBrowser;
   events: EventHub;
   notifier: Notifier;
   /** The stored event log every change appends to (in its transaction). */

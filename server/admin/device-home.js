@@ -4,8 +4,9 @@
 // whole list at once (`PUT …/home`).
 
 import { api, attempt } from "./api.js";
-import { actionButton, card, chip, h, keepFocus, keyedRows, liveSearch, loadError, loading, poster, progressBar, setOff, showRow, uid } from "./dom.js";
-import { HOME_MAX, catalogSearchPath, continueText, episodeName, episodeStateLabel, episodeStates, formatClock, moveItem, percent, plural, resumes, searchSummary, showMeta } from "./lib.js";
+import { catalogBrowser } from "./catalog-browser.js";
+import { actionButton, card, chip, h, keepFocus, keyedRows, loadError, loading, poster, progressBar, setOff, showRow, uid } from "./dom.js";
+import { HOME_MAX, continueText, episodeName, episodeStateLabel, episodeStates, formatClock, moveItem, percent, plural, resumes, showMeta } from "./lib.js";
 
 /** @param {import("./view-device.js").DeviceContext} ctx */
 export function homeCard(ctx) {
@@ -18,9 +19,6 @@ export function homeCard(ctx) {
   const counter = h("span", { class: "muted count" });
   const list = h("ol", { class: "list home" });
   const empty = h("p", { class: "muted" }, "The TV shows “Nothing here yet”. Add shows below.");
-  const searchId = uid("add-shows");
-  const hintId = uid("add-hint");
-  const search = h("input", { type: "search", id: searchId, placeholder: "Search the catalog", autocomplete: "off", spellcheck: "false", "aria-describedby": hintId });
 
   /** Saves the list. While a save runs, other edits are ignored (each is computed from the list it saw). */
   const save = async (/** @type {string[]} */ itemIds, /** @type {string} */ message) => {
@@ -122,29 +120,20 @@ export function homeCard(ctx) {
       },
     };
   };
-  const rows = keyedRows(list, (/** @type {any} */ e) => e.itemId, homeRow, () => search);
+  const rows = keyedRows(list, (/** @type {any} */ e) => e.itemId, homeRow, () => browser.search);
   const syncPickers = () => {
     for (const r of rows.rows.values()) r.syncPicker();
   };
 
-  // Add shows: the catalog searched as the owner types.
-  let showAll = false;
-  /** @type {any[] | null} the last results shown, null while the hint shows */
-  let results = null;
-  const showAllButton = h("button", { type: "button" }, "Show all");
-  const hint = h("div", { class: "search-hint", id: hintId }, h("span", { class: "muted" }, "Type a title to search the catalog."), showAllButton);
-  const summary = h("p", { class: "summary muted", "aria-live": "polite" });
-  const resultsList = h("div", { class: "list results" });
-  const resultsArea = h("div", null, resultsList);
-
+  // Add shows: the catalog browser, with an Add on each show (or why it cannot be added).
   /** @param {any} item */
   const resultRow = (item) => {
     const add = actionButton("Add", { "data-control": "add", "data-focus": `add:${item.id}`, "aria-label": `Add ${item.title}` }, async () => {
-      const after = (results ?? []).map((/** @type {any} */ r) => `add:${r.id}`);
+      const after = browser.items().map((/** @type {any} */ r) => `add:${r.id}`);
       const at = after.indexOf(`add:${item.id}`);
       // The row's Add turns into "On Home": the focus goes to the next show's Add, else to the nearest one above, else
       // to the search box.
-      await keepFocus(() => save([...ids(), item.id], `${item.title} added to Home.`), ...after.slice(at + 1), ...after.slice(0, at).reverse(), search);
+      await keepFocus(() => save([...ids(), item.id], `${item.title} added to Home.`), ...after.slice(at + 1), ...after.slice(0, at).reverse(), browser.search);
     });
     const reason = chip("");
     const element = showRow(item, { meta: showMeta(item), end: h("div", { class: "end" }, add, reason) });
@@ -160,30 +149,7 @@ export function homeCard(ctx) {
       },
     };
   };
-  const resultRows = keyedRows(resultsList, (/** @type {any} */ i) => i.id, resultRow, () => search);
-
-  const finder = liveSearch(
-    ctx.scope,
-    search,
-    async (query) => (query.trim() || showAll ? (await ctx.scope.read(catalogSearchPath(query))).items : null),
-    (items, query) => {
-      results = items;
-      hint.hidden = items !== null;
-      summary.textContent = items === null ? "" : searchSummary(items.length, query);
-      resultRows.set(items ?? []);
-      resultsArea.replaceChildren(resultsList);
-    },
-    (err) => {
-      summary.textContent = "";
-      resultsArea.replaceChildren(loadError(err, finder.run, "Could not search the catalog."));
-    },
-  );
-  // "Show all" lasts until the box changes.
-  search.addEventListener("input", () => (showAll = false));
-  showAllButton.addEventListener("click", () => {
-    showAll = true;
-    void keepFocus(() => finder.run(), search);
-  });
+  const browser = catalogBrowser(ctx.scope, { row: resultRow, label: "Add shows", heading: true, notOnDevice: ctx.id });
 
   /** @param {any[]} home */
   const update = (home) => {
@@ -191,12 +157,12 @@ export function homeCard(ctx) {
     counter.textContent = plural(entries.length, "show");
     empty.hidden = entries.length > 0;
     rows.set(entries);
-    if (results) resultRows.set(results);
+    browser.refresh();
   };
 
   const element = card(
     { title: "Home screen", aside: counter, intro: "What the TV shows, in this order: left to right, row by row. How many fit on one screen is set under Settings; the rest scroll." },
-    empty, list, h("h3", null, h("label", { for: searchId }, "Add shows")), search, hint, summary, resultsArea,
+    empty, list, browser.element,
   );
   return { element, update };
 }

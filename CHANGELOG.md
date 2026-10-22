@@ -7,6 +7,16 @@ contract share one version number. How to update (back up, update the server, th
 
 ## [Unreleased]
 
+### Added
+
+- **Admin page: a catalog browser.** A TV's "Add shows" and the Catalog page's "Shows" are now one browser: a title
+  search with filters for kind, genre, a year range, playable only and "new since" a catalog build, three orders (by
+  title, newest year, newest in the catalog), and 50 shows at a time with "Show more". On a TV's page, "Not on this
+  Home" leaves out what the TV already has. The Catalog page keeps its filters in the address, so Back from a show
+  returns to the same list. It replaces the search that stopped at 200 shows and its "Show all". The admin API's
+  `GET /api/v1/admin/catalog/search` takes the matching parameters plus `offset` and answers `total`;
+  `GET /api/v1/admin/catalog` gains `facets`.
+
 ### Fixed
 
 - **TV app: CH+/CH− on a dead channel.** When a channel ends on "Can't play right now" (Try again / Home with its

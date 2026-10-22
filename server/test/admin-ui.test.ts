@@ -4,11 +4,13 @@ import { readFile, readdir } from "node:fs/promises";
 import {
   APK_MAX_BYTES, HOME_COLUMNS, HOME_MAX, HOME_ROWS, androidText, apkVersion, appCheckReasonText, appCheckText, appUpdateChip, capabilityText, checkResultText,
   formatBytes, installNowBlocked, newApkText,
-  actorLabel, buildSummary, candidateOptions, catalogContents, catalogSearchPath, clockOffset, commandResultText, companionTarget,
+  BROWSE_PAGE, BROWSE_SORTS, DEFAULT_FILTERS, browseHash, browsePath, browseSummary, isFiltered, newSinceOptions, parseBrowseHash,
+  foldText, sinceAt, yearValue,
+  actorLabel, buildSummary, candidateOptions, catalogContents, clockOffset, commandResultText, companionTarget,
   continueText, episodeHistoryLine, episodeName, episodeStateLabel, episodeStates, errorText, formatClock, formatCode,
   formatCountdown, formatDrift, formatDuration, formatPosition, formatRelative, gridSummary, groupEpisodeChanges, isActive, issueLine,
   languageLabel, liveViewingLine, mediaKindLabel, moveItem, nowPlayingLine, parseCandidate, parseSse, percent, playbackState, plural,
-  problemContext, resumes, sameLanguage, scopeLabel, searchSummary, serverAddress, shortId, showMeta, sourceReport, syncDecision,
+  problemContext, resumes, sameLanguage, scopeLabel, serverAddress, shortId, showMeta, sourceReport, syncDecision,
   titleLine, titleStatusLabel, tokenFromHash, triggerLabel, tvPositionAt, viewingEnd, viewingSpan,
 } from "../admin/lib.js";
 import { ADMIN_FILES, ADMIN_VENDOR_FILES } from "../src/admin-files.ts";
@@ -152,7 +154,7 @@ test("admin helpers: build summaries and episode changes grouped by show", () =>
   assert.deepEqual(groupEpisodeChanges([]), []);
 });
 
-test("admin helpers: show lines, searches, ids, issues, error texts and languages", () => {
+test("admin helpers: show lines, ids, issues, error texts and languages", () => {
   cases([
     [showMeta({ kind: "movie", year: 2026 }), "Film · 2026"],
     [showMeta({ kind: "series", year: 2026, episodeCount: 4, playableCount: 3 }), "Series · 4 episodes · 2026"],
@@ -161,14 +163,6 @@ test("admin helpers: show lines, searches, ids, issues, error texts and language
     [showMeta({ kind: "series", year: 2026, episodeCount: 4, playableCount: 3 }, { playable: true }), "Series · 4 episodes · 2026 · 3 of 4 playable"],
     [showMeta({ kind: "movie", year: 2026, episodeCount: 1, playableCount: 0 }, { playable: true }), "Film · 2026 · not playable"],
     [showMeta({ kind: "movie", episodeCount: 1, playableCount: 1 }, { playable: true }), "Film", "all playable: nothing to say"],
-    [searchSummary(3, " pro "), "3 shows match “pro”."], [searchSummary(1, "pro"), "1 show matches “pro”."],
-    [searchSummary(0, "xyz"), "No show matches “xyz”."], [searchSummary(7, ""), "All 7 shows."],
-    [searchSummary(1, ""), "The catalog's only show."], [searchSummary(0, ""), "The catalog has no shows."],
-    [searchSummary(200, ""), "The first 200 shows; type a title to narrow the list.", "the server's cap"],
-    [searchSummary(200, "a"), "The first 200 shows that match “a”; type more to narrow the list."],
-    [catalogSearchPath(" pro "), "/catalog/search?limit=200&q=pro"],
-    [catalogSearchPath("a&b c"), "/catalog/search?limit=200&q=a%26b%20c"],
-    [catalogSearchPath(""), "/catalog/search?limit=200&q=", "an empty box lists the catalog"],
     [shortId("20261014-6b05c8e7"), "20261014-6b05c8e7"],
     [shortId("20261014-6b05c8e71a2b3c4d5e6f"), "20261014-6b05c8e71a2…"],
     [issueLine({ file: "items.json", path: "/items/3/poster", message: "file not found" }), "items.json /items/3/poster: file not found"],
@@ -189,6 +183,88 @@ test("admin helpers: show lines, searches, ids, issues, error texts and language
     [sameLanguage("en", "en-GB"), true], [sameLanguage("TR", "tr"), true], [sameLanguage("en", "tr"), false],
     [sameLanguage(null, "en"), false], [sameLanguage("en", undefined), false],
   ]);
+});
+
+test("admin helpers: the catalog browser's paths, summaries, hash state and 'new since' options", () => {
+  const f = (o: Partial<typeof DEFAULT_FILTERS> = {}) => ({ ...DEFAULT_FILTERS, ...o });
+  const builds = [
+    { buildId: "20261010-cccccccc", loadedAt: ago(2 * 86400_000), baseline: false },
+    { buildId: "20261009-bbbbbbbbbbbbbbbbbbbbbbbb", loadedAt: ago(5 * 86400_000), baseline: false },
+    { buildId: "20261001-aaaaaaaa", loadedAt: ago(9 * 86400_000), baseline: true },
+  ];
+  const page = { offset: 0, limit: BROWSE_PAGE };
+  cases([
+    [BROWSE_PAGE, 50],
+    [BROWSE_SORTS.map(([s]) => s), ["title", "year", "newest"]],
+    [DEFAULT_FILTERS, { q: "", kind: "", genre: "", yearFrom: "", yearTo: "", playable: false, notOnHome: false, since: "", sort: "title" }],
+
+    [yearValue("2024"), 2024], [yearValue(" 1999 "), 1999], [yearValue("1870"), 1870], [yearValue("2200"), 2200],
+    [foldText("Comédie"), "comedie"], [foldText("BİLİM ılık"), "bilim ilik"],
+    [yearValue(""), null], [yearValue("abc"), null], [yearValue("1869"), null, "below the schema's bounds"],
+    [yearValue("2201"), null], [yearValue("2024.5"), null, "not an integer"], [yearValue("-2024"), null], [yearValue("1e3"), null],
+
+    [isFiltered(DEFAULT_FILTERS), false], [isFiltered(f({ sort: "year" })), false, "the order filters nothing"],
+    [isFiltered(f({ q: "  " })), false, "spaces search nothing"], [isFiltered(f({ q: "pro" })), true],
+    [isFiltered(f({ kind: "live" })), true], [isFiltered(f({ genre: "Drama" })), true],
+    [isFiltered(f({ yearFrom: "2020" })), true], [isFiltered(f({ yearTo: "abc" })), false, "the server never sees it"],
+    [isFiltered(f({ playable: true })), true], [isFiltered(f({ notOnHome: true })), true], [isFiltered(f({ since: "x" })), true],
+
+    [sinceAt("", builds), null], [sinceAt("20261010-cccccccc", builds), ago(2 * 86400_000)],
+    [sinceAt("20261001-aaaaaaaa", builds), null, "nothing in the baseline is new"], [sinceAt("gone", builds), null],
+    [sinceAt("20261010-cccccccc", []), null],
+
+    [newSinceOptions(builds, NOW), [
+      ["", "Any time"],
+      ["20261010-cccccccc", "Since the latest build (2 days ago)"],
+      ["20261009-bbbbbbbbbbbbbbbbbbbbbbbb", "Since build 20261009-bbbbbbbbbbb… (5 days ago)"],
+    ]],
+    [newSinceOptions([builds[2]], NOW), [["", "Any time"]], "only the baseline"],
+    [newSinceOptions([], NOW), [["", "Any time"]]],
+
+    [browsePath(DEFAULT_FILTERS, page), "/catalog/search?limit=50"],
+    [browsePath(f({ q: " a&b c/#" }), page), "/catalog/search?q=a%26b+c%2F%23&limit=50"],
+    [browsePath(f({ q: "   " }), page), "/catalog/search?limit=50"],
+    [browsePath(f({ q: "pro", kind: "series", genre: "Bilim Kurgu", yearFrom: "1990", yearTo: "2024", playable: true, notOnHome: true, since: "20261010-cccccccc", sort: "newest" }),
+      { offset: 100, limit: 50, sinceAt: "2026-10-08T12:00:00.000Z", notOnDevice: "dev-1" }),
+    "/catalog/search?q=pro&kind=series&genre=Bilim+Kurgu&yearFrom=1990&yearTo=2024&playable=true&since=2026-10-08T12%3A00%3A00.000Z&notOnDevice=dev-1&sort=newest&offset=100&limit=50",
+    "every parameter, in the fixed order"],
+    [browsePath(f({ yearFrom: "abc", yearTo: "3000", since: "x" }), { ...page, sinceAt: null, notOnDevice: null }), "/catalog/search?limit=50",
+      "no year the server would refuse; since only with its time"],
+    [browsePath(f({ sort: "title" }), { offset: 0, limit: 10 }), "/catalog/search?limit=10"],
+
+    [browseSummary(0, 0, DEFAULT_FILTERS), "The catalog has no shows."],
+    [browseSummary(0, 0, f({ q: "xyz" })), "No show matches."], [browseSummary(0, 0, f({ kind: "live" })), "No show matches."],
+    [browseSummary(1, 1, DEFAULT_FILTERS), "The catalog's only show."],
+    [browseSummary(1, 1, f({ q: "pro" })), "1 show that matches “pro”."],
+    [browseSummary(1, 1, f({ playable: true })), "1 show (filtered)."],
+    [browseSummary(7, 7, DEFAULT_FILTERS), "All 7 shows."], [browseSummary(7, 7, f({ sort: "year" })), "All 7 shows."],
+    [browseSummary(3, 3, f({ q: " pro " })), "All 3 shows that match “pro”."],
+    [browseSummary(3, 3, f({ genre: "Drama" })), "All 3 shows (filtered)."],
+    [browseSummary(50, 1234, DEFAULT_FILTERS), "Showing 50 of 1,234 shows."],
+    [browseSummary(50, 1234, f({ q: "pro", yearFrom: "2000" })), "Showing 50 of 1,234 shows that match “pro” (filtered)."],
+    [browseSummary(1000, 1234, f({ q: "pro" })), "Showing 1,000 of 1,234 shows that match “pro”."],
+
+    [parseBrowseHash(""), DEFAULT_FILTERS], [parseBrowseHash("?"), DEFAULT_FILTERS], [parseBrowseHash("#/catalog"), DEFAULT_FILTERS],
+    [parseBrowseHash("q=pro&kind=series&sort=year"), f({ q: "pro", kind: "series", sort: "year" })],
+    [parseBrowseHash("?q=pro"), f({ q: "pro" }), "with its ?"],
+    [parseBrowseHash(new URLSearchParams("genre=Drama&playable=1&notOnHome=1&since=b1")), f({ genre: "Drama", playable: true, notOnHome: true, since: "b1" })],
+    [parseBrowseHash("kind=song&sort=random&playable=true&notOnHome=yes&page=3"), DEFAULT_FILTERS, "unknown values and keys"],
+    [parseBrowseHash("yearFrom=1990&yearTo=abc"), f({ yearFrom: "1990" })], [parseBrowseHash("yearFrom=1700&yearTo=2200"), f({ yearTo: "2200" })],
+
+    [browseHash(DEFAULT_FILTERS), "#/catalog"], [browseHash(f({ sort: "title" })), "#/catalog"],
+    [browseHash(f({ q: "pro", sort: "newest" })), "#/catalog?q=pro&sort=newest"],
+    [browseHash(f({ sort: "year", playable: true, kind: "live", q: "a b" })), "#/catalog?q=a+b&kind=live&playable=1&sort=year", "defaults' order"],
+    [browseHash(f({ yearFrom: "abc", yearTo: "2024" })), "#/catalog?yearTo=2024"],
+  ]);
+  for (const filters of [
+    DEFAULT_FILTERS,
+    f({ q: "a&b/c#d e?f=g" }),
+    f({ q: " pro ", kind: "movie", genre: "Bilim & Kurgu", yearFrom: "1990", yearTo: "2024", playable: true, notOnHome: true, since: "20261010-cccccccc", sort: "newest" }),
+    f({ sort: "year" }),
+  ]) {
+    assert.deepEqual(parseBrowseHash(browseHash(filters)), filters, `round trip of ${JSON.stringify(filters)}`);
+    assert.deepEqual(parseBrowseHash(new URLSearchParams(browseHash(filters).split("?")[1] ?? "")), filters, "the router's URLSearchParams");
+  }
 });
 
 test("admin helpers: the home limit and grid choices are the server's", () => {

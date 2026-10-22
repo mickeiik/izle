@@ -363,3 +363,20 @@ The server side of the specification above, in one change (the admin page and th
   of the running server, every module and the settings in one flat interface (`sessions` stays on it although no
   route reads it, since it is one of the modules). server.ts still spreads one object of the built modules into each
   constructor; the types, not the call site, say what a module may use. `StartOptions` is left for a later step.
+
+## Catalog browser (2026-10-22)
+
+- One module (`catalog-browser.js`) serves the Catalog page and a TV's "Add shows"; the caller draws the rows (a link,
+  or Add with its reason chip), the browser owns the controls, the requests and the paging. Pages of 50 are appended
+  by "Show more" rather than numbered: the focus logic of Add (on to the next show) needs one continuous list.
+- The server builds the browse index (folded search text, genres, years, first-seen dates, the three orders and the
+  facets) once per loaded catalog, lazily on the first request after a load and keyed on the `LoadedCatalog` object,
+  so the order of the load hook and the catalog history never matters.
+- "New in the catalog" is chosen by build, not by date: `since` is that build's `loadedAt`, the time the history
+  stamps on what the build added, so `>=` catches exactly its shows and episodes; the baseline means "any time". The
+  address keeps the build id, which survives a reload of the same list.
+- "Not on this Home" is answered by the server (`notOnDevice`): hiding rows in the page would leave pages of uneven
+  length and a wrong total, and the Home's ids (up to 200) do not fit a query string well. A show added while the box
+  is ticked stays listed, as "On Home", until the next search, so the focus can move on to the next Add.
+- Facets ride on `GET /admin/catalog`, which the browser reads anyway for the builds of "New"; a genre is matched
+  case- and accent-insensitively and shown under the first spelling the catalog uses.

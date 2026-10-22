@@ -250,6 +250,13 @@ input[type="checkbox"] { width: 1.25rem; height: 1.25rem; min-height: 0; padding
 .summary { font-size: var(--text-sm); margin: var(--space-3) 0; }
 .summary:empty { margin: 0; }
 
+/* The catalog browser: search, a wrapping filter bar, the results and "Show more". */
+.browser .filters { margin-top: var(--space-3); align-items: center; }
+.browser .filters .check { margin: 0; font-weight: inherit; gap: var(--space-2); }
+.browser .years { display: inline-flex; gap: var(--space-2); }
+.browser input.year { width: 7.5rem; }
+.browser .more { margin-top: var(--space-4); }
+
 .table-wrap { overflow-x: auto; }
 table { width: 100%; min-width: 30rem; border-collapse: collapse; }
 caption { caption-side: top; text-align: left; color: var(--muted); font-size: var(--text-sm); padding-bottom: var(--space-2); }
@@ -320,5 +327,9 @@ summary { cursor: pointer; }
   .facts dt { margin-top: var(--space-2); }
   .facts dt:first-child { margin-top: 0; }
   .show-head .poster { width: 6rem; }
+  .browser .filters > * { flex: 1 1 9rem; }
+  .browser .filters select { width: 100%; }
+  .browser .years { flex-basis: 100%; }
+  .browser input.year { width: auto; flex: 1; }
 }
 @media (max-width: 380px) { .brand span { display: none; } }

@@ -204,3 +204,17 @@ export function listQuery(value: string | undefined, name: string, ok: (v: strin
   if (list.length === 0 || list.length > 100 || list.some((v) => !ok(v))) throw new HttpError(400, "invalid_request", `${name} must be a comma-separated list of ${name}`);
   return list;
 }
+
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})?)?$/;
+
+/**
+ * An optional instant query parameter: an ISO 8601 date-time or epoch ms (a non-negative integer), as epoch ms. A
+ * date-time without an offset is UTC, as a date alone is (not the server's local time).
+ */
+export function timeQuery(value: string | undefined, name: string): number | undefined {
+  if (value === undefined || value === "") return undefined;
+  const utc = value.includes("T") && !/(Z|[+-]\d{2}:\d{2})$/.test(value) ? `${value}Z` : value;
+  const ms = /^\d+$/.test(value) ? Number(value) : ISO_TIME.test(value) ? Date.parse(utc) : NaN;
+  if (!Number.isSafeInteger(ms) || ms < 0) throw new HttpError(400, "invalid_request", `${name} must be an ISO 8601 date-time or epoch milliseconds`);
+  return ms;
+}

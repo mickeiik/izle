@@ -1,13 +1,13 @@
-// The owner's view of the loaded catalog (admin API): what is loaded and from which builds, search results, and an
+// The owner's view of the loaded catalog (admin API): what is loaded and from which builds, the browser's hits, and an
 // item with its episodes and sources. Upstream URLs, headers and adapter refs are never part of it. Also the reload
 // that the admin route and SIGHUP share.
 
 import { isLiveItem, type CatalogItem, type Source } from "@izle/contract";
 import { SERVER, type Actor } from "./actor.ts";
 import type { CatalogService, ReloadResult } from "./catalog.ts";
+import type { BrowseHit } from "./catalog-browse.ts";
 import type { AppContext } from "./context.ts";
 import { errorName } from "./errors.ts";
-import { isPlayable } from "./playback.ts";
 import { episodeDetails, iso, itemCard, itemDetails } from "./presenters.ts";
 import { hasHeaders } from "./resolve.ts";
 import type { CatalogBuild } from "./store.ts";
@@ -23,8 +23,11 @@ export function buildJson(b: CatalogBuild) {
   };
 }
 
-/** The loaded catalog, the resolver module, the server version, the newest builds and what the latest update changed. */
-export function catalogInfo(ctx: Pick<AppContext, "catalog" | "store" | "resolverModule">) {
+/**
+ * The loaded catalog, the resolver module, the server version, the newest builds, what the latest update changed
+ * and the browser's facets (its filter choices).
+ */
+export function catalogInfo(ctx: Pick<AppContext, "catalog" | "store" | "resolverModule" | "browse">) {
   const { catalog, store, resolverModule } = ctx;
   const cur = catalog.current;
   const builds = store.listCatalogBuilds(cur.manifest.catalogId, CATALOG_BUILDS_LISTED);
@@ -35,6 +38,7 @@ export function catalogInfo(ctx: Pick<AppContext, "catalog" | "store" | "resolve
     stats: cur.stats, adapters: cur.manifest.adapters, warnings: cur.warnings.map((w) => ({ file: w.file, path: w.path, message: w.message })),
     resolver: resolverModule ? { sha256: resolverModule.sha256, adapters: [...resolverModule.adapters.keys()] } : null, server: { version: VERSION },
     builds: builds.map(buildJson), changes: latest ? (store.getCatalogBuild(latest.catalogId, latest.buildId)?.changes ?? null) : null,
+    facets: ctx.browse.facets(),
   };
 }
 
@@ -74,10 +78,14 @@ export async function reloadOnSignal(deps: ReloadDeps & Pick<AppContext, "log">,
   }
 }
 
-/** A search hit: the item's card with its episode counts (null for a channel) and whether OK can play it. */
-export function searchHitJson(catalog: CatalogService, item: CatalogItem) {
+/**
+ * A browser hit: the item's card with its episode counts (null for a channel), whether OK can play it, when the
+ * catalog first carried it (null when always there) and its episodes new since the query's `since`.
+ */
+export function searchHitJson(catalog: CatalogService, { entry, newEpisodes }: BrowseHit) {
+  const { item } = entry;
   const counts = isLiveItem(item) ? { episodeCount: null, playableCount: null } : { episodeCount: item.episodes.length, playableCount: item.episodes.filter((e) => e.playbackAllowed).length };
-  return { ...itemCard(catalog, item), ...counts, playable: isPlayable(item) };
+  return { ...itemCard(catalog, item), ...counts, playable: entry.playable, firstSeenAt: entry.firstSeenAt === 0 ? null : iso(entry.firstSeenAt), newEpisodes };
 }
 
 /** A source as the owner sees it: what kind it is and whether it is proxied. Upstream URLs, headers and adapter refs are deliberately not exposed. */

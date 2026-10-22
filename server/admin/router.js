@@ -153,9 +153,11 @@ function createScope() {
 /**
  * Starts the router: on every hash change the current view's scope ends and the next view renders in `app`; the
  * focus moves to its heading (`h1`, made focusable), so keyboard and screen reader users start at the top. `pick`
- * returns the view and the main nav link to mark current (without one the nav is hidden).
+ * returns the view and the main nav link to mark current (without one the nav is hidden). It gets the hash's path
+ * parts (`#/catalog/items/x` → `["catalog", "items", "x"]`, decoded) and its query (after the first `?`, as in
+ * `#/catalog?q=pro`; empty without one), which a view may keep its state in.
  * @param {{ app: HTMLElement, nav: HTMLElement, before: () => Promise<void>,
- *   pick: (parts: string[]) => { view: (scope: Scope) => HTMLElement, nav?: string } }} o
+ *   pick: (parts: string[], query: URLSearchParams) => { view: (scope: Scope) => HTMLElement, nav?: string } }} o
  */
 export function startRouter({ app, nav, before, pick }) {
   /** @type {(Scope & { end(): void }) | null} */
@@ -175,7 +177,10 @@ export function startRouter({ app, nav, before, pick }) {
     current = null;
     await before();
     if (mine !== seq) return; // another navigation came in meanwhile
-    const r = pick((location.hash.replace(/^#/, "") || "/devices").split("/").filter(Boolean).map(decode));
+    const raw = location.hash.replace(/^#/, "");
+    const mark = raw.indexOf("?");
+    const path = (mark < 0 ? raw : raw.slice(0, mark)) || "/devices";
+    const r = pick(path.split("/").filter(Boolean).map(decode), new URLSearchParams(mark < 0 ? "" : raw.slice(mark + 1)));
     nav.hidden = r.nav === undefined;
     for (const a of nav.querySelectorAll("a")) {
       if (a.getAttribute("href") === r.nav) a.setAttribute("aria-current", "page");

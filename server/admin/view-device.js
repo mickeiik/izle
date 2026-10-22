@@ -15,9 +15,9 @@ import {
 } from "./lib.js";
 
 /**
- * What the sections of a TV's page share: `send` sends a command and resolves with whether the server took it,
+ * What the sections of a TV's page share: the TV's `id` and API `path`; `send` sends a command and resolves with whether the server took it,
  * `reload` re-reads the TV and its home screen and shows them.
- * @typedef {{ path: string, scope: import("./router.js").Scope, send: (body: any, what: string) => Promise<boolean>,
+ * @typedef {{ id: string, path: string, scope: import("./router.js").Scope, send: (body: any, what: string) => Promise<boolean>,
  *   reload: () => Promise<void> }} DeviceContext
  */
 
@@ -37,6 +37,7 @@ export function deviceView(scope, id) {
 
   /** @type {DeviceContext} */
   const ctx = {
+    id,
     path,
     scope,
     async send(body, what) {
