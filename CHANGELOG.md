@@ -24,6 +24,8 @@ contract share one version number. How to update (back up, update the server, th
 - **TV app:** Home scrolls more smoothly. The row beyond each edge of the screen is prepared ahead, so ↓ or ↑ onto it
   no longer builds a whole row of cards at once; the dimmed cards around the focused one are drawn without an extra
   layer each; a chip's label is measured once for the whole screen.
+- **TV app:** release builds are shrunk and optimized by R8 (class names are kept, so problem reports read the same):
+  a smaller APK and a faster app, Home's scrolling above all.
 
 ### Fixed
 
