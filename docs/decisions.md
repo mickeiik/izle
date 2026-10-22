@@ -282,7 +282,7 @@ The server side of the specification above, in one change (the admin page and th
   failed.
 - A `400` on a channel's progress report no longer switches the reporter into its old-server mode; that fallback is
   for episode reports only. `ResolveRequest` refuses both or neither of `episodeId` and `itemId`.
-- The "Live" chip is `#C62828` with white text (5.6:1), 20 sp like the other chips, the same red as the admin page.
+- The "Live" chip is `#C62828` with white text (5.6:1), the same size as the other chips, the same red as the admin page.
 
 ## Architecture: the media engine seam (2026-10-21)
 

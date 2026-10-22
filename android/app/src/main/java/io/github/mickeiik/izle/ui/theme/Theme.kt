@@ -143,7 +143,7 @@ private fun style(size: Int, weight: FontWeight = FontWeight.Normal, lineHeight:
 
 /**
  * Nothing on screen is smaller than 24 sp: the viewer sits far away and may not see well. The one exception are the
- * chips on Home's cards (`labelMedium`, `labelSmall`, used nowhere else) at 20 sp: the show's name under the card stays
+ * chips on Home's cards (`labelMedium`, `labelSmall`, used nowhere else) at 16 sp: the show's name under the card stays
  * at 24 sp. Only the roles in use.
  */
 private val IzleTypography = Typography(
@@ -156,8 +156,8 @@ private val IzleTypography = Typography(
     titleSmall = style(24, FontWeight.Bold),
     bodyLarge = style(28),
     bodySmall = style(24),
-    labelMedium = style(20, FontWeight.Bold, 24),
-    labelSmall = style(20, lineHeight = 26),
+    labelMedium = style(16, FontWeight.Bold, 20),
+    labelSmall = style(16, lineHeight = 22),
 )
 
 @Composable

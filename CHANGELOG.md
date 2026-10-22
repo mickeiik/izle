@@ -17,6 +17,11 @@ contract share one version number. How to update (back up, update the server, th
   `GET /api/v1/admin/catalog/search` takes the matching parameters plus `offset` and answers `total`;
   `GET /api/v1/admin/catalog` gains `facets`.
 
+### Changed
+
+- **TV app:** the chips on Home's cards ("Live", "New", "Episode 5", "2 new") are smaller (16 sp, was 20 sp), so
+  they cover less of the picture.
+
 ### Fixed
 
 - **Admin page: a Home list with a missing show could not be edited.** Once a catalog update dropped a show (or
