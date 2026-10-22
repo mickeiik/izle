@@ -196,9 +196,9 @@ hidden (so keep the catalog and resolver module outside `/home`), and there are 
 system calls. If `node` is not on systemd's default `PATH`, give its full path with `sudo systemctl edit --full izle`:
 `ExecStart=/usr/local/bin/node /opt/izle/bin/izle-server --config /etc/izle/izle.json`.
 
-- **Logs:** one JSON object per line, never with stream URLs, upstream headers or tokens: `journalctl -u izle -f`,
-  or only problems: `journalctl -u izle -o cat | jq -c 'select(.level != "info")'`. On Node 22 a single "SQLite is
-  an experimental feature" warning at start is expected.
+- **Logs:** one JSON object per line, never with stream URLs, upstream headers or tokens: `journalctl -u izle -f`, or
+  only problems: `journalctl -u izle -o cat | jq -R -c 'fromjson? | select(.level != "info")'`. On Node 22 a single
+  "SQLite is an experimental feature" warning at start is expected.
 - **`sudo systemctl reload izle`** (SIGHUP) re-reads the catalog only; **`sudo systemctl restart izle`** after a
   config change or a new resolver module. TVs reconnect on their own.
 
@@ -272,8 +272,7 @@ It prints the secret once (`izat_…`); the server keeps only its hash. `token l
 was last used, `token revoke <id>` cuts one off at once. A revoked or wrong token counts like a wrong admin token
 for the throttle above, so stop an app before revoking its token, or it locks its address out for 10 minutes.
 
-What a token can call is in the [server API](../spec/server-api-v1.md#remote-management): `GET /api/v1/admin/status`
-(every TV in one call), the event stream and long-poll, the viewing history, and the commands.
+What a token can call: [server API § Remote management](../spec/server-api-v1.md#remote-management).
 
 ## 6. HTTPS with Caddy
 
@@ -319,9 +318,10 @@ a Caddy certificate too.
 - **With Caddy:** allow 80 and 443 (`sudo ufw allow 80,443/tcp`). Port 8787 needs no rule: the server listens on
   127.0.0.1 only.
 - The server makes outgoing connections for resolver modules and the media proxy (to the upstream hosts your
-  catalog uses), and, with `appUpdates.source` `github` (the default), once a day to `api.github.com` and
-  `objects.githubusercontent.com` for the TV app's releases (§ 8). TVs fetch direct (non-proxied) streams themselves. "Listen along" (companion audio on your phone)
-  runs in the admin page and gets its stream through the server's proxy, so the phone needs only the admin page.
+  catalog uses), and, with `appUpdates.source` `github` (the default), once a day to `api.github.com` and GitHub's
+  release download hosts (`*.githubusercontent.com`, after a redirect) for the TV app's releases (§ 8). TVs fetch
+  direct (non-proxied) streams themselves. "Listen along" gets its stream through the server's proxy, so the phone
+  needs only the admin page.
 - The media proxy never connects to loopback, private (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`), link-local
   (including the cloud metadata address `169.254.169.254`) or CGNAT addresses, whatever an upstream's playlist or
   redirect names: such requests answer `502 egress_denied` and show as a problem on the TV's page. If your own
@@ -476,9 +476,7 @@ install the older package **and** restore the copy taken before the update (`bef
 Catalog tab shows the running server version. Update the server before the TVs: a newer app may report fields an
 older server rejects (the app then falls back, but the first report after each start is lost).
 
-**Update the TVs** from the admin page's **TV app** tab (§ 8, "Updating the TV app"): the server fetches the
-release's APK by itself (or you upload it), TVs on Android 12+ install it while idle, older TVs when you press
-**Install now** and someone at the TV presses OK. The tab lists each TV's installed version.
+**Update the TVs** from the admin page's **TV app** tab, as § 8 ("Updating the TV app") describes.
 
 ## 11. Troubleshooting
 

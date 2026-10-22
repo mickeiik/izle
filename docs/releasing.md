@@ -72,14 +72,13 @@ gh secret set ANDROID_KEY_ALIAS
 gh secret set ANDROID_KEY_PASSWORD
 ```
 
-**Moving a TV (or the emulator) from a debug to a release APK** needs `adb uninstall io.github.mickeiik.izle` before
-`adb install izle-tv-X.Y.Z.apk`, because the keys differ (otherwise: `INSTALL_FAILED_UPDATE_INCOMPATIBLE`). The TV
-then pairs again as a new TV: set up its home screen and forget the old entry on the admin page. Release builds are
-shrunk and optimized by R8 but not obfuscated (`-dontobfuscate` in `android/app/proguard-rules.pro`), so stack traces
-and the exception names in problem reports stay readable without a mapping file; they start with an empty server
-address and ignore the debug-only `izle.server` launch extra. The libraries bring their own R8 rules
-(kotlinx.serialization, Coil, OkHttp, Media3); a crash or a missing field that only a release build shows is a
-missing keep rule, added to `proguard-rules.pro`. To try a release build on the emulator over a debug install, sign
+**Moving a TV (or the emulator) from a debug to a release APK** needs `adb uninstall io.github.mickeiik.izle` first,
+because the keys differ (otherwise: `INSTALL_FAILED_UPDATE_INCOMPATIBLE`); the TV then pairs again as a new TV. Release
+builds are shrunk and optimized by R8 but not obfuscated (`-dontobfuscate` in `android/app/proguard-rules.pro`), so
+stack traces and the exception names in problem reports stay readable without a mapping file; they start with an empty
+server address and ignore the debug-only `izle.server` launch extra. The libraries bring their own R8 rules
+(kotlinx.serialization, Coil, OkHttp, Media3); a crash or a missing field that only a release build shows is a missing
+keep rule, added to `proguard-rules.pro`. To try a release build on the emulator over a debug install, sign
 `app-release-unsigned.apk` with the debug key (`apksigner sign --ks ~/.android/debug.keystore --ks-pass pass:android`).
 
 ## Make-public checklist
@@ -91,15 +90,16 @@ automated session) goes through this list.
   `docker run --rm -v "$PWD":/repo:ro ghcr.io/gitleaks/gitleaks:latest git /repo`), then review every finding.
   Expect none: the only known hits, made-up tokens the log redaction tests use as hostile fixtures, are marked
   with an inline `gitleaks:allow` and listed in [`.gitleaksignore`](../.gitleaksignore).
-- [ ] **Private names.** Search the history for the names of your private catalogs, their sources, their hosts and
-  your private repositories (only you know the list): `git log -p --all | grep -n -i -E 'name-one|name-two|private-host'`.
+- [ ] **Private names.** Search the history for the names of your private catalogs, their sources, their hosts and your
+  private repositories (only you know the list): `git log -p --all | grep -n -i -E 'name-one|name-two|private-host'`.
 - [ ] **Author identities.** `git log --all --format='%an <%ae>' | sort -u`: every address shown becomes public;
   rewrite them (e.g. to your GitHub `noreply` address) if needed.
 - [ ] **Tracked files.** Nothing like `*.token`, `*.db`, `*.jks`, `keystore.properties` or a local `izle.json`:
   `git ls-files | grep -E '\.(token|db|jks)$|keystore\.properties|(^|/)izle\.json$'` prints nothing.
 - [ ] **Binary files are ours or licensed.** `git ls-files '*.jpg' '*.png' '*.apk'`: sample posters are listed in
   [`sample-catalog/NOTICE.md`](../sample-catalog/NOTICE.md), the example catalog's posters are generated, and the
-  verification screenshots in earlier commits show only sample or generated content.
+  screenshots (`docs/images/`, `site/share-card.jpg`, and those in earlier commits) show only sample or generated
+  content.
 - [ ] **If something must go**, rewrite the history (`git filter-repo`) before publishing, and rotate whatever
   leaked anyway.
 - [ ] **Pinned actions.** Every `uses:` in the workflows names a commit SHA with its release as a comment

@@ -109,19 +109,10 @@ Security problems are reported privately: [SECURITY.md](SECURITY.md).
 
 ## Development
 
-Requirements: Node.js ≥ 22.13 and npm; for the TV app a JDK 21+ and the Android SDK.
-
-```bash
-npm ci && npm test
-npm run -w server dev -- --config server/izle.dev.json            # sample catalog on :8787, state in server/data/
-npm run -s -w server dev -- admin-token --config server/izle.dev.json   # prints the admin token
-```
-
-Every command (tests, typecheck, packaging, resolver check, the Android emulator loop) is listed in
-[AGENTS.md](AGENTS.md#commands); [Try the API with curl](docs/try-the-api.md) walks through pairing a TV and playing
-an episode by hand. Debug builds of the TV app prefill the emulator's address of the host's server; on the TV, the
-remote's Menu key or holding OK opens the [hidden menu](docs/ux/senior-tv.md#hidden-menu). Making releases:
-[docs/releasing.md](docs/releasing.md).
+Node.js ≥ 22.13 and npm (`npm ci && npm test`); for the TV app a JDK 21+ and the Android SDK. Every command (the
+development server, tests, typecheck, packaging, the Android emulator loop) is listed in
+[AGENTS.md](AGENTS.md#commands); [Try the API with curl](docs/try-the-api.md) pairs a TV and plays an episode by
+hand. Making releases: [docs/releasing.md](docs/releasing.md).
 
 | Path | What |
 |---|---|

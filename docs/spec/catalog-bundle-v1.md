@@ -181,11 +181,6 @@ the changelog.
 ## Changelog
 
 - **v1 (2026-10-10)** — initial version.
-- **v1, backdrop (2026-10-19)** — additive: `CatalogItem.backdrop` (optional, default null), a 16:9 landscape image
-  under `assets/`, content-addressed and validated like `poster`; `BundleStats.backdrops`. Servers before this
-  change reject a bundle that has the property.
-- **v1, live channels (2026-10-21)** — breaking (pre-release): live items (`kind: "live"`), TV channels that carry
-  `playbackAllowed` and `sources` themselves and have no `episodes`, `year`, `rating` or `autoAdvance`; `kind` is
-  the discriminator between the movie and series shape and the live shape; [Rules](#rules) 8 (channels have no
-  episodes) and the item id as a channel's address (rule 6); source ids are unique within the episode or the
-  channel; `BundleStats.live`; media kind `ts` (progressive MPEG-TS over HTTP, proxied like `mp4`).
+- **v1, before the first deployment (2026-10-19 to 2026-10-21)** — `CatalogItem.backdrop` and `BundleStats.backdrops`
+  (additive); live items (`kind: "live"`), [Rules](#rules) 8, source ids unique per episode or channel,
+  `BundleStats.live` and media kind `ts` (breaking (pre-release), changed in place).

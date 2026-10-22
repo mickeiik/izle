@@ -17,13 +17,15 @@ text instead of a URL.
 The server configuration names the module by a **local path** (`resolver.module`) plus a free-form
 `resolver.config` object; the server never downloads or installs modules. At startup it:
 
-1. imports the module with `await import(pathToFileURL(absolutePath).href)` and logs its SHA-256 (the first 16
-   hex digits; the admin API and `check-resolver` show all of it);
+1. imports the module with `await import(pathToFileURL(absolutePath).href)`;
 2. takes the default export if present, otherwise the module namespace, and requires `apiVersion === 1`;
 3. calls `createAdapters(ctx)` **once** (within 30 s) and rejects anything but an array of adapters with valid,
    unique ids (catalog id syntax) and a `resolve` function;
 4. checks that every id in the bundle manifest's `adapters` is provided, and refuses to start otherwise. A catalog
    reload that names an adapter the module does not provide is refused the same way (the previous catalog stays).
+
+Once loaded, the module's SHA-256 is logged (the first 16 hex digits; the admin API and `check-resolver` show all
+of it).
 
 Any failure stops the server with a message naming the module file and the error's class name, never the error's
 message. Without a configured module the server still starts; `adapter` sources are then unavailable.
@@ -45,7 +47,7 @@ export interface ResolverModule { apiVersion: 1; createAdapters(ctx: AdapterCont
 | `config` | The `resolver.config` object from the server configuration (paths, keys). Never logged. |
 | `dataDir` | A directory owned by the module for caches or state (created by the server). |
 | `fetch` | The `fetch` to use. Pass the request's `signal` to it. |
-| `log(level, msg, fields?)` | The server's logger. Output passes through the same redaction as the server's own logs, which is a heuristic: a field whose name contains `url`, `uri`, `href`, `header`, `authorization`, `cookie`, `token`, `ref`, `config`, `playlist`, `password`, `secret` or `body` is dropped; in every other string, URLs (`scheme://…` or `//host…`) become `<url host>`, text starting with `#EXTM3U` becomes `<playlist>` and runs of 20 or more base64url characters become `<token>`; an `Error` keeps only its class name and a short `code`. Everything else is written as given, for example a header map or `req.ref` passed as `fields` itself, a short API key, a host without a scheme. |
+| `log(level, msg, fields?)` | The server's logger. Output passes through the same redaction as the server's own logs, which is a heuristic: a field whose name contains one of the words `url`, `uri`, `href`, `header`, `authorization`, `cookie`, `token`, `ref`, `config`, `playlist`, `password`, `secret` or `body` is dropped; in every other string, URLs (`scheme://…` or `//host…`) become `<url host>`, text starting with `#EXTM3U` becomes `<playlist>` and runs of 20 or more base64url characters become `<token>`; an `Error` keeps only its class name and a short `code`. Everything else is written as given, for example a header map or `req.ref` passed as `fields` itself, a short API key, a host without a scheme. |
 
 ## Adapter
 
@@ -117,7 +119,8 @@ export interface ResolveResult {
   re-resolves.
 
 Results are validated against `resolve-result.v1.schema.json`; an invalid result counts as an `error` named
-`InvalidResult` (or `NotAPlaylist` / `PlaylistTooLarge` for inline playlists).
+`InvalidResult` (or `NotAPlaylist` / `PlaylistTooLarge` for inline playlists; the schema already refuses a
+`playlist` over 2 097 152 characters as `InvalidResult`).
 
 ## Execution model
 
@@ -148,15 +151,7 @@ the changelog.
 ## Changelog
 
 - **v1 (2026-10-10)** — initial version.
-- **v1, server implementation (2026-10-10)** — no API change. Clarified how the server uses results (first
-  servable one; subtitle-track headers proxied per track), the `empty` failure code, `BudgetExhausted`, and
-  that a catalog reload is refused when it needs an adapter the module does not provide.
-- **v1, Listen along (2026-10-11)** — no API change. An adapter may be called a second time for an episode the TV
-  is playing (the owner's phone); failures of such calls do not penalize the source for the TV.
-- **v1, log redaction (2026-10-18)** — no API change. `ctx.log` is described as the heuristic it is, and modules
-  must not pass header maps, refs, config, playlist text, URLs or tokens to it in any shape. The server now also
-  treats protocol-relative URLs as URLs and replaces playlist text by `<playlist>`.
-- **v1, live channels (2026-10-21)** — breaking (pre-release): `ResolveRequest.episodeId` is `string | null`
-  (`null` for an item-level source, a live channel); inline playlists are VOD-only (a channel's playlist comes as
-  a `url`); media kind `ts`, proxied like `mp4`. A channel is resolved again at `expiresAt`, when its proxy
-  session ends and after a player error.
+- **v1, before the first deployment (2026-10-10 to 2026-10-21)** — clarifications with no API change (how results
+  are used, the `empty` code, `BudgetExhausted`, Listen along's second call, `ctx.log` as a heuristic), then
+  breaking (pre-release), changed in place: `ResolveRequest.episodeId` is null for a live channel, inline playlists
+  are VOD only, media kind `ts`.

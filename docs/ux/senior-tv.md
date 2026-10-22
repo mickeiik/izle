@@ -6,8 +6,9 @@ remotely from the admin page (`/admin/` on the server) or, on the TV itself, beh
 
 ## Principles
 
-1. **Home → OK → plays.** One screen of show and channel cards, which the owner may group in titled sections. OK on a card plays the right episode at the right
-   place: the next unwatched episode, or the half-watched one where it was left; or a channel at its live edge.
+1. **Home → OK → plays.** One screen of show and channel cards, which the owner may group in titled sections. OK on a
+   card plays the right episode at the right place: the next unwatched episode, or the half-watched one where it was
+   left; or a channel at its live edge.
 2. **Back always goes home**, and Back on Home does nothing: the viewer cannot fall out of the app. (The remote's
    HOME button belongs to the system; when it is pressed the app saves the position and comes back on Home.)
 3. **Every error ends on Home by itself**, after a short, large message. Nothing waits for an answer.
@@ -15,10 +16,10 @@ remotely from the admin page (`/admin/` on the server) or, on the TV itself, beh
    short words in solid colours); high contrast; one focused element with a thick white border, everything else
    dimmed; nothing that matters outside the 5 % safe margins (48 dp left and right, 27 dp top and bottom), where
    many TVs crop the picture.
-5. **Owner-controlled.** Which shows and channels appear, their order and sections, how many fit on one screen, "continue from
-   episode X", UI language, audio and subtitle languages, autoplay on start, play/stop/pause/resume/seek/next/previous
-   and short messages all come from the server and apply live. When something goes wrong the TV tells the owner (problem
-   reports), not the viewer.
+5. **Owner-controlled.** Which shows and channels appear, their order and sections, how many fit on one screen,
+   "continue from episode X", UI language, audio and subtitle languages, autoplay on start,
+   play/stop/pause/resume/seek/next/previous and short messages all come from the server and apply live. When something
+   goes wrong the TV tells the owner (problem reports), not the viewer.
 
 ## Screens
 
@@ -41,13 +42,14 @@ remotely from the admin page (`/admin/` on the server) or, on the TV itself, beh
   the progress bar and the short "New" chip stay.
 - A channel's card has a solid red chip with white text that says **Live** (TV's convention for a live picture);
   short like "New", it stays on smaller cards. No progress bar, and never a "2 new" chip.
-- When episodes were added to a show since the viewer last watched it (or since it was put on Home), a small dark
-  chip at the card's top right counts them ("2 new", read out as "2 new episodes"; the server's `newEpisodes`).
-  Quieter than the bottom chip, it only informs: it takes no focus, never changes what OK plays, and goes away once
-  an episode of the show has been played.
+- When episodes were added to a show since the viewer last watched it (or since it was put on Home), a small dark chip
+  at the card's top right counts them ("2 new", read out as "2 new episodes"; the server's `newEpisodes`), when it fits
+  beside the bottom chip and bar. Quieter than the bottom chip, it only informs: it takes no focus, never changes what
+  OK plays, and goes away once an episode of the show has been played.
 - The tile played last gets the focus back; when the owner reorders Home while it shows (or moves the card to another
   section), the focus stays on the same card.
-- No shows: "Nothing here yet" in large type.
+- No shows: "Nothing here yet" in large type, and a line saying that the owner adds shows from the admin page. A
+  first start with no cached Home shows "Loading…", or "No connection" while the server is unreachable.
 - Server unreachable: the last home screen stays (cached), a solid red "No connection" chip with dark text appears
   over the grid at the top left, the TV retries every 10 s, and OK shows "No connection · Trying again…" for 5 s
   instead of playing.
@@ -62,7 +64,7 @@ remotely from the admin page (`/admin/` on the server) or, on the TV itself, beh
   error screen, closing the hidden menu), from the offline cache, or once a key was pressed; the hidden menu and the
   tiles wait while it shows.
 - **Messages from the owner** appear as a banner (30 sp bold, stepping down to 24 sp only for the longest ones, dark
-  on yellow, up to 3 lines, no focus, no buttons) for the time the owner chose, on Home and over the playing video
+  on yellow, up to 3 lines, no focus, no buttons) for the time the owner chose, on Home and on every player screen
   (playback goes on); other screens ignore them. On Home, as over the video, the hidden menu or the autoplay
   countdown, it is drawn across the top; the cards under it do not move.
 
@@ -111,9 +113,9 @@ shown one under the other in the owner's order. They change how the cards are la
   Home. No buttons: nothing on it takes the focus.
 - Nothing playable: "Can't play right now" with the poster, "Home in 30 s" counting down over its bar, **Try
   again** focused and **Home**; Home after 30 s.
-- A channel never ends and never shows Up next or "The end": when its stream ends or the player falls behind the
-  live window, the same source is resolved again once and plays from the live edge; if that fails, the source-error
-  ladder follows (Live channels under [Playback rules](#playback-rules)), ending on "Can't play right now", whose
+- A channel never ends and never shows Up next or "The end": when its stream ends, breaks or falls behind the live
+  window, the same source is resolved again and plays from the live edge; if that fails, the source-error ladder
+  follows (Live channels under [Playback rules](#playback-rules)), ending on "Can't play right now", whose
   **Try again** restarts the channel at the live edge. **CH+ / CH−** still change channels from there: a dead channel
   is left the way any channel is.
 - Subtitles (off unless the owner chose a language) are drawn large, white on a dark box, above the bottom edge,
@@ -130,9 +132,9 @@ shown one under the other in the owner's order. They change how the cards are la
 - No pause on a channel, as on classic TV: a short OK only shows the information, and Play/Pause, Rewind, Fast
   forward and ← / → do nothing.
 - From the admin page the owner can pause, resume, jump (which shows the information as if a key had been pressed),
-  switch episodes like CH+/CH−, stop, and show a message. These act only while video shows; resume, next and
-  previous close the hidden menu if it is open. On a channel, pause, resume and jump do nothing; next and previous
-  switch channels like CH+/CH−.
+  switch episodes like CH+/CH−, stop, and show a message. Pause, resume, jump and the episode switches act only while
+  video shows, stop on any player screen; resume, next and previous close the hidden menu if it is open. On a channel,
+  pause, resume and jump do nothing; next and previous switch channels like CH+/CH−.
 
 ### Update
 
@@ -151,16 +153,16 @@ Nothing about it ever interrupts playback: during playback the command answers `
   version", the version, "Press OK to install" and "Home in 60 s" over its bar, **Install** focused and **Not now**
   beside it. OK shows "Updating…" while it downloads, then the system's own Install/Cancel dialog ("Updating…"
   stays behind it until it is answered). Back, Not now, Cancel or 60 s without a press: Home.
-- A failure says "Could not update" for 15 s (with **Home** focused), then Home; "Updating…" goes Home by itself
-  after 2 minutes if the system never answers (Back too, without stopping an install already under way). Owner messages are not shown on
-  this screen; the Menu key and holding OK do nothing on it.
+- A failure says "Could not update" for 15 s (with **Home** focused), then Home; "Updating…" goes Home by itself after 2
+  minutes if the system never answers (Back too, without stopping an install already under way). Owner messages are not
+  shown on this screen; the Menu key and holding OK do nothing on it.
 
 ### Hidden menu
 
-Opened with the remote's **Menu** key or by **holding OK for 0.6 s** (on Home: for the focused show or channel; in
-the player: for what is playing, which pauses, except a channel, which plays on). A panel slides over a little more
-than the right half, its rows ending at the safe margin; the focused row has the same white border as the tiles and
-buttons. Back steps back one level and closes it.
+Opened with the remote's **Menu** key or by **holding OK for 0.6 s** (on Home: for the focused show or channel; in the
+player, once it plays: for what is playing, which pauses, except a channel, which plays on). A panel slides over a
+little more than the right half, its rows ending at the safe margin; the focused row has the same white border as the
+tiles and buttons. Back steps back one level and closes it.
 
 | Entry | Shown | Does |
 |---|---|---|
@@ -185,12 +187,12 @@ buttons. Back steps back one level and closes it.
 
 | Key | Home | Player (video) | Player (channel) | Up next / error overlay | Hidden menu |
 |---|---|---|---|---|---|
-| OK (short) | play the focused show or channel | pause / resume | information | press the focused button | choose |
+| OK (short) | play the focused show or channel | pause / resume | information (and undo a system pause) | press the focused button | choose |
 | OK (hold 0.6 s) | hidden menu | hidden menu | hidden menu | — | — |
 | Menu | hidden menu | hidden menu | hidden menu | — | — |
 | ← / → | move | seek −/+ 10 s (holding: 30 s steps after 2 s, 60 s after 4 s; one seek on release) | nothing | move | — |
 | ↑ / ↓ | move | nothing | nothing | move | move |
-| Play/Pause, Play, Pause | — | pause / resume | nothing | — | — |
+| Play/Pause, Play, Pause | — | pause / resume | Play/Pause, Play: undo a pause the system made (lost audio focus); else nothing | — | — |
 | Rewind / Fast forward | — | like ← / → | nothing | — | — |
 | Stop | — | save, Home | Home | — | — |
 | CH+ / CH−, ▶▶\| / \|◀◀ | nothing | next / previous episode (first press only; the ends: information only) | next / previous channel (first press only; the ends: information only) | a channel's error overlay: next / previous channel; else nothing | nothing |
@@ -212,10 +214,10 @@ izle.
 | End threshold ("finished") | remaining ≤ max(2 min, 5 % of the duration), capped at 10 % of the duration (so a 90 s episode is finished in its last 9 s, a 2 h film in its last 6 min) |
 | Heartbeat | every 15 s while playing, plus pause, resume, seek, stop and end (a channel: see Live channels) |
 | Countdowns | auto-next and autoplay on start 10 s, error screen 30 s, update "press OK" 60 s, "Could not update" 15 s, each with a bar that runs down a step a second; "The end" 8 s, then Home; "Updating…" at most 2 min |
-| Source errors | try the server's next alternative from the same position (a channel: from the live edge); HTTP 403/410 after more than 5 min of playback re-resolves the same source first (an expired signed URL) |
+| Source errors | try the server's next alternative from the same position (a channel: see Live channels); HTTP 403/410 after more than 5 min of playback re-resolves the same source first (an expired signed URL) |
 | Stream refresh | when a resolve answer's `expiresAt` is ≥ 90 s away (measured on the server's clock): resolve the same source again at `expiresAt` − 60 s, playing or paused; new media only when the URL changed, at the same position; at most one refresh per 60 s; a network or server failure is retried once after 30 s while the URL is still valid, else the 403/410 rule above applies |
 | Channel keys (CH+/CH−, ▶▶\|/\|◀◀, next/previous commands) | while a show plays: the nearest `playbackAllowed` episode after / before the current one in play order; while a channel plays, loads or shows "Can't play right now": the next / previous channel on this TV's Home, in Home order; no wrap-around; the current one is reported like Back (stopped, or finished within the end threshold) |
-| Live channels | no resume, end threshold or pause; starts at the live edge; heartbeat every 15 s while playing, without a position, plus stall, recovery and stop (Back, Stop, HOME or a channel key); the end of the stream or falling behind the live window: one re-resolve of the same source at the live edge, then the source-error ladder; a stream refresh (at `expiresAt` − 60 s) that brings new media restarts at the live edge |
+| Live channels | no resume, end threshold or pause; starts at the live edge; heartbeat every 15 s while playing, without a position, plus stall, recovery and stop (Back, Stop, HOME or a channel key); any failure (the end of the stream, a player error, falling behind the live window): a re-resolve of the same source at the live edge, once per failure streak and again only after 60 s of play, then the next alternative at the live edge; a stream refresh (at `expiresAt` − 60 s) that brings new media restarts at the live edge |
 | Owner's message | up to 200 characters, 3–120 s (the server's default: 15 s); a new one replaces the current one |
 | Problem reports (to the owner) | one attempt in the background, never retried, failures ignored: player errors (Media3 error code, HTTP status, exception class names — never messages or URLs), failed resolves (the server's error code or `network`), "Can't play right now" (`gave_up`), the server unreachable for ≥ 5 min (`server_unreachable`, sent once it answers again), a self-update that failed (`update_…`: the download or archive check without a command, the install once the command's result went out — its session write or status —, `update_needs_user_action`) |
 | Languages | audio: the owner's preferred language (and its primary subtag), else the stream default; subtitles: off unless the owner set a language |

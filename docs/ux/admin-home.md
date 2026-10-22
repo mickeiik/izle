@@ -18,10 +18,11 @@ is in [Senior TV experience](senior-tv.md#home); the routes are in the
 ## The selected card
 
 - Select a card by clicking it, or move between cards with the arrow keys as on the TV: ↑ and ↓ line by line across
-  sections, ← and → along a line. Enter does not play: a stray key would start something on someone's TV.
-- The panel under the screen shows the card: where it is ("Films · card 3 of 6 · row 1, column 3", "Channels · card
-  5 of 6", or "No title · card 2 of 3" in the untitled section), what OK plays, **Play**, **Episodes…** for a series,
-  and **Remove from Home**.
+  sections, ← and → along a line, Home and End to the first and last card. Enter does not play: a stray key would start
+  something on someone's TV.
+- The panel under the screen shows the card: where it is ("Films · card 3 of 6 · row 1, column 3" in a grid, "Channels ·
+  card 5 of 6" in a scrolling line; the untitled section reads "No title"), what OK plays, **Play**, **Episodes…** for a
+  series, and **Remove from Home**.
 - **Move**: ◀ and ▶ along its section; ▲ and ▼ a row up or down within a grid section (off at the section's first and
   last row); **Move to first**: the first place of its section; **Section**: a list of the sections by title (the
   untitled one as "No title") that moves the card to the end of the chosen one. The card stays selected wherever it
@@ -48,14 +49,14 @@ untitled section among them:
 
 - The catalog browser under the screen adds a show to the end of the section chosen in **Add to** above the results:
   "No title" (the untitled section) unless the owner picks another; the choice stays while the tab is open. The
-  message names it: "Sintel added to Films."
+  message names it: "Sintel added to Films." (or "added to Home." for the untitled section)
 - A show already on Home reads "On Home", whatever its section: a show is in one section at a time, and the
   selected card's **Section** moves it.
 
 ## Saving
 
 - Every change saves at once and the screen redraws from the server's answer; there is no Save button except the
-  grid's. While a change is being saved, further edits wait for it.
+  grid's. While a change is being saved, a title or layout edit waits for it; other edits are ignored.
 - Each edit is one [single change](../spec/server-api-v1.md#home-list-changes) on the server (add, move, remove, or
   one section's title, layout or place), never the whole Home sent back, so an edit made elsewhere at the same time
   (another page, an agent) is not undone. The screen follows such edits as it follows the TV.
