@@ -1,6 +1,5 @@
-// The owner's view of the loaded catalog (admin API): what is loaded and from which builds, the browser's hits, and an
-// item with its episodes and sources. Upstream URLs, headers and adapter refs are never part of it. Also the reload
-// that the admin route and SIGHUP share.
+// The owner's view of the loaded catalog (admin API), never with upstream URLs, headers or adapter refs; and the
+// reload that the admin route and SIGHUP share.
 
 import { isLiveItem, type CatalogItem, type Source } from "@izle/contract";
 import { SERVER, type Actor } from "./actor.ts";
@@ -23,10 +22,6 @@ export function buildJson(b: CatalogBuild) {
   };
 }
 
-/**
- * The loaded catalog, the resolver module, the server version, the newest builds, what the latest update changed
- * and the browser's facets (its filter choices).
- */
 export function catalogInfo(ctx: Pick<AppContext, "catalog" | "store" | "resolverModule" | "browse">) {
   const { catalog, store, resolverModule } = ctx;
   const cur = catalog.current;
@@ -44,11 +39,7 @@ export function catalogInfo(ctx: Pick<AppContext, "catalog" | "store" | "resolve
 
 type ReloadDeps = Pick<AppContext, "catalog" | "notifier" | "store" | "eventLog">;
 
-/**
- * Re-reads the catalog bundle (the admin route and SIGHUP). After a good load every TV's state version is bumped,
- * so the TVs re-read their home screens; after a refused one the previous catalog stays and nothing is bumped.
- * Either way the event log says what happened, with the counts of the build the catalog history recorded.
- */
+/** After a good load every TV re-reads its home screen; the event log has the counts the catalog history recorded. */
 export async function reloadCatalog({ catalog, notifier, store, eventLog }: ReloadDeps, actor: Actor): Promise<ReloadResult> {
   const r = await catalog.reload();
   if (r.ok) {
@@ -66,10 +57,7 @@ export async function reloadCatalog({ catalog, notifier, store, eventLog }: Relo
   return r;
 }
 
-/**
- * The reload for a signal handler: it never rejects. A reload that throws (the store is already closed during
- * shutdown) is logged with the error's class name, never its message, instead of ending the process.
- */
+/** Never rejects: a reload that throws (the store closed during shutdown) is logged by the error's class name. */
 export async function reloadOnSignal(deps: ReloadDeps & Pick<AppContext, "log">, signal: string): Promise<void> {
   try {
     await reloadCatalog(deps, SERVER);
@@ -78,17 +66,14 @@ export async function reloadOnSignal(deps: ReloadDeps & Pick<AppContext, "log">,
   }
 }
 
-/**
- * A browser hit: the item's card with its episode counts (null for a channel), whether OK can play it, when the
- * catalog first carried it (null when always there) and its episodes new since the query's `since`.
- */
+/** A browser hit: the item's card, its episode counts (null for a channel) and when the catalog first carried it. */
 export function searchHitJson(catalog: CatalogService, { entry, newEpisodes }: BrowseHit) {
   const { item } = entry;
   const counts = isLiveItem(item) ? { episodeCount: null, playableCount: null } : { episodeCount: item.episodes.length, playableCount: item.episodes.filter((e) => e.playbackAllowed).length };
   return { ...itemCard(catalog, item), ...counts, playable: entry.playable, firstSeenAt: entry.firstSeenAt === 0 ? null : iso(entry.firstSeenAt), newEpisodes };
 }
 
-/** A source as the owner sees it: what kind it is and whether it is proxied. Upstream URLs, headers and adapter refs are deliberately not exposed. */
+/** What kind a source is and whether it is proxied; upstream URLs, headers and adapter refs are deliberately left out. */
 function adminSource(s: Source) {
   return {
     id: s.id, type: s.type, label: s.label ?? null, languages: s.languages,
@@ -96,7 +81,6 @@ function adminSource(s: Source) {
   };
 }
 
-/** An item with every episode and source, or a channel with its approval and sources, as the admin page's item view shows it. */
 export function catalogItemJson(catalog: CatalogService, item: CatalogItem) {
   if (isLiveItem(item)) return { ...itemDetails(catalog, item), playbackAllowed: item.playbackAllowed, sources: item.sources.map(adminSource) };
   return {

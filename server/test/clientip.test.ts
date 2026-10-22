@@ -5,12 +5,9 @@ import { clientAddress, compileTrustedProxies, limiterKey } from "../src/clienti
 test("compileTrustedProxies accepts addresses and CIDR ranges and names the first bad entry", () => {
   const { list, invalid } = compileTrustedProxies(["127.0.0.1", "::1", "172.16.0.0/12", "fd00::/8", "::ffff:10.1.1.1"]);
   assert.equal(invalid, null);
-  assert.ok(list.check("127.0.0.1", "ipv4"));
-  assert.ok(list.check("172.20.3.4", "ipv4"));
+  for (const a of ["127.0.0.1", "172.20.3.4", "10.1.1.1"]) assert.ok(list.check(a, "ipv4"), a);
+  for (const a of ["::1", "fd12::5"]) assert.ok(list.check(a, "ipv6"), a);
   assert.ok(!list.check("172.32.0.1", "ipv4"));
-  assert.ok(list.check("::1", "ipv6"));
-  assert.ok(list.check("fd12::5", "ipv6"));
-  assert.ok(list.check("10.1.1.1", "ipv4"));
   for (const bad of ["localhost", "10.0.0.0/33", "fd00::/129", "10.0.0.0/8/1", "10.0.0.0/", "1.2.3.4/x", "999.1.1.1"]) {
     assert.equal(compileTrustedProxies(["127.0.0.1", bad]).invalid, bad, bad);
   }
@@ -18,26 +15,21 @@ test("compileTrustedProxies accepts addresses and CIDR ranges and names the firs
 
 test("clientAddress walks X-Forwarded-For from the right through trusted proxies only", () => {
   const trusted = compileTrustedProxies(["127.0.0.1", "10.0.0.0/8"]).list;
-  // No trust configured: the header is ignored. IPv4-mapped IPv6 addresses are unwrapped, and only those.
-  assert.equal(clientAddress("127.0.0.1", "203.0.113.9", null), "127.0.0.1");
-  assert.equal(clientAddress("::FFFF:10.0.0.7", undefined, null), "10.0.0.7");
-  assert.equal(clientAddress("2001:db8::1", undefined, null), "2001:db8::1");
-  // Direct client (not a proxy): its own header is ignored.
-  assert.equal(clientAddress("198.51.100.4", "203.0.113.9", trusted), "198.51.100.4");
-  // Through the local proxy.
-  assert.equal(clientAddress("127.0.0.1", "203.0.113.9", trusted), "203.0.113.9");
-  assert.equal(clientAddress("::ffff:127.0.0.1", " 203.0.113.9 ", trusted), "203.0.113.9");
-  // A client-supplied prefix is ignored: the proxy appended the real address last.
-  assert.equal(clientAddress("127.0.0.1", "1.1.1.1, 203.0.113.9", trusted), "203.0.113.9");
-  // Two trusted hops.
-  assert.equal(clientAddress("127.0.0.1", "203.0.113.9, 10.2.3.4", trusted), "203.0.113.9");
-  // Only trusted hops: the leftmost one is all we know.
-  assert.equal(clientAddress("127.0.0.1", "10.2.3.4", trusted), "10.2.3.4");
-  // Missing header or remote address.
-  assert.equal(clientAddress("127.0.0.1", undefined, trusted), "127.0.0.1");
-  assert.equal(clientAddress(undefined, "203.0.113.9", trusted), "unknown");
-  // Garbage from the proxy is used as is (it is only a rate-limit key) and never trusted further.
-  assert.equal(clientAddress("127.0.0.1", "1.1.1.1, unknown", trusted), "unknown");
+  const cases: Array<[string | undefined, string | undefined, boolean, string, string]> = [
+    ["127.0.0.1", "203.0.113.9", false, "127.0.0.1", "no trust configured: the header is ignored"],
+    ["::FFFF:10.0.0.7", undefined, false, "10.0.0.7", "IPv4-mapped IPv6 addresses are unwrapped"],
+    ["2001:db8::1", undefined, false, "2001:db8::1", "and only those"],
+    ["198.51.100.4", "203.0.113.9", true, "198.51.100.4", "a direct client's own header is ignored"],
+    ["127.0.0.1", "203.0.113.9", true, "203.0.113.9", "through the local proxy"],
+    ["::ffff:127.0.0.1", " 203.0.113.9 ", true, "203.0.113.9", "a mapped proxy address, a padded header"],
+    ["127.0.0.1", "1.1.1.1, 203.0.113.9", true, "203.0.113.9", "a client-supplied prefix is ignored"],
+    ["127.0.0.1", "203.0.113.9, 10.2.3.4", true, "203.0.113.9", "two trusted hops"],
+    ["127.0.0.1", "10.2.3.4", true, "10.2.3.4", "only trusted hops: the leftmost one is all we know"],
+    ["127.0.0.1", undefined, true, "127.0.0.1", "no header"],
+    [undefined, "203.0.113.9", true, "unknown", "no remote address"],
+    ["127.0.0.1", "1.1.1.1, unknown", true, "unknown", "garbage from the proxy is used as is and never trusted further"],
+  ];
+  for (const [remote, xff, trust, expected, why] of cases) assert.equal(clientAddress(remote, xff, trust ? trusted : null), expected, why);
 });
 
 test("limiterKey counts an IPv6 client by its /64 and leaves everything else as it is", () => {

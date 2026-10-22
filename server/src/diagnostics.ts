@@ -1,14 +1,14 @@
-// Admin "test this episode" tool (or this channel): runs every source through the same resolve path as the TV
-// (adapters, deadlines, validation) without creating sessions, and optionally probes the upstream. The report is safe
-// to show in the admin UI: hosts and header names only, never URLs, header values, refs or playlist text.
+// Admin "test this episode (or channel)": every source through the TV's resolve path without creating sessions, and
+// optionally an upstream probe. The report has hosts and header names only, never URLs, header values, refs or
+// playlist text.
 
-import type { ResolveResult, Source } from "@izle/contract";
+import type { ResolveResult } from "@izle/contract";
 import { episodeIdOf, playableOf, type CatalogService } from "./catalog.ts";
 import { errorName } from "./errors.ts";
 import { isPlaylistText, summarizePlaylist, type PlaylistSummary } from "./hls.ts";
 import { requirePlayableRef, requireSource, type PlayableId } from "./lookup.ts";
 import { MAX_PLAYLIST_BYTES, readText } from "./proxy.ts";
-import { deliveryPlan, type ResolveService, type TriedCode, type UpstreamStream } from "./resolve.ts";
+import { deliveryPlan, type ResolveService, type UpstreamStream } from "./resolve.ts";
 import { stopwatch } from "./stopwatch.ts";
 
 const PROBE_TIMEOUT_MS = 10_000;
@@ -23,34 +23,10 @@ interface ProbeReport {
   name?: string;
 }
 
-interface SourceReport {
-  sourceId: string;
-  type: Source["type"];
-  adapterId?: string;
-  ok: boolean;
-  code?: TriedCode;
-  name?: string;
-  ms: number;
-  /** Everything the adapter returned, in its order (adapter sources only). */
-  results?: ReturnType<typeof summarize>[];
-  /** The stream the TV would get. */
-  stream?: ReturnType<typeof summarize>;
-  probe?: ProbeReport;
-}
-
-function hostOf(url: string): string | null {
-  try {
-    return new URL(url).host || null;
-  } catch {
-    return null;
-  }
-}
-
-/** An adapter's result, or the stream resolve picked from it. */
 function summarize(r: ResolveResult | UpstreamStream, proxyAlways: boolean) {
   const plan = deliveryPlan(r, proxyAlways);
   return {
-    kind: r.media.kind, inline: "playlist" in r.media, host: hostOf("playlist" in r.media ? r.media.baseUrl : r.media.url),
+    kind: r.media.kind, inline: "playlist" in r.media, host: URL.parse("playlist" in r.media ? r.media.baseUrl : r.media.url)?.host || null,
     headerNames: Object.keys(r.headers ?? {}).sort(), delivery: !plan.servable ? "unsupported" : plan.proxyMain ? "proxy" : "direct",
     languages: r.languages ?? null, subtitleTracks: r.subtitleTracks?.length ?? 0, label: r.label ?? null, expiresAt: r.expiresAt ?? null,
   };
@@ -81,15 +57,10 @@ async function probe(stream: UpstreamStream, signal: AbortSignal | undefined, fe
   }
 }
 
-/**
- * What the admin asks to test (`POST /admin/diagnostics/resolve`, validated in validation.ts): an episode by its
- * episode id, or a channel by its item id.
- */
+/** `POST /admin/diagnostics/resolve`: an episode by its id, or a channel by its item id. */
 export type DiagnosticsInput = PlayableId & {
-  /** Only this source; every source of the episode or channel otherwise. */
   sourceId?: string;
   preferredAudioLanguage?: string | null;
-  /** Whether to probe the upstream of each stream found (default true). */
   probe?: boolean;
 };
 
@@ -103,20 +74,17 @@ export async function diagnosePlayable(
   const sources = input.sourceId === undefined ? playable.sources : [requireSource(playable, input.sourceId, 404, "unknown_source")];
   const { proxyAlways, deadlineMs } = deps.resolver;
   const attemptOpts = { preferredAudioLanguage: input.preferredAudioLanguage ?? null, deadlineMs, signal };
-  const reports: SourceReport[] = [];
+  const reports = [];
   for (const source of sources) {
     const a = await deps.resolver.attempt(ref, source, attemptOpts);
-    const report: SourceReport = { sourceId: source.id, type: source.type, ok: a.ok, ms: a.ms };
-    if (source.type === "adapter") report.adapterId = source.adapter;
-    if (a.results) report.results = a.results.map((r) => summarize(r, proxyAlways));
-    if (!a.ok) {
-      report.code = a.tried.code;
-      if (a.tried.name) report.name = a.tried.name;
-    } else {
-      report.stream = summarize(a.stream, proxyAlways);
-      if (input.probe !== false) report.probe = await probe(a.stream, signal, deps.fetch);
-    }
-    reports.push(report);
+    const outcome = a.ok
+      ? { stream: summarize(a.stream, proxyAlways), ...(input.probe !== false ? { probe: await probe(a.stream, signal, deps.fetch) } : {}) }
+      : { code: a.tried.code, ...(a.tried.name ? { name: a.tried.name } : {}) };
+    reports.push({
+      sourceId: source.id, type: source.type, ok: a.ok, ms: a.ms, ...(source.type === "adapter" ? { adapterId: source.adapter } : {}),
+      // Everything the adapter returned, in its order.
+      ...(a.results ? { results: a.results.map((r) => summarize(r, proxyAlways)) } : {}), ...outcome,
+    });
   }
   return { itemId: ref.item.id, episodeId: episodeIdOf(ref), playbackAllowed: playable.playbackAllowed, sources: reports };
 }

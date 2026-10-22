@@ -58,16 +58,13 @@ test("loader: default export or namespace, async createAdapters, context, sha256
   );
   assert.deepEqual([...viaDefault.adapters.keys()], ["one"]);
   const ctx = (globalThis as Json).__izleCtx;
-  assert.equal(ctx.dataDir, path.join(dataDir, "resolver"));
-  assert.ok((await stat(ctx.dataDir)).isDirectory());
-  assert.equal(typeof ctx.fetch, "function");
+  assert.deepEqual([ctx.dataDir, (await stat(ctx.dataDir)).isDirectory(), typeof ctx.fetch], [path.join(dataDir, "resolver"), true, "function"]);
 
   const lines: string[] = [];
   const r = await loadResolver({ module: EXAMPLE, config: { apiBase: "http://127.0.0.1:1/", apiKey: "k" }, dataDir, log: createLogger({ write: (l) => void lines.push(l) }) });
   assert.equal(r.sha256, createHash("sha256").update(await readFile(EXAMPLE)).digest("hex"));
   const loaded = JSON.parse(lines.find((l) => l.includes("resolver module loaded"))!);
-  assert.equal(loaded.sha256, r.sha256.slice(0, 16));
-  assert.deepEqual(loaded.adapters, ["example"]);
+  assert.deepEqual([loaded.sha256, loaded.adapters], [r.sha256.slice(0, 16), ["example"]]);
   assert.ok(!lines.join("\n").includes('"k"'), "the module config is never logged");
 });
 
@@ -127,26 +124,20 @@ test("healthchecks and the check-resolver command", async (t) => {
     const file = path.join(root, `izle-${Math.random()}.json`);
     await writeFile(file, JSON.stringify({ dataDir: "./data", catalog: { dir: bundleDir }, ...config }));
     const { INIT_CWD: _a, IZLE_ADMIN_TOKEN: _b, ...env } = process.env;
-    try {
-      const r = await promisify(execFile)(process.execPath, [BIN, "check-resolver", "--config", file], { env });
-      return { code: 0, stdout: r.stdout, stderr: r.stderr };
-    } catch (err) {
-      const e = err as { code: number; stdout: string; stderr: string };
-      return { code: e.code, stdout: e.stdout, stderr: e.stderr };
-    }
+    type Run = { code: number; stdout: string; stderr: string };
+    return promisify(execFile)(process.execPath, [BIN, "check-resolver", "--config", file], { env }).then((r): Run => ({ code: 0, ...r }), (e: Run) => e);
   };
-  const good = await run({ resolver: { module: EXAMPLE, config: { apiBase: up.url, apiKey: DEFAULT_API_KEY } } });
-  assert.equal(good.code, 0, good.stdout + good.stderr);
-  assert.match(good.stdout, /adapters: example/);
-  assert.match(good.stdout, /✔ catalog fixture: all 1 declared adapter\(s\) provided/);
-  assert.match(good.stdout, /✔ example: healthy/);
-  const bad = await run({ resolver: { module: EXAMPLE, config: { apiBase: up.url, apiKey: "wrong" } } });
-  assert.equal(bad.code, 1);
-  assert.match(bad.stdout, /✖ example: healthcheck failed \(error, UpstreamError/);
-  const none = await run({});
-  assert.equal(none.code, 1);
-  assert.match(none.stderr, /no resolver module is configured/);
-  const broken = await run({ resolver: { module: "./nope.js" } });
-  assert.equal(broken.code, 1);
-  assert.match(broken.stderr, /cannot read resolver module/);
+  const cases: Array<[Json, number, "stdout" | "stderr", RegExp[]]> = [
+    [{ resolver: { module: EXAMPLE, config: { apiBase: up.url, apiKey: DEFAULT_API_KEY } } }, 0, "stdout", [
+      /adapters: example/, /✔ catalog fixture: all 1 declared adapter\(s\) provided/, /✔ example: healthy/,
+    ]],
+    [{ resolver: { module: EXAMPLE, config: { apiBase: up.url, apiKey: "wrong" } } }, 1, "stdout", [/✖ example: healthcheck failed \(error, UpstreamError/]],
+    [{}, 1, "stderr", [/no resolver module is configured/]],
+    [{ resolver: { module: "./nope.js" } }, 1, "stderr", [/cannot read resolver module/]],
+  ];
+  for (const [config, code, stream, expected] of cases) {
+    const r = await run(config);
+    assert.equal(r.code, code, r.stdout + r.stderr);
+    for (const re of expected) assert.match(r[stream], re);
+  }
 });

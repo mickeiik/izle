@@ -59,14 +59,11 @@ test("hostile fixture: nothing secret survives a log line", () => {
   for (const leak of [DEVICE_TOKEN, "signed.example.test/", "referer.example.test", "s3cr3t", "private-slug", "k-123", "#EXTM3U", "a=b", "Policy=", "upstream 403", "dashboard.example.test/x"]) {
     assert.ok(!line.includes(leak), `leaked ${leak}: ${line}`);
   }
-  assert.equal(parsed.msg, "resolve failed for <url signed.example.test>");
-  assert.equal(parsed.note, "see <url dashboard.example.test>");
-  assert.deepEqual(parsed.list, ["<url a.example.test>", "<token>", 3]);
-  assert.deepEqual(parsed.error, { name: "Error", code: "E_UPSTREAM" });
-  assert.equal(parsed.circular.self, "<circular>");
-  assert.equal(parsed.itemId, "show");
-  assert.equal(parsed.level, "error");
-  assert.deepEqual(Object.keys(parsed.nested), ["deep"]);
+  const { msg, note, list, error, circular: { self }, itemId, level, nested } = parsed;
+  assert.deepEqual({ msg, note, list, error, self, itemId, level, nested: Object.keys(nested) }, {
+    msg: "resolve failed for <url signed.example.test>", note: "see <url dashboard.example.test>", list: ["<url a.example.test>", "<token>", 3],
+    error: { name: "Error", code: "E_UPSTREAM" }, self: "<circular>", itemId: "show", level: "error", nested: ["deep"],
+  });
 });
 
 test("hostile fixture (resolver audit shapes): protocol-relative URLs, playlist text and odd error names", () => {
@@ -83,10 +80,7 @@ test("hostile fixture (resolver audit shapes): protocol-relative URLs, playlist 
   log.info("E5b with a BOM and leading space", { body2: "\uFEFF  #EXTM3U\n#EXTINF:4,\nseg.ts?sig=q9Zk2" });
   log.info("F2 error names", { a: named, b: tokenNamed, c: longNamed, d: Object.assign(new TypeError("x"), {}) });
   const out = lines.map((l) => JSON.parse(l));
-  assert.deepEqual(out[0].src, "<url cdn.example.test>");
-  assert.deepEqual(out[1].note, "fetching <url cdn.example.test:8443> now");
-  assert.deepEqual(out[2].text, "<playlist>");
-  assert.deepEqual(out[3].body2, "<playlist>");
+  assert.deepEqual([out[0].src, out[1].note, out[2].text, out[3].body2], ["<url cdn.example.test>", "fetching <url cdn.example.test:8443> now", "<playlist>", "<playlist>"]);
   assert.deepEqual(out[4].a, { name: "Error", code: "E_X" }, "a name that is not an identifier is not kept");
   assert.deepEqual(out[4].b, { name: "<token>" }, "an identifier-shaped name is scrubbed like any string");
   assert.deepEqual(out[4].c, { name: "Error" }, "nor is one longer than 60 characters");
@@ -95,11 +89,9 @@ test("hostile fixture (resolver audit shapes): protocol-relative URLs, playlist 
     assert.ok(!lines.some((l) => l.includes(leak)), `leaked ${leak}`);
   }
 
-  // What is not a URL stays: file paths, comments, ratios.
-  assert.equal(redact("/opt/izle//lib/resolver.js"), "/opt/izle//lib/resolver.js");
-  assert.equal(redact("a // b, 1/2 and 3//4"), "a // b, 1/2 and 3//4");
+  // What is not a URL or a playlist stays: file paths, comments, ratios, text that only mentions #EXTM3U.
+  for (const kept of ["/opt/izle//lib/resolver.js", "a // b, 1/2 and 3//4", "not a playlist: #EXTM3U is missing"]) assert.equal(redact(kept), kept);
   assert.equal(redact("see https://x.example.test/a and //y.example.test/b"), "see <url x.example.test> and <url y.example.test>");
-  assert.equal(redact("not a playlist: #EXTM3U is missing"), "not a playlist: #EXTM3U is missing", "only text that starts as a playlist");
   assert.equal(redactReportText("#EXTM3U\nseg.ts"), "<playlist>", "TV problem text too");
 });
 

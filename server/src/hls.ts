@@ -6,7 +6,6 @@ export type LinkKind = "p" | "r";
 /** Tags whose `URI="…"` attribute names another playlist; every other tag's URI is a raw resource. */
 const PLAYLIST_URI_TAGS = new Set(["#EXT-X-MEDIA", "#EXT-X-I-FRAME-STREAM-INF", "#EXT-X-RENDITION-REPORT"]);
 const URI_ATTRIBUTE = /(^|,|:)(\s*URI\s*=\s*)"([^"]*)"/g;
-/** Line endings a playlist may use: `\n`, `\r\n` or a lone `\r`. */
 const LINE_BREAK = /\r?\n|\r/;
 
 const withoutBom = (text: string): string => text.replace(/^﻿/, "");
@@ -14,11 +13,8 @@ const tagName = (line: string): string => line.split(":", 1)[0]!.trim().toUpperC
 
 /** Bounds on a rewrite, so its work and output stay proportional to the playlist read, whatever its URIs resolve to. */
 export interface RewriteLimits {
-  /** Most lines a playlist may have. */
   maxLines: number;
-  /** Most characters the rewritten playlist may have. */
   maxLength: number;
-  /** Longest absolute URL a URI may resolve to. */
   maxUrlLength: number;
 }
 
@@ -32,21 +28,14 @@ export function isPlaylistText(text: string): boolean {
 }
 
 /**
- * Rewrites every URI of an HLS playlist (master or media): URI lines (variants, segments) and `URI="…"` attributes
- * (keys, maps, renditions, i-frame playlists, parts, preload hints). Each URI is resolved against `baseUrl`; http(s)
- * results are replaced by `link(absoluteUrl, kind)`, anything else (`data:`, `skd:`, unparsable) is kept as it is.
- * Line endings are normalized to `\n`; a leading BOM is dropped. Throws PlaylistTooLarge past one of `limits`
- * (a URL too long to rewrite is refused, not passed on as it is).
+ * Rewrites every URI of an HLS playlist (URI lines and `URI="…"` attributes) resolved against `baseUrl`: http(s)
+ * ones become `link(absoluteUrl, kind)`, anything else (`data:`, `skd:`, unparsable) stays. Line endings become `\n`,
+ * a BOM goes. Throws PlaylistTooLarge past one of `limits` (a URL too long to rewrite is refused, not kept).
  */
 export function rewritePlaylist(text: string, baseUrl: string, link: (url: string, kind: LinkKind) => string, limits: RewriteLimits = NO_LIMITS): string {
   const rewrite = (uri: string, kind: LinkKind): string => {
-    let abs: URL;
-    try {
-      abs = new URL(uri.trim(), baseUrl);
-    } catch {
-      return uri;
-    }
-    if (abs.protocol !== "http:" && abs.protocol !== "https:") return uri;
+    const abs = URL.parse(uri.trim(), baseUrl);
+    if (!abs || (abs.protocol !== "http:" && abs.protocol !== "https:")) return uri;
     abs.hash = "";
     if (abs.href.length > limits.maxUrlLength) throw new PlaylistTooLarge(`a URI longer than ${limits.maxUrlLength} characters`);
     return link(abs.href, kind);
@@ -71,13 +60,14 @@ export function rewritePlaylist(text: string, baseUrl: string, link: (url: strin
     nextIsPlaylist = false;
     return rewrite(trimmed, kind);
   };
-  const lines = input.map((line) => {
-    const out = rewriteLine(line);
-    length += out.length + 1;
-    if (length > limits.maxLength) throw new PlaylistTooLarge(`more than ${limits.maxLength} characters rewritten`);
-    return out;
-  });
-  return lines.join("\n");
+  return input
+    .map((line) => {
+      const out = rewriteLine(line);
+      length += out.length + 1;
+      if (length > limits.maxLength) throw new PlaylistTooLarge(`more than ${limits.maxLength} characters rewritten`);
+      return out;
+    })
+    .join("\n");
 }
 
 export interface PlaylistSummary {
@@ -88,7 +78,6 @@ export interface PlaylistSummary {
   endList: boolean;
 }
 
-/** Counts what a playlist contains (admin diagnostics). */
 export function summarizePlaylist(text: string): PlaylistSummary {
   const s: PlaylistSummary = { master: false, variants: 0, renditions: 0, segments: 0, endList: false };
   let nextIsPlaylist = false;
@@ -109,17 +98,12 @@ export function summarizePlaylist(text: string): PlaylistSummary {
 }
 
 const TS_PACKET = 188;
-/** Junk accepted before the first packet. */
 const TS_ALIGN_WINDOW = 4096;
 /** Consecutive sync bytes (one per packet) that identify an MPEG-TS stream. */
 const TS_SYNC_PACKETS = 5;
-/** Bytes `tsSyncOffset` needs to decide for any offset in the window. */
 export const TS_ALIGN_LOOKAHEAD = TS_ALIGN_WINDOW + TS_PACKET * TS_SYNC_PACKETS;
 
-/**
- * Offset of the first MPEG-TS packet in `head`: the smallest o < 4096 with a 0x47 sync byte at o, o+188, …,
- * o+188·4. 0 when the data already starts aligned or no such offset exists (then nothing is trimmed).
- */
+/** The smallest o < 4096 with a 0x47 sync byte at o, o+188, …, o+188·4; 0 when aligned already or none exists. */
 export function tsSyncOffset(head: Uint8Array): number {
   if (head[0] === 0x47) return 0;
   const last = Math.min(TS_ALIGN_WINDOW, head.length - TS_PACKET * (TS_SYNC_PACKETS - 1));
