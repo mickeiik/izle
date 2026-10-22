@@ -7,14 +7,13 @@ test("access tokens: create (the secret shown once), list oldest first, lastUsed
 
   const created = await s.admin("POST", "/tokens", { name: "  Kitchen agent ", scope: "control" });
   assert.equal(created.status, 201);
-  assert.match(created.json.secret, /^izat_[A-Za-z0-9_-]{43}$/);
-  assert.deepEqual(created.json.token, { id: created.json.token.id, name: "Kitchen agent", scope: "control", createdAt: "2026-10-10T12:00:00.000Z", lastUsedAt: null });
-  assert.match(created.json.token.id, /^[A-Za-z0-9]{12}$/);
-  const secret: string = created.json.secret;
-  const id: string = created.json.token.id;
+  const { secret, token: { id } } = created.json as { secret: string; token: { id: string } };
+  assert.match(secret, /^izat_[A-Za-z0-9_-]{43}$/);
+  assert.match(id, /^[A-Za-z0-9]{12}$/);
+  assert.deepEqual(created.json.token, { id, name: "Kitchen agent", scope: "control", createdAt: "2026-10-10T12:00:00.000Z", lastUsedAt: null });
 
-  assert.equal((await s.admin("POST", "/tokens", { name: "Kitchen agent", scope: "read" })).status, 409);
-  assert.equal((await s.admin("POST", "/tokens", { name: "Kitchen agent", scope: "read" })).json.error, "duplicate_name");
+  const duplicate = await s.admin("POST", "/tokens", { name: "Kitchen agent", scope: "read" });
+  assert.deepEqual([duplicate.status, duplicate.json.error], [409, "duplicate_name"]);
   for (const body of [{ name: "x", scope: "owner" }, { name: "", scope: "read" }, { name: "x".repeat(61), scope: "read" }, { scope: "read" }, { name: "x" }]) {
     assert.equal((await s.admin("POST", "/tokens", body)).status, 400, JSON.stringify(body));
   }

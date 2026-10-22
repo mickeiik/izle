@@ -15,18 +15,16 @@ import type { Command, Store } from "./store.ts";
 
 /** Commands that carry no payload (the SSE payload is `{}`). */
 export const PLAIN_COMMANDS = ["stop", "pause", "resume", "next", "previous"] as const;
-/** The longest relative seek, either way. */
 export const MAX_SEEK_DELTA_MS = 3_600_000;
 export const MESSAGE_MAX_CHARS = 200;
 export const MESSAGE_DURATION_SEC = { min: 3, max: 120, default: 15 };
 
 export type CommandType = "play" | "seek" | "message" | "update" | (typeof PLAIN_COMMANDS)[number];
 
-/** What the TV made of a command (`POST /tv/commands/:id/result`). */
 export const COMMAND_RESULTS = ["done", "ignored", "failed"] as const;
 export type CommandResult = (typeof COMMAND_RESULTS)[number];
 
-/** A command as the admin API takes it (`POST /admin/devices/:id/commands`, validated in validation.ts). */
+/** A command as the admin API takes it (validated in validation.ts). */
 export type CommandBody =
   | { type: "play"; itemId?: string; episodeId?: string; positionMs?: number }
   | { type: (typeof PLAIN_COMMANDS)[number] }
@@ -46,9 +44,7 @@ interface CommandDeps {
   events: EventHub;
   notifier: Notifier;
   eventLog: EventLog;
-  /** The APK an `update` names. */
   appUpdates: AppUpdateService;
-  /** What OK would play, for a `play` that names an item alone. */
   home: HomeService;
   log: Logger;
   now: () => number;
@@ -62,9 +58,8 @@ export class CommandService {
   }
 
   /**
-   * The episode a `play` names: the one given (in the item, when both are), or what OK would play for the item on
-   * this TV right now; a channel's item plays the channel at its live edge (`episodeId` null, no position). The TV
-   * gets ids only, so it plays what the owner saw when sending.
+   * The episode a `play` names: the one given, or what OK would play for the item on this TV right now (the TV gets
+   * ids only, so it plays what the owner saw when sending); a channel plays at its live edge, with no position.
    */
   private playPayload(deviceId: string, body: Extract<CommandBody, { type: "play" }>): Record<string, unknown> {
     const item = body.itemId === undefined ? null : requireItem(this.s.catalog, body.itemId, 404, "unknown_item");
@@ -87,7 +82,7 @@ export class CommandService {
     return { itemId: target.id, episodeId: cont.episodeId, ...position };
   }
 
-  /** What the TV gets with a command (the SSE `payload`); a message's display time defaults here. */
+  /** What the TV gets with a command (the SSE `payload`). */
   private payload(deviceId: string, body: CommandBody): Record<string, unknown> {
     switch (body.type) {
       case "play":
@@ -97,7 +92,7 @@ export class CommandService {
       case "message":
         return { text: body.text.trim(), durationSec: body.durationSec ?? MESSAGE_DURATION_SEC.default };
       case "update": {
-        // The version the TV is to install: the APK stored now (the TV fetches /tv/app before installing).
+        // The TV fetches /tv/app before installing.
         const apk = this.s.appUpdates.current();
         if (!apk) throw new HttpError(409, "no_apk", "no TV app APK is stored");
         return { versionCode: apk.versionCode };
@@ -107,7 +102,6 @@ export class CommandService {
     }
   }
 
-  /** Stores a command for the device and publishes it to the device's open event streams. */
   send(deviceId: string, body: CommandBody, actor: Actor): { command: Command; online: boolean } {
     const payload = this.payload(deviceId, body);
     const online = this.s.events.isOnline(deviceId);
@@ -127,7 +121,7 @@ export class CommandService {
     return this.s.store.pendingCommands(deviceId, this.s.now() - COMMAND_REPLAY_MS);
   }
 
-  /** The TV acknowledges a command; false when the device has no command with this id. */
+  /** False when the device has no command with this id. */
   ack(deviceId: string, id: number): boolean {
     return this.s.store.transaction(() => {
       if (!this.s.store.ackCommand(deviceId, id, this.s.now())) return false;
@@ -136,10 +130,7 @@ export class CommandService {
     });
   }
 
-  /**
-   * The TV reports what it made of a command, once: `unknown` when the device has no command with this id,
-   * `already_reported` for a second report.
-   */
+  /** The TV reports what it made of a command, once. */
   report(deviceId: string, id: number, result: CommandResult, reason: string | null): "ok" | "unknown" | "already_reported" {
     const outcome = this.s.store.transaction(() => {
       const cmd = this.s.store.getCommand(deviceId, id);

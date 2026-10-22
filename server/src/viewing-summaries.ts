@@ -13,9 +13,9 @@ export type TitleStatus = (typeof TITLE_STATUSES)[number];
 export const TITLE_SORTS = ["recent", "watched", "title"] as const;
 export type TitleSort = (typeof TITLE_SORTS)[number];
 
-/** A title is `watching` while it had a viewing in the last 30 days. */
-const WATCHING_WINDOW_MS = 30 * 24 * 60 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
+/** A title is `watching` while it had a viewing in the last 30 days. */
+const WATCHING_WINDOW_MS = 30 * DAY_MS;
 /** The longest span `GET /history/days` answers. */
 export const DAYS_MAX = 366;
 const DAYS_DEFAULT = 30;
@@ -29,15 +29,10 @@ interface SummaryDeps {
 
 /** A viewing as the admin API shows it (the running state stays inside). */
 export function viewingJson(v: Viewing) {
-  const { id, deviceId, deviceName, itemId, itemKind, itemTitle, episodeId, episodeTitle, season, number, sourceId, startedAt, endedAt } = v;
-  const { startPositionMs, endPositionMs, durationMs, watchedMs, endReason, seen, trigger, actor, commandId } = v;
-  return {
-    id, deviceId, deviceName, itemId, itemKind, itemTitle, episodeId, episodeTitle, season, number, sourceId, startedAt: iso(startedAt), endedAt: iso(endedAt),
-    startPositionMs, endPositionMs, durationMs, watchedMs, endReason, seen, trigger, actor, commandId,
-  };
+  const { catalogId, lastReportAt, lastPositionMs, lastPlaying, lastAnchorAt, lastState, ...shown } = v;
+  return { ...shown, startedAt: iso(v.startedAt), endedAt: iso(v.endedAt) };
 }
 
-/** The union of ranges, merged, in position order. */
 export function mergeRanges(ranges: ReadonlyArray<readonly [number, number]>): Array<[number, number]> {
   const out: Array<[number, number]> = [];
   for (const [from, to] of [...ranges].sort((a, b) => a[0] - b[0] || a[1] - b[1])) {
@@ -61,7 +56,6 @@ class HistoryView {
   /** When each episode was first seen by a viewing, over every TV. */
   readonly seenAt = new Map<string, number>();
   readonly marks: Map<string, EpisodeMark>;
-  /** When each present catalog episode first appeared (the "new episodes" status). */
   private readonly firstSeen: Map<string, number>;
   /** What the history last called each item (for one that left the catalog). */
   private readonly known: Map<string, { kind: string; title: string }>;
@@ -80,21 +74,19 @@ class HistoryView {
     this.known = d.store.historyItems(catalogId, itemId);
   }
 
-  /** Whether the episode is seen: the mark's word, else any seen viewing of any TV. */
+  /** The mark's word, else any seen viewing of any TV. */
   isSeen(episodeId: string): boolean {
     return this.marks.get(episodeId)?.seen ?? this.seenAt.has(episodeId);
   }
 
-  /** When the episode was first seen: the end of its first seen viewing, or an earlier `true` mark; null while not seen. */
+  /** The end of the episode's first seen viewing, or an earlier `true` mark; null while not seen. */
   seenSince(episodeId: string): number | null {
     if (!this.isSeen(episodeId)) return null;
     const mark = this.marks.get(episodeId);
-    const byViewing = this.seenAt.get(episodeId);
-    const byMark = mark?.seen ? mark.at : undefined;
-    return Math.min(byViewing ?? Infinity, byMark ?? Infinity);
+    return Math.min(this.seenAt.get(episodeId) ?? Infinity, mark?.seen ? mark.at : Infinity);
   }
 
-  /** The episodes the history knows of an item that is not (or no longer) in the catalog: with a viewing or a mark. */
+  /** The episodes of an item the history knows: with a viewing or a mark. */
   knownEpisodes(itemId: string): string[] {
     const ids = new Set((this.statsByItem.get(itemId) ?? []).flatMap((s) => (s.episodeId === null ? [] : [s.episodeId])));
     for (const m of this.marks.values()) if (m.itemId === itemId) ids.add(m.episodeId);
@@ -136,7 +128,7 @@ class HistoryView {
     return { ...common, status, episodes: counts, seasons: kind === "series" ? seasons : [], rewatches: sum(stats, (s) => Math.max(0, s.seenViewings - 1)) };
   }
 
-  /** `EpisodeHistory` of one episode (`episode` its catalog entry, when it has one), with the ranges of its viewings. */
+  /** `EpisodeHistory` of one episode (`episode` its catalog entry, when it has one). */
   episode(episodeId: string, episode: Episode | undefined, ranges: ReadonlyArray<readonly [number, number]>) {
     const stats = this.statsByEpisode.get(episodeId);
     const durationMs = episode?.durationMs ?? stats?.lastDurationMs ?? null;
@@ -178,12 +170,9 @@ export function titleDetail(d: SummaryDeps, itemId: string, deviceId: string | n
   const catalogEpisodes = item && !isLiveItem(item) ? item.episodes : [];
   const inCatalog = new Set(catalogEpisodes.map((e) => e.id));
   const gone = view.knownEpisodes(itemId).filter((id) => !inCatalog.has(id));
-  const key = (id: string) => [view.statsByEpisode.get(id)?.season ?? Infinity, view.statsByEpisode.get(id)?.number ?? Infinity, id] as const;
-  gone.sort((a, b) => {
-    const [sa, na, ia] = key(a);
-    const [sb, nb, ib] = key(b);
-    return sa - sb || na - nb || ia.localeCompare(ib);
-  });
+  const season = (id: string) => view.statsByEpisode.get(id)?.season ?? Infinity;
+  const number = (id: string) => view.statsByEpisode.get(id)?.number ?? Infinity;
+  gone.sort((a, b) => season(a) - season(b) || number(a) - number(b) || a.localeCompare(b));
   const episodes = [
     ...catalogEpisodes.map((e) => view.episode(e.id, e, ranges.get(e.id) ?? [])),
     ...gone.map((id) => view.episode(id, undefined, ranges.get(id) ?? [])),
@@ -191,7 +180,7 @@ export function titleDetail(d: SummaryDeps, itemId: string, deviceId: string | n
   return { title: view.title(itemId, item), episodes };
 }
 
-/** A formatter whose `format` gives the calendar date (`YYYY-MM-DD`) of an instant in `tz`; throws on an unknown zone. */
+/** A formatter whose `format` gives the calendar date (`YYYY-MM-DD`) of an instant in `tz`. */
 function dateFormatter(tz: string): Intl.DateTimeFormat {
   try {
     return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
@@ -200,7 +189,7 @@ function dateFormatter(tz: string): Intl.DateTimeFormat {
   }
 }
 
-/** The UTC midnight of a `YYYY-MM-DD` date (as epoch ms); 400 for anything else. */
+/** The UTC midnight of a `YYYY-MM-DD` date; 400 for anything else. */
 function parseDate(value: string, name: string): number {
   const ms = DATE.test(value) ? Date.parse(`${value}T00:00:00Z`) : NaN;
   if (Number.isNaN(ms) || new Date(ms).toISOString().slice(0, 10) !== value) throw new HttpError(400, "invalid_request", `${name} must be a date (YYYY-MM-DD)`);

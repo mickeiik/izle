@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ADMIN_TOKEN, fixtureItems, fixtureManifest, openEvents, publishBuild, testServer, writeBundle, type Json, type TestServer, type TestServerOptions } from "./helpers.ts";
+import { ADMIN_TOKEN, fixtureItems, fixtureManifest, openEvents, publishBuild, tempDir, testServer, writeBundle, type Json, type TestServer, type TestServerOptions } from "./helpers.ts";
 
 const MIN = 60_000;
 const RUN = "Zq3v9Kx2LmN8pQ4rT6uW1yA5bC7dE0fGhIjKlMnO"; // gitleaks:allow (made-up hostile fixture)
@@ -16,13 +16,17 @@ async function setup(t: { after(fn: () => unknown): void }, opts: TestServerOpti
 
 function helpers(s: TestServer, tv: { deviceId: string; token: string }) {
   const as = (method: string, route: string, body?: unknown) => s.call(method, `/api/v1/tv${route}`, { token: tv.token, body });
-  return {
-    tv, as,
-    resolve: (episodeId: string, extra: Json = {}) => as("POST", "/resolve", { episodeId, ...extra }),
-    report: (episodeId: string, status: string, positionMs: number, extra: Json = {}) => as("POST", "/progress", { episodeId, positionMs, status, ...extra }),
-    /** The TV's running viewing (as stored), or null. */
-    running: () => s.srv.ctx.playing.running(tv.deviceId),
+  const resolve = (episodeId: string, extra: Json = {}) => as("POST", "/resolve", { episodeId, ...extra });
+  const report = (episodeId: string, status: string, positionMs: number, extra: Json = {}) => as("POST", "/progress", { episodeId, positionMs, status, ...extra });
+  /** Plays `ms` from the start, stops, and lets a minute pass. */
+  const watch = async (episodeId: string, ms = 20_000) => {
+    await resolve(episodeId);
+    await report(episodeId, "playing", 0);
+    s.clock.advance(ms);
+    await report(episodeId, "stopped", ms);
+    s.clock.advance(MIN);
   };
+  return { tv, as, resolve, report, watch, running: () => s.srv.ctx.playing.running(tv.deviceId) };
 }
 
 const viewings = async (s: TestServer, query = "") => (await s.admin("GET", `/history/viewings${query}`)).json;
@@ -322,13 +326,7 @@ test("titles and episodes: seen by viewing or mark (a mark wins), another TV's v
 });
 
 test("days: a viewing counts on the day it started in the zone asked for; invalid zones and spans", async (t) => {
-  const { s, resolve, report } = await setup(t);
-  const watch = async (episodeId: string, ms: number) => {
-    await resolve(episodeId);
-    await report(episodeId, "playing", 0);
-    s.clock.advance(ms);
-    await report(episodeId, "stopped", ms);
-  };
+  const { s, watch } = await setup(t);
   await watch("show.e1", 30_000); // 2026-10-10 12:00Z
   s.clock.advance(9 * 60 * MIN);
   await watch("film.main", 45_000); // 21:30Z: already 2026-10-11 in Istanbul
@@ -348,19 +346,12 @@ test("days: a viewing counts on the day it started in the zone asked for; invali
 });
 
 test("viewings: filters and paging, newest first; they outlive the TV and the catalog", async (t) => {
-  const { s, resolve, report, tv } = await setup(t);
+  const { s, resolve, watch, tv } = await setup(t);
   const kitchen = helpers(s, await s.pair("Mutfak"));
-  const watch = async (h: { resolve: typeof resolve; report: typeof report }, episodeId: string) => {
-    await h.resolve(episodeId);
-    await h.report(episodeId, "playing", 0);
-    s.clock.advance(20_000);
-    await h.report(episodeId, "stopped", 20_000);
-    s.clock.advance(MIN);
-  };
-  await watch({ resolve, report }, "show.e1");
-  await watch(kitchen, "film.main");
-  await watch({ resolve, report }, "show.e2");
-  await watch(kitchen, "show.e1");
+  await watch("show.e1");
+  await kitchen.watch("film.main");
+  await watch("show.e2");
+  await kitchen.watch("show.e1");
   await resolve("film.main"); // running
   const ids = (list: Json) => list.viewings.map((v: Json) => v.episodeId);
   const all = await viewings(s);
@@ -456,20 +447,13 @@ test("events: ended before started on a replace, episode.seen after its ended; t
 });
 
 test("deletions: one viewing, a TV's, older than a date, everything; a deleted running viewing stays gone", async (t) => {
-  const { s, resolve, report, tv } = await setup(t);
+  const { s, resolve, report, watch, tv } = await setup(t);
   const kitchen = helpers(s, await s.pair("Mutfak"));
-  const watch = async (h: { resolve: typeof resolve; report: typeof report }, episodeId: string) => {
-    await h.resolve(episodeId);
-    await h.report(episodeId, "playing", 0);
-    s.clock.advance(20_000);
-    await h.report(episodeId, "stopped", 20_000);
-    s.clock.advance(MIN);
-  };
-  await watch({ resolve, report }, "show.e1");
-  await watch(kitchen, "show.e1");
+  await watch("show.e1");
+  await kitchen.watch("show.e1");
   const cut = at(s);
-  await watch({ resolve, report }, "show.e2");
-  await watch(kitchen, "show.e2");
+  await watch("show.e2");
+  await kitchen.watch("show.e2");
   await resolve("film.main");
   const count = async (q = "") => (await viewings(s, q)).viewings.length;
   assert.equal(await count(), 5);
@@ -513,7 +497,7 @@ test("hostile fixture: titles and names with URLs and tokens never reach the log
   const items = fixtureItems();
   items.items[0].title = `Şov https://evil.example.test/show?sig=${RUN}`;
   items.items[0].episodes[0].title = `Pilot ${RUN}`;
-  const s = await testServer(t, { bundleDir: await writeBundle(`${await (await import("./helpers.ts")).tempDir()}/bundle`, fixtureManifest(), items) });
+  const s = await testServer(t, { bundleDir: await writeBundle(`${await tempDir()}/bundle`, fixtureManifest(), items) });
   const h = helpers(s, await s.pair(`TV https://evil.example.test/tv?t=${RUN.slice(0, 24)}`));
   const from = s.logs.length;
   await h.resolve("show.e1");

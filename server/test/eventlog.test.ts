@@ -196,7 +196,8 @@ test("stream: a replay sends at most the newest 500 events, after a gap naming w
 });
 
 test("stream: a writer closes the stream once more frames wait than it may queue", async () => {
-  const stalled = { aborted: false, aborts: 0, abort() { this.aborts++; this.aborted = true; } };
+  const signal = () => ({ aborted: false, aborts: 0, abort() { this.aborts++; this.aborted = true; } });
+  const stalled = signal();
   const write = frameWriter(stalled, 3);
   let started = 0;
   // The reader never reads: the first frame never completes, the rest wait behind it.
@@ -205,7 +206,7 @@ test("stream: a writer closes the stream once more frames wait than it may queue
   assert.equal(stalled.aborts, 1, "aborted when the fourth frame was queued, once");
   assert.equal(started, 1, "frames run one at a time");
 
-  const flowing = { aborted: false, aborts: 0, abort() { this.aborts++; this.aborted = true; } };
+  const flowing = signal();
   const writeFlowing = frameWriter(flowing, 3);
   let written = 0;
   for (let round = 0; round < 50; round++) {
@@ -285,6 +286,7 @@ test("online: a TV is online while a stream is open and for the grace period aft
   await s.admin("DELETE", `/devices/${tv.deviceId}`);
   // (The unacknowledged pause commands are replayed first.)
   await assert.rejects(third.next((m) => m.event === "state", 2000), /stream ended/);
+  assert.equal((await s.call("GET", "/api/v1/tv/events", { token: tv.token })).status, 401);
   await new Promise((r) => setTimeout(r, 300));
   assert.deepEqual(await onlineEvents(), ["device.online", "device.offline", "device.online"]);
   assert.equal(online(), false);

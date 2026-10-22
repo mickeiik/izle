@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { databaseFile } from "../src/config.ts";
 import { openEvents, testServer, type Json, type TestServer } from "./helpers.ts";
 
-test("pairing: start → pending → approve → token delivered exactly once", async (t) => {
+test("pairing: start → pending → approve (waking the long-poll) → token delivered exactly once; expiry; validation", async (t) => {
   const s = await testServer(t);
   const start = await s.call("POST", "/api/v1/pair/start");
   assert.equal(start.status, 200);
@@ -20,49 +20,38 @@ test("pairing: start → pending → approve → token delivered exactly once", 
   const pending = await s.admin("GET", "/pair/pending");
   assert.deepEqual(pending.json.codes.map((c: { code: string }) => c.code), [start.json.code]);
 
+  const started = Date.now();
+  const polling = wait(start.json.pairToken, 10);
+  await new Promise((r) => setTimeout(r, 100));
   const approve = await s.admin("POST", "/pair/approve", { code: start.json.code, name: "  Salon TV " });
   assert.equal(approve.status, 200);
   const deviceId = approve.json.deviceId;
-  assert.equal((await s.admin("POST", "/pair/approve", { code: start.json.code, name: "again" })).status, 409);
-
-  const devices = await s.admin("GET", "/devices");
-  assert.equal(devices.json.devices[0].status, "pending");
-  assert.equal(devices.json.devices[0].name, "Salon TV");
-
-  const done = await wait();
-  assert.equal(done.status, 200);
-  assert.equal(done.json.status, "approved");
-  assert.equal(done.json.deviceId, deviceId);
+  const done = await polling;
+  assert.ok(Date.now() - started < 5000, "the approval wakes the long-poll");
+  assert.deepEqual([done.status, done.json.status, done.json.deviceId], [200, "approved", deviceId]);
   assert.ok(done.json.deviceToken.length >= 43);
+  assert.equal((await s.admin("POST", "/pair/approve", { code: start.json.code, name: "again" })).status, 404, "a delivered code is no longer open");
   const again = await wait();
-  assert.equal(again.status, 410, "the token is handed out once");
-  assert.equal(again.json.status, "expired");
+  assert.deepEqual([again.status, again.json.status], [410, "expired"], "the token is handed out once");
 
   const state = await s.call("GET", "/api/v1/tv/state", { token: done.json.deviceToken });
-  assert.equal(state.status, 200);
-  assert.equal(state.json.device.name, "Salon TV");
+  assert.deepEqual([state.status, state.json.device.name], [200, "Salon TV"]);
   assert.equal((await s.admin("GET", "/devices")).json.devices[0].status, "active");
-});
 
-test("pairing: a waiting long-poll is woken by the approval", async (t) => {
-  const s = await testServer(t);
-  const start = await s.call("POST", "/api/v1/pair/start");
-  const started = Date.now();
-  const polling = s.call("GET", `/api/v1/pair/wait?code=${start.json.code}&wait=10`, { token: start.json.pairToken });
-  await new Promise((r) => setTimeout(r, 100));
-  await s.admin("POST", "/pair/approve", { code: start.json.code, name: "TV" });
-  const r = await polling;
-  assert.equal(r.json.status, "approved");
-  assert.ok(Date.now() - started < 5000);
-});
-
-test("pairing: codes expire after 10 minutes", async (t) => {
-  const s = await testServer(t);
-  const start = await s.call("POST", "/api/v1/pair/start");
+  // Approved, then pending until collected; a second approval is refused. Codes expire after 10 minutes.
+  const next = await s.call("POST", "/api/v1/pair/start");
+  await s.admin("POST", "/pair/approve", { code: next.json.code, name: "Kitchen" });
+  assert.equal((await s.admin("POST", "/pair/approve", { code: next.json.code, name: "again" })).status, 409);
+  assert.deepEqual((await s.admin("GET", "/devices")).json.devices.map((d: Json) => [d.name, d.status]), [["Salon TV", "active"], ["Kitchen", "pending"]]);
+  const late = await s.call("POST", "/api/v1/pair/start");
   s.clock.advance(10 * 60_000 + 1);
-  const r = await s.call("GET", `/api/v1/pair/wait?code=${start.json.code}&wait=0`, { token: start.json.pairToken });
-  assert.equal(r.status, 410);
-  assert.equal((await s.admin("POST", "/pair/approve", { code: start.json.code, name: "TV" })).status, 404);
+  assert.equal((await s.call("GET", `/api/v1/pair/wait?code=${late.json.code}&wait=0`, { token: late.json.pairToken })).status, 410);
+  assert.equal((await s.admin("POST", "/pair/approve", { code: late.json.code, name: "TV" })).status, 404);
+
+  assert.equal((await s.call("GET", "/api/v1/pair/wait?code=12ab&wait=0", { token: "x" })).status, 400);
+  assert.equal((await s.call("GET", "/api/v1/pair/wait?code=123456&wait=99", { token: "x" })).status, 400);
+  assert.equal((await s.admin("POST", "/pair/approve", { code: "123456" })).status, 404, "the name is optional");
+  assert.equal((await s.admin("POST", "/pair/approve", { code: "123456", name: "   " })).status, 400, "a blank name is a mistake");
 });
 
 test("pairing: at most two open codes per client, with Retry-After, and pair/start is rate-limited per client", async (t) => {
@@ -160,15 +149,6 @@ test("pairing: behind a trusted reverse proxy the rate limit counts each X-Forwa
   const direct = await testServer(t, limit);
   assert.deepEqual([await start(direct, "203.0.113.1"), await start(direct, "203.0.113.2")], [200, 200]);
   assert.equal(await start(direct, "203.0.113.3"), 429);
-});
-
-test("pairing: input validation", async (t) => {
-  const s = await testServer(t);
-  assert.equal((await s.call("GET", "/api/v1/pair/wait?code=12ab&wait=0", { token: "x" })).status, 400);
-  assert.equal((await s.call("GET", "/api/v1/pair/wait?code=123456&wait=99", { token: "x" })).status, 400);
-  assert.equal((await s.admin("POST", "/pair/approve", { code: "123456" })).status, 404, "the name is optional");
-  assert.equal((await s.admin("POST", "/pair/approve", { code: "123456", name: "   " })).status, 400, "a blank name is a mistake");
-  assert.equal((await s.admin("POST", "/pair/approve", { code: "123456", name: "TV" })).status, 404);
 });
 
 test("pairing: approving without a name calls the TV \"TV\", then \"TV 2\", …", async (t) => {

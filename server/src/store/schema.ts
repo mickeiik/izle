@@ -103,7 +103,6 @@ export const MIGRATIONS: string[] = [
     seq INTEGER NOT NULL DEFAULT 0          -- bumped on every write (admin long-polls)
   );
 
-  -- "Listen along": the owner's companion links.
   CREATE TABLE companion_links (
     catalog_id TEXT NOT NULL,
     item_id TEXT NOT NULL,
@@ -117,7 +116,6 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX companion_links_by_item ON companion_links (catalog_id, item_id);
 
-  -- What went wrong on a TV, for the remote owner.
   CREATE TABLE problems (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,

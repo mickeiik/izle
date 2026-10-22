@@ -1,9 +1,7 @@
 // What each TV is playing: its now-playing row (what GET …/now, Listen along and the status list read), the running
-// viewing of the history (one playback of one episode, or of one channel: its start, its heartbeats, its end and the
-// lost sweep) and the long-poll on the row. A successful resolve starts or continues a playback; a progress report
-// is applied to the row and the viewing at once. Whether it is an episode or a channel is decided here, once, from
-// the ref: a channel has no position, so its row has none, its viewing has no ranges or seeks and is never seen.
-// Every change appends its events in its own transaction; nothing here is logged beyond ids and small facts.
+// viewing of the history (its start, its heartbeats, its end and the lost sweep) and the long-poll on the row.
+// Whether it is an episode or a channel is decided here, once, from the ref: a channel has no position, so its row
+// has none, its viewing has no ranges or seeks and is never seen. Nothing here is logged beyond ids and small facts.
 
 import { isLiveItem } from "@izle/contract";
 import { SERVER, tvActor, type Actor } from "./actor.ts";
@@ -16,9 +14,7 @@ import { matchesSaid, type PartialPlayingKey, type PlaybackSessions, type Resolv
 import type { Device, NowPlaying, Store, Viewing, ViewingEndReason, ViewingTrigger } from "./store.ts";
 import { Waiters } from "./waiters.ts";
 
-/** Longest an admin "now" long-poll waits for the next playback report. */
 export const MAX_NOW_WAIT_MS = 25_000;
-/** How often the lost sweep runs. */
 export const VIEWING_SWEEP_MS = 30_000;
 /** Silence (while playing, or before the first report) or an offline TV for this long ends the viewing as lost. */
 const LOST_AFTER_MS = 2 * 60_000;
@@ -39,7 +35,6 @@ interface ReportFields {
   ageMs?: number;
 }
 
-/** An episode's progress report: where the player is. */
 export interface EpisodeProgressInput extends ReportFields {
   episodeId: string;
   itemId?: undefined;
@@ -48,7 +43,6 @@ export interface EpisodeProgressInput extends ReportFields {
   status: ProgressReportStatus;
 }
 
-/** A channel's report: only that it plays (or stalls) or stopped; a channel has no position. */
 export interface LiveReportInput extends ReportFields {
   itemId: string;
   episodeId?: undefined;
@@ -58,7 +52,6 @@ export interface LiveReportInput extends ReportFields {
 /** `POST /tv/progress`: an episode's report or a channel's (validation.ts tells them apart). */
 export type ProgressInput = EpisodeProgressInput | LiveReportInput;
 
-/** Where an episode is and how long it is (as far as known); a channel has neither. */
 export interface Position {
   positionMs: number;
   durationMs: number | null;
@@ -85,36 +78,33 @@ interface Report {
    */
   said: PartialPlayingKey;
   status: ProgressReportStatus;
-  /** Where the player is; null for a channel. */
   position: Position | null;
   playing: boolean;
-  /** When the position was sampled (the receipt time minus the report's age). */
   anchorAt: number;
 }
 
 type ViewingPatch = Partial<Omit<Viewing, "id" | "actor">>;
+type RowWrite = Pick<NowPlaying, "state" | "playing" | "anchorAt"> & { position: Position | null };
+type Origin = Pick<ResolveInput, "trigger" | "commandId">;
 
 /** What a report does to the running viewing it names. */
 interface Heard {
   patch: ViewingPatch;
-  /** The events it appends, in order: the stall transitions, a seek, the pause transitions. */
+  /** In order: the stall transitions, a seek, the pause transitions. */
   events: Array<{ type: string; data: Record<string, unknown> }>;
   /** What was played since the report before, when the player advanced there without a seek (an episode only). */
   range: { fromMs: number; toMs: number } | null;
-  /** How the report ends the viewing and where (null for a channel); null while it goes on. */
   end: { reason: "stopped" | "finished"; positionMs: number | null } | null;
 }
 
-/** What the player was doing according to a report: `playing` with `playing: false` is a stall. */
-type PlayerState = "starting" | "playing" | "paused" | "stalled";
-
-function playerState(status: ProgressReportStatus | null, playing: boolean): PlayerState {
+/** `playing` with `playing: false` is a stall. */
+function playerState(status: ProgressReportStatus | null, playing: boolean): "starting" | "playing" | "paused" | "stalled" {
   if (status === null) return "starting";
   if (status === "paused") return "paused";
   return playing ? "playing" : "stalled";
 }
 
-/** Where a viewing was last (its last report, else where it started); null for a channel, which has no position. */
+/** Where a viewing was last (its last report, else where it started); null for a channel. */
 function lastPosition(v: Viewing): number | null {
   return v.episodeId === null ? null : (v.lastPositionMs ?? v.startPositionMs ?? 0);
 }
@@ -161,14 +151,11 @@ function hear(v: Viewing, r: Report, t: number): Heard {
   return { patch, events, range, end };
 }
 
-/**
- * What each TV is playing: the now-playing row, the running viewing and the waiters on the row. A resolve and a
- * report change both in one transaction (the caller's, when it has one); the waiters wake once it committed.
- */
+/** A resolve and a report change the row and the viewing in one transaction; the waiters wake once it committed. */
 export class PlayingService {
   private readonly s: PlayingDeps;
   private readonly waiters = new Waiters<string>();
-  /** When each TV went offline (its last stream's grace period ended); a TV absent here has been offline since the start. */
+  /** When each TV went offline; a TV absent here has been offline since the start. */
   private readonly offlineAt = new Map<string, number>();
   private readonly startedAt: number;
 
@@ -177,7 +164,7 @@ export class PlayingService {
     this.startedAt = deps.now();
   }
 
-  /** What the device plays (null: it never played). One read for the device page, Listen along and the status list. */
+  /** What the device plays (null: it never played). */
   current(deviceId: string): Current | null {
     const n = this.s.store.getNowPlaying(deviceId);
     if (!n) return null;
@@ -196,7 +183,6 @@ export class PlayingService {
     return this.current(deviceId);
   }
 
-  /** The device's running viewing, or null. */
   running(deviceId: string): Viewing | null {
     return this.s.store.runningViewing(deviceId);
   }
@@ -206,9 +192,9 @@ export class PlayingService {
    * (the source may change; no event), any other is ended as `replaced` and a new one started. `start` is where an
    * episode starts and its duration as known, as tv.ts decides them; a channel plays at its live edge and has none.
    */
-  started(device: Device, played: { ref: EpisodeRef; sourceId: string }, start: Position, input: Pick<ResolveInput, "trigger" | "commandId">): void;
-  started(device: Device, played: { ref: LiveRef; sourceId: string }, start: null, input: Pick<ResolveInput, "trigger" | "commandId">): void;
-  started(device: Device, played: { ref: PlayableRef; sourceId: string }, start: Position | null, input: Pick<ResolveInput, "trigger" | "commandId">): void {
+  started(device: Device, played: { ref: EpisodeRef; sourceId: string }, start: Position, input: Origin): void;
+  started(device: Device, played: { ref: LiveRef; sourceId: string }, start: null, input: Origin): void;
+  started(device: Device, played: { ref: PlayableRef; sourceId: string }, start: Position | null, input: Origin): void {
     const { ref, sourceId } = played;
     const t = this.s.now();
     // The overloads pair an episode's ref with its start and a channel's with none.
@@ -248,14 +234,7 @@ export class PlayingService {
     });
   }
 
-  /** Writes the row: what plays, from which source, where (null for a channel) and in which state since when. */
-  private write(
-    deviceId: string,
-    ref: PlayableRef,
-    sourceId: string | null,
-    w: { state: NowPlaying["state"]; position: Position | null; playing: boolean; anchorAt: number },
-    t: number,
-  ): void {
+  private write(deviceId: string, ref: PlayableRef, sourceId: string | null, w: RowWrite, t: number): void {
     const { position, ...rest } = w;
     this.s.store.setNowPlaying(deviceId, {
       catalogId: this.s.catalog.catalogId, ...playingKey(ref), sourceId, positionMs: position?.positionMs ?? null, durationMs: position?.durationMs ?? null,
@@ -263,7 +242,7 @@ export class PlayingService {
     });
   }
 
-  private startViewing(device: Device, ref: PlayableRef, sourceId: string, position: Position | null, input: Pick<ResolveInput, "trigger" | "commandId">, t: number): void {
+  private startViewing(device: Device, ref: PlayableRef, sourceId: string, position: Position | null, input: Origin, t: number): void {
     const { store, eventLog } = this.s;
     const running = store.runningViewing(device.id);
     const playing = playingKey(ref);
@@ -289,8 +268,8 @@ export class PlayingService {
     this.s.log.debug("viewing started", { deviceId: device.id, viewingId, itemId, episodeId, trigger });
   }
 
-  /** The trigger, actor and command behind a resolve: a command's actor when the TV names one of its play/next/previous commands. */
-  private origin(deviceId: string, input: Pick<ResolveInput, "trigger" | "commandId">): { trigger: ViewingTrigger; actor: Actor; commandId: number | null } {
+  /** The trigger, actor and command behind a resolve: a command's actor when the TV names one of its own. */
+  private origin(deviceId: string, input: Origin): { trigger: ViewingTrigger; actor: Actor; commandId: number | null } {
     const tv = tvActor(deviceId);
     if (input.trigger === undefined) return { trigger: "unknown", actor: tv, commandId: null };
     if (input.trigger !== "command") return { trigger: input.trigger, actor: tv, commandId: null };
@@ -298,7 +277,7 @@ export class PlayingService {
     return { trigger: "command", actor: cmd?.actor ?? tv, commandId: cmd?.id ?? null };
   }
 
-  /** Applies a report to the TV's running viewing when it plays what the report names (ignored otherwise). */
+  /** Applies a report to the TV's running viewing when it plays what the report names. */
   private hearViewing(device: Device, r: Report, t: number): void {
     const { store, eventLog } = this.s;
     const v = store.runningViewing(device.id);
@@ -311,10 +290,7 @@ export class PlayingService {
     if (end) this.end({ ...v, ...patch }, end.reason, t, end.positionMs, actor);
   }
 
-  /**
-   * Ends `v` (already updated with its last report), or drops it when it was too short to keep; the events follow.
-   * `positionMs` is where it ended (null for a channel, which is never seen).
-   */
+  /** Ends `v` (already updated with its last report), or drops it when it was too short to keep. */
   private end(v: Viewing, reason: ViewingEndReason, at: number, positionMs: number | null, actor: Actor): void {
     const { store, eventLog } = this.s;
     const { watchedMs } = v;
@@ -362,7 +338,7 @@ export class PlayingService {
     }
   }
 
-  /** Hears the online rule's changes (from the event hub), so the lost sweep knows how long a TV has been offline. */
+  /** Hears the event hub's online changes, so the lost sweep knows how long a TV has been offline. */
   onOnline(deviceId: string, online: boolean): void {
     if (online) this.offlineAt.delete(deviceId);
     else this.offlineAt.set(deviceId, this.s.now());

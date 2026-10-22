@@ -28,20 +28,19 @@ export interface PairingOptions {
   startLimit?: { max: number; windowMs: number };
 }
 
-/**
- * Pairing: the TV asks for a 6-digit code and long-polls with its pair token; the owner approves the code in the
- * admin API; the next poll creates the device token, hands it over once, and only its hash is kept.
- */
 interface PairingDeps {
   store: Store;
   eventLog: EventLog;
   events: EventHub;
-  /** A replaced TV's proxy sessions end with it. */
   proxy: ProxyService;
   log: Logger;
   now: () => number;
 }
 
+/**
+ * Pairing: the TV asks for a 6-digit code and long-polls with its pair token; the owner approves the code in the
+ * admin API; the next poll creates the device token, hands it over once, and only its hash is kept.
+ */
 export class PairingService {
   private readonly waiters = new Waiters<string>();
   private readonly limiter: RateLimiter;
@@ -85,10 +84,9 @@ export class PairingService {
   }
 
   /**
-   * Owner approval. Creates the device (pending until the TV collects its token). Without a name the TV is called
-   * "TV", or the first free "TV n", so two unnamed TVs stay apart in the admin page; the owner can rename it later.
-   * With `replaces` (an active device) no device is created: the code is bound to that one, which the TV takes
-   * over when it collects its token, keeping its name (`name` is ignored).
+   * Creates the device (pending until the TV collects its token), named "TV" or the first free "TV n" by default so
+   * two unnamed TVs stay apart. With `replaces` (an active device) the code is bound to that one instead, which the
+   * TV takes over, name included, when it collects its token.
    */
   approve(code: string, name?: string | null, replaces?: string): { deviceId: string; name: string } {
     const t = this.s.now();
@@ -113,10 +111,7 @@ export class PairingService {
     return device;
   }
 
-  /**
-   * Owner cancellation of an open code (one the owner's TV does not show): it expires now, so the TV's `pair/wait`
-   * answers 410, and a new device approved on it but never collected is deleted. False: no open code.
-   */
+  /** Owner cancellation of an open code (one the owner's TV does not show). False: no open code. */
   cancel(code: string, actor: Actor): boolean {
     const t = this.s.now();
     const cancelled = this.s.store.transaction(() => {
@@ -147,13 +142,12 @@ export class PairingService {
     if (row.approvedAt === null || row.deviceId === null) return { status: "pending" };
     const deviceToken = newToken();
     const deviceId = row.deviceId;
-    // A device that already has a token is being taken over (`approve` with `replaces`): the new token replaces it.
     const replaced = this.s.store.transaction(() => {
-      // The device exists: a code is deleted with its device (a cascade), so an open one always has its device.
+      // A code is deleted with its device (a cascade), so an open one always has its device.
       const device = this.s.store.getDevice(deviceId)!;
       this.s.store.setDeviceToken(deviceId, sha256(deviceToken), t);
       this.s.store.markPairCodeDelivered(code, t);
-      const taken = device.tokenHash !== null;
+      const taken = device.tokenHash !== null; // `approve` with `replaces`: the new token replaces the old one
       this.s.eventLog.append("device.paired", deviceId, tvActor(deviceId), { name: device.name, replaced: taken });
       return taken;
     });

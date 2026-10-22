@@ -92,23 +92,6 @@ test("report validation", async (t) => {
   assert.equal(edge.status, 202);
 });
 
-test("a report naming the TV's playback session gets the episode and source from it", async (t) => {
-  const { s, tv, as, report } = await setup(t);
-  const played = await as("POST", "/resolve", { episodeId: "show.e1" });
-  assert.equal(played.json.sourceId, "tr-dub");
-  await report({ kind: "playback", code: "decoder", sessionId: played.json.sessionId, positionMs: 5_000 });
-  const other = await s.pair("Other");
-  await s.call("POST", "/api/v1/tv/problems", { token: other.token, body: { kind: "playback", code: "foreign", sessionId: played.json.sessionId } });
-  await report({ kind: "playback", code: "mismatch", sessionId: played.json.sessionId, episodeId: "film.main" });
-  const rows = s.srv.ctx.store.listProblems(tv.deviceId, 10);
-  assert.deepEqual(rows.map((p) => [p.code, p.episodeId, p.sourceId]), [["mismatch", "film.main", null], ["decoder", "show.e1", "tr-dub"]]);
-  assert.deepEqual(
-    s.srv.ctx.store.listProblems(other.deviceId, 10).map((p) => [p.code, p.episodeId, p.sourceId]),
-    [["foreign", null, null]],
-    "another TV's session is not used",
-  );
-});
-
 test("more than 30 reports in 10 minutes answer 429 with Retry-After", async (t) => {
   const { s, report } = await setup(t);
   for (let i = 0; i < 30; i++) assert.equal((await report({ kind: "playback", code: `c${i}` })).status, 202);
@@ -164,17 +147,7 @@ test("Device.problems counts the last 24 hours; DELETE clears; unknown devices a
   assert.equal((await s.call("GET", `/api/v1/admin/devices/${tv.deviceId}/problems`, { token: tv.token })).status, 401);
 });
 
-test("problems of an episode that left the catalog are listed as missing", async (t) => {
-  const { s, report, list } = await setup(t);
-  await report({ kind: "playback", code: "a", episodeId: "film.main" });
-  assert.equal((await list()).json.problems[0].itemTitle, "Film");
-  await publishBuild(s.bundleDir, "fixture-2", (items) => items.filter((i) => i.id !== "film"));
-  assert.equal((await s.admin("POST", "/catalog/reload")).status, 200);
-  const [p] = (await list()).json.problems;
-  assert.deepEqual([p.itemId, p.itemTitle, p.itemKind, p.episodeId, p.episodeTitle, p.missing], ["film", null, null, "film.main", null, true]);
-});
-
-test("a channel's report names its item: listed with itemKind live and no episode, missing once the channel left the catalog", async (t) => {
+test("a channel's report names its item: listed with itemKind live and no episode; missing once it (or an episode) left the catalog", async (t) => {
   const { s, tv, report, list } = await setup(t);
   const fields = { kind: "playback", code: "ERROR_CODE_IO_NETWORK_CONNECTION_FAILED", itemId: "news", sourceId: "ts", httpStatus: 502, appVersion: "0.4.0" };
   assert.equal((await report(fields)).status, 202);
@@ -194,6 +167,7 @@ test("a channel's report names its item: listed with itemKind live and no episod
   await report({ kind: "other", code: "as_episode", episodeId: "news" });
   await report({ kind: "other", code: "ghost", itemId: "ghost" });
   await report({ kind: "other", code: "both", itemId: "news", episodeId: "film.main" });
+  await report({ kind: "playback", code: "film", episodeId: "film.main" });
   const byCode = async () => new Map((await list()).json.problems.map((x: Json) => [x.code, x]));
   let listed = await byCode();
   const view = (code: string) => {
@@ -204,14 +178,16 @@ test("a channel's report names its item: listed with itemKind live and no episod
   assert.deepEqual(view("ghost"), ["ghost", null, null, null, true]);
   assert.deepEqual(view("both"), ["film", "Film", "movie", "film.main", false]);
 
-  await publishBuild(s.bundleDir, "fixture-2", (items) => items.filter((i) => i.id !== "news"));
+  assert.deepEqual(view("film"), ["film", "Film", "movie", "film.main", false]);
+  await publishBuild(s.bundleDir, "fixture-2", (items) => items.filter((i) => i.id !== "news" && i.id !== "film"));
   assert.equal((await s.admin("POST", "/catalog/reload")).status, 200);
   listed = await byCode();
   assert.deepEqual(view(fields.code), ["news", null, null, null, true]);
+  assert.deepEqual([...view("film"), (listed.get("film") as Json).episodeTitle], ["film", null, null, "film.main", true, null]);
   assert.equal((listed.get(fields.code) as Json).sourceId, "ts", "what the report said stays");
 });
 
-test("a report naming a channel's session gets its item and source; an episode's session, named with its item, gives the episode", async (t) => {
+test("a report naming the TV's playback session (a channel's or an episode's) gets what it played and its source from it", async (t) => {
   const { s, tv, as, report } = await setup(t);
   const live = await as("POST", "/resolve", { itemId: "news" });
   assert.equal(live.json.sourceId, "hls");
@@ -224,16 +200,21 @@ test("a report naming a channel's session gets its item and source; an episode's
   await report({ kind: "playback", code: "other_item", sessionId: live.json.sessionId, itemId: "film" });
   await report({ kind: "playback", code: "channel_as_episode", sessionId: live.json.sessionId, episodeId: "show.e2" });
   await report({ kind: "playback", code: "episode_as_channel", sessionId: episode.json.sessionId, itemId: "news" });
-  assert.deepEqual(
-    s.srv.ctx.store.listProblems(tv.deviceId, 10).map((p) => [p.code, p.itemId, p.episodeId, p.sourceId]).reverse(),
-    [
-      ["live_stall", "news", null, "hls"],
-      ["by_item", "show", "show.e1", "tr-dub"],
-      ["other_item", "film", null, null],
-      ["channel_as_episode", "show", "show.e2", null],
-      ["episode_as_channel", "news", null, null],
-    ],
-  );
+  await report({ kind: "playback", code: "decoder", sessionId: episode.json.sessionId, positionMs: 5_000 });
+  await report({ kind: "playback", code: "mismatch", sessionId: episode.json.sessionId, episodeId: "film.main" });
+  const other = await s.pair("Other");
+  await s.call("POST", "/api/v1/tv/problems", { token: other.token, body: { kind: "playback", code: "foreign", sessionId: episode.json.sessionId } });
+  const rows = (deviceId: string) => s.srv.ctx.store.listProblems(deviceId, 10).map((p) => [p.code, p.itemId, p.episodeId, p.sourceId]).reverse();
+  assert.deepEqual(rows(tv.deviceId), [
+    ["live_stall", "news", null, "hls"],
+    ["by_item", "show", "show.e1", "tr-dub"],
+    ["other_item", "film", null, null],
+    ["channel_as_episode", "show", "show.e2", null],
+    ["episode_as_channel", "news", null, null],
+    ["decoder", "show", "show.e1", "tr-dub"],
+    ["mismatch", "film", "film.main", null],
+  ]);
+  assert.deepEqual(rows(other.deviceId), [["foreign", null, null, null]], "another TV's session is not used");
 });
 
 test("detail helpers: failed sources in a few words", () => {

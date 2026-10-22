@@ -26,12 +26,10 @@ function canonical(file: string): string {
 }
 
 /**
- * Copies the SQLite database `source` to `target` with `VACUUM INTO`, which reads one consistent snapshot. The
- * server keeps its database in WAL mode, so this works from a separate process while the server keeps reading and
- * writing; the source is opened as usual (never migrated) and closed again. The copy is a self-contained database
- * file with mode 0600 (it holds the devices' token hashes). It is written next to the target under a temporary name
- * and renamed into place, so the target path only ever holds a complete backup and a failed run leaves an older
- * file alone. An existing target is refused unless `force`; the database's own files are refused always.
+ * Copies the SQLite database `source` to `target` with `VACUUM INTO`, one consistent snapshot even while the server
+ * (WAL mode) keeps writing; the source is never migrated. The copy has mode 0600 (it holds the devices' token
+ * hashes) and is renamed into place from a temporary name, so the target only ever holds a complete backup. An
+ * existing target is refused unless `force`; the database's own files are refused always.
  */
 export function backupDatabase(source: string, target: string, opts: { force?: boolean } = {}): { bytes: number } {
   const src = statOrNull(source, true);

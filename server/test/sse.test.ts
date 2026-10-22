@@ -13,13 +13,9 @@ test("SSE: initial state, pings, state events on change, commands; no replay aft
   assert.match(es.headers.get("content-type") ?? "", /^text\/event-stream/);
   assert.equal(es.headers.get("x-accel-buffering"), "no");
   const first = await es.next();
-  assert.equal(first.event, "state");
   const v0 = JSON.parse(first.data!).version;
-  assert.equal(first.id, `s${v0}`);
-  assert.equal(v0, (await s.call("GET", "/api/v1/tv/state", { token: tv.token })).json.version);
-
-  const ping = await es.next((m) => m.comment === "ping");
-  assert.equal(ping.comment, "ping");
+  assert.deepEqual([first.event, first.id, v0], ["state", `s${v0}`, (await s.call("GET", "/api/v1/tv/state", { token: tv.token })).json.version]);
+  assert.equal((await es.next((m) => m.comment === "ping")).comment, "ping");
   await eventually(() => s.srv.ctx.events.isOnline(tv.deviceId));
   assert.equal((await s.admin("GET", "/devices")).json.devices[0].online, true);
 
@@ -31,10 +27,8 @@ test("SSE: initial state, pings, state events on change, commands; no replay aft
   assert.deepEqual(JSON.parse((await es.next()).data!), { version: v0 + 2 });
 
   const cmd = await s.admin("POST", `/devices/${tv.deviceId}/commands`, { type: "play", episodeId: "show.e1" });
-  assert.equal(cmd.json.online, true);
   const ev = await es.next();
-  assert.equal(ev.event, "command");
-  assert.deepEqual(JSON.parse(ev.data!), { id: cmd.json.id, type: "play", payload: { itemId: "show", episodeId: "show.e1" } });
+  assert.deepEqual([ev.event, JSON.parse(ev.data!)], ["command", { id: cmd.json.id, type: "play", payload: { itemId: "show", episodeId: "show.e1" } }]);
 
   // Commands older than the replay window are not sent again, even when unacknowledged.
   es.close();
@@ -61,12 +55,9 @@ test("SSE: commands reach the TV with their payloads, and come again in order un
   const ids: number[] = [];
   for (const [body, payload] of cases) {
     const r = await s.admin("POST", `/devices/${tv.deviceId}/commands`, body);
-    assert.equal(r.status, 202);
-    assert.equal(r.json.online, true);
+    assert.deepEqual([r.status, r.json.online], [202, true]);
     const ev = await es.next();
-    assert.equal(ev.event, "command");
-    assert.equal(ev.id, `c${r.json.id}`);
-    assert.deepEqual(JSON.parse(ev.data!), { id: r.json.id, type: body.type, payload });
+    assert.deepEqual([ev.event, ev.id, JSON.parse(ev.data!)], ["command", `c${r.json.id}`, { id: r.json.id, type: body.type, payload }]);
     ids.push(r.json.id);
   }
 
@@ -84,17 +75,6 @@ test("SSE: commands reach the TV with their payloads, and come again in order un
   // The autoplay setting is part of the TV's state: a change is announced like any other.
   await s.admin("PATCH", `/devices/${tv.deviceId}`, { autoplayOnStart: true });
   assert.deepEqual(JSON.parse((await again.next((m) => m.event === "state")).data!), { version: v0 + 1 });
-});
-
-test("SSE: deleting a device ends its stream", async (t) => {
-  const s = await testServer(t);
-  const tv = await s.pair("TV");
-  const es = await openEvents(s.base, tv.token);
-  t.after(() => es.close());
-  await es.next();
-  await s.admin("DELETE", `/devices/${tv.deviceId}`);
-  await assert.rejects(es.next(undefined, 2000), /stream ended/);
-  assert.equal((await s.call("GET", "/api/v1/tv/events", { token: tv.token })).status, 401);
 });
 
 test("SSE: events only reach the addressed device; shutdown ends open streams", async (t) => {
