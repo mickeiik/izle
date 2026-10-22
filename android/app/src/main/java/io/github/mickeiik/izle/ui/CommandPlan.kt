@@ -1,7 +1,6 @@
 package io.github.mickeiik.izle.ui
 
 import io.github.mickeiik.izle.data.api.CommandResult
-import io.github.mickeiik.izle.domain.PlayableRef
 import io.github.mickeiik.izle.domain.RemoteCommand
 import io.github.mickeiik.izle.player.PlayerPhase
 
@@ -21,13 +20,8 @@ import io.github.mickeiik.izle.player.PlayerPhase
  */
 object CommandPlan {
     sealed interface Action {
-        /**
-         * Plays [episodeId] from [positionMs], or under the normal resume rules when null; or, without [episodeId],
-         * the channel [itemId] at its live edge. [itemId]'s tile (if on Home) as the hint and the focus.
-         */
-        data class Play(val itemId: String?, val episodeId: String?, val positionMs: Long? = null) : Action {
-            val ref: PlayableRef get() = RemoteCommand.Play(itemId, episodeId, positionMs).ref
-        }
+        /** Plays what [command] names, its item's tile (if on Home) as the hint and the focus. */
+        data class Play(val command: RemoteCommand.Play) : Action
         data object Exit : Action
         data object Pause : Action
         data object Resume : Action
@@ -72,7 +66,7 @@ object CommandPlan {
         val noPause = listOf(Action.Report(CommandResult.ignored(CommandResult.LIVE)))
         fun closingMenu(resume: Boolean) = if (menuOpen) listOf(Action.CloseMenu(resume)) else emptyList()
         return when (command) {
-            is RemoteCommand.Play -> listOf(Action.Play(command.itemId, command.episodeId, command.positionMs))
+            is RemoteCommand.Play -> listOf(Action.Play(command))
             RemoteCommand.Stop -> if (screen == Screen.Player) listOf(Action.Exit, done) else notInPlayer
             RemoteCommand.Pause -> if (channel) noPause else if (video) listOf(Action.StayPausedAfterMenu, Action.Pause, done) else notInPlayer
             RemoteCommand.Resume -> if (channel) noPause else if (video) closingMenu(resume = false) + Action.Resume + done else notInPlayer

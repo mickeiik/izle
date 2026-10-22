@@ -2,15 +2,11 @@ package io.github.mickeiik.izle.update
 
 import io.github.mickeiik.izle.data.api.CommandResult
 import io.github.mickeiik.izle.ui.Screen
+import kotlinx.serialization.Serializable
 
 /** The TV app version the server offers (`GET /tv/app`). [auto]: the owner lets TVs install it by themselves. */
-data class AvailableUpdate(
-    val versionName: String,
-    val versionCode: Long,
-    val sha256: String,
-    val size: Long,
-    val auto: Boolean,
-)
+@Serializable
+data class AvailableUpdate(val versionName: String, val versionCode: Long, val sha256: String, val size: Long, val auto: Boolean = true)
 
 /**
  * When the TV installs a new version of itself (docs/ux/senior-tv.md, "Update"). Never during playback. A
@@ -30,9 +26,6 @@ object UpdatePlan {
 
     /** No automatic attempt for this long after one failed (a broken APK is not downloaded every 30 s). */
     const val RETRY_AFTER_FAILURE_MS = 6 * 3_600_000L
-
-    /** `GET /tv/app` this often while the app is in front, besides the stream's `app` events. */
-    const val CHECK_INTERVAL_MS = 6 * 3_600_000L
 
     /** How often the view model asks [autoInstall] while in front. */
     const val AUTO_TICK_MS = 30_000L

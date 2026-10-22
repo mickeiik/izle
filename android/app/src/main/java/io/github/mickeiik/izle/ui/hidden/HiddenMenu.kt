@@ -23,7 +23,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -45,7 +45,6 @@ import io.github.mickeiik.izle.ui.common.CheckIcon
 import io.github.mickeiik.izle.ui.common.ErrorText
 import io.github.mickeiik.izle.ui.common.PlayIcon
 import io.github.mickeiik.izle.ui.common.Spinner
-import io.github.mickeiik.izle.ui.common.currentLocale
 import io.github.mickeiik.izle.ui.common.episodeNameText
 import io.github.mickeiik.izle.ui.common.languageLabel
 import io.github.mickeiik.izle.ui.common.languageName
@@ -136,11 +135,8 @@ fun HiddenMenu(
                         }
                         item(key = "update") {
                             val version = about.updateVersion
-                            if (version != null) {
-                                MenuRow(stringResource(R.string.about_update_available), version, modifier = focus(rows.size)) {}
-                            } else {
-                                MenuRow(stringResource(R.string.about_up_to_date), modifier = focus(rows.size)) {}
-                            }
+                            val label = if (version != null) R.string.about_update_available else R.string.about_up_to_date
+                            MenuRow(stringResource(label), version, modifier = focus(rows.size)) {}
                         }
                     }
                 }
@@ -275,7 +271,7 @@ private fun EpisodesPage(menu: MenuUi, page: MenuPage.Episodes, actions: MenuAct
 
 @Composable
 private fun TrackPage(page: MenuPage, options: List<TrackOption>, automatic: Int, onChoose: (TrackOption?) -> Unit) {
-    val locale = LocalContext.current.currentLocale()
+    val locale = LocalConfiguration.current.locales[0]
     val unknown = stringResource(R.string.track_unknown)
     val selectedIndex = options.indexOfFirst { it.selected }
     MenuList(page, initial = if (page is MenuPage.Subtitles && selectedIndex >= 0) selectedIndex + 1 else 0) { focus ->

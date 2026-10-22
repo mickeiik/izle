@@ -15,8 +15,11 @@ import io.github.mickeiik.izle.data.api.EpisodeDetails
 import io.github.mickeiik.izle.data.api.HomeEntry
 import io.github.mickeiik.izle.data.api.ItemCard
 import io.github.mickeiik.izle.domain.AutoplayPlan
+import io.github.mickeiik.izle.installStatus
+import io.github.mickeiik.izle.json
 import io.github.mickeiik.izle.player.FakeMediaEngine
 import io.github.mickeiik.izle.player.PlayerPhase
+import io.github.mickeiik.izle.sha256
 import io.github.mickeiik.izle.update.AppInstaller
 import io.github.mickeiik.izle.update.UpdateCapability
 import io.github.mickeiik.izle.update.UpdatePlan
@@ -36,7 +39,6 @@ import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -47,7 +49,6 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.io.File
-import java.security.MessageDigest
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
@@ -563,11 +564,11 @@ class AppViewModelTest {
 
         // The system wants its dialog shown: the activity starts it.
         val confirm = Intent("android.content.pm.action.CONFIRM_INSTALL")
-        vm.onInstallStatus(status(PackageInstaller.STATUS_PENDING_USER_ACTION).putExtra(Intent.EXTRA_INTENT, confirm))
+        vm.onInstallStatus(installStatus(PackageInstaller.STATUS_PENDING_USER_ACTION).putExtra(Intent.EXTRA_INTENT, confirm))
         mainLooper.idle()
         assertEquals("android.content.pm.action.CONFIRM_INSTALL", runBlocking { withTimeout(5_000) { vm.launchIntents.first() } }.action)
         // Cancel in that dialog: Home, nothing else.
-        vm.onInstallStatus(status(PackageInstaller.STATUS_FAILURE_ABORTED))
+        vm.onInstallStatus(installStatus(PackageInstaller.STATUS_FAILURE_ABORTED))
         mainLooper.idle()
         assertEquals(Screen.Home, vm.screen.value)
     }
@@ -589,7 +590,7 @@ class AppViewModelTest {
         assertEquals("izle-tv/${BuildConfig.VERSION_NAME} (Android 36; ${BuildConfig.VERSION_CODE}; silent)", requests.last { it.url.encodedPath == "/api/v1/tv/app/apk" }.headers["User-Agent"])
 
         // The system wants it confirmed after all: abandoned, guided from now on, the owner told, back Home.
-        vm.onInstallStatus(status(PackageInstaller.STATUS_PENDING_USER_ACTION).putExtra(Intent.EXTRA_INTENT, Intent("x")))
+        vm.onInstallStatus(installStatus(PackageInstaller.STATUS_PENDING_USER_ACTION).putExtra(Intent.EXTRA_INTENT, Intent("x")))
         mainLooper.idle()
         assertEquals(listOf(7), installer.abandoned)
         assertEquals(Screen.Home, vm.screen.value)
@@ -673,7 +674,7 @@ class AppViewModelTest {
         vm.onUpdateInstall()
         waitUntil("the install") { installer.installs.isNotEmpty() }
         assertEquals("""{"result":"done","reason":"prompted"}""", awaitResult(id))
-        vm.onInstallStatus(status(PackageInstaller.STATUS_PENDING_USER_ACTION).putExtra(Intent.EXTRA_INTENT, Intent("x")))
+        vm.onInstallStatus(installStatus(PackageInstaller.STATUS_PENDING_USER_ACTION).putExtra(Intent.EXTRA_INTENT, Intent("x")))
         mainLooper.idle()
         assertEquals("x", runBlocking { withTimeout(5_000) { vm.launchIntents.first() } }.action)
 
@@ -689,7 +690,7 @@ class AppViewModelTest {
         assertNull("no autoplay over the dialog's answer", vm.autoplay.value)
 
         // Cancel in the dialog: Home, and still no autoplay.
-        vm.onInstallStatus(status(PackageInstaller.STATUS_FAILURE_ABORTED))
+        vm.onInstallStatus(installStatus(PackageInstaller.STATUS_FAILURE_ABORTED))
         mainLooper.idle()
         assertEquals(Screen.Home, vm.screen.value)
         advance(15_000)
@@ -930,13 +931,6 @@ class AppViewModelTest {
 
     private fun grantInstalls(granted: Boolean) = shadowOf(app.packageManager).setCanRequestPackageInstalls(granted)
 
-    /** What the system sends back for session 7. */
-    private fun status(status: Int) = Intent(AppInstaller.ACTION_INSTALL_STATUS)
-        .putExtra(PackageInstaller.EXTRA_STATUS, status)
-        .putExtra(PackageInstaller.EXTRA_SESSION_ID, 7)
-
-    private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-
     /** Checks and installs nothing; remembers what it was asked. */
     private inner class FakeInstaller : AppInstaller {
         inner class Install(val silent: Boolean, val bytes: ByteArray, val resultSentBefore: Boolean)
@@ -952,9 +946,9 @@ class AppViewModelTest {
             verified += expectedVersionCode
         }
 
-        override suspend fun install(file: File, silent: Boolean, commandId: Long?): Int {
+        override suspend fun install(file: File, silent: Boolean): Int {
             installFailure?.let { throw it }
-            val sent = commandId != null && results(commandId).isNotEmpty()
+            val sent = requests.any { it.url.encodedPath.endsWith("/result") }
             installs += Install(silent, file.readBytes(), sent)
             return 7
         }
@@ -1065,9 +1059,6 @@ class AppViewModelTest {
 
     /** The connection closes before an answer: an unreachable server, as the TV sees it. */
     private fun dropped(): MockResponse = MockResponse.Builder().onResponseStart(SocketEffect.CloseSocket()).build()
-
-    private fun json(code: Int, body: String) =
-        MockResponse.Builder().code(code).addHeader("Content-Type", "application/json").body(body).build()
 
     private fun stateJson(): String {
         val list = home.joinToString(",") { id ->

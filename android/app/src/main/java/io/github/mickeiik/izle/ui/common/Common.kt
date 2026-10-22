@@ -1,6 +1,5 @@
 package io.github.mickeiik.izle.ui.common
 
-import android.content.Context
 import android.content.ContextWrapper
 import android.content.res.Configuration
 import android.content.res.Resources
@@ -82,8 +81,6 @@ fun LocalizedContent(language: String, content: @Composable () -> Unit) {
         content = content,
     )
 }
-
-fun Context.currentLocale(): Locale = resources.configuration.locales[0]
 
 @Composable
 fun episodeNameText(name: EpisodeName): String? = when (name) {
@@ -244,32 +241,24 @@ fun TvButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, e
 }
 
 /**
- * The owner's message: 30 sp bold, stepping down to 24 sp only when a long one would not fit otherwise, at most three
- * lines, dark on the warm accent so it stands out on any picture. Not focusable, no buttons: it goes away by itself.
+ * The owner's message across the top of the screen, inside the safe margins (864 dp wide): over Home, the video, menu
+ * and overlays. 30 sp bold, stepping down to 24 sp only when a long one would not fit otherwise, at most three lines,
+ * dark on the warm accent so it stands out on any picture. Not focusable, no buttons: it goes away by itself.
  */
-@Composable
-fun MessageBanner(
-    text: String,
-    modifier: Modifier = Modifier,
-    textAlign: TextAlign = TextAlign.Start,
-) {
-    BasicText(
-        text,
-        style = MaterialTheme.typography.headlineSmall.copy(color = IzleColors.OnAccent, lineHeight = 1.25.em, textAlign = textAlign),
-        maxLines = 3,
-        overflow = TextOverflow.Ellipsis,
-        autoSize = TextAutoSize.StepBased(minFontSize = 24.sp, maxFontSize = 30.sp, stepSize = 2.sp),
-        modifier = modifier
-            .border(IzleBorders.OutlineWidth, IzleColors.BannerEdge, IzleShapes.Large)
-            .background(IzleColors.Accent, IzleShapes.Large)
-            .padding(horizontal = IzleSpacing.XLarge, vertical = IzleSpacing.Medium),
-    )
-}
-
-/** The banner across the top of the screen, inside the safe margins (864 dp wide): over Home, the video, menu and overlays. */
 @Composable
 fun MessageBannerOverlay(text: String, modifier: Modifier) {
     Box(modifier.fillMaxWidth().padding(IzleSpacing.Safe), contentAlignment = Alignment.TopCenter) {
-        MessageBanner(text, Modifier.widthIn(max = 864.dp), textAlign = TextAlign.Center)
+        BasicText(
+            text,
+            style = MaterialTheme.typography.headlineSmall.copy(color = IzleColors.OnAccent, lineHeight = 1.25.em, textAlign = TextAlign.Center),
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+            autoSize = TextAutoSize.StepBased(minFontSize = 24.sp, maxFontSize = 30.sp, stepSize = 2.sp),
+            modifier = Modifier
+                .widthIn(max = 864.dp)
+                .border(IzleBorders.OutlineWidth, IzleColors.BannerEdge, IzleShapes.Large)
+                .background(IzleColors.Accent, IzleShapes.Large)
+                .padding(horizontal = IzleSpacing.XLarge, vertical = IzleSpacing.Medium),
+        )
     }
 }

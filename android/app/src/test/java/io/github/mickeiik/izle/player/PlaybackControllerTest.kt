@@ -26,6 +26,7 @@ import io.github.mickeiik.izle.domain.PlayableRef
 import io.github.mickeiik.izle.domain.PlaybackOrigin
 import io.github.mickeiik.izle.domain.PlaybackPlan
 import io.github.mickeiik.izle.domain.RemoteCommand
+import io.github.mickeiik.izle.json
 import io.github.mickeiik.izle.settings.DeviceStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -528,8 +529,6 @@ class PlaybackControllerTest {
         assertEquals(listOf(audio, null), engine.audioSelections)
         assertEquals(listOf(text, null), engine.textSelections)
     }
-
-    private fun json(status: Int, body: String) = MockResponse.Builder().code(status).body(body).build()
 
     private companion object {
         const val DURATION = 1_200_000L

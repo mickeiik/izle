@@ -517,9 +517,9 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         val origin = PlaybackOrigin.command(command.id)
         for (action in actions) {
             when (action) {
-                is CommandPlan.Action.Play -> {
-                    action.itemId?.let { homeFocusItemId = it }
-                    startPlayback(action.ref, origin, action.positionMs, homeEntry(action.itemId)?.item, playCommand = true)
+                is CommandPlan.Action.Play -> with(action.command) {
+                    itemId?.let { homeFocusItemId = it }
+                    startPlayback(ref, origin, positionMs, homeEntry(itemId)?.item, playCommand = true)
                 }
                 CommandPlan.Action.Exit -> player.exit()
                 CommandPlan.Action.Pause -> player.pause()
@@ -559,18 +559,18 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     private fun updateContext(): UpdatePlan.Context {
         updater.refreshCapability()
         return UpdatePlan.Context(
-        capability = updater.capability.value,
-        installedVersionCode = updater.installedVersionCode,
-        screen = _screen.value,
-        menuOpen = _menu.value != null,
-        autoplayShowing = _autoplay.value != null,
-        playerInUse = player.inUse,
-        online = online.value,
-        idleMs = SystemClock.uptimeMillis() - lastActivityAt,
-        lastFailureAt = updater.lastFailureAt,
-        now = System.currentTimeMillis(),
-        busy = updater.busy,
-    )
+            capability = updater.capability.value,
+            installedVersionCode = updater.installedVersionCode,
+            screen = _screen.value,
+            menuOpen = _menu.value != null,
+            autoplayShowing = _autoplay.value != null,
+            playerInUse = player.inUse,
+            online = online.value,
+            idleMs = SystemClock.uptimeMillis() - lastActivityAt,
+            lastFailureAt = updater.lastFailureAt,
+            now = System.currentTimeMillis(),
+            busy = updater.busy,
+        )
     }
 
     /** While in front: every 30 s, whether a silent TV installs the offered version by itself ([UpdatePlan.autoInstall]). */

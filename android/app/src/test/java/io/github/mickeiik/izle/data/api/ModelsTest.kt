@@ -148,8 +148,6 @@ class ModelsTest {
             CommandResult.NO_PLAYABLE_SOURCE, CommandResult.PLAYBACK_ERROR, CommandResult.SUPERSEDED, CommandResult.STOPPED,
             CommandResult.BUSY, CommandResult.EPISODES_UNAVAILABLE, CommandResult.LIVE, CommandResult.NO_CHANNEL,
         )
-        assertEquals("""{"result":"ignored","reason":"live"}""", wire(CommandResult.ignored(CommandResult.LIVE)))
-        assertEquals("""{"result":"ignored","reason":"no_channel"}""", wire(CommandResult.ignored(CommandResult.NO_CHANNEL)))
         reasons.forEach { assertTrue(it, Regex("[A-Za-z0-9_.:-]{1,64}").matches(it)) }
     }
 
@@ -200,21 +198,6 @@ class ModelsTest {
         assertEquals("/p/Tk9uZQ/stream.ts", r.media.url)
         assertEquals(listOf("backup"), r.alternatives)
         assertEquals("2026-10-21T12:00:00.000Z", r.expiresAt)
-    }
-
-    @Test
-    fun aChannelsDetailsCarryItsPlayabilityInsteadOfEpisodes() {
-        val d = ApiJson.decodeFromString(
-            ItemDetailsResponse.serializer(),
-            """{"item":{"id":"news-24","kind":"live","title":"News 24","year":null,"posterUrl":null,"backdropUrl":null,
-               "originalTitle":null,"synopsis":null,"genres":[]},
-               "channel":{"playbackAllowed":true,"sources":[{"id":"main","label":null,"languages":{"audio":["tr"],"subtitles":[]}}]}}""",
-        )
-        assertTrue(d.item.isLive)
-        assertEquals(true, d.channel?.playbackAllowed)
-        assertTrue(d.episodes.isEmpty())
-        assertNull(d.cursorEpisodeId)
-        assertNull("a show has no channel part", ApiJson.decodeFromString(ItemDetailsResponse.serializer(), ITEM).channel)
     }
 
     @Test

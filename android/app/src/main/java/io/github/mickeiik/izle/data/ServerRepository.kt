@@ -59,10 +59,6 @@ class ServerRepository(
     private val _commands = MutableSharedFlow<ServerEvent.Command>(extraBufferCapacity = 16)
     val commands: SharedFlow<ServerEvent.Command> = _commands.asSharedFlow()
 
-    /** The server's `app` events: the TV app version it offers changed (the [onAppCheck] hook already runs on them). */
-    private val _appEvents = MutableSharedFlow<ServerEvent.App>(extraBufferCapacity = 4)
-    val appEvents: SharedFlow<ServerEvent.App> = _appEvents.asSharedFlow()
-
     /** Every state actually fetched from the server (never the offline cache). */
     private val _fetched = MutableSharedFlow<TvState>(extraBufferCapacity = 4)
     val fetched: SharedFlow<TvState> = _fetched.asSharedFlow()
@@ -203,10 +199,7 @@ class ServerRepository(
                             if (!_online.value) refresh(api)
                             checkApp(api)
                         }
-                        is ServerEvent.App -> {
-                            _appEvents.tryEmit(event)
-                            checkApp(api)
-                        }
+                        is ServerEvent.App -> checkApp(api)
                         is ServerEvent.State -> if (event.version != _state.value?.version) refresh(api)
                         is ServerEvent.Command -> dispatch(api, event)
                     }
