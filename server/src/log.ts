@@ -1,8 +1,7 @@
 // The one place where anything reaches the log. Stream URLs, upstream headers, adapter refs, tokens and playlist
-// text must never be written: keys that can hold them are dropped, and strings are scrubbed of URLs (with a scheme
-// or protocol-relative), playlist text and token-like runs. See AGENTS.md ("Hard invariants"). It is a heuristic:
-// a value under an innocent key that looks like none of these (a short API key, a header map passed as the fields
-// themselves) is written as given, which is why the code must not hand such values to the log in the first place.
+// text must never be written (AGENTS.md, "Hard invariants"): keys that can hold them are dropped, strings are
+// scrubbed of URLs, playlist text and token-like runs. It is a heuristic: a value under an innocent key that looks
+// like none of these (a short API key) is written as given, so the code must not hand such values to the log.
 
 import { errorName } from "./errors.ts";
 
@@ -10,7 +9,7 @@ export type Level = "debug" | "info" | "warn" | "error";
 
 const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 
-/** Words that, when they appear in a key (camelCase, snake_case or kebab-case), drop the whole value. */
+/** A key with one of these words (camelCase, snake_case or kebab-case) drops the whole value. */
 const SECRET_WORDS = new Set([
   "url", "urls", "uri", "href", "header", "headers", "authorization", "cookie", "cookies", "token", "tokens",
   "ref", "refs", "config", "playlist", "password", "secret", "body",
@@ -18,7 +17,7 @@ const SECRET_WORDS = new Set([
 
 /** `scheme://…`, or protocol-relative `//host…` (not preceded by a word character, `:` or `/`, as in a file path). */
 const URL_RE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+|(?<![\w:/])\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*(?::\d+)?(?:[/?#][^\s"'<>`]*)?/gi;
-/** Playlist text (HLS), whatever key it is under: the whole string goes. */
+/** Playlist text, whatever key it is under: the whole string goes. */
 const PLAYLIST_RE = /^\uFEFF?\s*#EXTM3U/;
 const TOKEN_RE = /[A-Za-z0-9_-]{20,}/g;
 const MAX_DEPTH = 6;
@@ -31,17 +30,11 @@ function isSecretKey(key: string): boolean {
 }
 
 function urlPlaceholder(match: string): string {
-  try {
-    return `<url ${new URL(match, "http://relative.invalid").host || "?"}>`;
-  } catch {
-    return "<url>";
-  }
+  const host = URL.parse(match, "http://relative.invalid")?.host;
+  return host === undefined ? "<url>" : `<url ${host || "?"}>`;
 }
 
-/**
- * Playlist text becomes `<playlist>`, URLs `<url host>`, token-like runs whatever `token` makes of them, and the
- * result is capped.
- */
+/** Playlist text becomes `<playlist>`, URLs `<url host>`, token-like runs what `token` makes of them; capped. */
 function scrub(value: string, token: (run: string) => string): string {
   if (PLAYLIST_RE.test(value)) return "<playlist>";
   const out = value.replace(URL_RE, urlPlaceholder).replace(TOKEN_RE, token);
@@ -53,22 +46,17 @@ function redactString(value: string): string {
 }
 
 /**
- * Long runs that read as words, not secrets: SCREAMING_SNAKE and snake/kebab case (whole number segments of up to
- * four digits allowed) and CamelCase of words with three or more letters, without digits. Player error names take
- * these shapes (`ERROR_CODE_IO_BAD_HTTP_STATUS`, `InvalidResponseCodeException`); random base64url runs of 20
- * characters match about 2 in 100 000 times, of 32 characters practically never (they mix cases and digits).
+ * Long runs that read as words, not secrets: SCREAMING_SNAKE and snake/kebab case (number segments of up to four
+ * digits) and CamelCase of 3+ letter words, as player error names are. Random base64url runs of 20 characters match
+ * about 2 in 100 000 times, of 32 practically never.
  */
 const IDENTIFIER_RE = /^(?:[A-Z]+(?:[_-](?:[A-Z]+|[0-9]{1,4}))+|[a-z]+(?:[_-](?:[a-z]+|[0-9]{1,4}))+|(?:[A-Z][a-z]{2,}){2,}|[a-z]{2,}(?:[A-Z][a-z]{2,})+)$/;
 
-/**
- * The same redaction for text a TV reports about a problem (stored for the owner, never logged): URLs become
- * `<url host>` and token-like runs `<token>`, except runs that read as identifiers, so error names survive.
- */
+/** The redaction for problem text a TV reports (stored, never logged): runs that read as identifiers survive. */
 export function redactReportText(value: string): string {
   return scrub(value, (run) => (IDENTIFIER_RE.test(run) ? run : "<token>"));
 }
 
-/** Returns a log-safe deep copy of `value`. */
 export function redact(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
   if (value === null || value === undefined) return value;
   if (typeof value === "string") return redactString(value);
@@ -103,11 +91,9 @@ export function redact(value: unknown, depth = 0, seen = new WeakSet<object>()):
 }
 
 export interface Logger extends Record<Level, (msg: string, fields?: Record<string, unknown>) => void> {
-  /** A logger whose lines all carry `fields`. */
   child(fields: Record<string, unknown>): Logger;
 }
 
-/** `write` receives one JSON line (without the trailing newline); stdout by default. */
 export function createLogger(
   opts: { level?: Level; write?: (line: string) => void; now?: () => number } = {},
   bound: Record<string, unknown> = {},

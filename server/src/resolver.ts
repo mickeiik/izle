@@ -13,9 +13,7 @@ import { isPlaylistText } from "./hls.ts";
 import type { Logger } from "./log.ts";
 import { stopwatch } from "./stopwatch.ts";
 
-/** Time allowed for `createAdapters` at startup. */
 const CREATE_ADAPTERS_TIMEOUT_MS = 30_000;
-/** Time allowed for one adapter's `healthcheck`. */
 const HEALTHCHECK_TIMEOUT_MS = 15_000;
 
 export class ResolverLoadError extends Error {
@@ -23,13 +21,12 @@ export class ResolverLoadError extends Error {
 }
 
 export interface LoadedResolver {
-  /** Absolute path of the module file. */
   file: string;
   sha256: string;
   adapters: ReadonlyMap<string, Adapter>;
 }
 
-/** Resolves when `promise` settles, or rejects with a TimeoutError after `ms` (the promise is left to settle alone). */
+/** `promise`, or a TimeoutError after `ms` (the promise is left to settle alone). */
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   promise.catch(() => {}); // a late rejection must not become an unhandled rejection
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -39,34 +36,23 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-/** Calls `fn` so that synchronous throws become rejections. */
-function call<T>(fn: () => T | Promise<T>): Promise<T> {
-  try {
-    return Promise.resolve(fn());
-  } catch (err) {
-    return Promise.reject(err);
-  }
-}
+/** `fn()`, its synchronous throws as rejections. */
+const call = <T>(fn: () => T | Promise<T>): Promise<T> => new Promise<T>((resolve) => resolve(fn()));
 
-/**
- * Imports the module, checks the API version and creates the adapters once. Throws ResolverLoadError with a
- * message fit for the owner's terminal (it never includes the module's own error messages).
- */
+/** Imports the module and creates its adapters; ResolverLoadError messages never include the module's own. */
 export async function loadResolver(opts: {
   module: string;
   config: Record<string, unknown>;
-  /** The server's data directory; the module gets `<dataDir>/resolver`. */
   dataDir: string;
   log: Logger;
 }): Promise<LoadedResolver> {
   const file = path.resolve(opts.module);
-  let bytes: Buffer;
+  let sha256: string;
   try {
-    bytes = readFileSync(file);
+    sha256 = createHash("sha256").update(readFileSync(file)).digest("hex");
   } catch {
     throw new ResolverLoadError(`cannot read resolver module ${file}`);
   }
-  const sha256 = createHash("sha256").update(bytes).digest("hex");
 
   let ns: Record<string, unknown>;
   try {
@@ -124,10 +110,9 @@ type AdapterOutcome =
   | { ok: false; code: AdapterFailureCode; name: string | null; ms: number };
 
 /**
- * Runs `adapter.resolve` under `AbortSignal.any([signal, <deadline>])`. A call that ignores the signal is abandoned
- * when the deadline passes. Results are schema-validated; an invalid result counts as an error named
- * `InvalidResult`. The deadline is an ordinary timer rather than `AbortSignal.timeout()`, whose timer does not keep
- * the process alive: a CLI run or a test with nothing else pending would end before the deadline fires.
+ * Runs `adapter.resolve` under `signal` and a deadline (a call that ignores them is abandoned) and validates the
+ * results. The deadline is an ordinary timer: `AbortSignal.timeout()`'s does not keep the process alive, so a CLI
+ * run with nothing else pending would end before it fires.
  */
 export async function runAdapter(
   adapter: Adapter,
@@ -174,7 +159,6 @@ type HealthOutcome =
   | { adapterId: string; ok: true; ms: number; /** the adapter has no healthcheck */ skipped: boolean }
   | { adapterId: string; ok: false; code: "timeout" | "error"; name: string; ms: number };
 
-/** Runs every adapter's healthcheck (adapters without one count as healthy). */
 export async function healthcheckAll(resolver: LoadedResolver): Promise<HealthOutcome[]> {
   return Promise.all(
     [...resolver.adapters.values()].map(async (adapter): Promise<HealthOutcome> => {
