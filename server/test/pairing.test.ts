@@ -42,7 +42,8 @@ test("pairing: start → pending → approve (waking the long-poll) → token de
   const next = await s.call("POST", "/api/v1/pair/start");
   await s.admin("POST", "/pair/approve", { code: next.json.code, name: "Kitchen" });
   assert.equal((await s.admin("POST", "/pair/approve", { code: next.json.code, name: "again" })).status, 409);
-  assert.deepEqual((await s.admin("GET", "/devices")).json.devices.map((d: Json) => [d.name, d.status]), [["Salon TV", "active"], ["Kitchen", "pending"]]);
+  const listed = (await s.admin("GET", "/devices")).json.devices.map((d: Json) => [d.name, d.status]).sort();
+  assert.deepEqual(listed, [["Kitchen", "pending"], ["Salon TV", "active"]]);
   const late = await s.call("POST", "/api/v1/pair/start");
   s.clock.advance(10 * 60_000 + 1);
   assert.equal((await s.call("GET", `/api/v1/pair/wait?code=${late.json.code}&wait=0`, { token: late.json.pairToken })).status, 410);
