@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -262,4 +262,22 @@ test("cli: backup without a database says so and creates nothing", async () => {
   assert.equal(r.code, 1);
   assert.equal(r.err, `izle-server: there is no database at ${path.join(dir, "data", "izle.db")}; the server creates it when it first starts\n`);
   assert.deepEqual(readdirSync(dir), ["izle.json"]);
+});
+
+test("cli: the server refuses a data directory from an older pre-release izle and says what to do", async () => {
+  const dir = await tempDir("izle-old-");
+  const config = path.join(dir, "izle.json");
+  await writeFile(config, JSON.stringify({ listen: { host: "127.0.0.1", port: 0 }, dataDir: "./data", appUpdates: { source: "manual" } }));
+  mkdirSync(path.join(dir, "data"));
+  const file = path.join(dir, "data", "izle.db");
+  const old = new DatabaseSync(file);
+  old.exec("CREATE TABLE devices (id TEXT PRIMARY KEY); PRAGMA user_version = 3");
+  old.close();
+  const r = await run(["--config", config]);
+  assert.equal(r.code, 1);
+  assert.equal(
+    r.err,
+    `izle-server: ${file} was made by an older pre-release izle (schema version 3) and cannot be upgraded: ` +
+      `move the data directory ${path.join(dir, "data")} away (or delete it), then start the server and pair the TVs again\n`,
+  );
 });

@@ -84,7 +84,7 @@ function insertAt<T>(list: T[], position: number | undefined, value: T): void {
   list.splice(Math.min(position ?? list.length, list.length), 0, value);
 }
 
-/** Per-TV home grid: cards per row and rows per screen (the owner's setting; the defaults are migration 8's). */
+/** Per-TV home grid: cards per row and rows per screen (the owner's setting; the defaults are the schema's). */
 export const HOME_COLUMNS = { min: 3, max: 6, default: 4 } as const;
 export const HOME_ROWS = { min: 1, max: 4, default: 2 } as const;
 

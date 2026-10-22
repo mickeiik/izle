@@ -6,9 +6,14 @@ import type { CommandResult, CommandType } from "./commands.ts";
 import type { ProgressReportStatus } from "./playback.ts";
 import type { ProblemKind } from "./problems.ts";
 import type { Scope } from "./tokens.ts";
-import { MIGRATIONS } from "./store/migrations.ts";
+import { INITIAL_VERSION, MIGRATIONS, SCHEMA, SCHEMA_VERSION } from "./store/schema.ts";
 
-export { MIGRATIONS, SCHEMA_VERSION } from "./store/migrations.ts";
+export { SCHEMA_VERSION } from "./store/schema.ts";
+
+/** A database this server cannot open: made by an older pre-release izle, or by a newer server. */
+export class DatabaseVersionError extends Error {
+  override name = "DatabaseVersionError";
+}
 
 export interface Device {
   id: string;
@@ -76,7 +81,7 @@ export interface StoredApk {
 interface PairCode {
   code: string;
   pairTokenHash: string;
-  /** sha256 of the client address that started the code; null for codes from before migration 7. */
+  /** sha256 of the client address that started the code. */
   clientHash: string | null;
   deviceId: string | null;
   createdAt: number;
@@ -385,10 +390,25 @@ export class Store {
   constructor(file: string) {
     if (file !== ":memory:") mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     this.db = new DatabaseSync(file, { enableForeignKeyConstraints: true });
-    this.db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
+    this.db.exec("PRAGMA busy_timeout = 5000");
+    // The version is checked before anything is written, so a refused database is left as it was.
     const current = this.schemaVersion;
-    if (current > MIGRATIONS.length) throw new Error(`database schema version ${current} is newer than this server (${MIGRATIONS.length})`);
-    for (let v = current; v < MIGRATIONS.length; v++) this.transaction(() => this.db.exec(`${MIGRATIONS[v]!}; PRAGMA user_version = ${v + 1}`));
+    if (current > SCHEMA_VERSION) {
+      this.close();
+      throw new DatabaseVersionError(`database schema version ${current} is newer than this server (${SCHEMA_VERSION})`);
+    }
+    if (current > 0 && current < INITIAL_VERSION) {
+      this.close();
+      throw new DatabaseVersionError(
+        `${file} was made by an older pre-release izle (schema version ${current}) and cannot be upgraded: ` +
+          `move the data directory ${path.dirname(file)} away (or delete it), then start the server and pair the TVs again`,
+      );
+    }
+    this.db.exec("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;");
+    if (current === 0) this.transaction(() => this.db.exec(`${SCHEMA}; PRAGMA user_version = ${INITIAL_VERSION}`));
+    for (let v = Math.max(current, INITIAL_VERSION); v < SCHEMA_VERSION; v++) {
+      this.transaction(() => this.db.exec(`${MIGRATIONS[v - INITIAL_VERSION]!}; PRAGMA user_version = ${v + 1}`));
+    }
   }
 
   get schemaVersion(): number {
@@ -595,8 +615,8 @@ export class Store {
   }
 
   /**
-   * The device's sections in display order, always with the untitled one: a TV paired after migration 10 has no
-   * row until its Home is first written, and reads as the untitled section alone (the write stores it).
+   * The device's sections in display order, always with the untitled one: a newly paired TV has no row until its
+   * Home is first written, and reads as the untitled section alone (the write stores it).
    */
   getHomeSections(deviceId: string): HomeSectionRow[] {
     const rows = this.many<HomeSectionRow>("SELECT section_id AS id, title, layout FROM home_sections WHERE device_id = ? ORDER BY position", [deviceId]);

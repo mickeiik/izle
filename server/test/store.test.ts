@@ -2,40 +2,71 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
-import { MIGRATIONS, SCHEMA_VERSION, Store } from "../src/store.ts";
+import { DatabaseVersionError, SCHEMA_VERSION, Store } from "../src/store.ts";
+import { INITIAL_VERSION } from "../src/store/schema.ts";
 import { tempDir, untitled } from "./helpers.ts";
 
-/** A database left at schema version `version` with `sql` run on it, then opened (and so migrated) by the store. */
-async function migrateFrom(version: number, ...sql: string[]) {
+/** A database file left at schema version `version` by another izle. */
+async function databaseAt(version: number): Promise<string> {
   const file = path.join(await tempDir(), "izle.db");
   const raw = new DatabaseSync(file);
-  for (const m of MIGRATIONS.slice(0, version)) raw.exec(m);
-  raw.exec(`PRAGMA user_version = ${version}`);
-  for (const q of sql) raw.exec(q);
+  raw.exec(`CREATE TABLE devices (id TEXT PRIMARY KEY); PRAGMA user_version = ${version}`);
   raw.close();
+  return file;
+}
+
+/** A new store with one device, `d1`, and its database file. */
+async function storeWithDevice(name = "TV"): Promise<{ s: Store; file: string }> {
+  const file = path.join(await tempDir(), "izle.db");
   const s = new Store(file);
-  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  s.createDevice({ id: "d1", name, tokenHash: "h", now: 1 });
   return { s, file };
 }
 
-test("migrations run once and record the schema version", async () => {
+/** The file's schema version and journal mode, as a refused database must keep them. */
+function versionAndJournal(file: string): [number, string] {
+  const raw = new DatabaseSync(file);
+  try {
+    return [Number(raw.prepare("PRAGMA user_version").get()!.user_version), String(raw.prepare("PRAGMA journal_mode").get()!.journal_mode)];
+  } finally {
+    raw.close();
+  }
+}
+
+test("a new database gets the initial schema and its version, and opens again as it is", async () => {
+  assert.equal(INITIAL_VERSION, 10, "the last version of the pre-release migration chain; it never changes");
   const file = path.join(await tempDir(), "data", "izle.db");
   const a = new Store(file);
   assert.equal(a.schemaVersion, SCHEMA_VERSION);
   a.createDevice({ id: "d1", name: "TV", tokenHash: "h", now: 1 });
   a.close();
+  const raw = new DatabaseSync(file);
+  const tables = raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((r) => r.name);
+  raw.close();
+  assert.deepEqual(tables, [
+    "access_tokens", "app_apk", "catalog_builds", "catalog_seen", "catalog_seen_items", "commands", "companion_links", "devices", "episode_marks",
+    "events", "home_entries", "home_sections", "item_cursor", "now_playing", "pair_codes", "problems", "progress", "viewing_ranges", "viewings",
+  ]);
   const b = new Store(file);
   assert.equal(b.schemaVersion, SCHEMA_VERSION);
   assert.equal(b.getDevice("d1")?.name, "TV");
   b.close();
 });
 
+test("refuses a database from an older pre-release izle, and leaves it as it is", async () => {
+  for (const version of [1, INITIAL_VERSION - 1]) {
+    const file = await databaseAt(version);
+    const message = `${file} was made by an older pre-release izle (schema version ${version}) and cannot be upgraded: ` +
+      `move the data directory ${path.dirname(file)} away (or delete it), then start the server and pair the TVs again`;
+    assert.throws(() => new Store(file), (err) => err instanceof DatabaseVersionError && err.message === message);
+    assert.deepEqual(versionAndJournal(file), [version, "delete"], "nothing was migrated or written");
+  }
+});
+
 test("refuses a database written by a newer server", async () => {
-  const file = path.join(await tempDir(), "izle.db");
-  const raw = new DatabaseSync(file);
-  raw.exec(`PRAGMA user_version = ${SCHEMA_VERSION + 1}`);
-  raw.close();
-  assert.throws(() => new Store(file), /newer than this server/);
+  const file = await databaseAt(SCHEMA_VERSION + 1);
+  assert.throws(() => new Store(file), (err) => err instanceof DatabaseVersionError && /newer than this server/.test(err.message));
+  assert.deepEqual(versionAndJournal(file), [SCHEMA_VERSION + 1, "delete"]);
 });
 
 test("deleting a device cascades to its rows; transactions roll back on error", async () => {
@@ -58,13 +89,9 @@ test("deleting a device cascades to its rows; transactions roll back on error", 
   s.close();
 });
 
-test("migration 2: now_playing gains its anchor and seq, companion links exist; old rows read as defaults", async () => {
-  const { s } = await migrateFrom(1, "INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'TV', 'h', 1)",
-    "INSERT INTO now_playing (device_id, catalog_id, item_id, episode_id, source_id, position_ms, duration_ms, state, updated_at) VALUES ('d1', 'c', 'i', 'e', NULL, 5, 10, 'paused', 2)");
-  assert.deepEqual(s.getNowPlaying("d1"), {
-    catalogId: "c", itemId: "i", episodeId: "e", sourceId: null, positionMs: 5, durationMs: 10, state: "paused", updatedAt: 2, playing: false,
-    anchorAt: null, seq: 0,
-  });
+test("now playing carries its anchor and a per-device sequence number; companion links", async () => {
+  const { s } = await storeWithDevice();
+  assert.equal(s.getNowPlaying("d1"), null);
   const row = { catalogId: "c", itemId: "i", episodeId: "e", sourceId: "s", positionMs: 7, durationMs: 10, state: "playing" as const, updatedAt: 3, playing: true, anchorAt: 2_900 };
   assert.equal(s.setNowPlaying("d1", row), 1);
   assert.equal(s.setNowPlaying("d1", { ...row, positionMs: 8 }), 2);
@@ -84,8 +111,8 @@ test("migration 2: now_playing gains its anchor and seq, companion links exist; 
   s.close();
 });
 
-test("migration 3: devices gain autoplay (off), problems are kept per device, newest first, and go with the device", async () => {
-  const { s } = await migrateFrom(2, "INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'TV', 'h', 1)");
+test("autoplay is off on a new device; problems are kept per device, newest first, and go with the device", async () => {
+  const { s } = await storeWithDevice();
   assert.equal(s.getDevice("d1")?.autoplayOnStart, false);
   assert.equal(s.updateDevice("d1", { autoplayOnStart: true })?.autoplayOnStart, true);
   assert.equal(s.updateDevice("d1", { name: "Salon" })?.autoplayOnStart, true, "other patches leave it alone");
@@ -110,15 +137,12 @@ test("migration 3: devices gain autoplay (off), problems are kept per device, ne
   s.close();
 });
 
-test("migration 4: home entries keep the date they were added, cursors carry the wrap flag", async () => {
-  const before = Date.now();
-  const { s } = await migrateFrom(3, "INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'TV', 'h', 1)",
-    "INSERT INTO home_entries (device_id, position, catalog_id, item_id) VALUES ('d1', 0, 'c', 'a'), ('d1', 1, 'c', 'b')",
-    "INSERT INTO item_cursor (device_id, catalog_id, item_id, episode_id, updated_at) VALUES ('d1', 'c', 'a', 'a.2', 5)");
-  const backfilled = s.getHomeEntries("d1", "c");
-  const at = backfilled[0]!.addedAt!;
-  assert.ok(at >= Math.floor(before / 1000) * 1000 && at <= Date.now(), "existing rows are backfilled to the migration time");
-  assert.deepEqual(backfilled, [{ itemId: "a", addedAt: at, sectionId: "untitled" }, { itemId: "b", addedAt: at, sectionId: "untitled" }]);
+test("home entries keep the date they were added, cursors carry the wrap flag", async () => {
+  const { s } = await storeWithDevice();
+  const at = 1_000;
+  s.setHome("d1", "c", untitled(["a", "b"]), at);
+  assert.deepEqual(s.getHomeEntries("d1", "c"), [{ itemId: "a", addedAt: at, sectionId: "untitled" }, { itemId: "b", addedAt: at, sectionId: "untitled" }]);
+  s.setCursor("d1", { catalogId: "c", itemId: "a", episodeId: "a.2", updatedAt: 5 });
   assert.deepEqual(s.getCursor("d1", "c", "a"), { catalogId: "c", itemId: "a", episodeId: "a.2", updatedAt: 5, wrapped: false });
 
   s.setHome("d1", "c", untitled(["b", "a"]), at + 1000);
@@ -144,27 +168,11 @@ test("migration 4: home entries keep the date they were added, cursors carry the
   s.close();
 });
 
-test("migration 5: saved positions become imported viewings; access tokens and events have rows; hooks run after commit only", async () => {
-  const { s, file } = await migrateFrom(4, "INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'Salon', 'h', 1), ('d2', 'Kitchen', 'h2', 1)",
-    `INSERT INTO progress (device_id, catalog_id, episode_id, item_id, position_ms, duration_ms, status, updated_at) VALUES
-    ('d1', 'c', 'a.1', 'a', 1200000, 1200000, 'finished', 20), ('d1', 'c', 'a.2', 'a', 300000, NULL, 'watching', 30), ('d2', 'c', 'f.main', 'f', 100, 5000, 'watching', 10)`,
-    "INSERT INTO commands (device_id, type, payload_json, created_at) VALUES ('d1', 'stop', '{}', 5)");
-  const db = new DatabaseSync(file);
-  const viewings = db.prepare("SELECT * FROM viewings ORDER BY id").all();
-  assert.deepEqual(viewings.map((v) => [v.device_id, v.device_name, v.episode_id, v.item_id, v.started_at, v.ended_at, v.end_position_ms, v.duration_ms, v.end_reason, v.seen]), [
-    ["d2", "Kitchen", "f.main", "f", 10, 10, 100, 5000, "stopped", 0],
-    ["d1", "Salon", "a.1", "a", 20, 20, 1200000, 1200000, "finished", 1],
-    ["d1", "Salon", "a.2", "a", 30, 30, 300000, null, "stopped", 0],
-  ], "one imported viewing per saved position, oldest first");
-  assert.deepEqual(new Set(viewings.map((v) => [v.imported, v.trigger, v.start_position_ms, v.source_id, v.watched_ms, v.command_id].join())), new Set(["1,unknown,,,,"]));
-  assert.equal(viewings[1]!.actor_json, '{"type":"tv","deviceId":"d1"}');
-  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM viewing_ranges").get()!.n, 0);
-  db.close();
-
-  // Commands from before have no actor; new ones carry theirs and the result columns.
-  assert.deepEqual(s.pendingCommands("d1", 0).map((c) => [c.actor, c.result, c.reason, c.resultAt]), [[null, null, null, null]]);
+test("commands carry who sent them; access tokens and events have rows; hooks run after commit only", async () => {
+  const { s } = await storeWithDevice("Salon");
   const cmd = s.insertCommand("d1", "pause", {}, { type: "token", tokenId: "t1", name: "agent" }, 6);
-  assert.deepEqual([cmd.actor, cmd.result], [{ type: "token", tokenId: "t1", name: "agent" }, null]);
+  assert.deepEqual([cmd.actor, cmd.result, cmd.reason, cmd.resultAt], [{ type: "token", tokenId: "t1", name: "agent" }, null, null, null]);
+  assert.deepEqual(s.pendingCommands("d1", 0).map((c) => c.actor), [{ type: "token", tokenId: "t1", name: "agent" }]);
 
   const token = { id: "tok000000001", name: "agent", scope: "read" as const, createdAt: 7, lastUsedAt: null };
   assert.deepEqual(s.insertAccessToken({ ...token, secretHash: "hash1" }), token);
@@ -201,8 +209,8 @@ test("migration 5: saved positions become imported viewings; access tokens and e
   s.close();
 });
 
-test("migration 6: devices from before read no app version; one APK row at most", async () => {
-  const { s, file } = await migrateFrom(5, "INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'Salon', 'h', 1)");
+test("a new device reads no app version until its TV reports one; one APK row at most", async () => {
+  const { s, file } = await storeWithDevice("Salon");
   const d = s.getDevice("d1")!;
   assert.deepEqual([d.appVersion, d.appVersionCode, d.androidSdk, d.updateCapability, d.appReportedAt], [null, null, null, null, null]);
   s.setDeviceApp("d1", { version: "0.2.0", versionCode: 200, androidSdk: 25, capability: "guided" }, 7);
@@ -224,13 +232,16 @@ test("migration 6: devices from before read no app version; one APK row at most"
   s.close();
 });
 
-test("migration 7: pairing codes from before have no client; cancelling one unbinds and removes its uncollected device", async () => {
-  const { s } = await migrateFrom(6, "INSERT INTO devices (id, name, token_hash, created_at) VALUES ('new', 'TV', NULL, 1), ('old', 'Salon', 'h', 1)",
-    `INSERT INTO pair_codes (code, pair_token_hash, device_id, created_at, expires_at, approved_at) VALUES
-    ('111111', 'p1', 'new', 1, 100, 2), ('222222', 'p2', 'old', 1, 100, 2), ('333333', 'p3', NULL, 1, 100, NULL)`);
-  assert.equal(s.getPairCode("333333")!.clientHash, null);
-  s.insertPairCode({ code: "444444", pairTokenHash: "p4", clientHash: "c".repeat(64), createdAt: 3, expiresAt: 100 });
-  assert.equal(s.getPairCode("444444")!.clientHash, "c".repeat(64));
+test("pairing codes remember their client; cancelling one unbinds and removes its uncollected device", async () => {
+  const s = new Store(path.join(await tempDir(), "izle.db"));
+  s.createDevice({ id: "new", name: "TV", tokenHash: null, now: 1 });
+  s.createDevice({ id: "old", name: "Salon", tokenHash: "h", now: 1 });
+  for (const [code, client] of [["111111", "a"], ["222222", "b"], ["333333", "c"], ["444444", "d"]] as const) {
+    s.insertPairCode({ code, pairTokenHash: `p${code[0]}`, clientHash: client.repeat(64), createdAt: Number(code[0]), expiresAt: 100 });
+  }
+  s.approvePairCode("111111", "new", 2);
+  s.approvePairCode("222222", "old", 2);
+  assert.equal(s.getPairCode("444444")!.clientHash, "d".repeat(64));
   s.cancelPairCode("111111", 50);
   s.cancelPairCode("222222", 50);
   assert.deepEqual([s.getPairCode("111111")!.expiresAt, s.getPairCode("111111")!.deviceId], [50, null]);
@@ -240,9 +251,9 @@ test("migration 7: pairing codes from before have no client; cancelling one unbi
   s.close();
 });
 
-test("migration 8: devices from before get the 4 × 2 home grid; a patch sets either alone and bumps the version", async () => {
-  const { s } = await migrateFrom(7, "INSERT INTO devices (id, name, token_hash, created_at, autoplay_on_start) VALUES ('d1', 'Salon', 'h', 1, 1)");
-  const d = s.getDevice("d1")!;
+test("a new device gets the 4 × 2 home grid; a patch sets either alone and bumps the version", async () => {
+  const { s } = await storeWithDevice("Salon");
+  const d = s.updateDevice("d1", { autoplayOnStart: true })!;
   assert.deepEqual([d.homeColumns, d.homeRows, d.autoplayOnStart], [4, 2, true]);
   const wide = s.updateDevice("d1", { homeColumns: 6 })!;
   assert.deepEqual([wide.homeColumns, wide.homeRows, wide.stateVersion], [6, 2, d.stateVersion + 1]);
@@ -297,23 +308,21 @@ test("catalog history rows: episodes seen after a date, removal and return, buil
   s.close();
 });
 
-test("migration 9: now playing and viewings may name a channel; rows, ranges and the viewing id sequence survive the rebuild", async () => {
-  const actor = '{"type":"tv","deviceId":"d1"}';
-  const { s, file } = await migrateFrom(8, "INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'Salon', 'h', 1)",
-    `INSERT INTO now_playing (device_id, catalog_id, item_id, episode_id, source_id, position_ms, duration_ms, state, updated_at, playing, anchor_at, seq)
-    VALUES ('d1', 'c', 'i', 'e', 's', 5, 10, 'paused', 2, 1, 1, 3)`,
-    `INSERT INTO viewings (id, device_id, device_name, catalog_id, item_id, item_kind, item_title, episode_id, started_at, ended_at, end_position_ms, duration_ms, watched_ms, end_reason, seen, trigger, actor_json)
-    VALUES (1, 'd1', 'Salon', 'c', 'i', 'series', 'Show', 'e1', 10, 20, 100, 1000, 90, 'stopped', 0, 'viewer', '${actor}'),
-           (2, 'd1', 'Salon', 'c', 'i', 'series', 'Show', 'e2', 30, 40, 1000, 1000, 900, 'finished', 1, 'viewer', '${actor}'),
-           (3, 'd1', 'Salon', 'c', 'i', 'series', 'Show', 'e3', 50, 60, 10, 1000, 5, 'stopped', 0, 'viewer', '${actor}')`,
-    "INSERT INTO viewing_ranges (viewing_id, from_ms, to_ms) VALUES (1, 0, 100), (2, 0, 1000)",
-    "DELETE FROM viewings WHERE id = 3", // the sequence stands at 3
-  );
-  assert.deepEqual(s.getNowPlaying("d1"), { catalogId: "c", itemId: "i", episodeId: "e", sourceId: "s", positionMs: 5, durationMs: 10, state: "paused", updatedAt: 2, playing: true, anchorAt: 1, seq: 3 });
-  assert.deepEqual(s.listViewings({ catalogId: "c", limit: 10 }).map((v) => [v.id, v.episodeId, v.seen, v.actor]), [[2, "e2", true, { type: "tv", deviceId: "d1" }], [1, "e1", false, { type: "tv", deviceId: "d1" }]]);
+test("now playing and viewings may name a channel; viewing ids are never reused; ranges go with their viewing", async () => {
+  const { s, file } = await storeWithDevice("Salon");
+  const actor = { type: "tv" as const, deviceId: "d1" };
+  const base = { deviceId: "d1", deviceName: "Salon", catalogId: "c", itemId: "news", itemKind: "live", itemTitle: "News", episodeTitle: null, season: null, number: null, sourceId: "hls", startedAt: 70, endedAt: null, startPositionMs: null, endPositionMs: null, durationMs: null, watchedMs: 0, endReason: null, seen: false, trigger: "viewer" as const, actor, commandId: null, imported: false, lastReportAt: null, lastPositionMs: null, lastPlaying: false, lastAnchorAt: null, lastState: null };
+  const episode = (episodeId: string, startedAt: number, seen: boolean) =>
+    s.insertViewing({ ...base, itemId: "i", itemKind: "series", itemTitle: "Show", episodeId, startedAt, endedAt: startedAt + 10, seen, endReason: seen ? "finished" : "stopped" });
+  episode("e1", 10, false);
+  episode("e2", 30, true);
+  episode("e3", 50, false);
+  s.addViewingRange(1, 0, 100);
+  s.addViewingRange(2, 0, 1000);
+  assert.equal(s.deleteViewing(3), true);
+  assert.deepEqual(s.listViewings({ catalogId: "c", limit: 10 }).map((v) => [v.id, v.episodeId, v.seen, v.actor]), [[2, "e2", true, actor], [1, "e1", false, actor]]);
   assert.deepEqual([s.viewingRanges(1), s.viewingRanges(2)], [[[0, 100]], [[0, 1000]]]);
 
-  const base = { deviceId: "d1", deviceName: "Salon", catalogId: "c", itemId: "news", itemKind: "live", itemTitle: "News", episodeTitle: null, season: null, number: null, sourceId: "hls", startedAt: 70, endedAt: null, startPositionMs: null, endPositionMs: null, durationMs: null, watchedMs: 0, endReason: null, seen: false, trigger: "viewer" as const, actor: { type: "tv" as const, deviceId: "d1" }, commandId: null, imported: false, lastReportAt: null, lastPositionMs: null, lastPlaying: false, lastAnchorAt: null, lastState: null };
   const live = s.insertViewing({ ...base, episodeId: null });
   assert.deepEqual([live.id, live.episodeId, live.startPositionMs], [4, null, null], "the id sequence continues past the deleted viewing");
   assert.equal(s.runningViewing("d1")?.id, 4);
@@ -322,17 +331,17 @@ test("migration 9: now playing and viewings may name a channel; rows, ranges and
   assert.equal(s.historyEpisodeItem("c", "news"), null, "a channel's item id is no episode id");
   assert.deepEqual([...s.historyItems("c").entries()], [["i", { kind: "series", title: "Show" }], ["news", { kind: "live", title: "News" }]]);
 
+  const playing = { catalogId: "c", itemId: "i", episodeId: "e", sourceId: "s", positionMs: 5, durationMs: 10, state: "paused" as const, updatedAt: 2, playing: true, anchorAt: 1 };
+  assert.equal(s.setNowPlaying("d1", playing), 1);
   const row = { catalogId: "c", itemId: "news", episodeId: null, sourceId: "hls", positionMs: null, durationMs: null, state: "playing" as const, updatedAt: 5, playing: true, anchorAt: 5 };
-  assert.equal(s.setNowPlaying("d1", row), 4, "the sequence number carries on");
-  assert.deepEqual(s.getNowPlaying("d1"), { ...row, seq: 4 });
+  assert.equal(s.setNowPlaying("d1", row), 2, "the sequence number carries on");
+  assert.deepEqual(s.getNowPlaying("d1"), { ...row, seq: 2 });
 
   s.addViewingRange(2, 1000, 1100);
-  assert.throws(() => s.addViewingRange(999, 0, 1), /FOREIGN KEY/, "ranges still belong to viewings");
+  assert.throws(() => s.addViewingRange(999, 0, 1), /FOREIGN KEY/, "ranges belong to viewings");
   assert.equal(s.deleteViewing(2), true);
-  assert.deepEqual(s.viewingRanges(2), [], "deleting a viewing still deletes its ranges");
+  assert.deepEqual(s.viewingRanges(2), [], "deleting a viewing deletes its ranges");
   const db = new DatabaseSync(file);
-  const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name IN ('viewings', 'viewing_ranges') ORDER BY name").all().map((r) => r.name);
-  assert.deepEqual(indexes, ["viewing_ranges_by_viewing", "viewings_by_device", "viewings_by_end", "viewings_by_episode", "viewings_by_item"]);
   assert.deepEqual(db.prepare("SELECT name, seq FROM sqlite_sequence WHERE name LIKE 'viewings%'").all().map((r) => [r.name, r.seq]), [["viewings", 4]]);
   assert.throws(() => db.exec("INSERT INTO now_playing (device_id, catalog_id, item_id, state, updated_at) VALUES ('ghost', 'c', 'i', 'playing', 1)"), /FOREIGN KEY/);
   db.close();
@@ -358,19 +367,14 @@ test("catalog history rows for channels: seen by item id, removal and return", a
   s.close();
 });
 
-test("migration 10: every Home from before is the untitled section alone, with its items in order; sections go with their device", async () => {
-  const { s, file } = await migrateFrom(9, "INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'Salon', 'h1', 1), ('d2', 'Mutfak', 'h2', 1)",
-    `INSERT INTO home_entries (device_id, position, catalog_id, item_id, added_at) VALUES
-    ('d1', 0, 'c', 'b', 10), ('d1', 1, 'c', 'a', 11), ('d1', 2, 'other', 'z', 12), ('d1', 3, 'c', 'c', 13)`);
-  const untitledGrid = { id: "untitled", title: null, layout: "grid" };
-  assert.deepEqual(s.getHomeSections("d1"), [untitledGrid]);
-  assert.deepEqual(s.getHomeEntries("d1", "c"), [
-    { itemId: "b", addedAt: 10, sectionId: "untitled" }, { itemId: "a", addedAt: 11, sectionId: "untitled" }, { itemId: "c", addedAt: 13, sectionId: "untitled" },
-  ]);
-  assert.deepEqual(s.getHomeEntries("d1", "other").map((e) => e.itemId), ["z"], "entries stay scoped to their catalog");
-  assert.deepEqual(s.getHomeSections("d2"), [untitledGrid], "a TV with an empty Home has it too");
+test("Home is cut into sections in the owner's order, per TV; sections go with their device", async () => {
+  const { s, file } = await storeWithDevice("Salon");
   s.createDevice({ id: "d3", name: "Yeni", tokenHash: null, now: 2 });
-  assert.deepEqual(s.getHomeSections("d3"), [untitledGrid], "a TV paired later reads as the untitled section before its first write");
+  const untitledGrid = { id: "untitled", title: null, layout: "grid" };
+  assert.deepEqual(s.getHomeSections("d3"), [untitledGrid], "a TV reads as the untitled section alone before its first write");
+  s.setHome("d1", "c", untitled(["b"]), 10);
+  s.setHome("d1", "c", untitled(["b", "a"]), 11);
+  assert.deepEqual(s.getHomeSections("d1"), [untitledGrid]);
 
   s.setHome("d1", "c", [{ id: "Abc12345", title: "Kids", layout: "row", itemIds: ["a"] }, { ...untitledGrid, itemIds: ["b", "x"] }], 50);
   assert.deepEqual(s.getHomeSections("d1"), [{ id: "Abc12345", title: "Kids", layout: "row" }, untitledGrid]);
@@ -385,7 +389,7 @@ test("migration 10: every Home from before is the untitled section alone, with i
   assert.throws(() => check.exec("INSERT INTO home_entries (device_id, position, catalog_id, item_id, section_id) VALUES ('d1', 9, 'c', 'q', 'gone0000')"), /FOREIGN KEY/,
     "an entry names a section of its own TV");
   check.exec("DELETE FROM devices WHERE id = 'd1'");
-  assert.deepEqual(check.prepare("SELECT device_id FROM home_sections ORDER BY device_id").all().map((r) => r.device_id), ["d2", "d3"], "deleting a TV deletes its sections");
+  assert.deepEqual(check.prepare("SELECT device_id FROM home_sections ORDER BY device_id").all().map((r) => r.device_id), ["d3"], "deleting a TV deletes its sections");
   assert.equal(check.prepare("SELECT COUNT(*) AS n FROM home_entries WHERE device_id = 'd1'").get()?.n, 0);
   check.close();
 });

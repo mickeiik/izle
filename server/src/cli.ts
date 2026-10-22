@@ -12,6 +12,7 @@ import { SCOPES, type Scope } from "./tokens.ts";
 import { healthcheckAll, loadResolver, ResolverLoadError } from "./resolver.ts";
 import { startServer } from "./server.ts";
 import { adminCall, linkBase, qrCode, ServerUnreachableError, signInLink } from "./shell.ts";
+import { DatabaseVersionError } from "./store.ts";
 import { VERSION } from "./version.ts";
 
 const USAGE = `usage:
@@ -280,7 +281,7 @@ export async function main(argv: string[]): Promise<number> {
     process.on("SIGHUP", () => void reloadOnSignal(server.ctx, "SIGHUP"));
     return -1; // keep running
   } catch (err) {
-    if (err instanceof ConfigError || err instanceof ResolverLoadError || err instanceof BackupError) return fail(err.message);
+    if (err instanceof ConfigError || err instanceof ResolverLoadError || err instanceof BackupError || err instanceof DatabaseVersionError) return fail(err.message);
     if (err instanceof ServerUnreachableError) return fail(`${err.message}; is it running? (--server <url> if it listens elsewhere)`);
     if (err instanceof BundleValidationError) {
       const errors = err.issues.filter((x) => x.severity === "error").map((i) => `\n  ✖ ${formatIssue(i)}`);

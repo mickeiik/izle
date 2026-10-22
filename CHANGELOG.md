@@ -17,8 +17,7 @@ contract share one version number. How to update (back up, update the server, th
   `total`; `GET /api/v1/admin/catalog` gains `facets`.
 - **Sections on Home.** A TV's Home can be cut into up to 20 titled sections, in the owner's order, each a grid or
   one line that scrolls sideways; shows put on Home without a section stay in the untitled section, where every
-  existing Home starts (the database is migrated on the first start). Deleting a section moves its shows to the
-  untitled one.
+  Home starts. Deleting a section moves its shows to the untitled one.
   - Server: `POST`/`PATCH`/`DELETE /api/v1/admin/devices/:id/home/sections[/:sectionId]`, `sectionId` on the single
     item changes, `PUT …/home {"sections"}`; `PUT …/home {"itemIds"}` keeps each show in its section. A TV's page and
     every Home change answer `sections`; the TV's state carries `homeSections`, and `home` lists the shows section
@@ -34,6 +33,9 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Changed
 
+- **Breaking (pre-release): a data directory from 0.4.0 or earlier is refused.** The database now starts from one
+  schema instead of a chain of migrations, so the server no longer upgrades a database (or a backup) made by 0.4.0 or
+  earlier; it stops and says so. Move the data directory away (or delete it), start the server and pair the TVs again.
 - **Admin page:** a TV's page is split into tabs (Now playing, Home screen, Listen along, History, Settings,
   Problems with a count), kept in the address (`#/devices/<id>/settings`). Settings holds the TV app's version and
   "Install now", the TV's settings and "Forget this TV".

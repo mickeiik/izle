@@ -139,6 +139,10 @@ each. Earlier entries, and the history of how each feature was built, are in git
   page keeps and flags them, so the owner sees what a reload took away. Every Home change runs one edit inside one
   transaction and checks the result, so `expected` is checked before the body's own refusals.
 - Every module declares the deps interface it uses; `AppContext` is the routes' flat view of the running server.
+- The pre-release migration chain was collapsed into one initial schema at `user_version` 10, its last version, so a
+  database made since opens as it is. One below 10 (izle 0.4.0 or earlier, or a backup of one) is refused rather than
+  migrated: nothing was deployed, and keeping the chain meant testing upgrades nobody needs. Later changes append to
+  `MIGRATIONS` after the schema.
 
 ## TV app architecture
 
@@ -180,8 +184,8 @@ each. Earlier entries, and the history of how each feature was built, are in git
 - `layout` is an enum rather than a boolean, so a later layout is additive; the table has no CHECK on it, so a new
   layout needs no rebuild. Each home entry names its section through a composite foreign key (TV, section), so it can
   never point at another TV's section.
-- A TV paired after migration 10 has no section row until its Home is first written, and reads as the untitled
-  section alone: one rule for reads, no write on pairing.
+- A TV has no section row until its Home is first written, and reads as the untitled section alone: one rule for
+  reads, no write on pairing.
 - `expected` in the `{"sections"}` form compares `title` and `layout` only when given, so a caller that tracks only
   what is on Home is not refused over a renamed section.
 - Admin page: choosing a section in the list scrolls the screen without moving the selection, and it stays there
