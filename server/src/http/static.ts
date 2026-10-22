@@ -24,7 +24,6 @@ async function readOr404(file: string): Promise<Uint8Array<ArrayBuffer>> {
   }
 }
 
-
 export function registerStatic(app: Hono<Env>, ctx: AppContext): void {
   const { catalog } = ctx;
 
