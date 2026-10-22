@@ -6,6 +6,8 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-23
+
 ### Added
 
 - **Admin page: a catalog browser** for a TV's "Add shows" and the Catalog page's "Shows": title search, filters
@@ -27,7 +29,8 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 
 ### Changed
 
-- **Breaking (pre-release):** a viewing in the API no longer has `imported`.
+- **Breaking (pre-release):** a viewing in the API no longer has `imported`, and the database starts over: a data
+  directory from 0.4.0 or earlier is refused (start with an empty one and pair the TVs again).
 - **Admin page:** a TV's page is split into tabs (Now playing, Home screen, Listen along, History, Settings,
   Problems with a count), kept in the address (`#/devices/<id>/settings`). Settings holds the TV app's version and
   "Install now", the TV's settings and "Forget this TV".
@@ -207,7 +210,8 @@ The first release: everything needed to run izle at home with your own catalog.
 - Node.js 22.13 or newer (`node:sqlite`), tested on 22, 24 and 26. The TV app needs Android 7.0 (API 24)+ and carries
   Let's Encrypt's roots.
 
-[Unreleased]: https://github.com/mickeiik/izle/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/mickeiik/izle/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/mickeiik/izle/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/mickeiik/izle/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/mickeiik/izle/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/mickeiik/izle/compare/v0.1.0...v0.2.0
