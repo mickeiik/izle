@@ -459,7 +459,9 @@ reported it (each null until it does; `reportedAt`: when it first reported that 
 `auto` off: send [`update`](#commands)).
 
 Errors. Home list: `400 too_many_items` (`max`), `duplicate_item`, `unknown_item`, `not_playable` (`itemId`: no
-`playbackAllowed` episode, or a channel with `playbackAllowed: false`). Cursor: `404 unknown_item`,
+`playbackAllowed` episode, or a channel with `playbackAllowed: false`), checked only for items not already on the
+list: one a catalog reload left missing or unplayable may stay, so the list can still be reordered or shortened.
+Cursor: `404 unknown_item`,
 `400 unknown_episode` (not in this item; always for a channel, which has no cursor), `400 not_allowed`; setting the
 cursor also forgets that episode's saved position, so "continue from episode X" starts X from the beginning.
 Commands: `400 unknown_episode`, `400 not_allowed` (play), `400 invalid_request` (unknown type, a seek with both or
