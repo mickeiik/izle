@@ -37,7 +37,8 @@ const USAGE = `usage:
   izle-server backup <file> [--config <file>] [--force]
                                                    copy the database to <file> (mode 0600) while the server keeps
                                                    running; --force replaces an existing file
-  izle-server validate-catalog <dir>               validate a catalog bundle (same as izle-validate)
+  izle-server validate-catalog <dir> [--probe] [--json]
+                                                   validate a catalog bundle (same as izle-validate)
   izle-server check-resolver [--config <file>]     load the configured resolver module, check that it provides
                                                    the catalog's adapters, and run every adapter's healthcheck
   izle-server --version                            print the version
