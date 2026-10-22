@@ -108,6 +108,22 @@ test("set, add, move, remove: the expected-list check, the refusals, clamping, e
   assert.deepEqual(events("home.changed").at(-1), { itemIds: ["film", "show"], added: [], removed: ["news"] });
 });
 
+test("a list holding missing or unplayable items still takes edits: only items new to it are checked", async (t) => {
+  const { store, home, device } = await setup(t);
+  // As a catalog reload leaves a list: an item gone, items no longer playable.
+  store.setHome(device.id, CATALOG, ["show", "gone", "locked", "off-air"], 1);
+  home.remove(device.id, "show", OWNER);
+  home.move(device.id, "gone", 2, OWNER);
+  home.add(device.id, "film", 0, OWNER);
+  home.set(device.id, ["film", "locked", "off-air", "gone"], OWNER, ["film", "locked", "off-air", "gone"]);
+  assert.deepEqual(home.ids(device.id), ["film", "locked", "off-air", "gone"]);
+  home.remove(device.id, "gone", OWNER);
+  refuses(() => home.add(device.id, "gone", undefined, OWNER), 400, "unknown_item");
+  refuses(() => home.add(device.id, "locked", undefined, OWNER), 400, "duplicate_item");
+  home.remove(device.id, "locked", OWNER);
+  refuses(() => home.add(device.id, "locked", undefined, OWNER), 400, "not_playable");
+});
+
 test("setCursor: forgets the episode's saved position and bumps the version; a channel has no cursor", async (t) => {
   const { store, catalog, home, device, version, events } = await setup(t);
   store.upsertProgress(device.id, { catalogId: CATALOG, itemId: "show", episodeId: "show.e4", positionMs: 30_000, durationMs: 60_000, status: "watching", updatedAt: 1 });

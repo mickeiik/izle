@@ -19,6 +19,10 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Fixed
 
+- **Admin page: a Home list with a missing show could not be edited.** Once a catalog update dropped a show (or
+  made it unplayable) that was on a TV's Home, every change to that list, removing the missing show included,
+  failed with "That show is not in the catalog (any more)." Only the shows a change adds are checked now; the ones
+  already on the list may stay until the owner removes them.
 - **TV app: CH+/CH− on a dead channel.** When a channel ends on "Can't play right now" (Try again / Home with its
   countdown), CH+/CH− and |◀◀ ▶▶| now switch to the next / previous channel on Home as they do while a channel
   plays; before, they did nothing until the viewer pressed a button. The owner's `next` and `previous` commands do

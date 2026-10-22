@@ -102,7 +102,9 @@ export class HomeService {
 
   /**
    * Replaces the home list; returns the new state version. With `expected` (the list the caller saw), answers 409
-   * `home_changed` when the list is no longer that, so two editors do not overwrite each other.
+   * `home_changed` when the list is no longer that, so two editors do not overwrite each other. Only items new to the
+   * list must be in the catalog and playable: one a catalog reload left missing or unplayable may stay (the TV hides
+   * it), so the list can still be reordered or shortened.
    */
   set(deviceId: string, itemIds: string[], actor: Actor, expected?: string[]): number {
     if (itemIds.length > HOME_MAX_ITEMS) {
@@ -112,17 +114,20 @@ export class HomeService {
     for (const id of itemIds) {
       if (seen.has(id)) throw new HttpError(400, "duplicate_item", "an item appears twice", { itemId: id });
       seen.add(id);
-      const item = this.s.catalog.item(id);
-      if (!item) throw new HttpError(400, "unknown_item", "no such item in the catalog", { itemId: id });
-      if (!isPlayable(item)) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed, or is a channel whose playback is not allowed", { itemId: id });
     }
     this.s.store.transaction(() => {
       const before = this.ids(deviceId);
       if (expected && (before.length !== expected.length || before.some((id, i) => id !== expected[i]))) {
         throw new HttpError(409, "home_changed", "the home list changed in the meantime", { itemIds: before });
       }
-      this.s.store.setHome(deviceId, this.s.catalog.catalogId, itemIds, this.s.now());
       const was = new Set(before);
+      for (const id of itemIds) {
+        if (was.has(id)) continue;
+        const item = this.s.catalog.item(id);
+        if (!item) throw new HttpError(400, "unknown_item", "no such item in the catalog", { itemId: id });
+        if (!isPlayable(item)) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed, or is a channel whose playback is not allowed", { itemId: id });
+      }
+      this.s.store.setHome(deviceId, this.s.catalog.catalogId, itemIds, this.s.now());
       const is = new Set(itemIds);
       this.s.eventLog.append("home.changed", deviceId, actor, { itemIds, added: itemIds.filter((id) => !was.has(id)), removed: before.filter((id) => !is.has(id)) });
     });
