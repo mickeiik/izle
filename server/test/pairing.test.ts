@@ -2,11 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { databaseFile } from "../src/config.ts";
-import { openEvents, startTestServer, type Json, type TestServer } from "./helpers.ts";
+import { openEvents, testServer, type Json, type TestServer } from "./helpers.ts";
 
 test("pairing: start → pending → approve → token delivered exactly once", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const start = await s.call("POST", "/api/v1/pair/start");
   assert.equal(start.status, 200);
   assert.match(start.json.code, /^[0-9]{6}$/);
@@ -46,8 +45,7 @@ test("pairing: start → pending → approve → token delivered exactly once", 
 });
 
 test("pairing: a waiting long-poll is woken by the approval", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const start = await s.call("POST", "/api/v1/pair/start");
   const started = Date.now();
   const polling = s.call("GET", `/api/v1/pair/wait?code=${start.json.code}&wait=10`, { token: start.json.pairToken });
@@ -59,8 +57,7 @@ test("pairing: a waiting long-poll is woken by the approval", async (t) => {
 });
 
 test("pairing: codes expire after 10 minutes", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const start = await s.call("POST", "/api/v1/pair/start");
   s.clock.advance(10 * 60_000 + 1);
   const r = await s.call("GET", `/api/v1/pair/wait?code=${start.json.code}&wait=0`, { token: start.json.pairToken });
@@ -69,8 +66,7 @@ test("pairing: codes expire after 10 minutes", async (t) => {
 });
 
 test("pairing: at most two open codes per client, with Retry-After, and pair/start is rate-limited per client", async (t) => {
-  const s = await startTestServer({ pairing: { startLimit: { max: 4, windowMs: 60_000 } } });
-  t.after(() => s.close());
+  const s = await testServer(t, { pairing: { startLimit: { max: 4, windowMs: 60_000 } } });
   assert.equal((await s.call("POST", "/api/v1/pair/start")).status, 200);
   s.clock.advance(30_000);
   assert.equal((await s.call("POST", "/api/v1/pair/start")).status, 200);
@@ -90,8 +86,7 @@ test("pairing: at most two open codes per client, with Retry-After, and pair/sta
 });
 
 test("pairing: one client cannot keep another from getting a code, across expiry cycles; ten open codes at most", async (t) => {
-  const s = await startTestServer({ configFile: { trustedProxies: ["127.0.0.1", "::1"] } });
-  t.after(() => s.close());
+  const s = await testServer(t, { configFile: { trustedProxies: ["127.0.0.1", "::1"] } });
   const start = (client: string) => s.call("POST", "/api/v1/pair/start", { headers: { "X-Forwarded-For": client } });
   for (let cycle = 0; cycle < 4; cycle++) {
     // The flooder starts first and keeps asking, inside its own rate limit.
@@ -115,8 +110,7 @@ test("pairing: one client cannot keep another from getting a code, across expiry
 });
 
 test("pairing: the owner clears a code nobody should approve; the TV's wait answers 410", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const stranger = await s.call("POST", "/api/v1/pair/start");
   const mine = await s.call("POST", "/api/v1/pair/start");
   const waiting = s.call("GET", `/api/v1/pair/wait?code=${stranger.json.code}&wait=10`, { token: stranger.json.pairToken });
@@ -156,23 +150,20 @@ test("pairing: behind a trusted reverse proxy the rate limit counts each X-Forwa
   const start = (s: TestServer, client: string) =>
     s.call("POST", "/api/v1/pair/start", { headers: { "X-Forwarded-For": client } }).then((r) => r.status);
 
-  const behindProxy = await startTestServer({ ...limit, configFile: { trustedProxies: ["127.0.0.1", "::1"] } });
-  t.after(() => behindProxy.close());
+  const behindProxy = await testServer(t, { ...limit, configFile: { trustedProxies: ["127.0.0.1", "::1"] } });
   assert.deepEqual([await start(behindProxy, "203.0.113.1"), await start(behindProxy, "203.0.113.1")], [200, 200]);
   assert.equal(await start(behindProxy, "203.0.113.1"), 429);
   assert.equal(await start(behindProxy, "203.0.113.2"), 200, "another TV behind the same proxy has its own limit");
   assert.equal(await start(behindProxy, "198.51.100.7, 203.0.113.1"), 429, "a forged prefix does not escape the limit");
 
   // Without trustedProxies the header is ignored: every request counts for the socket address.
-  const direct = await startTestServer(limit);
-  t.after(() => direct.close());
+  const direct = await testServer(t, limit);
   assert.deepEqual([await start(direct, "203.0.113.1"), await start(direct, "203.0.113.2")], [200, 200]);
   assert.equal(await start(direct, "203.0.113.3"), 429);
 });
 
 test("pairing: input validation", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   assert.equal((await s.call("GET", "/api/v1/pair/wait?code=12ab&wait=0", { token: "x" })).status, 400);
   assert.equal((await s.call("GET", "/api/v1/pair/wait?code=123456&wait=99", { token: "x" })).status, 400);
   assert.equal((await s.admin("POST", "/pair/approve", { code: "123456" })).status, 404, "the name is optional");
@@ -181,8 +172,7 @@ test("pairing: input validation", async (t) => {
 });
 
 test("pairing: approving without a name calls the TV \"TV\", then \"TV 2\", …", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const approve = async (name?: string) => {
     const start = await s.call("POST", "/api/v1/pair/start");
     const r = await s.admin("POST", "/pair/approve", { code: start.json.code, ...(name === undefined ? {} : { name }) });
@@ -199,8 +189,7 @@ test("pairing: approving without a name calls the TV \"TV\", then \"TV 2\", …"
 });
 
 test("replacing a TV: the new TV takes over the device and everything stored for it; the old token stops working", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const old = await s.pair("Salon");
   const d = old.deviceId;
   await s.admin("PUT", `/devices/${d}/home`, { itemIds: ["show", "film"] });
@@ -237,8 +226,7 @@ test("replacing a TV: the new TV takes over the device and everything stored for
 });
 
 test("replacing a TV: a code that expires uncollected changes nothing, also after the purge", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const old = await s.pair("Salon");
   const start = await s.call("POST", "/api/v1/pair/start");
   assert.equal((await s.admin("POST", "/pair/approve", { code: start.json.code, replaces: old.deviceId })).status, 200);
@@ -251,8 +239,7 @@ test("replacing a TV: a code that expires uncollected changes nothing, also afte
 });
 
 test("replacing a TV: deleting the TV before the new one collects its token deletes the code with it", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const old = await s.pair("Salon");
   const start = await s.call("POST", "/api/v1/pair/start");
   assert.equal((await s.admin("POST", "/pair/approve", { code: start.json.code, replaces: old.deviceId })).status, 200);
@@ -263,8 +250,7 @@ test("replacing a TV: deleting the TV before the new one collects its token dele
 });
 
 test("history adopt: a deleted TV's viewings go to an existing one, under its name", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const gone = await s.pair("Old TV");
   const tv = await s.pair("New TV");
   const db = new DatabaseSync(databaseFile(s.config));

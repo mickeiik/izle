@@ -55,6 +55,12 @@ function fail(line: string): number {
   return 1;
 }
 
+/** An answer of the running server that the command did not expect: the token refused, or what the server said. */
+function unexpected(server: string, r: { status: number; json: unknown }): number {
+  const message = (r.json as { message?: string } | null)?.message;
+  return fail(r.status === 401 ? TOKEN_REFUSED : `unexpected answer ${r.status} from ${server}${message ? `: ${message}` : ""}`);
+}
+
 /** A command line that cannot be run: why, then the usage, on stderr; exit status 2. */
 function usage(message: string): number {
   process.stderr.write(`${message}\n${USAGE}\n`);
@@ -101,45 +107,37 @@ async function pair(config: ServerConfig, args: string[], serverUrl: string | un
   if (sub !== "pending" && sub !== "approve" && sub !== "cancel") return usage(`pair needs "pending", "approve <code> [name…]" or "cancel <code>"`);
   const server = serverUrl ?? localServerUrl(config);
   const { token } = loadAdminToken(config, stderrLog, { create: false });
-  try {
-    if (sub === "pending") {
-      if (rest.length > 0) return fail(`pair pending takes no arguments`);
-      const r = await adminCall<{ codes: Array<{ code: string; expiresAt: string; approved: boolean }> }>(server, token, "GET", "/api/v1/admin/pair/pending");
-      if (r.status === 401) return fail(TOKEN_REFUSED);
-      if (r.status !== 200) return fail(`unexpected answer ${r.status} from ${server}`);
-      const codes = r.json!.codes;
-      if (codes.length === 0) out("no TV is waiting; izle on the TV shows a 6-digit code when it is not paired");
-      for (const c of codes) {
-        const left = Math.max(0, Math.round((Date.parse(c.expiresAt) - Date.now()) / 1000));
-        out(`${c.code}  ${c.approved ? "approved, waiting for the TV to collect its token" : `waiting for approval, expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`}`);
-      }
-      return 0;
+  if (sub === "pending") {
+    if (rest.length > 0) return fail(`pair pending takes no arguments`);
+    const r = await adminCall<{ codes: Array<{ code: string; expiresAt: string; approved: boolean }> }>(server, token, "GET", "/api/v1/admin/pair/pending");
+    if (r.status !== 200) return unexpected(server, r);
+    const codes = r.json!.codes;
+    if (codes.length === 0) out("no TV is waiting; izle on the TV shows a 6-digit code when it is not paired");
+    for (const c of codes) {
+      const left = Math.max(0, Math.round((Date.parse(c.expiresAt) - Date.now()) / 1000));
+      out(`${c.code}  ${c.approved ? "approved, waiting for the TV to collect its token" : `waiting for approval, expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`}`);
     }
-    if (sub === "cancel") {
-      const [code, ...more] = rest;
-      if (!PAIR_CODE.test(code ?? "") || more.length > 0) return fail("pair cancel needs one 6-digit code (pair pending lists them)");
-      const r = await adminCall<{ message?: string }>(server, token, "DELETE", `/api/v1/admin/pair/pending/${code}`);
-      if (r.status === 404) return fail(`no code ${code} is waiting; it was collected, cleared or expired`);
-      if (r.status === 401) return fail(TOKEN_REFUSED);
-      if (r.status !== 204) return fail(`unexpected answer ${r.status} from ${server}${r.json?.message ? `: ${r.json.message}` : ""}`);
-      out(`cleared: the code ${code} no longer pairs; a TV that showed it asks for a new one`);
-      return 0;
-    }
-    const [code, ...nameWords] = rest;
-    if (!PAIR_CODE.test(code ?? "")) return fail("pair approve needs the 6-digit code the TV shows");
-    const name = nameWords.join(" ").trim();
-    const body = { code, ...(name ? { name } : {}) };
-    const r = await adminCall<{ deviceId: string; name: string; message?: string }>(server, token, "POST", "/api/v1/admin/pair/approve", body);
-    if (r.status === 404) return fail(`no TV is waiting with the code ${code}; the TV shows a new code every 10 minutes`);
-    if (r.status === 409) return fail(`the code ${code} is already approved`);
-    if (r.status === 401) return fail(TOKEN_REFUSED);
-    if (r.status !== 200) return fail(`unexpected answer ${r.status} from ${server}${r.json?.message ? `: ${r.json.message}` : ""}`);
-    out(`approved: "${r.json!.name}" (${r.json!.deviceId}) shows its home screen in a moment; put shows on it from the admin page`);
     return 0;
-  } catch (err) {
-    if (err instanceof ServerUnreachableError) return fail(`${err.message}; is it running? (--server <url> if it listens elsewhere)`);
-    throw err;
   }
+  if (sub === "cancel") {
+    const [code, ...more] = rest;
+    if (!PAIR_CODE.test(code ?? "") || more.length > 0) return fail("pair cancel needs one 6-digit code (pair pending lists them)");
+    const r = await adminCall(server, token, "DELETE", `/api/v1/admin/pair/pending/${code}`);
+    if (r.status === 404) return fail(`no code ${code} is waiting; it was collected, cleared or expired`);
+    if (r.status !== 204) return unexpected(server, r);
+    out(`cleared: the code ${code} no longer pairs; a TV that showed it asks for a new one`);
+    return 0;
+  }
+  const [code, ...nameWords] = rest;
+  if (!PAIR_CODE.test(code ?? "")) return fail("pair approve needs the 6-digit code the TV shows");
+  const name = nameWords.join(" ").trim();
+  const body = { code, ...(name ? { name } : {}) };
+  const r = await adminCall<{ deviceId: string; name: string }>(server, token, "POST", "/api/v1/admin/pair/approve", body);
+  if (r.status === 404) return fail(`no TV is waiting with the code ${code}; the TV shows a new code every 10 minutes`);
+  if (r.status === 409) return fail(`the code ${code} is already approved`);
+  if (r.status !== 200) return unexpected(server, r);
+  out(`approved: "${r.json!.name}" (${r.json!.deviceId}) shows its home screen in a moment; put shows on it from the admin page`);
+  return 0;
 }
 
 /** `token create <name…> --scope <scope>` / `token list` / `token revoke <id>` against the running server. */
@@ -150,42 +148,33 @@ async function token(config: ServerConfig, args: string[], serverUrl: string | u
   const server = serverUrl ?? localServerUrl(config);
   const { token: adminToken } = loadAdminToken(config, stderrLog, { create: false });
   type Token = { id: string; name: string; scope: Scope; createdAt: string; lastUsedAt: string | null };
-  const unexpected = (r: { status: number; json: unknown }) => {
-    const message = (r.json as { message?: string } | null)?.message;
-    return fail(r.status === 401 ? TOKEN_REFUSED : `unexpected answer ${r.status} from ${server}${message ? `: ${message}` : ""}`);
-  };
-  try {
-    if (sub === "list") {
-      if (rest.length > 0) return fail("token list takes no arguments");
-      const r = await adminCall<{ tokens: Token[] }>(server, adminToken, "GET", "/api/v1/admin/tokens");
-      if (r.status !== 200) return unexpected(r);
-      if (r.json!.tokens.length === 0) out("no access tokens; create one with `izle-server token create <name> --scope <scope>`");
-      for (const t of r.json!.tokens) out(`${t.id}  ${t.scope.padEnd(7)}  ${t.lastUsedAt ? `last used ${t.lastUsedAt}` : "never used"}  ${t.name}`);
-      return 0;
-    }
-    if (sub === "revoke") {
-      const [id, ...extra] = rest;
-      if (!id || extra.length > 0) return fail("token revoke needs the token's id (see token list)");
-      const r = await adminCall<{ message?: string }>(server, adminToken, "DELETE", `/api/v1/admin/tokens/${encodeURIComponent(id)}`);
-      if (r.status === 404) return fail(`no access token with the id ${id}`);
-      if (r.status !== 204) return unexpected(r);
-      out(`revoked access token ${id}; requests with it answer 401 from now on`);
-      return 0;
-    }
-    const name = rest.join(" ").trim();
-    if (!name) return fail("token create needs a name");
-    if (!SCOPES.includes(scope as Scope)) return fail(`token create needs --scope ${SCOPES.join("|")}`);
-    const r = await adminCall<{ token: Token; secret: string; message?: string }>(server, adminToken, "POST", "/api/v1/admin/tokens", { name, scope });
-    if (r.status === 409) return fail(`an access token named "${name}" exists`);
-    if (r.status !== 201) return unexpected(r);
-    // The secret alone on stdout, like admin-token, so a script can capture it; it is shown only now.
-    process.stderr.write(`created access token "${r.json!.token.name}" (${r.json!.token.id}, scope ${r.json!.token.scope}); its secret, shown only now:\n`);
-    out(r.json!.secret);
+  if (sub === "list") {
+    if (rest.length > 0) return fail("token list takes no arguments");
+    const r = await adminCall<{ tokens: Token[] }>(server, adminToken, "GET", "/api/v1/admin/tokens");
+    if (r.status !== 200) return unexpected(server, r);
+    if (r.json!.tokens.length === 0) out("no access tokens; create one with `izle-server token create <name> --scope <scope>`");
+    for (const t of r.json!.tokens) out(`${t.id}  ${t.scope.padEnd(7)}  ${t.lastUsedAt ? `last used ${t.lastUsedAt}` : "never used"}  ${t.name}`);
     return 0;
-  } catch (err) {
-    if (err instanceof ServerUnreachableError) return fail(`${err.message}; is it running? (--server <url> if it listens elsewhere)`);
-    throw err;
   }
+  if (sub === "revoke") {
+    const [id, ...extra] = rest;
+    if (!id || extra.length > 0) return fail("token revoke needs the token's id (see token list)");
+    const r = await adminCall(server, adminToken, "DELETE", `/api/v1/admin/tokens/${encodeURIComponent(id)}`);
+    if (r.status === 404) return fail(`no access token with the id ${id}`);
+    if (r.status !== 204) return unexpected(server, r);
+    out(`revoked access token ${id}; requests with it answer 401 from now on`);
+    return 0;
+  }
+  const name = rest.join(" ").trim();
+  if (!name) return fail("token create needs a name");
+  if (!SCOPES.includes(scope as Scope)) return fail(`token create needs --scope ${SCOPES.join("|")}`);
+  const r = await adminCall<{ token: Token; secret: string }>(server, adminToken, "POST", "/api/v1/admin/tokens", { name, scope });
+  if (r.status === 409) return fail(`an access token named "${name}" exists`);
+  if (r.status !== 201) return unexpected(server, r);
+  // The secret alone on stdout, like admin-token, so a script can capture it; it is shown only now.
+  process.stderr.write(`created access token "${r.json!.token.name}" (${r.json!.token.id}, scope ${r.json!.token.scope}); its secret, shown only now:\n`);
+  out(r.json!.secret);
+  return 0;
 }
 
 /**
@@ -292,6 +281,7 @@ export async function main(argv: string[]): Promise<number> {
     return -1; // keep running
   } catch (err) {
     if (err instanceof ConfigError || err instanceof ResolverLoadError || err instanceof BackupError) return fail(err.message);
+    if (err instanceof ServerUnreachableError) return fail(`${err.message}; is it running? (--server <url> if it listens elsewhere)`);
     if (err instanceof BundleValidationError) {
       const errors = err.issues.filter((x) => x.severity === "error").map((i) => `\n  ✖ ${formatIssue(i)}`);
       return fail(`the catalog bundle is invalid:${errors.join("")}`);

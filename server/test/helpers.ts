@@ -119,6 +119,10 @@ export async function tempDir(prefix = "izle-test-"): Promise<string> {
   return mkdtemp(path.join(tmpdir(), prefix));
 }
 
+/** URIs of a playlist: URI lines and URI="…" attributes. */
+export const uris = (playlist: string): string[] =>
+  playlist.split("\n").flatMap((line) => (line.startsWith("#") ? [...line.matchAll(/URI="([^"]*)"/g)].map((m) => m[1]!) : line.trim() ? [line.trim()] : []));
+
 /** A Home of the untitled section alone, holding `itemIds` (for `Store#setHome`). */
 export function untitled(itemIds: string[]) {
   return [{ id: "untitled", title: null, layout: "grid", itemIds }];
@@ -203,6 +207,23 @@ export async function startTestServer(opts: TestServerOptions = {}): Promise<Tes
   };
 
   return { srv, base, config, bundleDir, logs, clock, call, admin, pair, close: () => srv.close() };
+}
+
+/** The server's log lines with this message, parsed. */
+export const logged = (s: TestServer, msg: string): Json[] => s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === msg);
+
+/** Creates an access token through the API and returns its secret and id. */
+export async function createToken(s: TestServer, name: string, scope: string) {
+  const r = await s.admin("POST", "/tokens", { name, scope });
+  if (r.status !== 201) throw new Error(`token ${r.status} ${JSON.stringify(r.json)}`);
+  return { secret: r.json.secret as string, id: r.json.token.id as string };
+}
+
+/** `startTestServer`, closed once the test `t` ends. */
+export async function testServer(t: { after(fn: () => unknown): void }, opts?: TestServerOptions): Promise<TestServer> {
+  const s = await startTestServer(opts);
+  t.after(() => s.close());
+  return s;
 }
 
 export interface SseMessage {

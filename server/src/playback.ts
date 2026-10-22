@@ -15,7 +15,7 @@ export function isPlayable(item: CatalogItem): boolean {
   return isLiveItem(item) ? item.playbackAllowed : nextAllowedIndex(item, -1) >= 0;
 }
 
-/** An item's cursor as the play-order rules see it; a bare episode id is an ordinary (not wrapped) cursor. */
+/** An item's cursor as the play-order rules see it. */
 interface CursorLike {
   episodeId: string;
   /** Placed by the wrap to the first episode after the last one was finished. */
@@ -32,13 +32,12 @@ interface CursorLike {
  */
 export function cursorIndex(
   item: EpisodicItem,
-  cursor: string | CursorLike | null,
+  c: CursorLike | null,
   progress: ReadonlyMap<string, Pick<Progress, "status">>,
   appended: ReadonlySet<string> = new Set(),
 ): number {
   const first = nextAllowedIndex(item, -1);
   if (first < 0) return -1;
-  const c: CursorLike | null = typeof cursor === "string" ? { episodeId: cursor, wrapped: false } : cursor;
   if (c?.wrapped && appended.size > 0) {
     const added = item.episodes.findIndex((e) => e.playbackAllowed && appended.has(e.id));
     if (added >= 0) return added;

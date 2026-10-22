@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { CHANNEL_REFERER, fixtureItems, fixtureManifest, startTestServer, tempDir, TEST_RESOLVER, writeBundle, type Json, type TestServer } from "./helpers.ts";
+import { CHANNEL_REFERER, fixtureItems, fixtureManifest, testServer, tempDir, TEST_RESOLVER, writeBundle, type Json, type TestServer, type TestServerOptions } from "./helpers.ts";
 
 /** A made-up token-like run (40 base64url characters), never a real secret. */
 const RUN = "Zq3v9Kx2LmN8pQ4rT6uW1yA5bC7dE0fGhIjKlMnO"; // gitleaks:allow (made-up hostile fixture)
@@ -21,10 +21,9 @@ function fakeUpstream() {
   return { asked, fetch };
 }
 
-async function setup(t: { after(fn: () => unknown): void }, opts: Parameters<typeof startTestServer>[0] = {}) {
+async function setup(t: { after(fn: () => unknown): void }, opts: TestServerOptions = {}) {
   const up = fakeUpstream();
-  const s = await startTestServer({ fetch: up.fetch, ...opts });
-  t.after(() => s.close());
+  const s = await testServer(t, { fetch: up.fetch, ...opts });
   const diagnose = (body: Json) => s.admin("POST", "/diagnostics/resolve", body);
   return { s, up, diagnose };
 }

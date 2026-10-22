@@ -2,18 +2,18 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import path from "node:path";
-import { egressPolicy, EgressDenied, invalidPrivateUpstream, isNonPublicAddress } from "../src/egress.ts";
-import { fixtureManifest, listen, startTestServer, tempDir, writeBundle, type Json } from "./helpers.ts";
+import { egressPolicy, EgressDenied, invalidPrivateUpstream } from "../src/egress.ts";
+import { fixtureManifest, listen, testServer, tempDir, uris, writeBundle, type Json } from "./helpers.ts";
 
 test("egress policy: non-public addresses and IP literals are refused unless listed", () => {
+  const none = egressPolicy();
   for (const a of [
     "127.0.0.1", "127.255.0.9", "10.1.2.3", "172.16.0.1", "172.31.255.255", "192.168.1.10", "169.254.169.254", "100.64.0.1", "0.0.0.0",
     "224.0.0.251", "255.255.255.255", "198.18.0.1", "::", "::1", "fe80::1", "fe80::1%eth0", "fd00::1", "ff02::1", "::ffff:127.0.0.1",
     "::ffff:7f00:1", "::ffff:10.0.0.1", "64:ff9b::a00:1", "64:ff9b::1", "not-an-address",
-  ]) assert.equal(isNonPublicAddress(a), true, a);
-  for (const a of ["93.184.216.34", "1.1.1.1", "172.32.0.1", "2606:4700:4700::1111", "::ffff:8.8.8.8", "64:ff9b::808:808"]) assert.equal(isNonPublicAddress(a), false, a);
+  ]) assert.equal(none.allows("host.example.test", 80, a), false, a);
+  for (const a of ["93.184.216.34", "1.1.1.1", "172.32.0.1", "2606:4700:4700::1111", "::ffff:8.8.8.8", "64:ff9b::808:808"]) assert.equal(none.allows("host.example.test", 80, a), true, a);
 
-  const none = egressPolicy();
   const refused = (url: string, policy = none) => assert.throws(() => policy.check(new URL(url)), (e: unknown) => e instanceof EgressDenied, url);
   for (const u of ["http://127.0.0.1/", "http://[::1]:8080/", "http://[::ffff:127.0.0.1]/", "https://169.254.169.254/latest/meta-data/", "http://10.0.0.1:8788/x", "http://0x7f.1/"]) refused(u);
   assert.throws(() => none.check(new URL("ftp://media.example.test/a")), (e: EgressDenied) => e.reason === "scheme");
@@ -90,10 +90,6 @@ async function startHostileUpstream(internal: string, other: string) {
   return { ...(await listen(server)), hits };
 }
 
-/** URIs of a playlist: URI lines and URI="…" attributes. */
-const uris = (playlist: string): string[] =>
-  playlist.split("\n").flatMap((line) => (line.startsWith("#") ? [...line.matchAll(/URI="([^"]*)"/g)].map((m) => m[1]!) : line.trim() ? [line.trim()] : []));
-
 async function setupHostile(t: { after(fn: () => unknown): void }) {
   const internal = await startInternal();
   t.after(() => internal.close());
@@ -112,8 +108,7 @@ async function setupHostile(t: { after(fn: () => unknown): void }) {
   const bundleDir = await writeBundle(path.join(await tempDir(), "bundle"), { ...fixtureManifest(), adapters: [] }, items);
   // The owner lists the upstream and the CDN by address and port; the internal server, on the same loopback
   // address, is not listed.
-  const s = await startTestServer({ bundleDir, configFile: { proxy: { privateUpstreams: [new URL(up.url).host, new URL(other.url).host] } } });
-  t.after(() => s.close());
+  const s = await testServer(t, { bundleDir, configFile: { proxy: { privateUpstreams: [new URL(up.url).host, new URL(other.url).host] } } });
   const tv = await s.pair();
   const r = await s.call("POST", "/api/v1/tv/resolve", { token: tv.token, body: { episodeId: "m.main" } });
   assert.equal(r.status, 200, JSON.stringify(r.json));
@@ -180,8 +175,7 @@ test("proxy egress: without privateUpstreams a loopback upstream is refused befo
     ],
   };
   const bundleDir = await writeBundle(path.join(await tempDir(), "bundle"), { ...fixtureManifest(), adapters: [] }, items);
-  const s = await startTestServer({ bundleDir });
-  t.after(() => s.close());
+  const s = await testServer(t, { bundleDir });
   const tv = await s.pair();
   const r = await s.call("POST", "/api/v1/tv/resolve", { token: tv.token, body: { episodeId: "m.main" } });
   assert.equal(r.status, 200);

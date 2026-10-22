@@ -1,19 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ADMIN_TOKEN, openEvents, startTestServer, type Json, type TestServer } from "./helpers.ts";
-
-const logged = (s: TestServer, msg: string): Json[] => s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === msg);
-
-/** Creates an access token through the API and returns its secret and id. */
-async function createToken(s: TestServer, name: string, scope: string) {
-  const r = await s.admin("POST", "/tokens", { name, scope });
-  assert.equal(r.status, 201, JSON.stringify(r.json));
-  return { secret: r.json.secret as string, id: r.json.token.id as string };
-}
+import { ADMIN_TOKEN, createToken, logged, openEvents, testServer, type Json } from "./helpers.ts";
 
 test("access tokens: create (the secret shown once), list oldest first, lastUsedAt once a minute, revoke; the log never has the secret", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
 
   const created = await s.admin("POST", "/tokens", { name: "  Kitchen agent ", scope: "control" });
   assert.equal(created.status, 201);
@@ -63,8 +53,7 @@ test("access tokens: create (the secret shown once), list oldest first, lastUsed
 });
 
 test("scopes: each level against a representative route of every level; 403 insufficient_scope names what is needed and is not throttled", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   const tokens = { read: await createToken(s, "r", "read"), control: await createToken(s, "c", "control"), manage: await createToken(s, "m", "manage") };
 
@@ -125,8 +114,7 @@ test("scopes: each level against a representative route of every level; 403 insu
 });
 
 test("a revoked (or wrong) access token counts as a failed sign-in and locks the address out like a wrong owner token", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const { secret, id } = await createToken(s, "old app", "read");
   await s.admin("DELETE", `/tokens/${id}`);
   const devices = (token: string) => s.call("GET", "/api/v1/admin/devices", { token });
@@ -140,8 +128,7 @@ test("a revoked (or wrong) access token counts as a failed sign-in and locks the
 });
 
 test("revoking an access token ends the event stream and long-poll it has open, before any later event", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   const reader = await createToken(s, "monitor", "read");
   const other = await createToken(s, "other", "read");
@@ -170,8 +157,7 @@ test("revoking an access token ends the event stream and long-poll it has open, 
 });
 
 test("an admin event stream whose access token is gone ends at the next ping", async (t) => {
-  const s = await startTestServer({ pingMs: 30 });
-  t.after(() => s.close());
+  const s = await testServer(t, { pingMs: 30 });
   const reader = await createToken(s, "monitor", "read");
   const es = await openEvents(s.base, reader.secret, "/api/v1/admin/events/stream");
   t.after(() => es.close());

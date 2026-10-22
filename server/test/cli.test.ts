@@ -8,7 +8,7 @@ import { main } from "../src/cli.ts";
 import { localServerUrl } from "../src/config.ts";
 import { linkBase, qrCode, signInLink } from "../src/shell.ts";
 import { SCHEMA_VERSION } from "../src/store.ts";
-import { ADMIN_TOKEN, startTestServer, tempDir } from "./helpers.ts";
+import { ADMIN_TOKEN, testServer, tempDir } from "./helpers.ts";
 
 // The CLI reads the admin token the way the server does; the test server runs with the token from the environment.
 process.env.IZLE_ADMIN_TOKEN = ADMIN_TOKEN;
@@ -37,8 +37,7 @@ async function refused(argv: string[], code: number, err?: RegExp, message?: str
 }
 
 test("cli: pair pending / pair approve drive the running server's admin API", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const cfg = ["--config", s.config.configPath!, "--server", s.base];
 
   let r = await run(["pair", "pending", ...cfg]);
@@ -91,8 +90,7 @@ test("cli: pair pending / pair approve drive the running server's admin API", as
 });
 
 test("cli: token create / list / revoke drive the running server's admin API; the secret is printed once, on stdout", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const cfg = ["--config", s.config.configPath!, "--server", s.base];
 
   let r = await run(["token", "list", ...cfg]);
@@ -128,8 +126,7 @@ test("cli: token create / list / revoke drive the running server's admin API; th
 });
 
 test("cli: pair approve against a wrong admin token is reported, not retried", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const start = await s.call("POST", "/api/v1/pair/start");
   const saved = process.env.IZLE_ADMIN_TOKEN;
   process.env.IZLE_ADMIN_TOKEN = "another-token-that-is-long-enough";
@@ -142,8 +139,7 @@ test("cli: pair approve against a wrong admin token is reported, not retried", a
 });
 
 test("cli: admin-token --link prints the sign-in link and its QR code", async (t) => {
-  const s = await startTestServer({ configFile: { publicUrl: "https://izle.example.org/" } });
-  t.after(() => s.close());
+  const s = await testServer(t, { configFile: { publicUrl: "https://izle.example.org/" } });
   const link = `https://izle.example.org/admin/#token=${ADMIN_TOKEN}`;
 
   let r = await run(["admin-token", "--config", s.config.configPath!]);
@@ -170,8 +166,7 @@ test("cli: admin-token --link prints the sign-in link and its QR code", async (t
 });
 
 test("cli: admin-token --rotate is refused while IZLE_ADMIN_TOKEN is set, and the token stays", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   await refused(["admin-token", "--rotate", "--config", s.config.configPath!], 1, /IZLE_ADMIN_TOKEN is set and overrides the token file.*change or remove the variable/);
   const r = await run(["admin-token", "--config", s.config.configPath!]);
   assert.deepEqual([r.code, r.out], [0, `${ADMIN_TOKEN}\n`]);
@@ -218,8 +213,7 @@ function readBackup(file: string) {
 }
 
 test("cli: backup copies the running server's database; an existing file needs --force", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   assert.equal((await s.admin("PUT", `/devices/${tv.deviceId}/home`, { itemIds: ["show", "film"] })).status, 200);
   const dir = await tempDir("izle-backup-");

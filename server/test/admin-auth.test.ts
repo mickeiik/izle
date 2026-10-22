@@ -2,17 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { errorText } from "../admin/lib.js";
 import { RateLimiter } from "../src/ratelimit.ts";
-import { ADMIN_TOKEN, startTestServer, type Json, type TestServer } from "./helpers.ts";
+import { ADMIN_TOKEN, logged, testServer } from "./helpers.ts";
 
 // A hostile guess with no run of 20 token characters: the log's string scrubbing would let it through, so only never
 // logging the presented token keeps it out of the log.
 const GUESS = "hostile.guess/of:the+admin=token~42";
 
-const logged = (s: TestServer, msg: string): Json[] => s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === msg);
-
 test("admin auth: ten failures lock the address out until the window ends, even with the right token", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   const devices = (token: string | null) => s.call("GET", "/api/v1/admin/devices", { token });
 
@@ -69,8 +66,7 @@ test("admin auth: ten failures lock the address out until the window ends, even 
 });
 
 test("admin auth: requests without a token answer 401 but never count toward the lockout", async (t) => {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   // What another site's page in the owner's browser can send: no credentials, cross-site fetch metadata.
   const crossSite = { "Origin": "https://elsewhere.example", "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "no-cors" };
   for (let i = 0; i < 50; i++) {
@@ -87,8 +83,7 @@ test("admin auth: requests without a token answer 401 but never count toward the
 });
 
 test("admin auth: behind a trusted reverse proxy each X-Forwarded-For client is counted on its own", async (t) => {
-  const s = await startTestServer({ configFile: { trustedProxies: ["127.0.0.1", "::1"] } });
-  t.after(() => s.close());
+  const s = await testServer(t, { configFile: { trustedProxies: ["127.0.0.1", "::1"] } });
   const devices = (client: string | null, token: string | null) =>
     s.call("GET", "/api/v1/admin/devices", { token, ...(client ? { headers: { "X-Forwarded-For": client } } : {}) }).then((r) => r.status);
 
@@ -106,8 +101,7 @@ test("admin auth: behind a trusted reverse proxy each X-Forwarded-For client is 
 });
 
 test("admin auth: an IPv6 client is counted by its /64, so it cannot escape the lockout by changing addresses", async (t) => {
-  const s = await startTestServer({ configFile: { trustedProxies: ["127.0.0.1", "::1"] } });
-  t.after(() => s.close());
+  const s = await testServer(t, { configFile: { trustedProxies: ["127.0.0.1", "::1"] } });
   const devices = (client: string, token: string) => s.call("GET", "/api/v1/admin/devices", { token, headers: { "X-Forwarded-For": client } }).then((r) => r.status);
   for (let i = 0; i < 10; i++) assert.equal(await devices(`2001:db8:1:2::${(i + 1).toString(16)}`, GUESS), 401);
   assert.equal(await devices("2001:db8:1:2:ffff::1", GUESS), 429, "a fresh address in the same /64 is locked out");

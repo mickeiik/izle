@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import path from "node:path";
-import { fixtureItems, fixtureManifest, listen, publishBuild, startTestServer, tempDir, writeBundle, type Json } from "./helpers.ts";
+import { fixtureItems, fixtureManifest, listen, logged, publishBuild, tempDir, testServer, writeBundle, type Json } from "./helpers.ts";
 
 const PROXY_MP4 = /^\/p\/([A-Za-z0-9_-]{43})\/video\.mp4$/;
 const PROXY_HLS = /^\/p\/([A-Za-z0-9_-]{43})\/index\.m3u8$/;
@@ -62,8 +62,7 @@ async function setup(t: { after(fn: () => unknown): void }) {
     ],
   });
   const bundleDir = await writeBundle(path.join(await tempDir(), "bundle"), fixtureManifest(), items);
-  const s = await startTestServer({ bundleDir, configFile: { proxy: { privateUpstreams: ["127.0.0.1"] } } }); // a loopback upstream
-  t.after(() => s.close());
+  const s = await testServer(t, { bundleDir, configFile: { proxy: { privateUpstreams: ["127.0.0.1"] } } }); // a loopback upstream
   const tv = await s.pair("Salon");
   const as = (method: string, route: string, body?: unknown) => s.call(method, `/api/v1/tv${route}`, { token: tv.token, body });
   const progress = (body: Json) => as("POST", "/progress", body);
@@ -242,7 +241,7 @@ test("companion resolve: forced source, always proxied, own session scope, DASH 
   // Nothing secret in the log; companion resolves are marked.
   const logs = s.logs.join("\n");
   for (const leak of [tvToken, PROXY_MP4.exec(c3.json.media.url)![1]!, "http://", "https://", REFERER]) assert.ok(!logs.includes(leak), `log leaked ${leak}`);
-  const resolved = s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === "resolved");
+  const resolved = logged(s, "resolved");
   assert.ok(resolved.some((l) => l.companion === true && l.delivery === "proxy" && l.sourceId === "fr-mp4"));
   assert.ok(resolved.some((l) => l.companion === undefined && l.sourceId === "tv-hls"));
 

@@ -3,13 +3,12 @@ import assert from "node:assert/strict";
 import { OWNER } from "../src/actor.ts";
 import { reloadOnSignal } from "../src/catalog-admin.ts";
 import { HOME_COLUMNS, HOME_MAX_ITEMS, HOME_ROWS } from "../src/home.ts";
-import { fixtureItems, fixtureManifest, openEvents, publishBuild, startTestServer, tempDir, writeBundle, type Json } from "./helpers.ts";
+import { fixtureItems, fixtureManifest, logged, openEvents, publishBuild, testServer, tempDir, writeBundle, type Json } from "./helpers.ts";
 
 /** A server with a paired TV; `fillers` playable movies beyond the fixture's usual ones (for the home limit). */
 async function setup(t: { after(fn: () => unknown): void }, fillers?: number) {
   const bundleDir = fillers === undefined ? undefined : await writeBundle(await tempDir(), fixtureManifest(), fixtureItems(fillers));
-  const s = await startTestServer({ bundleDir });
-  t.after(() => s.close());
+  const s = await testServer(t, { bundleDir });
   const tv = await s.pair("Salon");
   return { s, tv };
 }
@@ -214,7 +213,7 @@ test("commands: every type is validated and stored with its payload; the log nev
   assert.equal(s.srv.ctx.store.pendingCommands(tv.deviceId, 0).length, good.length, "nothing was stored for refused bodies");
 
   // The log has the type and ids, never a message's text.
-  const queued = s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === "command queued");
+  const queued = logged(s, "command queued");
   assert.deepEqual(queued.map((l) => l.type), good.map(([body]) => (body as { type: string }).type));
   for (const l of queued) assert.deepEqual(Object.keys(l).sort(), ["commandId", "deviceId", "level", "msg", "time", "type"]);
   assert.ok(!s.logs.some((l) => l.includes("Yemek") || l.includes("xxxxxxxx")), "message text never reaches the log");
@@ -316,8 +315,7 @@ test("diagnostics: the probe reaches upstreams through the server's fetch", asyn
     asked.push([String(input), init?.headers]);
     return new Response("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n", { status: 200, headers: { "Content-Type": "application/vnd.apple.mpegurl" } });
   };
-  const s = await startTestServer({ fetch: upstream });
-  t.after(() => s.close());
+  const s = await testServer(t, { fetch: upstream });
   const d = await s.admin("POST", "/diagnostics/resolve", { episodeId: "show.e1", sourceId: "tr-dub" });
   assert.equal(d.status, 200);
   const { ms, ...probe } = d.json.sources[0].probe;
@@ -368,7 +366,7 @@ test("catalog reload on SIGHUP: bumps every TV like the route; a reload that thr
   // unhandled rejection (which ends the process).
   await s.close();
   await reloadOnSignal(s.srv.ctx, "SIGHUP");
-  const failed = s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === "catalog reload failed");
+  const failed = logged(s, "catalog reload failed");
   assert.deepEqual(failed.map(({ level, signal, error }) => ({ level, signal, error })), [{ level: "warn", signal: "SIGHUP", error: "Error" }]);
   assert.ok(!JSON.stringify(failed).includes("not open"), "the class name only, never the message");
 });
@@ -459,8 +457,7 @@ const browsable = (items: Json[]) =>
 
 test("catalog browsing: facets, filters, orders, pages, not on a Home, new since a build", async (t) => {
   const bundleDir = await writeBundle(await tempDir(), fixtureManifest(), { items: browsable(fixtureItems(12).items) });
-  const s = await startTestServer({ bundleDir });
-  t.after(() => s.close());
+  const s = await testServer(t, { bundleDir });
   const search = async (query: string) => (await s.admin("GET", `/catalog/search?${query}`)).json;
   const ids = async (query: string) => (await search(query)).items.map((i: { id: string }) => i.id);
 

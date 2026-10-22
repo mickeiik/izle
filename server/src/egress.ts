@@ -83,12 +83,6 @@ function checkedAddress(address: string): { address: string; type: "ipv4" | "ipv
   return v4 ? { address: v4, type: "ipv4" } : { address: plain, type: "ipv6" };
 }
 
-/** Whether `address` is loopback, private, link-local or in another range the proxy never reaches by default. */
-export function isNonPublicAddress(address: string): boolean {
-  const a = checkedAddress(address);
-  return a === null || DENIED.check(a.address, a.type);
-}
-
 interface Rule {
   /** A host name (lowercase, no trailing dot), or null: `net` decides. */
   name: string | null;

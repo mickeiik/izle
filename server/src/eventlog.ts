@@ -83,11 +83,6 @@ export class EventLog {
     return this.store.lastEventId();
   }
 
-  /** The oldest kept event's id, or null when none is kept. */
-  oldestId(): number | null {
-    return this.store.oldestEventId();
-  }
-
   /**
    * The events after `f.after` (at most `f.limit`), with `gap: true` when some between `after` and the oldest kept
    * one are gone: the kept events then start from the oldest.

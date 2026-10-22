@@ -1,10 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ADMIN_TOKEN, BACKDROP_NAME, fixtureItems, fixtureManifest, startTestServer, writeBundle, type Json, type TestServer } from "./helpers.ts";
+import { ADMIN_TOKEN, BACKDROP_NAME, fixtureItems, fixtureManifest, testServer, writeBundle, type Json, type TestServer } from "./helpers.ts";
 
 async function setup(t: { after(fn: () => unknown): void }) {
-  const s = await startTestServer();
-  t.after(() => s.close());
+  const s = await testServer(t);
   const tv = await s.pair("Salon");
   const as = (method: string, route: string, body?: unknown) => s.call(method, `/api/v1/tv${route}`, { token: tv.token, body });
   return { s, tv, as };

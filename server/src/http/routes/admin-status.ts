@@ -7,7 +7,7 @@ import { iso } from "../../presenters.ts";
 import { VERSION } from "../../version.ts";
 import type { Env } from "../middleware.ts";
 
-export function status(ctx: AppContext) {
+function status(ctx: AppContext) {
   const { store, catalog, devices, pairing, eventLog, events, playing } = ctx;
   const lastEventId = eventLog.lastId();
   const { manifest } = catalog.current;
