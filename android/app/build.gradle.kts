@@ -49,7 +49,10 @@ android {
             buildConfigField("String", "DEFAULT_SERVER_URL", "\"http://10.0.2.2:8787\"")
         }
         release {
-            isMinifyEnabled = false
+            // R8 shrinks and optimizes (Compose runs much faster), without renaming: see proguard-rules.pro.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("release")
             buildConfigField("String", "DEFAULT_SERVER_URL", "\"\"")
         }
