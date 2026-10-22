@@ -9,61 +9,51 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Added
 
-- **Admin page: a catalog browser.** A TV's "Add shows" and the Catalog page's "Shows" are now one browser: a title
-  search with filters for kind, genre, a year range, playable only and "new since" a catalog build, three orders (by
-  title, newest year, newest in the catalog), and 50 shows at a time with "Show more". On a TV's page, "Not on this
-  Home" leaves out what the TV already has. The Catalog page keeps its filters in the address, so Back from a show
-  returns to the same list. It replaces the search that stopped at 200 shows and its "Show all". The admin API's
-  `GET /api/v1/admin/catalog/search` takes the matching parameters plus `offset` and answers `total`;
-  `GET /api/v1/admin/catalog` gains `facets`.
-- **Server: sections on Home.** A TV's Home can be cut into up to 20 titled sections, in an order the owner sets,
-  each laid out as a grid or as one line; shows put on Home without a section stay in the untitled section, which is
-  where every Home from before starts (the database is migrated on the first start). The admin API gains
-  `POST`/`PATCH`/`DELETE /api/v1/admin/devices/:id/home/sections[/:sectionId]`, `sectionId` on the single item changes,
-  and `PUT …/home {"sections"}`; `PUT …/home {"itemIds"}` keeps each show in its section. A TV's page and every Home
-  change answer `sections`, and the TV's state carries `homeSections` next to `home`, which now lists the shows
-  section after section. Deleting a section moves its shows to the untitled one.
-- **Admin page: sections on a TV's Home.** The Home screen tab draws the TV's sections as the TV shows them: their
-  titles, the thin line between two sections and the lines that scroll sideways; a section the TV leaves out because
-  nothing in it can play is drawn as an empty band. A Sections list beside the screen adds, renames, reorders and
-  deletes sections and makes one a single scrolling line. The selected card moves within its section or to another
-  one, and "Add shows" adds to the section chosen in "Add to". Each edit is saved as one change, so an edit made
-  elsewhere at the same time is not undone.
-- **TV app: sections on Home.** Home draws the owner's sections in their order: a titled section starts with its
-  title, a thin line separates two sections, and a section laid out as one line of cards scrolls sideways, with the
-  edge of the next card showing in the margin. ↑ and ↓ go line by line across sections to the nearest card. The
-  focus stays on a card the owner moves to another section, and the offline home screen keeps its sections. A Home
-  without sections looks as before.
+- **Admin page: a catalog browser.** A TV's "Add shows" and the Catalog page's "Shows" are one browser: a title
+  search with filters (kind, genre, years, playable only, "new since" a catalog build), three orders (title, newest
+  year, newest in the catalog) and 50 shows at a time with "Show more". On a TV's page, "Not on this Home" leaves out
+  what the TV already has; the Catalog page keeps its filters in the address. It replaces the search that stopped at
+  200 shows. In the API, `GET /api/v1/admin/catalog/search` takes the matching parameters plus `offset` and answers
+  `total`; `GET /api/v1/admin/catalog` gains `facets`.
+- **Sections on Home.** A TV's Home can be cut into up to 20 titled sections, in the owner's order, each a grid or
+  one line that scrolls sideways; shows put on Home without a section stay in the untitled section, where every
+  existing Home starts (the database is migrated on the first start). Deleting a section moves its shows to the
+  untitled one.
+  - Server: `POST`/`PATCH`/`DELETE /api/v1/admin/devices/:id/home/sections[/:sectionId]`, `sectionId` on the single
+    item changes, `PUT …/home {"sections"}`; `PUT …/home {"itemIds"}` keeps each show in its section. A TV's page and
+    every Home change answer `sections`; the TV's state carries `homeSections`, and `home` lists the shows section
+    after section.
+  - Admin page: the Home screen tab draws the sections as the TV shows them (a section the TV leaves out because
+    nothing in it can play is an empty band). A Sections list adds, renames, reorders and deletes sections and makes
+    one a scrolling line; the selected card moves within or between sections, and "Add shows" adds to the section
+    chosen in "Add to". Each edit is saved as one change, so an edit made elsewhere is not undone.
+  - TV app: a titled section starts with its title, a thin line separates two sections, and a scrolling line shows
+    the edge of the next card in the margin. ↑ and ↓ go line by line across sections to the nearest card; the focus
+    stays on a card the owner moves. The offline home screen keeps its sections, and a Home without sections looks as
+    before.
 
 ### Changed
 
-- **Admin page:** a TV's page is split into tabs instead of one long page: Now playing, Home screen, Listen along,
-  History, Settings and Problems (with a count when there are any). The tab is kept in the address
-  (`#/devices/<id>/settings`), so a reload or a shared link opens it. Settings now holds the TV app's version and
-  "Install now", the TV's settings, and "Forget this TV".
-- **Admin page:** a TV's Home screen tab draws the TV's Home to scale instead of a list: the same grid, cards, chips,
-  progress bars and titles, with further rows scrolling inside the screen as on the TV. Select a card (or move with
-  the arrow keys) to play it, move it left, right, up or down a row or to the first place, open its episodes, or
-  remove it. What the TV hides (missing from the catalog, not playable) is listed under the screen. The grid's
-  columns and rows moved here from Settings: a new size is previewed on the screen before "Save grid".
-- **TV app:** the chips on Home's cards ("Live", "New", "Episode 5", "2 new") are smaller (16 sp, was 20 sp), so
-  they cover less of the picture.
-- **TV app:** Home scrolls more smoothly. The row beyond each edge of the screen is prepared ahead, so ↓ or ↑ onto it
-  no longer builds a whole row of cards at once; the dimmed cards around the focused one are drawn without an extra
-  layer each; a chip's label is measured once for the whole screen.
+- **Admin page:** a TV's page is split into tabs (Now playing, Home screen, Listen along, History, Settings,
+  Problems with a count), kept in the address (`#/devices/<id>/settings`). Settings holds the TV app's version and
+  "Install now", the TV's settings and "Forget this TV".
+- **Admin page:** the Home screen tab draws the TV's Home to scale instead of a list, with further rows scrolling
+  inside the screen. Select a card (or move with the arrow keys) to play it, move it, open its episodes or remove it.
+  What the TV hides (missing from the catalog, not playable) is listed under the screen. The grid's columns and rows
+  moved here from Settings and are previewed before "Save grid".
+- **TV app:** the chips on Home's cards are smaller (16 sp, was 20 sp), so they cover less of the picture.
+- **TV app:** Home scrolls more smoothly: the row beyond each edge is prepared ahead, dimmed cards need no extra
+  layer each, and a chip's label is measured once per screen.
 - **TV app:** release builds are shrunk and optimized by R8 (class names are kept, so problem reports read the same):
-  a smaller APK and a faster app, Home's scrolling above all.
+  a smaller APK and a faster app.
 
 ### Fixed
 
-- **Admin page: a Home list with a missing show could not be edited.** Once a catalog update dropped a show (or
-  made it unplayable) that was on a TV's Home, every change to that list, removing the missing show included,
-  failed with "That show is not in the catalog (any more)." Only the shows a change adds are checked now; the ones
-  already on the list may stay until the owner removes them.
-- **TV app: CH+/CH− on a dead channel.** When a channel ends on "Can't play right now" (Try again / Home with its
-  countdown), CH+/CH− and |◀◀ ▶▶| now switch to the next / previous channel on Home as they do while a channel
-  plays; before, they did nothing until the viewer pressed a button. The owner's `next` and `previous` commands do
-  the same from that screen.
+- **Admin page: a Home list with a missing show could not be edited.** Once a catalog update dropped a show on a TV's
+  Home (or made it unplayable), every change to that list failed with "That show is not in the catalog (any more)."
+  Only the shows a change adds are checked now.
+- **TV app: CH+/CH− on a dead channel.** On a channel's "Can't play right now", CH+/CH− and |◀◀ ▶▶| (and the owner's
+  `next` and `previous`) now switch channels as they do while a channel plays; before, they did nothing.
 
 ## [0.4.0] - 2026-10-21
 
@@ -153,8 +143,6 @@ contract share one version number. How to update (back up, update the server, th
   (watching, new episodes, finished, idle) and, per title, its episodes with how much of each was played and the
   owner's marks (seen, not seen, which win over what the TVs reported). A TV's page lists its viewings: who started
   each, how much was watched and how it ended.
-- **Access tokens on the admin page** ("Access"): create a token with a scope for an app or an agent, see when it
-  was last used, revoke it. The secret is shown once.
 - **Play any show on a TV from its catalog page** ("Play on"), whether it is on that TV's home screen or not; and
   when approving a pairing code, a new TV can take over an existing one ("Replaces"), keeping its name, settings,
   home screen and history.
@@ -169,8 +157,9 @@ contract share one version number. How to update (back up, update the server, th
   `ended`, `episode.seen` and `history.changed`; the status's `nowPlaying` shows only a running viewing, with its
   `viewingId`.
 - **Access tokens for agents and apps:** the owner creates named tokens with a scope (`read`, `control` or
-  `manage`) and revokes them at any time, through `GET`/`POST`/`DELETE /api/v1/admin/tokens` or `izle-server token
-  create <name> --scope <scope>`, `token list` and `token revoke <id>`. A token lacking a route's scope gets
+  `manage`), sees when each was last used and revokes them, on the admin page ("Access"), through
+  `GET`/`POST`/`DELETE /api/v1/admin/tokens` or `izle-server token create <name> --scope <scope>`, `token list` and
+  `token revoke <id>`; the secret is shown once. A token lacking a route's scope gets
   `403 insufficient_scope`; a wrong or revoked one counts like a wrong admin token. Every change records who made
   it (its `actor`), and the access log names a token by its id, never its secret.
 - **`GET /api/v1/admin/status`:** every active TV in one call (online, last seen, what it plays), the catalog, the
@@ -216,8 +205,6 @@ contract share one version number. How to update (back up, update the server, th
   build's changes, and `GET /api/v1/admin/catalog/builds/<buildId>` returns any one.
 - **Self-hosting guide: publishing catalog builds:** one directory per build and a `current` symlink, so publishing
   or rolling back is one atomic swap and a reload; a job on the host can publish through the admin API without sudo.
-  The guide also says that `systemctl reload izle` re-reads the catalog only: a new resolver module needs
-  `systemctl restart izle`.
 - **Pairing from the server's shell:** `izle-server pair pending` lists the waiting codes, `izle-server pair approve
   <code> [name]` approves one.
 - **Sign-in link for a phone:** `izle-server admin-token --link` prints a sign-in link for the admin page and its QR
