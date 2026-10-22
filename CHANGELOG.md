@@ -16,6 +16,11 @@ contract share one version number. How to update (back up, update the server, th
   returns to the same list. It replaces the search that stopped at 200 shows and its "Show all". The admin API's
   `GET /api/v1/admin/catalog/search` takes the matching parameters plus `offset` and answers `total`;
   `GET /api/v1/admin/catalog` gains `facets`.
+- **TV app: sections on Home.** Home draws the owner's sections in their order: a titled section starts with its
+  title, a thin line separates two sections, and a section laid out as one line of cards scrolls sideways, with the
+  edge of the next card showing in the margin. ↑ and ↓ go line by line across sections to the nearest card. The
+  focus stays on a card the owner moves to another section, and the offline home screen keeps its sections. A Home
+  without sections looks as before.
 
 ### Changed
 

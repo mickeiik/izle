@@ -409,3 +409,26 @@ The server side of the specification above, in one change (the admin page and th
   can be moved, since the owner may want a titled section such as "Channels" first.
 - `layout` is an enum (`grid`, `row`) rather than a boolean, so a later layout is additive; the TV treats an unknown
   one as `grid`.
+
+## Home sections, TV app (2026-10-22)
+
+- One `LazyVerticalGrid` draws all of Home: a section title is an item across the grid, a row section one item
+  across the grid holding a `LazyRow` that spans the screen (its cards show in the side margins). The title items'
+  heights make the grid's single `spacedBy(gap)` give the specified tops (`HomeLayout.slots`), so a Home without a
+  titled section is the same grid items as before, and the lazy cache window stays as it was. A grid section's last
+  card spans the rest of its row (at one card's width) when an untitled grid follows. A custom layout was not needed.
+- The lines between sections are drawn over the grid from its layout info, each anchored to the item under it, or
+  else the last line above it: a line can lie in the unused second title line of the row above, where neither item
+  alone is always laid out, and an unfocused card's dimming would cover it if it were drawn behind.
+- ↑ ↓ ← → are handled from `HomeLayout`, not by Compose's focus search: a lazy grid lays out the next line item by
+  item and the search stops at its first card (↓ from the fourth column landed on the first). When the target card
+  is not laid out yet, Home scrolls towards its line and focuses it once laid out (other arrow keys wait for that,
+  at most 1 s); ← and → stop at a line's ends, which the search did not do with cards peeking into the margins.
+- Bring-into-view works out the focused card's unscaled bounds from its centre: the request grows with the 110 %
+  scale while that animates, and the target must not move with it.
+- When the sections change, the card that had the focus gets it back and its line is brought into view: moving a
+  card to another section disposes its old place, and Compose hands the focus to another card first.
+- Only the untitled section (even as a row) draws as Home without sections; an entry of `home` that no section
+  holds is drawn at the end of the untitled section. The scroll bar is viewport / content height (as the admin
+  mirror), a fraction of a dp from the former rows / total rows. The line's centre is rounded halves up, as the
+  admin page's `Math.round`.

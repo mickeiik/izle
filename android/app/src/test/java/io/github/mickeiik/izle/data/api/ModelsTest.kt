@@ -68,6 +68,34 @@ class ModelsTest {
     }
 
     @Test
+    fun decodesHomeSectionsAndKeepsThemInTheCachedState() {
+        // An older server (and a state cached before sections): none.
+        assertEquals(emptyList<HomeSectionInfo>(), ApiJson.decodeFromString(TvState.serializer(), STATE).homeSections)
+
+        val withSections = STATE.replace(
+            "\"somethingNew\":",
+            """"homeSections": [
+                 {"id": "untitled", "title": null, "layout": "grid", "itemIds": ["caminandes"], "extra": 1},
+                 {"id": "Hq7cP2xd", "title": "Channels", "layout": "row", "itemIds": ["news-24"]},
+                 {"id": "Zt3kQ9wm", "title": "Later"}
+               ],
+               "somethingNew":""",
+        )
+        val state = ApiJson.decodeFromString(TvState.serializer(), withSections)
+        assertEquals(
+            listOf(
+                HomeSectionInfo("untitled", null, "grid", listOf("caminandes")),
+                HomeSectionInfo("Hq7cP2xd", "Channels", "row", listOf("news-24")),
+                HomeSectionInfo("Zt3kQ9wm", "Later", "grid", emptyList()),
+            ),
+            state.homeSections,
+        )
+        // The offline cache is the state encoded with the same Json: the sections come back from it.
+        val cached = ApiJson.decodeFromString(TvState.serializer(), ApiJson.encodeToString(TvState.serializer(), state))
+        assertEquals(state, cached)
+    }
+
+    @Test
     fun decodesAResolveAnswer() {
         val r = ApiJson.decodeFromString(ResolveResponse.serializer(), RESOLVE)
         assertEquals("hls", r.media.kind)
