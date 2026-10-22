@@ -2,7 +2,6 @@ package io.github.mickeiik.izle.ui
 
 import io.github.mickeiik.izle.data.api.CommandResult
 import io.github.mickeiik.izle.data.api.NextEpisode
-import io.github.mickeiik.izle.domain.PlayableRef
 import io.github.mickeiik.izle.domain.RemoteCommand
 import io.github.mickeiik.izle.player.PlayerPhase
 import io.github.mickeiik.izle.ui.CommandPlan.Action
@@ -36,7 +35,7 @@ class CommandPlanTest {
     @Test
     fun onHomeOnlyPlayAndMessagesAct() {
         for (menuOpen in listOf(false, true)) {
-            assertEquals(listOf(Action.Play("show", "show.e2")), CommandPlan.actions(play, Screen.Home, PlayerPhase.Idle, menuOpen))
+            assertEquals(listOf(Action.Play(play)), CommandPlan.actions(play, Screen.Home, PlayerPhase.Idle, menuOpen))
             assertEquals(listOf(Action.ShowMessage(message), done), CommandPlan.actions(message, Screen.Home, PlayerPhase.Idle, menuOpen))
             for (command in transport + RemoteCommand.Stop) {
                 assertEquals("$command", notInPlayer, CommandPlan.actions(command, Screen.Home, PlayerPhase.Idle, menuOpen))
@@ -48,9 +47,9 @@ class CommandPlanTest {
     @Test
     fun playCarriesItsStartPosition() {
         val fromStart = RemoteCommand.Play("show", "show.e2", positionMs = 0)
-        assertEquals(listOf(Action.Play("show", "show.e2", positionMs = 0)), CommandPlan.actions(fromStart, Screen.Home, PlayerPhase.Idle, menuOpen = false))
+        assertEquals(listOf(Action.Play(fromStart)), CommandPlan.actions(fromStart, Screen.Home, PlayerPhase.Idle, menuOpen = false))
         val at = RemoteCommand.Play(null, "show.e2", positionMs = 754_000)
-        assertEquals(listOf(Action.Play(null, "show.e2", positionMs = 754_000)), onVideo(at, menuOpen = true))
+        assertEquals(listOf(Action.Play(at)), onVideo(at, menuOpen = true))
     }
 
     @Test
@@ -67,7 +66,7 @@ class CommandPlanTest {
         assertEquals(listOf(Action.Step(-1)), onVideo(RemoteCommand.Previous))
         assertEquals(listOf(Action.CloseMenu(resume = true), Action.Step(-1)), onVideo(RemoteCommand.Previous, menuOpen = true))
         assertEquals(listOf(Action.Exit, done), onVideo(RemoteCommand.Stop, menuOpen = true))
-        assertEquals(listOf(Action.Play("show", "show.e2")), onVideo(play, menuOpen = true))
+        assertEquals(listOf(Action.Play(play)), onVideo(play, menuOpen = true))
         assertEquals(listOf(Action.ShowMessage(message), done), onVideo(message, menuOpen = true))
         assertEquals("an unknown command does nothing", unknownType, onVideo(RemoteCommand.Ignored("launch"), menuOpen = true))
     }
@@ -87,7 +86,7 @@ class CommandPlanTest {
         assertEquals(noPause, onVideo(RemoteCommand.Pause, menuOpen = true, live = true))
         assertEquals(noPause, onVideo(RemoteCommand.Resume, menuOpen = true, live = true))
         assertEquals(listOf(Action.CloseMenu(resume = true), Action.Zap(1)), onVideo(RemoteCommand.Next, menuOpen = true, live = true))
-        assertEquals(listOf(Action.Play("show", "show.e2")), onVideo(play, live = true))
+        assertEquals(listOf(Action.Play(play)), onVideo(play, live = true))
         assertEquals(listOf(Action.ShowMessage(message), done), onVideo(message, live = true))
         // Its error screen still changes channels (next/previous zap, as CH+/CH− do) but takes no other transport
         // command (no video showing); Home has no channel playing.
@@ -108,10 +107,8 @@ class CommandPlanTest {
     @Test
     fun playWithoutAnEpisodePlaysTheChannel() {
         val channel = RemoteCommand.Play("news-24", episodeId = null)
-        assertEquals(listOf(Action.Play("news-24", null)), CommandPlan.actions(channel, Screen.Home, PlayerPhase.Idle, menuOpen = false))
-        assertEquals(listOf(Action.Play("news-24", null)), onVideo(channel, menuOpen = true))
-        assertEquals(PlayableRef.Channel("news-24"), Action.Play("news-24", null).ref)
-        assertEquals(PlayableRef.Episode("show.e2"), Action.Play("show", "show.e2", positionMs = 0).ref)
+        assertEquals(listOf(Action.Play(channel)), CommandPlan.actions(channel, Screen.Home, PlayerPhase.Idle, menuOpen = false))
+        assertEquals(listOf(Action.Play(channel)), onVideo(channel, menuOpen = true))
     }
 
     @Test
@@ -121,7 +118,7 @@ class CommandPlanTest {
                 assertEquals("$command in $phase", notInPlayer, CommandPlan.actions(command, Screen.Player, phase, menuOpen = false))
             }
             assertEquals(listOf(Action.Exit, done), CommandPlan.actions(RemoteCommand.Stop, Screen.Player, phase, menuOpen = false))
-            assertEquals(listOf(Action.Play("show", "show.e2")), CommandPlan.actions(play, Screen.Player, phase, menuOpen = false))
+            assertEquals(listOf(Action.Play(play)), CommandPlan.actions(play, Screen.Player, phase, menuOpen = false))
             assertEquals(listOf(Action.ShowMessage(message), done), CommandPlan.actions(message, Screen.Player, phase, menuOpen = false))
         }
     }

@@ -32,13 +32,6 @@ data class HomeGrid(
     /** How many rows [count] cards take. */
     fun rowCount(count: Int): Int = (count + columns - 1) / columns
 
-    /**
-     * The row to have at the top so that [targetRow] is in view, moving as little as possible from [currentFirstRow]:
-     * the grid stays put when the row is already on screen, else the row comes in at the top or the bottom edge.
-     */
-    fun firstRowShowing(targetRow: Int, currentFirstRow: Int): Int =
-        currentFirstRow.coerceIn((targetRow - rows + 1).coerceAtLeast(0), targetRow)
-
     companion object {
         const val MIN_COLUMNS = 3
         const val MAX_COLUMNS = 6

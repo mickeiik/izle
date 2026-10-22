@@ -75,20 +75,4 @@ class HomeGridTest {
         assertEquals(2, g.rowCount(5))
         assertEquals(50, g.rowCount(200))
     }
-
-    @Test
-    fun aRowAlreadyInViewKeepsTheGridWhereItIs() {
-        val g = grid(4, 2)
-        // A new grid (back from the player) at the top: rows 0 and 1 are in view.
-        assertEquals(0, g.firstRowShowing(targetRow = 0, currentFirstRow = 0))
-        assertEquals(0, g.firstRowShowing(targetRow = 1, currentFirstRow = 0))
-        // Row 2 comes in at the bottom edge, not at the top.
-        assertEquals(1, g.firstRowShowing(targetRow = 2, currentFirstRow = 0))
-        assertEquals(4, g.firstRowShowing(targetRow = 5, currentFirstRow = 0))
-        // Scrolled down: a row above comes in at the top edge; one on screen moves nothing.
-        assertEquals(1, g.firstRowShowing(targetRow = 1, currentFirstRow = 3))
-        assertEquals(3, g.firstRowShowing(targetRow = 4, currentFirstRow = 3))
-        // One row a screen: the row itself.
-        assertEquals(5, grid(4, 1).firstRowShowing(targetRow = 5, currentFirstRow = 0))
-    }
 }

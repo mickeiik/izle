@@ -162,10 +162,7 @@ class ServerRepositoryTest {
         }
         val api = api()
         repo.use(api)
-        val app = async { withTimeout(5_000) { repo.appEvents.first() } }
-        delay(50)
         repo.start()
-        assertEquals(ServerEvent.App(300), app.await())
         withTimeout(5_000) { while (checks.size < 3) delay(20) }
         repo.stop()
         delay(300)

@@ -88,8 +88,9 @@ class ApiClient(
         return raw.decode(ResolveResponse.serializer()).copy(serverDateMs = raw.dateMs)
     }
 
-    suspend fun progress(report: ProgressReport): ProgressAck =
-        exchange(jsonPost("api/v1/tv/progress", ProgressReport.serializer(), report)).decode(ProgressAck.serializer())
+    suspend fun progress(report: ProgressReport) {
+        exchange(jsonPost("api/v1/tv/progress", ProgressReport.serializer(), report)).requireOk()
+    }
 
     suspend fun ackCommand(id: Long) {
         exchange(authorize(Request.Builder().url(url("api/v1/tv/commands/$id/ack")).post(EMPTY_BODY)).build()).requireOk()
@@ -109,9 +110,9 @@ class ApiClient(
     suspend fun app(): AvailableUpdate? {
         val raw = exchange(authorize(Request.Builder().url(url("api/v1/tv/app"))).build())
         if (raw.status == 204) return null
-        val info = raw.decode(AppInfo.serializer())
+        val info = raw.decode(AvailableUpdate.serializer())
         if (info.versionCode <= 0 || info.size <= 0 || !SHA256.matches(info.sha256)) throw ApiException(raw.status, "bad_response")
-        return AvailableUpdate(info.versionName, info.versionCode, info.sha256.lowercase(), info.size, info.auto)
+        return info.copy(sha256 = info.sha256.lowercase())
     }
 
     /** `GET /tv/app/apk`, streamed by the caller ([io.github.mickeiik.izle.update.ApkDownloader]). */

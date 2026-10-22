@@ -99,18 +99,9 @@ data class ContinueInfo(
     val status: String = "new",
 )
 
-/** `GET /tv/items/:itemId`: a show's episodes and cursor, or a channel's [channel] instead. */
+/** `GET /tv/items/:itemId`: a show's episodes and cursor (a channel has none; the TV never asks for its details). */
 @Serializable
-data class ItemDetailsResponse(
-    val item: ItemCard,
-    val cursorEpisodeId: String? = null,
-    val episodes: List<EpisodeDetails> = emptyList(),
-    val channel: ChannelDetails? = null,
-)
-
-/** A channel's playability (its sources are the server's business). */
-@Serializable
-data class ChannelDetails(val playbackAllowed: Boolean = false)
+data class ItemDetailsResponse(val item: ItemCard, val cursorEpisodeId: String? = null, val episodes: List<EpisodeDetails> = emptyList())
 
 @Serializable
 data class EpisodeDetails(
@@ -264,9 +255,6 @@ enum class ProgressStatus {
     val isFinal: Boolean get() = this == Stopped || this == Finished
 }
 
-@Serializable
-data class ProgressAck(val ok: Boolean = true, val version: Long = 0)
-
 /**
  * `POST /tv/problems`: something went wrong on this TV, for the owner's admin page. `kind`: `playback`, `resolve`,
  * `network` or `other`; `code` matches `[A-Za-z0-9_.:-]{1,64}`; `ageMs` is how long ago it happened. Never carries
@@ -345,10 +333,6 @@ data class CommandResult(val result: Outcome, val reason: String? = null) {
         const val INTERNAL = "internal" // failed: something this TV did not expect went wrong (no crash, Home again)
     }
 }
-
-/** `GET /tv/app`: the TV app version the server stores (`204` when none). [auto]: TVs may install it by themselves. */
-@Serializable
-data class AppInfo(val versionName: String, val versionCode: Long, val sha256: String, val size: Long, val auto: Boolean = true)
 
 @Serializable
 data class PairStart(val code: String, val pairToken: String)

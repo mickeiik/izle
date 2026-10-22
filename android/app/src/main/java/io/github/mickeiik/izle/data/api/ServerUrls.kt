@@ -31,7 +31,7 @@ object ServerUrls {
         return base.resolve(ref)
     }
 
-    /** A short form for screens: scheme, host and port only. */
+    /** A short form for screens: scheme, host, port (unless the default) and path, without the trailing slash. */
     fun display(url: HttpUrl): String {
         val defaultPort = HttpUrl.defaultPort(url.scheme)
         val port = if (url.port == defaultPort) "" else ":${url.port}"

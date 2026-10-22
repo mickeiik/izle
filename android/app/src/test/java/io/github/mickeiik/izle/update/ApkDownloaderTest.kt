@@ -3,6 +3,7 @@ package io.github.mickeiik.izle.update
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.ApiException
 import io.github.mickeiik.izle.data.api.CommandResult
+import io.github.mickeiik.izle.sha256
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -18,7 +19,6 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
-import java.security.MessageDigest
 
 class ApkDownloaderTest {
     @get:Rule
@@ -27,7 +27,7 @@ class ApkDownloaderTest {
     private val server = MockWebServer()
     private val http = OkHttpClient()
     private val bytes = ByteArray(200_000) { (it * 31 % 251).toByte() }
-    private val sha = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+    private val sha = sha256(bytes)
     private val update = AvailableUpdate("0.3.0", 300, sha, bytes.size.toLong(), auto = true)
 
     @Before

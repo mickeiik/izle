@@ -153,7 +153,7 @@ class AppUpdater(
                 return UpdateRun.Ignored(CommandResult.BUSY)
             }
             committing = true
-            val sessionId = installer().install(file, silent, commandId)
+            val sessionId = installer().install(file, silent)
             committed[sessionId] = silent
             lastCommitAt = wallClock()
             return UpdateRun.Committed
@@ -213,7 +213,7 @@ class AppUpdater(
             val confirm = IntentCompat.getParcelableExtra(intent, Intent.EXTRA_INTENT, Intent::class.java)
             val trusted = confirm != null && installer().ownsSession(sessionId) && installer().isSystemConfirmation(confirm)
             if (!silent && trusted) {
-                _installStatus.tryEmit(InstallStatus.NeedsConfirmation(confirm!!))
+                _installStatus.tryEmit(InstallStatus.NeedsConfirmation(confirm))
                 return
             }
             committed.remove(sessionId)

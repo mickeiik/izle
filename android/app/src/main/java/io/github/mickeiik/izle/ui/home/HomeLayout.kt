@@ -14,7 +14,7 @@ data class SectionShape(val titled: Boolean, val row: Boolean, val count: Int, v
 
 /**
  * Where everything on Home goes, in dp, in content coordinates: y = 0 at the viewport's top, the viewport [grid]'s
- * (centred in the safe area as without sections) plus [titleReserve]. docs/ux/senior-tv.md, "Sections".
+ * (centred in the safe area as without sections) plus [SECTION_HEADER] with a title. docs/ux/senior-tv.md, "Sections".
  *
  * One card size for the whole Home ([grid]): when a section has a title, [SECTION_HEADER] is set aside from the height
  * first. Section k > 0 starts where a next row would: one [HomeGrid.gap] under the previous section's last cell. A
@@ -23,7 +23,6 @@ data class SectionShape(val titled: Boolean, val row: Boolean, val count: Int, v
  */
 data class HomeLayout(
     val grid: HomeGrid,
-    val titleReserve: Float,
     val viewportHeight: Float,
     val contentHeight: Float,
     val sections: List<Section>,
@@ -160,7 +159,6 @@ data class HomeLayout(
         fun compute(columns: Int, rows: Int, width: Float, height: Float, titleLine: Float, sections: List<SectionShape>): HomeLayout {
             val titled = sections.any { it.titled }
             val g = grid(columns, rows, width, height, titleLine, titled)
-            val reserve = if (titled) SECTION_HEADER else 0f
             val placed = ArrayList<Section>(sections.size)
             val lines = ArrayList<Line>()
             val slots = ArrayList<Slot>()
@@ -210,8 +208,7 @@ data class HomeLayout(
             }
             return HomeLayout(
                 grid = g,
-                titleReserve = reserve,
-                viewportHeight = g.viewportHeight + reserve,
+                viewportHeight = g.viewportHeight + if (titled) SECTION_HEADER else 0f,
                 contentHeight = if (lines.isEmpty()) 0f else cellBottom + g.padding,
                 sections = placed,
                 lines = lines,

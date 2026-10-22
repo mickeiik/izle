@@ -65,7 +65,6 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowLooper
 import java.io.File
-import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 
@@ -142,7 +141,7 @@ class SeniorInvariantsTest {
         // Installs nothing: the update screen is what is tested here.
         app.graph.installer = object : AppInstaller {
             override suspend fun verifyArchive(file: File, expectedVersionCode: Long) = Unit
-            override suspend fun install(file: File, silent: Boolean, commandId: Long?): Int = 1.also { installs += silent }
+            override suspend fun install(file: File, silent: Boolean): Int = 1.also { installs += silent }
             override fun ownsSession(sessionId: Int) = true
             override fun isSystemConfirmation(intent: Intent) = true
             override fun abandon(sessionId: Int) = Unit
@@ -384,7 +383,7 @@ class SeniorInvariantsTest {
             waitUntil("the first row") { first.all(::shown) }
             assertFalse("the second row is out of view", second.any(::shown))
             assertFocusedTile("Show A")
-            val slot = laidOut(compose.onNode(hasClickAction() and hasText("Show A")).fetchSemanticsNode())
+            val slot = cardAt("Show A")
 
             // Down scrolls exactly one row: the second row in full, the first one gone.
             tv.press(KeyEvent.KEYCODE_DPAD_DOWN)
@@ -401,12 +400,12 @@ class SeniorInvariantsTest {
             }
 
             // Exactly one row: E's card is where A's was.
-            assertSameBounds(slot, laidOut(compose.onNode(hasClickAction() and hasText("Show E")).fetchSemanticsNode()))
+            assertSameBounds(slot, cardAt("Show E"))
 
             // Up brings the first row back, exactly where it was.
             tv.press(KeyEvent.KEYCODE_DPAD_UP)
             assertFocusedTile("Show A")
-            assertSameBounds(slot, laidOut(compose.onNode(hasClickAction() and hasText("Show A")).fetchSemanticsNode()))
+            assertSameBounds(slot, cardAt("Show A"))
             assertTrue(first.all(::shown))
             assertFalse(second.any(::shown))
         }
@@ -483,17 +482,16 @@ class SeniorInvariantsTest {
             """{"id":"Films123","title":"Films","layout":"row","itemIds":["c","d","e","f","g","h","i"]}]"""
         onTv { tv ->
             waitUntil("the sections") { exists("Films") && exists(hasClickAction() and hasText("Show C")) }
-            fun card(title: String) = laidOut(compose.onNode(hasClickAction() and hasText(title)).fetchSemanticsNode())
             // The title: large (30 sp), over the line, aligned with the cards' left edge; it takes no focus.
             assertEquals(30f, drawnTexts().first { it.first == "Films" }.second.value, 0f)
-            val title = laidOut(compose.onNode(hasText("Films") and !hasClickAction()).fetchSemanticsNode())
-            assertEquals(card("Show C").left, title.left, 0.5f)
-            assertTrue("the title between the rows: $title", title.top > card("Show A").bottom && title.bottom < card("Show C").top)
+            val title = textAt("Films")
+            assertEquals(cardAt("Show C").left, title.left, 0.5f)
+            assertTrue("the title between the rows: $title", title.top > cardAt("Show A").bottom && title.bottom < cardAt("Show C").top)
             compose.onAllNodes(isFocusable() and hasText("Films")).assertCountEquals(0)
 
             // The focused card grows: places are compared by the name under each card.
-            fun x(title: String) = laidOut(compose.onNode(hasText(title) and !hasClickAction()).fetchSemanticsNode()).left
-            val pitch = card("Show D").width + 20f * density()
+            fun x(title: String) = textAt(title).left
+            val pitch = cardAt("Show D").width + 20f * density()
             assertFocusedTile("Show A")
             tv.press(KeyEvent.KEYCODE_DPAD_DOWN)
             assertFocusedTile("Show C")
@@ -520,8 +518,8 @@ class SeniorInvariantsTest {
             assertFocusedTile("Show I")
             assertEquals(start + 3 * pitch, x("Show I"), 0.5f)
             // The card before those in view shows in the left margin, the screen's edge cutting it.
-            val peek = card("Show E")
-            assertTrue("E peeks into the margin: $peek", peek.left < 0f && peek.right > 0f && peek.right < card("Show A").left)
+            val peek = cardAt("Show E")
+            assertTrue("E peeks into the margin: $peek", peek.left < 0f && peek.right > 0f && peek.right < cardAt("Show A").left)
             repeat(7) { tv.press(KeyEvent.KEYCODE_DPAD_LEFT) }
             assertFocusedTile("Show C")
             assertEquals(start, x("Show C"), 0.5f)
@@ -540,16 +538,15 @@ class SeniorInvariantsTest {
         onTv { tv ->
             // E, the card after those in view, peeks into the margin; F comes once the line slides.
             waitUntil("the line") { exists(hasClickAction() and hasText("Show E")) }
-            val name = { title: String -> laidOut(compose.onNode(hasText(title) and !hasClickAction()).fetchSemanticsNode()) }
             // One line: E follows D on it (not a second row), and nothing but the cards is drawn.
-            assertEquals(name("Show A").top, name("Show E").top, 0.5f)
+            assertEquals(textAt("Show A").top, textAt("Show E").top, 0.5f)
             assertEquals(emptySet<String>(), allTexts().toSet() - home.map { "Show ${it.uppercase()}" }.toSet() - string(R.string.badge_new))
-            val start = name("Show A").left
-            val pitch = name("Show B").left - start
+            val start = textAt("Show A").left
+            val pitch = textAt("Show B").left - start
             repeat(4) { tv.press(KeyEvent.KEYCODE_DPAD_RIGHT) }
             assertFocusedTile("Show E")
             // It slid by one card.
-            assertEquals(start + 3 * pitch, name("Show E").left, 0.5f)
+            assertEquals(start + 3 * pitch, textAt("Show E").left, 0.5f)
             tv.press(KeyEvent.KEYCODE_DPAD_DOWN)
             assertFocusedTile("Show E")
         }
@@ -563,12 +560,10 @@ class SeniorInvariantsTest {
             """{"id":"untitled","title":null,"layout":"grid","itemIds":["d"]}]"""
         onTv { tv ->
             waitUntil("the sections") { exists("Kids") && exists(hasClickAction() and hasText("Show D")) }
-            val name = { title: String -> laidOut(compose.onNode(hasText(title) and !hasClickAction()).fetchSemanticsNode()) }
-            val card = { title: String -> laidOut(compose.onNode(hasClickAction() and hasText(title)).fetchSemanticsNode()) }
             // C ends the titled section's row (it takes the rest of it) but keeps one card's size; D starts a row under A.
-            assertEquals(card("Show B").size, card("Show C").size)
-            assertEquals(name("Show A").left, name("Show D").left, 0.5f)
-            assertTrue(name("Show D").top > name("Show A").bottom)
+            assertEquals(cardAt("Show B").size, cardAt("Show C").size)
+            assertEquals(textAt("Show A").left, textAt("Show D").left, 0.5f)
+            assertTrue(textAt("Show D").top > textAt("Show A").bottom)
             tv.press(KeyEvent.KEYCODE_DPAD_DOWN)
             assertFocusedTile("Show D")
         }
@@ -591,7 +586,7 @@ class SeniorInvariantsTest {
             tv.onActivity { app.graph.repository.refreshSoon() }
             waitUntil("the new section") { exists("Later") }
             assertFocusedTile("Show B")
-            assertTrue("B under the title", tileBounds("Show B").top > laidOut(compose.onNode(hasText("Later")).fetchSemanticsNode()).bottom)
+            assertTrue("B under the title", tileBounds("Show B").top > textAt("Later").bottom)
         }
     }
 
@@ -611,7 +606,7 @@ class SeniorInvariantsTest {
         awaitTiles("Show A", "Show B", "Show C")
         // An Android 7 TV (or one without the "install unknown apps" grant): guided.
         shadowOf(app.packageManager).setCanRequestPackageInstalls(false)
-        tv.onActivity { vm(it).onSettingsEntry(SettingsEntry.InstallUpdate) }
+        tv.vm.onSettingsEntry(SettingsEntry.InstallUpdate)
         waitUntil("the press OK screen") { exists(string(R.string.update_press_ok)) }
         compose.onNodeWithText(string(R.string.update_overline)).assertIsDisplayed()
         compose.onNodeWithText("99.0.0").assertIsDisplayed()
@@ -630,7 +625,7 @@ class SeniorInvariantsTest {
         waitUntil("the focus back on the tiles") { focusedTitle() == "Show A" }
 
         // Again, and OK this time: it installs.
-        tv.onActivity { vm(it).onSettingsEntry(SettingsEntry.InstallUpdate) }
+        tv.vm.onSettingsEntry(SettingsEntry.InstallUpdate)
         waitUntil("the press OK screen") { exists(string(R.string.update_press_ok)) }
         tv.press(KeyEvent.KEYCODE_DPAD_CENTER)
         waitUntil("Updating…") { exists(string(R.string.update_installing)) }
@@ -656,18 +651,11 @@ class SeniorInvariantsTest {
     }
 
     /** Every text drawn on the screen, with its size. */
-    private fun drawnTexts(): List<Pair<String, androidx.compose.ui.unit.TextUnit>> {
-        fun collect(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::collect)
-        return collect(compose.onRoot(useUnmergedTree = true).fetchSemanticsNode()).flatMap { node ->
-            val layouts = mutableListOf<TextLayoutResult>()
-            node.config.getOrNull(SemanticsActions.GetTextLayoutResult)?.action?.invoke(layouts)
-            layouts.map { it.layoutInput.text.text to it.layoutInput.style.fontSize }
-        }
+    private fun drawnTexts(): List<Pair<String, androidx.compose.ui.unit.TextUnit>> = allNodes(unmerged = true).flatMap { node ->
+        val layouts = mutableListOf<TextLayoutResult>()
+        node.config.getOrNull(SemanticsActions.GetTextLayoutResult)?.action?.invoke(layouts)
+        layouts.map { it.layoutInput.text.text to it.layoutInput.style.fontSize }
     }
-
-    private fun vm(activity: MainActivity): AppViewModel = ViewModelProvider(activity)[AppViewModel::class.java]
-
-    private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     /** Starts the app as the launcher does and closes it after [block], before the server goes away. */
     private fun onTv(block: (ActivityScenario<MainActivity>) -> Unit) {
@@ -736,16 +724,22 @@ class SeniorInvariantsTest {
     /** Where a node is laid out, unclipped (semantics bounds are clipped by the grid). */
     private fun laidOut(node: SemanticsNode): Rect = node.layoutInfo.coordinates.let { Rect(it.positionInRoot(), it.size.toSize()) }
 
+    /** Where the card of this show is laid out, unclipped. */
+    private fun cardAt(title: String) = laidOut(compose.onNode(hasClickAction() and hasText(title)).fetchSemanticsNode())
+
+    /** Where a text outside the cards (a name under one, a section's title) is laid out, unclipped. */
+    private fun textAt(text: String) = laidOut(compose.onNode(hasText(text) and !hasClickAction()).fetchSemanticsNode())
+
     /** The tile with this title (in the card: one without a picture) is on screen, not clipped away by the grid. */
     private fun shown(title: String): Boolean {
         val all = compose.onAllNodes(hasClickAction() and hasText(title))
         return (0 until all.fetchSemanticsNodes().size).any { all[it].isDisplayed() }
     }
 
-    /** Every node of the (merged) tree for which [predicate] holds. */
-    private fun nodes(predicate: (SemanticsNode) -> Boolean): List<SemanticsNode> {
-        fun collect(node: SemanticsNode): List<SemanticsNode> = listOf(node).filter(predicate) + node.children.flatMap(::collect)
-        return collect(compose.onRoot().fetchSemanticsNode())
+    /** Every node of the merged (or [unmerged]) tree. */
+    private fun allNodes(unmerged: Boolean = false): List<SemanticsNode> {
+        fun collect(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::collect)
+        return collect(compose.onRoot(useUnmergedTree = unmerged).fetchSemanticsNode())
     }
 
     /** Lets [ms] of the paused main-looper clock pass, running what was due in that time (backoffs, banner expiry). */
@@ -759,7 +753,7 @@ class SeniorInvariantsTest {
         compose.onAllNodes(isFocused()).fetchSemanticsNodes().singleOrNull()?.texts()?.firstOrNull()
 
     /** Every text shown anywhere on the screen. */
-    private fun allTexts(): List<String> = nodes { true }.flatMap { it.texts() }
+    private fun allTexts(): List<String> = allNodes().flatMap { it.texts() }
 
     private fun SemanticsNode.texts(): List<String> = config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text }
 
@@ -787,9 +781,6 @@ class SeniorInvariantsTest {
         compose.waitForIdle()
         Thread.sleep(10)
     }
-
-    private fun json(code: Int, body: String) =
-        MockResponse.Builder().code(code).addHeader("Content-Type", "application/json").body(body).build()
 
     private fun stateJson(): String {
         val list = home.joinToString(",") { id ->

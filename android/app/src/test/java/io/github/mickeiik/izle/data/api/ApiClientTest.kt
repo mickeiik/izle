@@ -1,5 +1,6 @@
 package io.github.mickeiik.izle.data.api
 
+import io.github.mickeiik.izle.json
 import kotlinx.coroutines.runBlocking
 import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
@@ -27,15 +28,12 @@ class ApiClientTest {
 
     private fun client(token: String? = "device-token", path: String = "/") = ApiClient(server.url(path), token, http)
 
-    private fun json(body: String, code: Int = 200) =
-        MockResponse.Builder().code(code).addHeader("Content-Type", "application/json").body(body).build()
-
     private inline fun <reified T : Throwable> failsWith(noinline call: suspend () -> Unit): T =
         assertThrows(T::class.java) { runBlocking { call() } }
 
     @Test
     fun stateSendsTheDeviceToken() = runBlocking {
-        server.enqueue(json("""{"version":3,"device":{"id":"d","name":"TV"},"catalog":{"id":"c","buildId":"b","name":"n"},"home":[]}"""))
+        server.enqueue(json(200, """{"version":3,"device":{"id":"d","name":"TV"},"catalog":{"id":"c","buildId":"b","name":"n"},"home":[]}"""))
         val state = client().state()
         assertEquals(3L, state.version)
         val request = server.takeRequest()
@@ -46,8 +44,8 @@ class ApiClientTest {
 
     @Test
     fun everyApiCallSaysWhichAppAndHowItUpdates() = runBlocking {
-        server.enqueue(json("""{"version":3,"device":{"id":"d","name":"TV"},"catalog":{"id":"c","buildId":"b","name":"n"},"home":[]}"""))
-        server.enqueue(json("""{"code":"483920","pairToken":"pair-secret"}"""))
+        server.enqueue(json(200, """{"version":3,"device":{"id":"d","name":"TV"},"catalog":{"id":"c","buildId":"b","name":"n"},"home":[]}"""))
+        server.enqueue(json(200, """{"code":"483920","pairToken":"pair-secret"}"""))
         var agent = "izle-tv/0.2.0 (Android 25; 200; guided)"
         val api = ApiClient(server.url("/"), "device-token", http, userAgent = { agent })
         api.state()
@@ -61,9 +59,9 @@ class ApiClientTest {
     @Test
     fun appIsTheOfferedVersionOrNothing() = runBlocking {
         val sha = "AB".repeat(32)
-        server.enqueue(json("""{"versionName":"0.3.0","versionCode":300,"sha256":"$sha","size":12345678,"auto":false,"uploadedAt":"x"}"""))
+        server.enqueue(json(200, """{"versionName":"0.3.0","versionCode":300,"sha256":"$sha","size":12345678,"auto":false,"uploadedAt":"x"}"""))
         server.enqueue(MockResponse.Builder().code(204).build())
-        server.enqueue(json("""{"versionName":"0.3.0","versionCode":300,"sha256":"nope","size":1}"""))
+        server.enqueue(json(200, """{"versionName":"0.3.0","versionCode":300,"sha256":"nope","size":1}"""))
         assertEquals(io.github.mickeiik.izle.update.AvailableUpdate("0.3.0", 300, sha.lowercase(), 12_345_678, auto = false), client().app())
         val request = server.takeRequest()
         assertEquals("/api/v1/tv/app", request.url.encodedPath)
@@ -74,7 +72,7 @@ class ApiClientTest {
 
     @Test
     fun worksBelowAPathPrefix() = runBlocking {
-        server.enqueue(json("""{"item":{"id":"caminandes","kind":"series","title":"C"},"cursorEpisodeId":null,"episodes":[]}"""))
+        server.enqueue(json(200, """{"item":{"id":"caminandes","kind":"series","title":"C"},"cursorEpisodeId":null,"episodes":[]}"""))
         client(path = "/izle/").item("caminandes")
         assertEquals("/izle/api/v1/tv/items/caminandes", server.takeRequest().url.encodedPath)
     }
@@ -83,7 +81,7 @@ class ApiClientTest {
     fun resolvePostsJson() = runBlocking {
         server.enqueue(
             json(
-                """{"sessionId":"s","sourceId":"a","media":{"kind":"mp4","url":"/p/x/file.mp4"},"item":{"id":"m","kind":"movie","title":"M"},
+                200, """{"sessionId":"s","sourceId":"a","media":{"kind":"mp4","url":"/p/x/file.mp4"},"item":{"id":"m","kind":"movie","title":"M"},
                    "episode":{"id":"m.film"}}""",
             ),
         )
@@ -98,8 +96,8 @@ class ApiClientTest {
 
     @Test
     fun commandResultsArePostedToTheCommandsRoute() = runBlocking {
-        server.enqueue(json("""{"ok":true}"""))
-        server.enqueue(json("""{"error":"already_reported"}""", code = 409))
+        server.enqueue(json(200, """{"ok":true}"""))
+        server.enqueue(json(409, """{"error":"already_reported"}"""))
         client().reportCommandResult(12, CommandResult.ignored(CommandResult.NOT_IN_PLAYER))
         val request = server.takeRequest()
         assertEquals("POST", request.method)
@@ -117,7 +115,7 @@ class ApiClientTest {
         val short = OkHttpClient.Builder().readTimeout(200, TimeUnit.MILLISECONDS).build()
         val long = OkHttpClient.Builder().readTimeout(5, TimeUnit.SECONDS).build()
         val api = ApiClient(server.url("/"), "device-token", short, long)
-        val slow = { body: String -> json(body).newBuilder().headersDelay(600, TimeUnit.MILLISECONDS).build() }
+        val slow = { body: String -> json(200, body).newBuilder().headersDelay(600, TimeUnit.MILLISECONDS).build() }
         server.enqueue(slow("""{"sessionId":"s","sourceId":"a","media":{"kind":"hls","url":"/p/x/index.m3u8"},"item":{"id":"m","kind":"movie","title":"M"},"episode":{"id":"m.film"}}"""))
         assertEquals("a", api.resolve(ResolveRequest("m.film")).sourceId)
         server.enqueue(slow("""{"version":1,"device":{"id":"d","name":"TV"},"catalog":{"id":"c","buildId":"b","name":"n"},"home":[]}"""))
@@ -126,7 +124,7 @@ class ApiClientTest {
 
     @Test
     fun errorAnswersBecomeApiExceptions() = runBlocking {
-        server.enqueue(json("""{"error":"not_allowed","message":"playback of this episode is not allowed"}""", code = 403))
+        server.enqueue(json(403, """{"error":"not_allowed","message":"playback of this episode is not allowed"}"""))
         server.enqueue(MockResponse.Builder().code(429).addHeader("Retry-After", "42").body("""{"error":"rate_limited"}""").build())
         server.enqueue(MockResponse.Builder().code(502).body("<html>bad gateway</html>").build())
         val notAllowed = failsWith<ApiException> { client().resolve(ResolveRequest("e")) }
@@ -140,10 +138,10 @@ class ApiClientTest {
 
     @Test
     fun pairingFlow() = runBlocking {
-        server.enqueue(json("""{"code":"483920","pairToken":"pair-secret","expiresAt":"2026-10-10T10:10:00.000Z"}"""))
-        server.enqueue(json("""{"status":"pending"}"""))
-        server.enqueue(json("""{"status":"approved","deviceId":"abcdefabcdef","deviceToken":"tok"}"""))
-        server.enqueue(json("""{"error":"expired","status":"expired"}""", code = 410))
+        server.enqueue(json(200, """{"code":"483920","pairToken":"pair-secret","expiresAt":"2026-10-10T10:10:00.000Z"}"""))
+        server.enqueue(json(200, """{"status":"pending"}"""))
+        server.enqueue(json(200, """{"status":"approved","deviceId":"abcdefabcdef","deviceToken":"tok"}"""))
+        server.enqueue(json(410, """{"error":"expired","status":"expired"}"""))
         val api = client(token = null)
         val start = api.pairStart()
         assertNull(server.takeRequest().headers["Authorization"])
@@ -159,9 +157,9 @@ class ApiClientTest {
 
     @Test
     fun progressAndAck() = runBlocking {
-        server.enqueue(json("""{"ok":true,"version":9}"""))
-        server.enqueue(json("""{"ok":true}"""))
-        assertEquals(9L, client().progress(ProgressReport("s", episodeId = "e", positionMs = 1_000, durationMs = 2_000, status = ProgressStatus.Playing)).version)
+        server.enqueue(json(200, """{"ok":true,"version":9}"""))
+        server.enqueue(json(200, """{"ok":true}"""))
+        client().progress(ProgressReport("s", episodeId = "e", positionMs = 1_000, durationMs = 2_000, status = ProgressStatus.Playing))
         assertEquals(
             """{"sessionId":"s","episodeId":"e","positionMs":1000,"durationMs":2000,"status":"playing"}""",
             server.takeRequest().body?.utf8(),
@@ -174,8 +172,8 @@ class ApiClientTest {
     fun resolveCarriesTheServersClock() = runBlocking {
         val body = """{"sessionId":"s","sourceId":"a","media":{"kind":"hls","url":"/p/x/index.m3u8"},"item":{"id":"m","kind":"movie","title":"M"},
                       "episode":{"id":"m.film"},"expiresAt":"2026-10-14T12:01:40.000Z"}"""
-        server.enqueue(json(body).newBuilder().addHeader("Date", "Wed, 14 Oct 2026 12:00:00 GMT").build())
-        server.enqueue(json(body))
+        server.enqueue(json(200, body).newBuilder().addHeader("Date", "Wed, 14 Oct 2026 12:00:00 GMT").build())
+        server.enqueue(json(200, body))
         val r = client().resolve(ResolveRequest("m.film"))
         assertEquals("2026-10-14T12:01:40.000Z", r.expiresAt)
         assertEquals(1_791_979_200_000L, r.serverDateMs)
@@ -184,8 +182,8 @@ class ApiClientTest {
 
     @Test
     fun problemReportsArePostedWithTheDeviceToken() = runBlocking {
-        server.enqueue(json("""{"ok":true}""", code = 202))
-        server.enqueue(json("""{"error":"invalid_request"}""", code = 400))
+        server.enqueue(json(202, """{"ok":true}"""))
+        server.enqueue(json(400, """{"error":"invalid_request"}"""))
         val report = ProblemReport(kind = "playback", code = "gave_up", episodeId = "e", detail = "tried 2 sources", appVersion = "0.2.0")
         client().reportProblem(report)
         val request = server.takeRequest()
@@ -199,8 +197,8 @@ class ApiClientTest {
 
     @Test
     fun anUnreachableServerIsAnIOExceptionAndOrNullOnFailureIgnoresOnlyTheServersFailures() = runBlocking<Unit> {
-        server.enqueue(json("""{"ok":true}"""))
-        server.enqueue(json("""{"error":"unknown_command"}""", code = 404))
+        server.enqueue(json(200, """{"ok":true}"""))
+        server.enqueue(json(404, """{"error":"unknown_command"}"""))
         val api = client()
         assertEquals(Unit, orNullOnFailure { api.healthz() })
         assertNull("an error answer", orNullOnFailure { api.ackCommand(12) })

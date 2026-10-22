@@ -6,7 +6,10 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import io.github.mickeiik.izle.data.ProblemReporter
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.CommandResult
+import io.github.mickeiik.izle.installStatus
+import io.github.mickeiik.izle.json
 import io.github.mickeiik.izle.settings.DeviceStore
+import io.github.mickeiik.izle.sha256
 import io.github.mickeiik.izle.ui.Screen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -39,7 +42,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
-import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 
@@ -169,7 +171,7 @@ class AppUpdaterTest {
         val run = launch { updater.run(api, update, silent = true, commandId = null) { true } }
         withTimeout(5_000) { while (!File(cacheDir, ApkDownloader.FILE_NAME).exists()) delay(5) }
         assertTrue(updater.busy)
-        updater.onInstallStatus(status(PackageInstaller.STATUS_SUCCESS, sessionId = 42))
+        updater.onInstallStatus(installStatus(PackageInstaller.STATUS_SUCCESS, sessionId = 42))
         yield()
         assertTrue(statuses.isEmpty())
         assertTrue("the download goes on", File(cacheDir, ApkDownloader.FILE_NAME).exists())
@@ -178,10 +180,10 @@ class AppUpdaterTest {
         // Committed session 7: another session's success does not count, its own does.
         apk = { MockResponse.Builder().body(Buffer().write(bytes)).build() }
         assertEquals(UpdateRun.Committed, updater.run(api, update, silent = true, commandId = null) { true })
-        updater.onInstallStatus(status(PackageInstaller.STATUS_SUCCESS, sessionId = 42))
+        updater.onInstallStatus(installStatus(PackageInstaller.STATUS_SUCCESS, sessionId = 42))
         yield()
         assertTrue(statuses.isEmpty())
-        updater.onInstallStatus(status(PackageInstaller.STATUS_SUCCESS, sessionId = 7))
+        updater.onInstallStatus(installStatus(PackageInstaller.STATUS_SUCCESS, sessionId = 7))
         yield()
         assertEquals(listOf<InstallStatus>(InstallStatus.Succeeded), statuses)
 
@@ -189,7 +191,7 @@ class AppUpdaterTest {
         val fresh = updater()
         val freshStatuses = CopyOnWriteArrayList<InstallStatus>()
         val freshCollector = launch(start = CoroutineStart.UNDISPATCHED) { fresh.installStatus.collect { freshStatuses += it } }
-        fresh.onInstallStatus(status(PackageInstaller.STATUS_SUCCESS, sessionId = 7))
+        fresh.onInstallStatus(installStatus(PackageInstaller.STATUS_SUCCESS, sessionId = 7))
         yield()
         assertEquals(listOf<InstallStatus>(InstallStatus.Succeeded), freshStatuses)
         collector.cancel()
@@ -249,10 +251,6 @@ class AppUpdaterTest {
         now = 1_000_000L,
     )
 
-    private fun status(status: Int, sessionId: Int) = Intent(AppInstaller.ACTION_INSTALL_STATUS)
-        .putExtra(PackageInstaller.EXTRA_STATUS, status)
-        .putExtra(PackageInstaller.EXTRA_SESSION_ID, sessionId)
-
     private fun problems() = requests.filter { it.url.encodedPath == "/api/v1/tv/problems" }.map { it.body?.utf8().orEmpty() }
 
     private suspend fun awaitProblem(code: String) = withTimeout(5_000) {
@@ -261,11 +259,6 @@ class AppUpdaterTest {
 
     /** Gives a request that should not come the time to arrive anyway. */
     private suspend fun settle() = delay(200)
-
-    private fun json(code: Int, body: String) =
-        MockResponse.Builder().code(code).addHeader("Content-Type", "application/json").body(body).build()
-
-    private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     /** Checks and installs nothing; fails as told. */
     private class FakeInstaller : AppInstaller {
@@ -277,7 +270,7 @@ class AppUpdaterTest {
             verifyFailure?.let { throw it }
         }
 
-        override suspend fun install(file: File, silent: Boolean, commandId: Long?): Int {
+        override suspend fun install(file: File, silent: Boolean): Int {
             installFailure?.let { throw it }
             installs += silent
             return 7

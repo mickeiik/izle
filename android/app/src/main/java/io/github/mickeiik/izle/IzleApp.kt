@@ -85,12 +85,10 @@ class AppGraph(val context: Context) {
 
     /**
      * API calls (never media) say which app version this is and how it can update: the server records it per TV.
-     * Null for the first moment, until the updater read what it stored (OkHttp's own goes out then).
+     * None for the first moment, until the updater read what it stored (OkHttp's own `User-Agent` goes out then).
      */
-    val apiUserAgent: String? get() = updater.userAgent
-
     fun apiClient(baseUrl: HttpUrl, deviceToken: String?): ApiClient =
-        ApiClient(baseUrl, deviceToken, http, longPollHttp, userAgent = { apiUserAgent })
+        ApiClient(baseUrl, deviceToken, http, longPollHttp, userAgent = { updater.userAgent })
 
     /** Media requests. */
     val userAgent: String = "izle-tv/${BuildConfig.VERSION_NAME}"
