@@ -29,6 +29,11 @@ contract share one version number. How to update (back up, update the server, th
   deletes sections and makes one a single scrolling line. The selected card moves within its section or to another
   one, and "Add shows" adds to the section chosen in "Add to". Each edit is saved as one change, so an edit made
   elsewhere at the same time is not undone.
+- **TV app: sections on Home.** Home draws the owner's sections in their order: a titled section starts with its
+  title, a thin line separates two sections, and a section laid out as one line of cards scrolls sideways, with the
+  edge of the next card showing in the margin. ↑ and ↓ go line by line across sections to the nearest card. The
+  focus stays on a card the owner moves to another section, and the offline home screen keeps its sections. A Home
+  without sections looks as before.
 
 ### Changed
 

@@ -97,6 +97,9 @@ class SeniorInvariantsTest {
     @Volatile private var columns: Int? = null
     @Volatile private var rows: Int? = null
 
+    /** The state's `homeSections` (JSON array); null: not sent, as by an older server. */
+    @Volatile private var sections: String? = null
+
     /** An owner's message (shown for 5 s) that the event stream hands out once, on the TV's next connection. */
     @Volatile private var message: String? = null
 
@@ -472,6 +475,104 @@ class SeniorInvariantsTest {
     }
 
     @Test
+    fun aTitledLineOfCardsSlidesAtItsEdgeAndTheFocusMovesToTheNearestCard() {
+        columns = 4
+        rows = 2
+        home = listOf("a", "b", "c", "d", "e", "f", "g", "h", "i")
+        sections = """[{"id":"untitled","title":null,"layout":"grid","itemIds":["a","b"]},""" +
+            """{"id":"Films123","title":"Films","layout":"row","itemIds":["c","d","e","f","g","h","i"]}]"""
+        onTv { tv ->
+            waitUntil("the sections") { exists("Films") && exists(hasClickAction() and hasText("Show C")) }
+            fun card(title: String) = laidOut(compose.onNode(hasClickAction() and hasText(title)).fetchSemanticsNode())
+            // The title: large (30 sp), over the line, aligned with the cards' left edge; it takes no focus.
+            assertEquals(30f, drawnTexts().first { it.first == "Films" }.second.value, 0f)
+            val title = laidOut(compose.onNode(hasText("Films") and !hasClickAction()).fetchSemanticsNode())
+            assertEquals(card("Show C").left, title.left, 0.5f)
+            assertTrue("the title between the rows: $title", title.top > card("Show A").bottom && title.bottom < card("Show C").top)
+            compose.onAllNodes(isFocusable() and hasText("Films")).assertCountEquals(0)
+
+            // The focused card grows: places are compared by the name under each card.
+            fun x(title: String) = laidOut(compose.onNode(hasText(title) and !hasClickAction()).fetchSemanticsNode()).left
+            val pitch = card("Show D").width + 20f * density()
+            assertFocusedTile("Show A")
+            tv.press(KeyEvent.KEYCODE_DPAD_DOWN)
+            assertFocusedTile("Show C")
+            val start = x("Show C")
+            assertEquals(x("Show A"), start, 0.5f)
+            // Along the line, within what is in view: nothing moves.
+            repeat(3) { tv.press(KeyEvent.KEYCODE_DPAD_RIGHT) }
+            assertFocusedTile("Show F")
+            assertEquals(start, x("Show C"), 0.5f)
+            // Past the last card in view, the line slides by one card under the focus.
+            tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
+            assertFocusedTile("Show G")
+            assertEquals(start - pitch, x("Show C"), 0.5f)
+            assertEquals(start + 3 * pitch, x("Show G"), 0.5f)
+            // Up goes to the card nearest above (G is in the fourth column; the row above has two cards).
+            tv.press(KeyEvent.KEYCODE_DPAD_UP)
+            assertFocusedTile("Show B")
+            // The line kept its place: down from B (second column) is E, second in view.
+            tv.press(KeyEvent.KEYCODE_DPAD_DOWN)
+            assertFocusedTile("Show E")
+            assertEquals(start - pitch, x("Show C"), 0.5f)
+            // To the end, where right stops; left at the start stops too.
+            repeat(5) { tv.press(KeyEvent.KEYCODE_DPAD_RIGHT) }
+            assertFocusedTile("Show I")
+            assertEquals(start + 3 * pitch, x("Show I"), 0.5f)
+            // The card before those in view shows in the left margin, the screen's edge cutting it.
+            val peek = card("Show E")
+            assertTrue("E peeks into the margin: $peek", peek.left < 0f && peek.right > 0f && peek.right < card("Show A").left)
+            repeat(7) { tv.press(KeyEvent.KEYCODE_DPAD_LEFT) }
+            assertFocusedTile("Show C")
+            assertEquals(start, x("Show C"), 0.5f)
+            // Down from Home's last line stays.
+            tv.press(KeyEvent.KEYCODE_DPAD_DOWN)
+            assertFocusedTile("Show C")
+            tv.assertOnHome()
+        }
+    }
+
+    @Test
+    fun anUntitledGridUnderATitledOneStartsItsOwnRowAtTheSameCardSize() {
+        columns = 4
+        home = listOf("a", "b", "c", "d")
+        sections = """[{"id":"Kids1234","title":"Kids","layout":"grid","itemIds":["a","b","c"]},""" +
+            """{"id":"untitled","title":null,"layout":"grid","itemIds":["d"]}]"""
+        onTv { tv ->
+            waitUntil("the sections") { exists("Kids") && exists(hasClickAction() and hasText("Show D")) }
+            val name = { title: String -> laidOut(compose.onNode(hasText(title) and !hasClickAction()).fetchSemanticsNode()) }
+            val card = { title: String -> laidOut(compose.onNode(hasClickAction() and hasText(title)).fetchSemanticsNode()) }
+            // C ends the titled section's row (it takes the rest of it) but keeps one card's size; D starts a row under A.
+            assertEquals(card("Show B").size, card("Show C").size)
+            assertEquals(name("Show A").left, name("Show D").left, 0.5f)
+            assertTrue(name("Show D").top > name("Show A").bottom)
+            tv.press(KeyEvent.KEYCODE_DPAD_DOWN)
+            assertFocusedTile("Show D")
+        }
+    }
+
+    @Test
+    fun aCardTheOwnerMovesToAnotherSectionKeepsTheFocus() {
+        home = listOf("a", "b", "c")
+        onTv { tv ->
+            awaitTiles("Show A", "Show B", "Show C")
+            tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
+            assertFocusedTile("Show B")
+            // Without a titled section nothing is drawn but the cards.
+            assertEquals(emptySet<String>(), allTexts().toSet() - setOf("Show A", "Show B", "Show C", string(R.string.badge_new)))
+
+            home = listOf("a", "c", "b")
+            sections = """[{"id":"untitled","title":null,"layout":"grid","itemIds":["a","c"]},""" +
+                """{"id":"Later123","title":"Later","layout":"row","itemIds":["b"]}]"""
+            version = 2
+            tv.onActivity { app.graph.repository.refreshSoon() }
+            waitUntil("the new section") { exists("Later") }
+            assertFocusedTile("Show B")
+            assertTrue("B under the title", tileBounds("Show B").top > laidOut(compose.onNode(hasText("Later")).fetchSemanticsNode()).bottom)
+        }
+    }
+
+    @Test
     fun anEmptyHomeSaysNothingHereYet() {
         home = emptyList()
         onTv { tv ->
@@ -673,10 +774,13 @@ class SeniorInvariantsTest {
         }
         val grid = listOfNotNull(columns?.let { ""","homeColumns":$it""" }, rows?.let { ""","homeRows":$it""" }).joinToString("")
         return """{"version":$version,"device":{"id":"tv-1","name":"Living room","uiLanguage":"en"$grid},""" +
-            """"catalog":{"id":"sample","buildId":"b1","name":"Sample"},"home":[$list]}"""
+            """"catalog":{"id":"sample","buildId":"b1","name":"Sample"},"home":[$list]""" +
+            (sections?.let { ""","homeSections":$it""" } ?: "") + "}"
     }
 
     private fun string(id: Int, vararg args: Any): String = app.getString(id, *args)
+
+    private fun density(): Float = app.resources.displayMetrics.density
 
     private fun quantity(id: Int, count: Int): String = app.resources.getQuantityString(id, count, count)
 
