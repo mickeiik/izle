@@ -58,15 +58,14 @@ export function homeCard(ctx) {
     const r = await attempt(() => api("PATCH", ctx.path, { homeColumns: chosenGrid().columns, homeRows: chosenGrid().rows }), "Grid saved. The TV applies it right away.");
     if (r.ok) await ctx.reload().catch(() => {});
   });
+  // Undo hides itself: the focus goes back to the columns.
   const undoGrid = actionButton("Undo", null, async () => {
-    if (savedGrid) showGrid(savedGrid);
-  });
-  /** @param {{ columns: number, rows: number }} g */
-  const showGrid = (g) => {
-    columns.value = String(g.columns);
-    rows.value = String(g.rows);
+    if (!savedGrid) return;
+    columns.value = String(savedGrid.columns);
+    rows.value = String(savedGrid.rows);
     draw();
-  };
+    columns.focus();
+  });
   columns.addEventListener("change", () => draw());
   rows.addEventListener("change", () => draw());
   const gridControls = h("div", { class: "grid-size" },
@@ -77,7 +76,11 @@ export function homeCard(ctx) {
   const grid = h("div", { class: "tv-grid", role: "listbox", "aria-label": "Home on the TV", "aria-describedby": gridHint.id });
   const canvas = h("div", { class: "tv-canvas" }, tvEmpty, grid);
   const screen = h("div", { class: "tv-screen" }, canvas);
-  const scale = new ResizeObserver(() => (canvas.style.transform = `scale(${screen.clientWidth / SCREEN_W})`));
+  // Also when the tab is shown again: a hidden grid cannot scroll, so its selected row is brought into view then.
+  const scale = new ResizeObserver(() => {
+    canvas.style.transform = `scale(${screen.clientWidth / SCREEN_W})`;
+    markSelected();
+  });
   scale.observe(screen);
   ctx.scope.onCleanup(() => scale.disconnect());
   /** The layout drawn last. */
@@ -235,17 +238,10 @@ export function homeCard(ctx) {
   const up = actionButton("▲", { class: "icon", "aria-label": "Move up a row" }, () => moveTo(at() - layout.columns));
   const down = actionButton("▼", { class: "icon", "aria-label": "Move down a row" }, () => moveTo(at() + layout.columns));
   const first = actionButton("Move to first", null, () => moveTo(0));
+  // The card that takes its place is selected next (see `update`); with none left, the focus goes to "Add shows".
   const remove = actionButton("Remove from Home", { class: "danger" }, async () => {
     const e = entryNow();
-    if (!e) return;
-    // The card that takes its place is selected next (else the one before it); with none left, the focus goes to
-    // "Add shows".
-    const i = at();
-    const next = shown[i + 1] ?? shown[i - 1] ?? null;
-    await keepFocus(async () => {
-      await save(ids().filter((x) => x !== e.itemId), `${e.title ?? e.itemId} removed.`);
-      if (next && shown.some((x) => x.itemId === next.itemId)) select(next.itemId, false);
-    }, browser.search);
+    if (e) await keepFocus(() => save(ids().filter((x) => x !== e.itemId), `${e.title ?? e.itemId} removed.`), browser.search);
   });
   const inspector = h("section", { class: "inspector", "aria-label": "Selected show", hidden: true },
     where, h("div", { class: "row top-align" }, h("div", { class: "grow" }, name, line, progress), h("div", { class: "buttons" }, play, episodes)),
@@ -338,6 +334,10 @@ export function homeCard(ctx) {
    * @param {any[]} home @param {any} [device]
    */
   const update = (home, device) => {
+    // A selected card that went away (removed here or elsewhere, or hidden by a catalog reload) hands the selection,
+    // and the focus if it had it, to the card that takes its place, else the one before it.
+    const was = shown.findIndex((e) => e.itemId === selected);
+    const hadFocus = grid.contains(document.activeElement);
     entries = home;
     shown = home.filter(onTv);
     if (device) {
@@ -354,8 +354,12 @@ export function homeCard(ctx) {
     grid.hidden = shown.length === 0;
     hiddenRows.set(entries.filter((e) => !onTv(e)));
     hiddenBox.hidden = shown.length === entries.length;
-    if (!shown.some((e) => e.itemId === selected)) selected = shown[0]?.itemId ?? null;
+    if (!shown.some((e) => e.itemId === selected)) selected = shown[Math.min(Math.max(was, 0), shown.length - 1)]?.itemId ?? null;
     draw();
+    if (hadFocus && !grid.contains(document.activeElement)) {
+      const t = selected ? tiles.rows.get(selected)?.element : null;
+      (t ?? browser.search).focus({ preventScroll: true });
+    }
     browser.refresh();
   };
 

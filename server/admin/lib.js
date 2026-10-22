@@ -539,9 +539,9 @@ function tvResumes(c) {
 }
 
 /**
- * What a card on the TV's Home shows over its picture (EpisodeNames.badge and tileBadgeText): the chip at the bottom
- * (`tone` "live" for a channel, "new" for New), the progress bar's percent (null: none) and the "2 new" count at the
- * top right (0: none).
+ * What a card on the TV's Home shows over its picture (EpisodeNames.badge, tileBadgeText and ActionChip): the chip at
+ * the bottom (`tone` "live" for a channel, "new" for New, "resume" when OK resumes, else ""), the progress bar's
+ * percent (null: none) and the "2 new" count at the top right (0: none).
  * @param {{ kind: string, continue: (ContinueInfo & { index?: number }) | null, newEpisodes?: number }} e
  */
 export function tvCard(e) {
@@ -555,9 +555,9 @@ export function tvCard(e) {
     const label = c.label?.trim();
     const number = c.number ?? (c.index ?? 0) + 1;
     const name = label || (c.season !== null && c.season !== undefined && c.season > 1 ? `Season ${c.season}, Episode ${number}` : `Episode ${number}`);
-    return { chip: resume ? `Continue · ${name}` : name, tone: "", progress, newEpisodes };
+    return { chip: resume ? `Continue · ${name}` : name, tone: resume ? "resume" : "", progress, newEpisodes };
   }
-  if (resume) return { chip: "Continue", tone: "", progress, newEpisodes };
+  if (resume) return { chip: "Continue", tone: "resume", progress, newEpisodes };
   if (c.status === "finished") return { chip: "Watch again", tone: "", progress, newEpisodes };
   return { chip: "New", tone: "new", progress, newEpisodes };
 }

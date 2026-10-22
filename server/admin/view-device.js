@@ -59,7 +59,7 @@ export function deviceView(scope, id, tab) {
   const listenAlong = companionCard({ deviceId: id, signal: scope.signal });
   scope.onCleanup(() => listenAlong.stop());
   const viewings = historyCard(ctx);
-  const problems = problemsCard(ctx, (n) => tabBar.setBadge("problems", n > 0 ? String(n) : ""));
+  const problems = problemsCard(ctx, (count) => tabBar.setBadge("problems", count));
   /** @type {Record<typeof TABS[number][0], HTMLElement[]>} */
   const content = {
     now: [now.element],
@@ -77,8 +77,9 @@ export function deviceView(scope, id, tab) {
     selected: tab ?? "now",
     onSelect: (key) => {
       history.replaceState(null, "", `#/devices/${encodeURIComponent(id)}/${key}`);
-      const under = body.element.getBoundingClientRect().top - top.getBoundingClientRect().bottom;
-      if (under < 0) window.scrollBy(0, under - 16);
+      const gap = parseFloat(getComputedStyle(top).marginBottom) || 0;
+      const under = body.element.getBoundingClientRect().top - top.getBoundingClientRect().bottom - gap;
+      if (under < 0) window.scrollBy(0, under);
     },
   });
   const top = h("div", { class: "sticky", hidden: true }, scope.note, tabBar.list);
@@ -427,7 +428,14 @@ function historyCard(ctx) {
   return { element, refresh, fail: (err, retry) => shown.fail(err, retry, "Could not load the history.") };
 }
 
-/** @param {DeviceContext} ctx @param {(count: number) => void} counted runs with how many problems each read found @returns {Section} */
+/** How many problems the card reads (the latest). */
+const PROBLEMS_SHOWN = 50;
+
+/**
+ * @param {DeviceContext} ctx @param {(count: string) => void} counted runs after each read with the count for the tab
+ *   ("3", "50+" when the read was full, "" for none)
+ * @returns {Section}
+ */
 function problemsCard(ctx, counted) {
   const shown = slot();
   const list = rebuiltOnChange();
@@ -437,9 +445,9 @@ function problemsCard(ctx, counted) {
     if (r.ok) await keepFocus(() => refresh().catch(() => {}), element.querySelector("h2"));
   });
   const refresh = async () => {
-    const { problems } = await ctx.scope.read(`${ctx.path}/problems?limit=50`);
+    const { problems } = await ctx.scope.read(`${ctx.path}/problems?limit=${PROBLEMS_SHOWN}`);
     clear.hidden = problems.length === 0;
-    counted(problems.length);
+    counted(problems.length >= PROBLEMS_SHOWN ? `${PROBLEMS_SHOWN}+` : problems.length > 0 ? String(problems.length) : "");
     const content = list.content(problems, (time) => {
       if (problems.length === 0) return h("p", { class: "muted" }, "No problems recorded.");
       const li = (/** @type {any} */ p) => {

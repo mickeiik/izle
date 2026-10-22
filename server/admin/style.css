@@ -13,7 +13,8 @@
   --live: #c62828; --on-live: #ffffff;
   /* The TV's own colours (the TV app's theme), in both themes: the Home screen tab draws its screen. */
   --tv-bg: #0b0b0f; --tv-surface: #1c1c24; --tv-text: #f5f5f7; --tv-dim: #b8b8c4; --tv-focus: #ffffff; --tv-bezel: #18181d;
-  --tv-chip: #e2e2ea; --on-tv-chip: #15151b; --tv-new: #5fb98a; --on-tv-new: #04210f; --tv-progress: #ffc94d; --tv-shade: rgb(0 0 0 / 90%);
+  --tv-chip: #e2e2ea; --on-tv-chip: #15151b; --tv-new: #7fe3c4; --on-tv-new: #002118; --tv-accent: #ffc94d; --on-tv-accent: #1a1300;
+  --tv-hairline: rgb(255 255 255 / 20%); --tv-track: rgb(255 255 255 / 33%); --tv-shade: rgb(0 0 0 / 90%);
   --shadow: 0 1px 2px rgb(0 0 0 / 6%), 0 2px 8px rgb(0 0 0 / 4%);
 
   --space-0: 0.125rem; --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem; --space-5: 1.5rem;
@@ -252,8 +253,9 @@ input[type="checkbox"] { width: 1.25rem; height: 1.25rem; min-height: 0; padding
 .grid-size label + select + label { margin-left: var(--space-2); }
 .grid-size button:first-of-type { margin-left: var(--space-2); }
 .tv { max-width: 48rem; margin: var(--space-3) auto 0; }
+/* content-box: the 16:9 is the picture's, inside the bezel. */
 .tv-screen {
-  position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: var(--tv-bg);
+  position: relative; box-sizing: content-box; aspect-ratio: 16 / 9; overflow: hidden; background: var(--tv-bg);
   border: 10px solid var(--tv-bezel); border-radius: var(--radius-lg); box-shadow: var(--shadow);
 }
 .tv-canvas { position: absolute; top: 0; left: 0; width: 960px; height: 540px; padding: 27px 48px; display: grid; place-items: center; transform-origin: 0 0; color: var(--tv-text); }
@@ -281,13 +283,14 @@ input[type="checkbox"] { width: 1.25rem; height: 1.25rem; min-height: 0; padding
 }
 .tv-chip {
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 8px; border-radius: 8px;
-  background: var(--tv-chip); color: var(--on-tv-chip); font-size: 16px; line-height: 20px; font-weight: 700;
+  border: 1px solid var(--tv-hairline); background: var(--tv-chip); color: var(--on-tv-chip); font-size: 16px; line-height: 20px; font-weight: 700;
 }
 .tv-chip.new { background: var(--tv-new); color: var(--on-tv-new); }
+.tv-chip.resume { background: var(--tv-accent); color: var(--on-tv-accent); }
 .tv-chip.live { background: var(--live); color: var(--on-live); }
-.tv-bar { align-self: stretch; height: 6px; border-radius: 3px; background: rgb(255 255 255 / 30%); overflow: hidden; }
-.tv-bar > span { display: block; height: 100%; background: var(--tv-progress); }
-.tv-new { position: absolute; top: 8px; right: 8px; padding: 0 8px; border-radius: 8px; background: rgb(11 11 15 / 85%); color: var(--tv-text); font-size: 16px; line-height: 22px; }
+.tv-bar { align-self: stretch; height: 6px; border-radius: 3px; background: var(--tv-track); overflow: hidden; }
+.tv-bar > span { display: block; height: 100%; background: var(--tv-accent); }
+.tv-new { position: absolute; top: 8px; right: 8px; padding: 0 8px; border: 1px solid var(--tv-hairline); border-radius: 8px; background: rgb(11 11 15 / 85%); color: var(--tv-text); font-size: 16px; line-height: 22px; }
 .tv-title {
   height: calc(var(--title-lines) * 32px); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical;
   -webkit-line-clamp: var(--title-lines); line-clamp: var(--title-lines); font-size: 24px; line-height: 32px; font-weight: 700; color: var(--tv-dim);
