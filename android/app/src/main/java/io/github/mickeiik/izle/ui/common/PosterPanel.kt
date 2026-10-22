@@ -6,7 +6,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,7 +30,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.LineBreak
@@ -55,10 +53,9 @@ private val PosterHeight = 330.dp
 private val TextWidth = 576.dp
 
 /**
- * The full-screen panel of "Up next", autoplay on start, "Can't play right now" and "The end": the poster always at the
- * same spot, the text beside it always in the same order. Opaque: the end credits or the tiles behind would compete
- * with the countdown. The first button takes the focus: it is what OK does (Play now, Try again). [showTitle] is drawn
- * in the poster's place when there is none.
+ * The full-screen panel of "Up next", autoplay, "Can't play right now", "The end" and the update: the poster (else
+ * [showTitle]) always at the same spot, the text beside it. Opaque: the credits or the tiles behind would compete with
+ * the countdown. The first button takes the focus: it is what OK does.
  */
 @Composable
 fun PosterPanel(
@@ -77,7 +74,20 @@ fun PosterPanel(
             modifier = Modifier.align(Alignment.Center).width(PosterWidth + IzleSpacing.Huge + TextWidth),
         ) {
             Box(Modifier.size(PosterWidth, PosterHeight).clip(IzleShapes.Large).background(IzleColors.Surface)) {
-                PosterOrTitle(posterUrl, showTitle, maxLines = 5, color = IzleColors.Dim)
+                if (posterUrl != null) {
+                    AsyncImage(posterUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                } else if (showTitle != null) {
+                    // Split at syllables when a word is too long.
+                    Text(
+                        showTitle,
+                        style = MaterialTheme.typography.headlineSmall.copy(hyphens = Hyphens.Auto, lineBreak = LineBreak.Heading),
+                        color = IzleColors.Dim,
+                        textAlign = TextAlign.Center,
+                        maxLines = 5,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.align(Alignment.Center).padding(IzleSpacing.Large),
+                    )
+                }
             }
             Column(Modifier.width(TextWidth)) {
                 if (overline != null) {
@@ -95,49 +105,23 @@ fun PosterPanel(
                 }
                 if (buttons.isNotEmpty()) {
                     Spacer(Modifier.height(IzleSpacing.XXLarge))
-                    PanelButtons(buttons)
+                    // No key: the panel's state changes every second (the countdown), and the focus must be asked for only once.
+                    val focus = remember { FocusRequester() }
+                    var firstFocused by remember { mutableStateOf(false) }
+                    LaunchedEffect(Unit) { requestFocusWithin({ focus }, took = { firstFocused }) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(IzleSpacing.XLarge)) {
+                        buttons.forEachIndexed { i, button ->
+                            val first = Modifier.focusRequester(focus).onFocusChanged { firstFocused = it.isFocused }
+                            TvButton(button.label, button.onClick, if (i == 0) first else Modifier)
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-/** The poster filling its box or, without one, [title] in its place, split at syllables when a word is too long. */
-@Composable
-fun BoxScope.PosterOrTitle(posterUrl: String?, title: String?, maxLines: Int, color: Color) {
-    if (posterUrl != null) {
-        AsyncImage(model = posterUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-    } else if (title != null) {
-        Text(
-            title,
-            style = MaterialTheme.typography.headlineSmall.copy(hyphens = Hyphens.Auto, lineBreak = LineBreak.Heading),
-            color = color,
-            textAlign = TextAlign.Center,
-            maxLines = maxLines,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.align(Alignment.Center).padding(IzleSpacing.Large),
-        )
-    }
-}
-
-@Composable
-private fun PanelButtons(buttons: List<PanelButton>) {
-    // No key: the panel's state changes every second (the countdown), and the focus must be asked for only once.
-    val focus = remember { FocusRequester() }
-    var firstFocused by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { requestFocusWithin({ focus }, took = { firstFocused }) }
-    Row(horizontalArrangement = Arrangement.spacedBy(IzleSpacing.XLarge)) {
-        buttons.forEachIndexed { i, button ->
-            val first = if (i == 0) Modifier.focusRequester(focus).onFocusChanged { firstFocused = it.isFocused } else Modifier
-            TvButton(button.label, button.onClick, first)
-        }
-    }
-}
-
-/**
- * The time left of a countdown that the view model ticks once a second: each tick starts one linear step of a second
- * towards the next value, so the bar moves smoothly; no frame loop, so a paused clock (the UI tests') holds it.
- */
+/** Each tick of the view model's countdown starts a one-second linear step: smooth, yet a paused clock holds it. */
 @Composable
 private fun CountdownBar(secondsLeft: Int, totalSeconds: Int) {
     val total = totalSeconds.coerceAtLeast(1).toFloat()

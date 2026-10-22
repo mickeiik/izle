@@ -159,8 +159,11 @@ class SeniorInvariantsTest {
     }
 
     @Test
-    fun backOnHomeDoesNothing() = onTv { tv ->
-        awaitTiles("Show A", "Show B", "Show C")
+    fun backOnHomeDoesNothingAndNothingIsAboveTheGrid() = onTv { tv ->
+        awaitTiles(*ABC)
+        // No clock, no hint: every text on Home belongs to a tile.
+        assertEquals(emptyList<String>(), allTexts().filter { CLOCK.matches(it) })
+        assertEquals(emptySet<String>(), allTexts().toSet() - setOf(*ABC, string(R.string.badge_new)))
         // Up to Android 15 the remote's Back reaches the activity as a key event…
         tv.press(KeyEvent.KEYCODE_BACK)
         tv.assertOnHome()
@@ -173,23 +176,31 @@ class SeniorInvariantsTest {
     }
 
     @Test
-    fun theFirstTileHasTheFocusAndKeepsTheShowWhenTheListIsReordered() = onTv { tv ->
-        awaitTiles("Show A", "Show B", "Show C")
+    fun theFirstTileHasTheFocusAndKeepsTheShowWhenTheOwnerMovesIt() = onTv { tv ->
+        awaitTiles(*ABC)
         assertFocusedTile("Show A")
         tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
         assertFocusedTile("Show B")
 
         // The owner moves B to the end: the focus stays on the show, not on its old place (where A is now).
         home = listOf("c", "a", "b")
-        version = 2
-        tv.onActivity { app.graph.repository.refreshSoon() }
+        refresh(tv, version = 2)
         awaitTiles("Show C", "Show A", "Show B")
         assertFocusedTile("Show B")
+
+        // Then to a section of its own.
+        home = listOf("a", "c", "b")
+        sections = """[{"id":"untitled","title":null,"layout":"grid","itemIds":["a","c"]},""" +
+            """{"id":"Later123","title":"Later","layout":"row","itemIds":["b"]}]"""
+        refresh(tv, version = 3)
+        waitUntil("the new section") { exists("Later") }
+        assertFocusedTile("Show B")
+        assertTrue("B under the title", tileBounds("Show B").top > textAt("Later").bottom)
     }
 
     @Test
-    fun anOkReleaseWithoutAPressDoesNotPlayButAShortPressDoes() = onTv { tv ->
-        awaitTiles("Show A", "Show B", "Show C")
+    fun anOkReleaseWithoutAPressDoesNotPlayButAShortPressDoesAndItsErrorScreenGoesHome() = onTv { tv ->
+        awaitTiles(*ABC)
         // The TV launcher starts the app on the OK press; the app only gets the release.
         val now = SystemClock.uptimeMillis()
         tv.key(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, downTime = now - 100, eventTime = now)
@@ -202,8 +213,12 @@ class SeniorInvariantsTest {
         assertEquals(Screen.Player, tv.vm.screen.value)
         waitUntil("the resolve request") { resolveRequests().isNotEmpty() }
         assertEquals(listOf("""{"episodeId":"a.film","trigger":"viewer"}"""), resolveRequests())
-        // Nothing is playable on this server: the player shows its own error screen.
+        // Nothing is playable on this server: the player's error screen says when it goes Home (Robolectric's clock
+        // stands still: the first second of 30), and the first button has the focus: OK tries again.
         waitUntil("the player's error screen") { exists(string(R.string.cannot_play)) }
+        compose.onNodeWithText(string(R.string.auto_home_countdown, 30)).assertIsDisplayed()
+        compose.onNode(isFocused()).assert(hasText(string(R.string.try_again)))
+        compose.onNodeWithText(string(R.string.go_home)).assertIsDisplayed()
     }
 
     @Test
@@ -216,7 +231,7 @@ class SeniorInvariantsTest {
             "c" to """{"item":{"id":"c","kind":"movie","title":"Show C"},"newEpisodes":0,"continue":{"episodeId":"c.film","status":"new"}}""",
         )
         onTv { tv ->
-            awaitTiles("Show A", "Show B", "Show C")
+            awaitTiles(*ABC)
             // The poster says "2 new"; the tile reads the count out in full.
             val chip = quantity(R.plurals.badge_new_episodes, 2)
             compose.onNode(hasClickAction() and hasContentDescription(chip)).assertIsDisplayed().assert(hasText("Show B"))
@@ -250,7 +265,7 @@ class SeniorInvariantsTest {
         // B is a channel; even with a count (never from a correct server) its card has no "2 new".
         entries = mapOf("b" to """{"item":{"id":"b","kind":"live","title":"Show B"},"continue":null,"newEpisodes":2}""")
         onTv { tv ->
-            awaitTiles("Show A", "Show B", "Show C")
+            awaitTiles(*ABC)
             val live = string(R.string.badge_live)
             assertEquals(setOf("Show B", live), tileTexts("Show B"))
             assertEquals(emptyList<String>(), tileDescriptions("Show B"))
@@ -280,7 +295,7 @@ class SeniorInvariantsTest {
 
     @Test
     fun aChannelsInformationIsItsNameAndLiveWithoutTimes() = onTv { tv ->
-        awaitTiles("Show A", "Show B", "Show C")
+        awaitTiles(*ABC)
         fun show(ui: PlayerUi) {
             tv.onActivity { it.setContent { IzleTheme { PlayerScreen(ui, player = null, onPlayNext = {}, onHome = {}, onRetry = {}) } } }
             compose.waitForIdle()
@@ -298,32 +313,11 @@ class SeniorInvariantsTest {
     }
 
     @Test
-    fun theErrorScreenSaysWhenItGoesHomeWithTryAgainFocused() = onTv { tv ->
-        awaitTiles("Show A", "Show B", "Show C")
-        tv.press(KeyEvent.KEYCODE_DPAD_CENTER)
-        waitUntil("the player's error screen") { exists(string(R.string.cannot_play)) }
-        // Robolectric's clock stands still, so the countdown shows its first second; Home comes after 30 s.
-        compose.onNodeWithText(string(R.string.auto_home_countdown, 30)).assertIsDisplayed()
-        // The first button has the focus: OK tries again.
-        compose.onNode(isFocused()).assert(hasText(string(R.string.try_again)))
-        compose.onNodeWithText(string(R.string.go_home)).assertIsDisplayed()
-    }
-
-    @Test
-    fun nothingIsAboveTheGrid() = onTv { tv ->
-        awaitTiles("Show A", "Show B", "Show C")
-        // No clock, no hint: every text on Home belongs to a tile.
-        assertEquals(emptyList<String>(), allTexts().filter { CLOCK.matches(it) })
-        assertEquals(emptySet<String>(), allTexts().toSet() - setOf("Show A", "Show B", "Show C", string(R.string.badge_new)))
-        tv.assertOnHome()
-    }
-
-    @Test
     // Real text measurement (the default "legacy" graphics measure a character as about a pixel), so the banner has
     // its real size.
     @GraphicsMode(GraphicsMode.Mode.NATIVE)
     fun theOwnersMessageOnHomeIsDrawnOverTheTopAndMovesNoTile() = onTv { tv ->
-        awaitTiles("Show A", "Show B", "Show C")
+        awaitTiles(*ABC)
         val tileBefore = focusedTileBounds()
         // The longest message the server allows. The event stream hands it out on the TV's next connection, which
         // the TV makes 1 s after the first one failed.
@@ -357,29 +351,13 @@ class SeniorInvariantsTest {
     }
 
     @Test
-    fun theTilesFollowTheOwnersColumns() {
+    fun theTilesFollowTheOwnersColumnsAndWithOneRowTheNextRowScrollsInOnDown() {
         columns = 3
-        home = listOf("a", "b", "c", "d")
-        onTv { tv ->
-            awaitTiles("Show A", "Show B", "Show C", "Show D")
-            // Three to a row: D starts the second row, under A.
-            val a = tileBounds("Show A")
-            val d = tileBounds("Show D")
-            assertEquals(a.left, d.left, 0.5f)
-            assertTrue("D under A: $a, $d", d.top > a.bottom)
-            tv.press(KeyEvent.KEYCODE_DPAD_DOWN)
-            assertFocusedTile("Show D")
-        }
-    }
-
-    @Test
-    fun withOneRowTheNextRowScrollsInOnDown() {
-        columns = 4
         rows = 1
-        home = listOf("a", "b", "c", "d", "e", "f", "g", "h")
+        home = listOf("a", "b", "c", "d", "e", "f")
         onTv { tv ->
-            val first = listOf("Show A", "Show B", "Show C", "Show D")
-            val second = listOf("Show E", "Show F", "Show G", "Show H")
+            val first = listOf("Show A", "Show B", "Show C")
+            val second = listOf("Show D", "Show E", "Show F")
             waitUntil("the first row") { first.all(::shown) }
             assertFalse("the second row is out of view", second.any(::shown))
             assertFocusedTile("Show A")
@@ -387,20 +365,20 @@ class SeniorInvariantsTest {
 
             // Down scrolls exactly one row: the second row in full, the first one gone.
             tv.press(KeyEvent.KEYCODE_DPAD_DOWN)
-            assertFocusedTile("Show E")
+            assertFocusedTile("Show D")
             assertTrue(second.all(::shown))
             assertFalse(first.any(::shown))
             val grid = compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange)).fetchSemanticsNode().boundsInRoot
             // The card and the name under it, in full.
-            val e = compose.onAllNodesWithText("Show E").fetchSemanticsNodes()
-            assertEquals(2, e.size)
-            e.forEach {
+            val d = compose.onAllNodesWithText("Show D").fetchSemanticsNodes()
+            assertEquals(2, d.size)
+            d.forEach {
                 val b = laidOut(it)
-                assertTrue("Show E inside the grid: $b, $grid", b.top >= grid.top && b.bottom <= grid.bottom && b.left >= grid.left && b.right <= grid.right)
+                assertTrue("Show D inside the grid: $b, $grid", b.top >= grid.top && b.bottom <= grid.bottom && b.left >= grid.left && b.right <= grid.right)
             }
 
-            // Exactly one row: E's card is where A's was.
-            assertSameBounds(slot, cardAt("Show E"))
+            // Three to a row, exactly one row: D's card is where A's was.
+            assertSameBounds(slot, cardAt("Show D"))
 
             // Up brings the first row back, exactly where it was.
             tv.press(KeyEvent.KEYCODE_DPAD_UP)
@@ -442,28 +420,11 @@ class SeniorInvariantsTest {
     }
 
     @Test
-    fun theMenuKeyOpensTheHiddenMenuAndBackReturnsToTheTiles() = onTv { tv ->
-        awaitTiles("Show A", "Show B", "Show C")
-        tv.press(KeyEvent.KEYCODE_MENU)
-        compose.onNodeWithText(string(R.string.menu_start_over)).assertIsDisplayed().assertIsFocused()
-        // The focus cannot leave the menu for the tiles behind it.
-        tv.press(KeyEvent.KEYCODE_DPAD_LEFT)
-        compose.onNodeWithText(string(R.string.menu_start_over)).assertIsFocused()
-
-        tv.press(KeyEvent.KEYCODE_BACK)
-        compose.onAllNodesWithText(string(R.string.menu_start_over)).assertCountEquals(0)
-        tv.assertOnHome()
-        waitUntil("the focus back on the tiles") { focusedTitle() == "Show A" }
-        tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
-        assertFocusedTile("Show B")
-    }
-
-    @Test
-    fun holdingOkOpensTheHiddenMenuAndTheReleaseDoesNotChooseAnything() = onTv { tv ->
-        awaitTiles("Show A", "Show B", "Show C")
+    fun holdingOkOrTheMenuKeyOpensTheHiddenMenuAndBackReturnsToTheTiles() = onTv { tv ->
+        awaitTiles(*ABC)
         val down = SystemClock.uptimeMillis()
         tv.key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, down)
-        // The remote repeats the key while it is held; past 0.6 s the menu opens.
+        // The remote repeats the key while it is held; past 0.6 s the menu opens, and the release chooses nothing.
         tv.key(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_CENTER, down, eventTime = down + 650, repeat = 1)
         compose.onNodeWithText(string(R.string.menu_start_over)).assertIsFocused()
         tv.key(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_CENTER, down, eventTime = down + 700)
@@ -471,6 +432,19 @@ class SeniorInvariantsTest {
         compose.onNodeWithText(string(R.string.menu_start_over)).assertIsFocused()
         assertEquals(Screen.Home, tv.vm.screen.value)
         assertEquals(emptyList<String>(), resolveRequests())
+        tv.press(KeyEvent.KEYCODE_BACK)
+
+        tv.press(KeyEvent.KEYCODE_MENU)
+        compose.onNodeWithText(string(R.string.menu_start_over)).assertIsDisplayed().assertIsFocused()
+        // The focus cannot leave the menu for the tiles behind it.
+        tv.press(KeyEvent.KEYCODE_DPAD_LEFT)
+        compose.onNodeWithText(string(R.string.menu_start_over)).assertIsFocused()
+        tv.press(KeyEvent.KEYCODE_BACK)
+        compose.onAllNodesWithText(string(R.string.menu_start_over)).assertCountEquals(0)
+        tv.assertOnHome()
+        waitUntil("the focus back on the tiles") { focusedTitle() == "Show A" }
+        tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
+        assertFocusedTile("Show B")
     }
 
     @Test
@@ -570,27 +544,6 @@ class SeniorInvariantsTest {
     }
 
     @Test
-    fun aCardTheOwnerMovesToAnotherSectionKeepsTheFocus() {
-        home = listOf("a", "b", "c")
-        onTv { tv ->
-            awaitTiles("Show A", "Show B", "Show C")
-            tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
-            assertFocusedTile("Show B")
-            // Without a titled section nothing is drawn but the cards.
-            assertEquals(emptySet<String>(), allTexts().toSet() - setOf("Show A", "Show B", "Show C", string(R.string.badge_new)))
-
-            home = listOf("a", "c", "b")
-            sections = """[{"id":"untitled","title":null,"layout":"grid","itemIds":["a","c"]},""" +
-                """{"id":"Later123","title":"Later","layout":"row","itemIds":["b"]}]"""
-            version = 2
-            tv.onActivity { app.graph.repository.refreshSoon() }
-            waitUntil("the new section") { exists("Later") }
-            assertFocusedTile("Show B")
-            assertTrue("B under the title", tileBounds("Show B").top > textAt("Later").bottom)
-        }
-    }
-
-    @Test
     fun anEmptyHomeSaysNothingHereYet() {
         home = emptyList()
         onTv { tv ->
@@ -603,7 +556,7 @@ class SeniorInvariantsTest {
 
     @Test
     fun theUpdateScreenIsLargeOkInstallsAndBackGoesHome() = onTv { tv ->
-        awaitTiles("Show A", "Show B", "Show C")
+        awaitTiles(*ABC)
         // An Android 7 TV (or one without the "install unknown apps" grant): guided.
         shadowOf(app.packageManager).setCanRequestPackageInstalls(false)
         tv.vm.onSettingsEntry(SettingsEntry.InstallUpdate)
@@ -637,7 +590,6 @@ class SeniorInvariantsTest {
         tv.assertOnHome()
     }
 
-    /** Every text on the screen is drawn at 24 sp or more. */
     private fun assertAllTextAtLeast24Sp() = assertTextSizes(chips = emptySet())
 
     /** Every text on the screen is drawn at 24 sp or more, except the Home cards' [chips], at 16 sp or more. */
@@ -650,7 +602,6 @@ class SeniorInvariantsTest {
         }
     }
 
-    /** Every text drawn on the screen, with its size. */
     private fun drawnTexts(): List<Pair<String, androidx.compose.ui.unit.TextUnit>> = allNodes(unmerged = true).flatMap { node ->
         val layouts = mutableListOf<TextLayoutResult>()
         node.config.getOrNull(SemanticsActions.GetTextLayoutResult)?.action?.invoke(layouts)
@@ -688,6 +639,12 @@ class SeniorInvariantsTest {
         assertEquals(Screen.Home, vm.screen.value)
     }
 
+    /** The owner changed Home: the state the server hands out is now at [version]. */
+    private fun refresh(tv: ActivityScenario<MainActivity>, version: Long) {
+        this.version = version
+        tv.onActivity { app.graph.repository.refreshSoon() }
+    }
+
     /** Waits until Home shows exactly these tiles, in this order. */
     private fun awaitTiles(vararg titles: String) {
         waitUntil("the tiles ${titles.toList()}") { tileTitles() == titles.toList() }
@@ -699,22 +656,21 @@ class SeniorInvariantsTest {
             .sortedWith(compareBy<SemanticsNode>({ it.boundsInRoot.top }, { it.boundsInRoot.left }))
             .mapNotNull { node -> node.texts().firstOrNull { it.startsWith("Show ") } }
 
-    /** Every text on the tile of this show (its chips included). */
-    private fun tileTexts(title: String): Set<String> =
-        compose.onNode(hasClickAction() and hasText(title)).fetchSemanticsNode().texts().toSet()
+    private fun tile(title: String) = compose.onNode(hasClickAction() and hasText(title)).fetchSemanticsNode()
 
-    /** What the tile of this show reads out beyond its texts. */
+    /** Every text on the tile of this show (its chips included), and what it reads out beyond them. */
+    private fun tileTexts(title: String): Set<String> = tile(title).texts().toSet()
+
     private fun tileDescriptions(title: String): List<String> =
-        compose.onNode(hasClickAction() and hasText(title)).fetchSemanticsNode().config.getOrNull(SemanticsProperties.ContentDescription).orEmpty()
+        tile(title).config.getOrNull(SemanticsProperties.ContentDescription).orEmpty()
 
     private fun assertFocusedTile(title: String) {
         compose.onNode(isFocused() and hasClickAction()).assert(hasText(title))
     }
 
-    /** Where the focused tile is drawn. */
     private fun focusedTileBounds() = compose.onNode(isFocused() and hasClickAction()).fetchSemanticsNode().boundsInRoot
 
-    private fun tileBounds(title: String) = compose.onNode(hasClickAction() and hasText(title)).fetchSemanticsNode().boundsInRoot
+    private fun tileBounds(title: String) = tile(title).boundsInRoot
 
     private fun assertSameBounds(expected: Rect, actual: Rect) {
         listOf(expected.left to actual.left, expected.top to actual.top, expected.right to actual.right, expected.bottom to actual.bottom)
@@ -724,8 +680,7 @@ class SeniorInvariantsTest {
     /** Where a node is laid out, unclipped (semantics bounds are clipped by the grid). */
     private fun laidOut(node: SemanticsNode): Rect = node.layoutInfo.coordinates.let { Rect(it.positionInRoot(), it.size.toSize()) }
 
-    /** Where the card of this show is laid out, unclipped. */
-    private fun cardAt(title: String) = laidOut(compose.onNode(hasClickAction() and hasText(title)).fetchSemanticsNode())
+    private fun cardAt(title: String) = laidOut(tile(title))
 
     /** Where a text outside the cards (a name under one, a section's title) is laid out, unclipped. */
     private fun textAt(text: String) = laidOut(compose.onNode(hasText(text) and !hasClickAction()).fetchSemanticsNode())
@@ -736,7 +691,6 @@ class SeniorInvariantsTest {
         return (0 until all.fetchSemanticsNodes().size).any { all[it].isDisplayed() }
     }
 
-    /** Every node of the merged (or [unmerged]) tree. */
     private fun allNodes(unmerged: Boolean = false): List<SemanticsNode> {
         fun collect(node: SemanticsNode): List<SemanticsNode> = listOf(node) + node.children.flatMap(::collect)
         return collect(compose.onRoot(useUnmergedTree = unmerged).fetchSemanticsNode())
@@ -748,11 +702,9 @@ class SeniorInvariantsTest {
         compose.waitForIdle()
     }
 
-    /** The first text of the focused element, if any. */
     private fun focusedTitle(): String? =
         compose.onAllNodes(isFocused()).fetchSemanticsNodes().singleOrNull()?.texts()?.firstOrNull()
 
-    /** Every text shown anywhere on the screen. */
     private fun allTexts(): List<String> = allNodes().flatMap { it.texts() }
 
     private fun SemanticsNode.texts(): List<String> = config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text }
@@ -799,6 +751,8 @@ class SeniorInvariantsTest {
     private fun quantity(id: Int, count: Int): String = app.resources.getQuantityString(id, count, count)
 
     private companion object {
+        val ABC = arrayOf("Show A", "Show B", "Show C")
+
         /** A clock: "14:54" or "2:54 PM". */
         val CLOCK = Regex("""^\d{1,2}:\d{2}( [AP]M)?$""")
 

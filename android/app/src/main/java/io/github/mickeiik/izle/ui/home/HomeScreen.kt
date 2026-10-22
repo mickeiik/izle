@@ -88,6 +88,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.times
@@ -123,20 +124,20 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** The thin scroll indicator in the right safe margin, 22 dp from the screen's edge. */
+/** The scroll indicator sits in the right safe margin, 22 dp from the screen's edge. */
 private val ScrollIndicatorWidth = 6.dp
 private val ScrollIndicatorEndGap = 22.dp
 
-/** An unfocused tile: the background at 38 % over it looks like the tile at 62 % opacity, without an offscreen layer. */
+/** The background at 38 % over an unfocused tile: the tile at 62 % opacity, without an offscreen layer. */
 private val UnfocusedVeil = IzleColors.Background.copy(alpha = 0.38f)
 
-/** Where a portrait poster is cut to fill a landscape card: a band 28 % of the way down, above the poster's centre. */
+/** A portrait poster filling a landscape card is cut around a band 28 % of the way down. */
 private val PosterCrop = BiasAlignment(horizontalBias = 0f, verticalBias = -0.44f)
 
 /**
- * The only screen the viewer navigates: a grid of 16:9 cards filling the screen, the owner's columns × rows of them
- * at a time (with the owner's sections: their titles, grids and sideways lines, see [HomeLayout]), OK plays. The card played last (or focused last) gets the focus back when the screen appears. Nothing is
- * above the grid: the owner's message is drawn over it by IzleRoot, and "No connection" sits over its top left corner.
+ * The only screen the viewer navigates: the owner's sections of 16:9 cards ([HomeLayout]), OK plays. The card played
+ * (or focused) last gets the focus back. Nothing is above the grid: IzleRoot draws the owner's message over it.
+ * [active] is false while the hidden menu or the autoplay countdown is on top: Home must not take the focus back then.
  */
 @Composable
 fun HomeScreen(
@@ -144,9 +145,7 @@ fun HomeScreen(
     online: Boolean,
     message: HomeMessage?,
     initialFocusItemId: String?,
-    /** False while the hidden menu or the autoplay countdown is on top: Home must not take the focus back then. */
     active: Boolean,
-    /** A server-relative picture reference (`/assets/…`) as a URL to load. */
     imageUrl: (String?) -> String?,
     onFocused: (String) -> Unit,
     onPlay: (HomeEntry) -> Unit,
@@ -157,14 +156,7 @@ fun HomeScreen(
             val sections = remember(state.home, state.homeSections) { HomeSections.of(state.home, state.homeSections) }
             Box(Modifier.fillMaxSize().padding(vertical = IzleSpacing.SafeVertical)) {
                 SectionsGrid(
-                    sections = sections,
-                    columns = state.device.homeColumns,
-                    rows = state.device.homeRows,
-                    initialFocusItemId = initialFocusItemId,
-                    active = active,
-                    imageUrl = imageUrl,
-                    onFocused = onFocused,
-                    onPlay = onPlay,
+                    sections, state.device.homeColumns, state.device.homeRows, initialFocusItemId, active, imageUrl, onFocused, onPlay,
                 )
             }
         }
@@ -215,14 +207,10 @@ private fun OfflineChip(modifier: Modifier) {
 }
 
 /**
- * Scrolls Home as little as shows the focused line whole (docs/ux/senior-tv.md, "Sections"): the padding above its
- * row, or its section's title on the section's first line (Home's first line at the very top), down to the padding
- * under its cell. [focusedLine] is the focused card's line in [layout]. [offset] and [size] are the focused card's
- * bounds, which grow with its 110 % scale while that runs, so its unscaled top is worked out from its centre. The
- * distance is asked again on every frame of the scroll, so it must be exact, with no tolerance.
- *
- * While Home is not [active] (the hidden menu or the autoplay countdown on top) the grid stays where it is: when the
- * tiles stop taking the focus, the focus passes through another tile for a moment, which would scroll it.
+ * Scrolls Home as little as shows the focused line whole ([HomeLayout.Line.top] to its bottom padding). The card's
+ * bounds grow with its 110 % scale while that runs, so its unscaled top is worked out from its centre; the distance is
+ * asked again on every frame, so it is exact. Not [active]: the focus passes through another tile for a moment while
+ * the tiles stop taking it, which must not scroll.
  */
 @OptIn(ExperimentalFoundationApi::class)
 private class LineInView(
@@ -247,11 +235,7 @@ private class LineInView(
     }
 }
 
-/**
- * Slides a row section as little as shows the focused card within the columns ([startPx] to [endPx] in the line,
- * which spans the screen): one card at a time once the focus reaches the edge of what is in view. [cardPx] is a card's
- * unscaled width, as laid out. Exact, like [LineInView].
- */
+/** Slides a row section as little as keeps the focused card within the columns ([startPx] to [endPx]), like [LineInView]. */
 @OptIn(ExperimentalFoundationApi::class)
 private class CardInView(
     private val startPx: Float,
@@ -270,31 +254,28 @@ private class CardInView(
     }
 }
 
-/** The focused card, known as soon as the focus moves: the scroll asks for its line in the same frame. */
+/**
+ * The focused card, known as soon as the focus moves (the scroll asks for its line in the same frame); its [section]
+ * (−1: none) lights that section's title; [pendingMove] is a move waiting for its card to be laid out.
+ */
 private class FocusTrack {
     var itemId: String? = null
-
-    /** The section the focus is in (−1: none), for its title's colour. */
     val section = mutableIntStateOf(-1)
-
-    /** A move to a card not laid out yet: the keys wait for it (a few frames). */
     var pendingMove: Job? = null
 }
 
-/** How long a move waits for its card to be laid out, at most. */
 private const val PENDING_MOVE_MS = 1_000L
 
 /** A row section's first card in view: the one at the start of the columns. */
 private fun LazyListState.firstInView(): Int =
     layoutInfo.visibleItemsInfo.minByOrNull { abs(it.offset) }?.index ?: firstVisibleItemIndex
 
-/** Where Home is scrolled to, in the layout's dp. */
+/** Where Home is scrolled to, in the layout's dp ([scrollTo] goes there at once). */
 private fun HomeLayout.scrollOf(state: LazyGridState, density: Density): Float {
     val slot = slots.getOrNull(state.firstVisibleItemIndex) ?: return 0f
     return slot.top - grid.padding + state.firstVisibleItemScrollOffset / density.density
 }
 
-/** Scrolls Home to [offset] (the layout's dp) at once. */
 private suspend fun LazyGridState.scrollTo(layout: HomeLayout, offset: Float, density: Density) {
     val padding = layout.grid.padding
     val at = layout.slots.indexOfLast { it.top - padding <= offset }.coerceAtLeast(0)
@@ -308,10 +289,8 @@ private const val ROW_KEY = "\u0000row:"
 private val DividerColor = Color(0x2EFFFFFF)
 
 /**
- * Home's cards in their sections, one lazy grid for all of them: rows of [columns] cards, a section's title as an item
- * across the grid, a row section as one item holding a lazy row that spans the screen. The lines between sections are
- * drawn over the grid where the layout puts them. ↑ ↓ ← → follow [HomeLayout] (the next line, nearest card; stop at a
- * line's ends).
+ * One lazy grid for all sections: rows of cards, a title as a full-width item, a row section as one item holding a
+ * lazy row that spans the screen; the lines between sections are drawn over it. ↑ ↓ ← → follow [HomeLayout].
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -348,8 +327,8 @@ private fun SectionsGrid(
     val cardTitleStyle = MaterialTheme.typography.titleSmall
     val titleLine = with(density) { cardTitleStyle.lineHeight.toDp() }
     val isActive by rememberUpdatedState(active)
-    val chipSizes = rememberChipSizes()
     val measurer = rememberTextMeasurer()
+    val chipSizes = remember(measurer, density) { ChipSizes(measurer, density) }
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         val safeWidth = maxWidth.value - 2 * IzleSpacing.SafeHorizontal.value
         val titled = sections.any { it.title != null }
@@ -462,35 +441,61 @@ private fun SectionsGrid(
             }
         }
 
+        /** A card and its name under it, [outer] being its cell's width (its grid cell's, or one card's). */
         @Composable
         fun CardTile(entry: HomeEntry, section: Int, index: Int, outer: Modifier) {
             val id = entry.item.id
             val requester = requesters.getOrPut(id) { FocusRequester() }
             // A card that keeps the focus while the sections around it move lights its section's title at its new place.
             LaunchedEffect(section) { if (gridHasFocus && focus.itemId == id) focus.section.intValue = section }
-            Tile(
-                entry = entry,
-                grid = g,
-                backdropUrl = imageUrl(entry.item.backdropUrl),
-                posterUrl = imageUrl(entry.item.posterUrl),
-                chipSizes = chipSizes,
-                outer = outer,
-                // While the hidden menu is open, focus must not fall through to the tiles behind it.
-                modifier = Modifier
-                    .focusRequester(requester)
-                    .focusProperties { canFocus = active }
-                    .onFocusChanged {
-                        if (it.isFocused) {
-                            focus.itemId = id
-                            focus.section.intValue = section
-                        }
-                    },
-                onFocused = {
-                    lastFocusedIndex = sectionStarts[section] + index
-                    onFocused(id)
+            // The focus is read in the effect and the draw phase only: moving it recomposes no tile.
+            val interaction = remember { MutableInteractionSource() }
+            val focused = interaction.collectIsFocusedAsState()
+            val onTileFocused by rememberUpdatedState {
+                lastFocusedIndex = sectionStarts[section] + index
+                onFocused(id)
+            }
+            LaunchedEffect(interaction) { snapshotFlow { focused.value }.collect { if (it) onTileFocused() } }
+            Column(
+                outer.height(g.cellHeight.dp).drawWithContent {
+                    drawContent()
+                    if (!focused.value) drawRect(UnfocusedVeil)
                 },
-                onClick = { onPlay(entry) },
-            )
+            ) {
+                Card(
+                    onClick = { onPlay(entry) },
+                    interactionSource = interaction,
+                    scale = CardDefaults.scale(focusedScale = 1.1f),
+                    border = CardDefaults.border(focusedBorder = IzleBorders.focus(IzleShapes.Medium)),
+                    shape = CardDefaults.shape(IzleShapes.Medium),
+                    colors = CardDefaults.colors(containerColor = IzleColors.Surface),
+                    // While the hidden menu is open, focus must not fall through to the tiles behind it.
+                    modifier = Modifier
+                        .focusRequester(requester)
+                        .focusProperties { canFocus = active }
+                        .onFocusChanged {
+                            if (it.isFocused) {
+                                focus.itemId = id
+                                focus.section.intValue = section
+                            }
+                        }
+                        .fillMaxWidth()
+                        .aspectRatio(16f / 9f),
+                ) {
+                    Box(Modifier.fillMaxSize()) {
+                        CardPicture(imageUrl(entry.item.backdropUrl), imageUrl(entry.item.posterUrl), entry.item.title, g.titleLinesInCard)
+                        CardChips(entry, g, chipSizes)
+                    }
+                }
+                Spacer(Modifier.height(g.titleGap.dp))
+                Text(
+                    entry.item.title,
+                    style = cardTitleStyle,
+                    color = IzleColors.OnSurface,
+                    maxLines = g.titleLines,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
 
         CompositionLocalProvider(LocalBringIntoViewSpec provides lineInView) {
@@ -632,85 +637,22 @@ private fun ScrollIndicator(state: LazyGridState, layout: HomeLayout, modifier: 
     }
 }
 
-@Composable
-private fun Tile(
-    entry: HomeEntry,
-    grid: HomeGrid,
-    backdropUrl: String?,
-    posterUrl: String?,
-    chipSizes: ChipSizes,
-    /** The cell's width: its grid cell's, or one card's. */
-    outer: Modifier,
-    /** The card's. */
-    modifier: Modifier,
-    onFocused: () -> Unit,
-    onClick: () -> Unit,
-) {
-    // The focus is read in the effect and the draw phase only: moving it recomposes no tile here.
-    val interaction = remember { MutableInteractionSource() }
-    val focused = interaction.collectIsFocusedAsState()
-    val currentOnFocused by rememberUpdatedState(onFocused)
-    LaunchedEffect(interaction) { snapshotFlow { focused.value }.collect { if (it) currentOnFocused() } }
-
-    Column(
-        outer.height(grid.cellHeight.dp).drawWithContent {
-            drawContent()
-            if (!focused.value) drawRect(UnfocusedVeil)
-        },
-    ) {
-        Card(
-            onClick = onClick,
-            interactionSource = interaction,
-            scale = CardDefaults.scale(focusedScale = 1.1f),
-            border = CardDefaults.border(focusedBorder = IzleBorders.focus(IzleShapes.Medium)),
-            shape = CardDefaults.shape(IzleShapes.Medium),
-            colors = CardDefaults.colors(containerColor = IzleColors.Surface),
-            modifier = modifier.fillMaxWidth().aspectRatio(16f / 9f),
-        ) {
-            Box(Modifier.fillMaxSize()) {
-                CardPicture(backdropUrl, posterUrl, entry.item.title, grid.titleLinesInCard)
-                CardChips(entry, grid, chipSizes)
-            }
-        }
-        Spacer(Modifier.height(grid.titleGap.dp))
-        Text(
-            entry.item.title,
-            style = MaterialTheme.typography.titleSmall,
-            color = IzleColors.OnSurface,
-            maxLines = grid.titleLines,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
 /**
- * The backdrop, cropped to the card; else the poster, cropped to the card around its upper part (where posters keep
- * faces and titles); else (or when the picture cannot be loaded) the show's title in the card. A picture is
- * described by the show's title.
+ * The backdrop; else the poster, cut around its upper part (where posters keep faces and titles); else (or when the
+ * picture cannot be loaded) the show's title. A picture is described by the show's title.
  */
 @Composable
 private fun BoxScope.CardPicture(backdropUrl: String?, posterUrl: String?, title: String, titleLines: Int) {
     var backdropFailed by remember(backdropUrl) { mutableStateOf(false) }
     var posterFailed by remember(posterUrl) { mutableStateOf(false) }
-    when {
-        backdropUrl != null && !backdropFailed ->
-            AsyncImage(
-                model = backdropUrl,
-                contentDescription = title,
-                contentScale = ContentScale.Crop,
-                onError = { backdropFailed = true },
-                modifier = Modifier.fillMaxSize(),
-            )
-        posterUrl != null && !posterFailed ->
-            AsyncImage(
-                model = posterUrl,
-                contentDescription = title,
-                contentScale = ContentScale.Crop,
-                alignment = PosterCrop,
-                onError = { posterFailed = true },
-                modifier = Modifier.fillMaxSize(),
-            )
-        else -> Text(
+    if (backdropUrl != null && !backdropFailed) {
+        AsyncImage(backdropUrl, title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop, onError = { backdropFailed = true })
+    } else if (posterUrl != null && !posterFailed) {
+        AsyncImage(
+            posterUrl, title, Modifier.fillMaxSize(), alignment = PosterCrop, contentScale = ContentScale.Crop, onError = { posterFailed = true },
+        )
+    } else {
+        Text(
             title,
             style = MaterialTheme.typography.titleSmall.copy(hyphens = Hyphens.Auto, lineBreak = LineBreak.Heading),
             color = IzleColors.OnSurface,
@@ -731,14 +673,13 @@ private fun BoxScope.CardChips(entry: HomeEntry, grid: HomeGrid, chipSizes: Chip
     val badge = EpisodeNames.badge(entry.item.kind, entry.playNext)
     val progress = EpisodeNames.progressFraction(entry.playNext)
     val label = tileBadgeText(badge)
-    val labelStyle = MaterialTheme.typography.labelMedium
-    val cardWidth = grid.cardWidth.dp
-    val cardHeight = grid.cardHeight.dp
     val barHeight = if (progress != null) IzleSpacing.Small + 6.dp else 0.dp
+    // On one line, with what goes under it ([below]), inside the card's margins.
+    fun fits(chip: DpSize, below: Dp) =
+        chip.width <= grid.cardWidth.dp - 2 * IzleSpacing.Small && IzleSpacing.Small + chip.height + below <= grid.cardHeight.dp
 
-    val actionChip = chipSizes.of(label, labelStyle, ChipVerticalPadding)
-    val showAction = actionChip.width <= cardWidth - 2 * IzleSpacing.Small &&
-        IzleSpacing.Small + actionChip.height + barHeight + IzleSpacing.Small <= cardHeight
+    val actionChip = chipSizes.of(label, MaterialTheme.typography.labelMedium, ChipVerticalPadding)
+    val showAction = fits(actionChip, barHeight + IzleSpacing.Small)
     val bottomHeight = when {
         showAction -> IzleSpacing.Small + actionChip.height + barHeight + IzleSpacing.Small
         progress != null -> IzleSpacing.Small + 6.dp + IzleSpacing.Small
@@ -760,44 +701,36 @@ private fun BoxScope.CardChips(entry: HomeEntry, grid: HomeGrid, chipSizes: Chip
             }
         }
     }
+    // "2 new" when episodes were added: quieter than the chip saying what OK does, no focus, read out in full.
     val newEpisodes = EpisodeNames.newEpisodes(entry)
-    if (newEpisodes > 0) {
-        val short = pluralStringResource(R.plurals.badge_new_episodes_short, newEpisodes, newEpisodes)
-        val newChip = chipSizes.of(short, MaterialTheme.typography.labelSmall, 0.dp)
-        val fits = newChip.width <= cardWidth - 2 * IzleSpacing.Small &&
-            IzleSpacing.Small + newChip.height + bottomHeight <= cardHeight
-        if (fits) NewEpisodesChip(newEpisodes, short, Modifier.align(Alignment.TopEnd).padding(IzleSpacing.Small))
+    if (newEpisodes <= 0) return
+    val short = pluralStringResource(R.plurals.badge_new_episodes_short, newEpisodes, newEpisodes)
+    if (!fits(chipSizes.of(short, MaterialTheme.typography.labelSmall, 0.dp), bottomHeight)) return
+    val description = pluralStringResource(R.plurals.badge_new_episodes, newEpisodes, newEpisodes)
+    Box(
+        Modifier.align(Alignment.TopEnd).padding(IzleSpacing.Small)
+            .clearAndSetSemantics { contentDescription = description }.posterChip(IzleColors.ChipInfo),
+    ) {
+        Text(short, style = MaterialTheme.typography.labelSmall, color = IzleColors.OnChipInfo, maxLines = 1, softWrap = false)
     }
 }
 
 private val ChipVerticalPadding = 2.dp
 
-private data class ChipSize(val width: Dp, val height: Dp)
-
 /**
  * How large a chip ([posterChip]) with a text on one line is, measured once per text for the whole grid: the same few
- * labels ("New", "Live", "Episode 5") come back on most cards, and a row scrolling in measures none of them again.
+ * labels ("New", "Live", "Episode 5") come back on most cards.
  */
 private class ChipSizes(private val measurer: TextMeasurer, private val density: Density) {
-    private val sizes = HashMap<Triple<String, TextStyle, Dp>, ChipSize>()
+    private val sizes = HashMap<Triple<String, TextStyle, Dp>, DpSize>()
 
-    fun of(text: String, style: TextStyle, verticalPadding: Dp): ChipSize = sizes.getOrPut(Triple(text, style, verticalPadding)) {
+    fun of(text: String, style: TextStyle, verticalPadding: Dp): DpSize = sizes.getOrPut(Triple(text, style, verticalPadding)) {
         val size = measurer.measure(text, style, maxLines = 1, softWrap = false, density = density).size
-        with(density) { ChipSize(size.width.toDp() + 2 * IzleSpacing.Small, size.height.toDp() + 2 * verticalPadding) }
+        with(density) { DpSize(size.width.toDp() + 2 * IzleSpacing.Small, size.height.toDp() + 2 * verticalPadding) }
     }
 }
 
-@Composable
-private fun rememberChipSizes(): ChipSizes {
-    val measurer = rememberTextMeasurer()
-    val density = LocalDensity.current
-    return remember(measurer, density) { ChipSizes(measurer, density) }
-}
-
-/**
- * What OK does, in a solid chip that reads on any picture: mint for "New", the accent when OK resumes, red with white
- * text for a channel ("Live"), else grey.
- */
+/** What OK does, in a solid chip that reads on any picture. */
 @Composable
 private fun ActionChip(badge: TileBadge, label: String) {
     val (background, foreground) = when (badge) {
@@ -818,24 +751,12 @@ private fun Modifier.posterChip(color: Color) = this
     .background(color, IzleShapes.Small)
     .padding(horizontal = IzleSpacing.Small)
 
-/** "2 new" when episodes were added: quieter than the chip saying what OK does, no focus, read out in full. */
-@Composable
-private fun NewEpisodesChip(count: Int, text: String, modifier: Modifier) {
-    val description = pluralStringResource(R.plurals.badge_new_episodes, count, count)
-    Box(modifier.clearAndSetSemantics { contentDescription = description }.posterChip(IzleColors.ChipInfo)) {
-        Text(text, style = MaterialTheme.typography.labelSmall, color = IzleColors.OnChipInfo, maxLines = 1, softWrap = false)
-    }
-}
-
-/**
- * "Autoplay on start", drawn over Home like the player's "Up next": what OK on the tile would play ("Live" for a
- * channel), the countdown, **Play now** (focused) and **Not now**. Back and any other key cancel it (see MainActivity).
- */
+/** "Autoplay on start" over Home, like the player's "Up next". Back and any other key cancel it (see MainActivity). */
 @Composable
 fun AutoplayOverlay(ui: AutoplayUi, posterUrl: String?, onPlayNow: () -> Unit, onNotNow: () -> Unit) {
     val item = ui.entry.item
     PosterPanel(
-        posterUrl = posterUrl,
+        posterUrl,
         showTitle = item.title,
         title = item.title,
         lines = listOf(tileBadgeText(EpisodeNames.badge(item.kind, ui.entry.playNext))),

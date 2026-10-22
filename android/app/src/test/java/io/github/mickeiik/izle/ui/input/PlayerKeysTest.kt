@@ -10,49 +10,36 @@ import io.github.mickeiik.izle.ui.input.PlayerKeyAction.SeekForward
 import io.github.mickeiik.izle.ui.input.PlayerKeyAction.Stop
 import io.github.mickeiik.izle.ui.input.PlayerKeyAction.TogglePause
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Test
 
 /** docs/ux/senior-tv.md, "Remote key map": the "Player (video)" and "Player (channel)" columns. */
 class PlayerKeysTest {
-    private val ok = listOf(KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER)
-
     @Test
-    fun anEpisodePausesAndSeeks() {
-        ok.forEach { assertEquals(TogglePause, PlayerKeys.action(it, live = false)) }
-        assertEquals(SeekBack, PlayerKeys.action(KeyEvent.KEYCODE_DPAD_LEFT, live = false))
-        assertEquals(SeekBack, PlayerKeys.action(KeyEvent.KEYCODE_MEDIA_REWIND, live = false))
-        assertEquals(SeekForward, PlayerKeys.action(KeyEvent.KEYCODE_DPAD_RIGHT, live = false))
-        assertEquals(SeekForward, PlayerKeys.action(KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, live = false))
-        assertEquals(TogglePause, PlayerKeys.action(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, live = false))
-        assertEquals(Play, PlayerKeys.action(KeyEvent.KEYCODE_MEDIA_PLAY, live = false))
-        assertEquals(Pause, PlayerKeys.action(KeyEvent.KEYCODE_MEDIA_PAUSE, live = false))
-        assertEquals(Stop, PlayerKeys.action(KeyEvent.KEYCODE_MEDIA_STOP, live = false))
-        assertEquals(Nothing, PlayerKeys.action(KeyEvent.KEYCODE_DPAD_UP, live = false))
-        assertEquals(Nothing, PlayerKeys.action(KeyEvent.KEYCODE_DPAD_DOWN, live = false))
-    }
-
-    @Test
-    fun aChannelOnlyShowsItsInformation() {
-        ok.forEach { assertEquals(Info, PlayerKeys.action(it, live = true)) }
-        for (key in listOf(
-            KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MEDIA_REWIND,
-            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.KEYCODE_MEDIA_PAUSE, KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
-        )) {
-            assertEquals("key $key", Nothing, PlayerKeys.action(key, live = true))
-        }
-        // Play only undoes a pause the system made; while the channel plays it does nothing.
-        assertEquals(Play, PlayerKeys.action(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, live = true))
-        assertEquals(Play, PlayerKeys.action(KeyEvent.KEYCODE_MEDIA_PLAY, live = true))
-        assertEquals(Stop, PlayerKeys.action(KeyEvent.KEYCODE_MEDIA_STOP, live = true))
-    }
-
-    @Test
-    fun keysRoutedElsewhereAreNotThePlayers() {
-        for (live in listOf(false, true)) {
-            for (key in listOf(KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_MEDIA_NEXT, KeyEvent.KEYCODE_VOLUME_UP)) {
-                assertNull("key $key", PlayerKeys.action(key, live))
-            }
+    fun anEpisodePausesAndSeeksAChannelOnlyShowsItsInformation() {
+        // Key: (episode, channel). A channel's Play only undoes a pause the system made: while it plays it does nothing.
+        val keys = mapOf(
+            KeyEvent.KEYCODE_DPAD_CENTER to (TogglePause to Info),
+            KeyEvent.KEYCODE_ENTER to (TogglePause to Info),
+            KeyEvent.KEYCODE_NUMPAD_ENTER to (TogglePause to Info),
+            KeyEvent.KEYCODE_DPAD_LEFT to (SeekBack to Nothing),
+            KeyEvent.KEYCODE_MEDIA_REWIND to (SeekBack to Nothing),
+            KeyEvent.KEYCODE_DPAD_RIGHT to (SeekForward to Nothing),
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD to (SeekForward to Nothing),
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE to (TogglePause to Play),
+            KeyEvent.KEYCODE_MEDIA_PLAY to (Play to Play),
+            KeyEvent.KEYCODE_MEDIA_PAUSE to (Pause to Nothing),
+            KeyEvent.KEYCODE_MEDIA_STOP to (Stop to Stop),
+            KeyEvent.KEYCODE_DPAD_UP to (Nothing to Nothing),
+            KeyEvent.KEYCODE_DPAD_DOWN to (Nothing to Nothing),
+            // Routed elsewhere: not the player's.
+            KeyEvent.KEYCODE_BACK to (null to null),
+            KeyEvent.KEYCODE_MENU to (null to null),
+            KeyEvent.KEYCODE_CHANNEL_UP to (null to null),
+            KeyEvent.KEYCODE_MEDIA_NEXT to (null to null),
+            KeyEvent.KEYCODE_VOLUME_UP to (null to null),
+        )
+        for ((key, actions) in keys) {
+            assertEquals("key $key", actions, PlayerKeys.action(key, live = false) to PlayerKeys.action(key, live = true))
         }
     }
 }

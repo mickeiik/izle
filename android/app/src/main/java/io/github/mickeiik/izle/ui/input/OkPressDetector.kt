@@ -1,15 +1,11 @@
 package io.github.mickeiik.izle.ui.input
 
 /**
- * Tells a short OK press (a click) from a long one (the hidden menu) on a remote.
- *
- * Every OK key event goes through here before the UI sees it. DOWN is held back; a key repeat at least
- * [thresholdMs] after the press opens the menu while the key is still held; the release then either delivers
- * the click (short press) or is swallowed (long press). A release without a matching press — e.g. the OK that
- * launched the app from the TV launcher — is swallowed too, so it cannot start playback by accident.
+ * Tells a short OK press (a click) from a long one (the hidden menu). DOWN is held back; a repeat [thresholdMs] after
+ * the press opens the menu while the key is held; the release then delivers the click or is swallowed. A release
+ * without a press (the OK that launched the app from the TV launcher) is swallowed too: it cannot start playback.
  */
 class OkPressDetector(private val thresholdMs: Long = 600) {
-    /** [Swallow]: nothing for the UI (yet); [Click]: deliver a click; [LongPress]: open the hidden menu. */
     enum class Result { Swallow, Click, LongPress }
 
     private var pressedAt = -1L
@@ -19,27 +15,20 @@ class OkPressDetector(private val thresholdMs: Long = 600) {
         if (repeatCount == 0) {
             pressedAt = downTimeMs
             fired = false
-            return Result.Swallow
-        }
-        if (pressedAt < 0 || fired) return Result.Swallow
-        if (eventTimeMs - pressedAt >= thresholdMs) {
+        } else if (pressedAt >= 0 && !fired && eventTimeMs - pressedAt >= thresholdMs) {
             fired = true
             return Result.LongPress
         }
         return Result.Swallow
     }
 
-    fun onUp(eventTimeMs: Long): Result {
-        val result = when {
-            pressedAt < 0 || fired -> Result.Swallow
-            eventTimeMs - pressedAt >= thresholdMs -> Result.LongPress
-            else -> Result.Click
-        }
-        reset()
-        return result
-    }
+    fun onUp(eventTimeMs: Long): Result = when {
+        pressedAt < 0 || fired -> Result.Swallow
+        eventTimeMs - pressedAt >= thresholdMs -> Result.LongPress
+        else -> Result.Click
+    }.also { reset() }
 
-    /** Forget a press in progress (e.g. the window lost focus between DOWN and UP). */
+    /** Forgets a press in progress (the window lost focus between DOWN and UP). */
     fun reset() {
         pressedAt = -1L
         fired = false

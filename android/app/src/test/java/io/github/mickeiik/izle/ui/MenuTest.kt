@@ -12,24 +12,21 @@ import org.junit.Test
 
 class MenuTest {
     @Test
-    fun onHomeASeriesOffersItsEpisodesAndAnyShowStartingOver() {
-        assertEquals(listOf(Episodes, StartOver, Settings, About), MenuPlan.rootEntries("series", fromPlayer = false, audioTrackCount = 0))
-        assertEquals(listOf(StartOver, Settings, About), MenuPlan.rootEntries("movie", fromPlayer = false, audioTrackCount = 0))
-        assertEquals("an empty Home", listOf(Settings, About), MenuPlan.rootEntries(null, fromPlayer = false, audioTrackCount = 0))
-    }
-
-    @Test
-    fun inThePlayerAudioNeedsTwoTracksAndSubtitlesAreAlwaysThere() {
-        assertEquals(listOf(Episodes, StartOver, Audio, Subtitles, Settings, About), MenuPlan.rootEntries("series", fromPlayer = true, audioTrackCount = 2))
-        assertEquals(listOf(StartOver, Subtitles, Settings, About), MenuPlan.rootEntries("movie", fromPlayer = true, audioTrackCount = 1))
-        assertEquals(listOf(StartOver, Subtitles, Settings, About), MenuPlan.rootEntries("movie", fromPlayer = true, audioTrackCount = 0))
-    }
-
-    @Test
-    fun aChannelHasNeitherEpisodesNorStartOverButKeepsItsTracksInThePlayer() {
-        assertEquals(listOf(Settings, About), MenuPlan.rootEntries("live", fromPlayer = false, audioTrackCount = 0))
-        assertEquals(listOf(Audio, Subtitles, Settings, About), MenuPlan.rootEntries("live", fromPlayer = true, audioTrackCount = 2))
-        assertEquals(listOf(Subtitles, Settings, About), MenuPlan.rootEntries("live", fromPlayer = true, audioTrackCount = 1))
+    fun theRootPageOffersWhatTheShowAndThePlayerAllow() {
+        // (kind, in the player, audio tracks): a series has Episodes, any show Start over, a channel neither; the player
+        // adds Audio language with two tracks or more, and Subtitles. A null kind: an empty Home.
+        val cases = mapOf(
+            Triple("series", false, 0) to listOf(Episodes, StartOver, Settings, About),
+            Triple("movie", false, 0) to listOf(StartOver, Settings, About),
+            Triple(null, false, 0) to listOf(Settings, About),
+            Triple("series", true, 2) to listOf(Episodes, StartOver, Audio, Subtitles, Settings, About),
+            Triple("movie", true, 1) to listOf(StartOver, Subtitles, Settings, About),
+            Triple("movie", true, 0) to listOf(StartOver, Subtitles, Settings, About),
+            Triple("live", false, 0) to listOf(Settings, About),
+            Triple("live", true, 2) to listOf(Audio, Subtitles, Settings, About),
+            Triple("live", true, 1) to listOf(Subtitles, Settings, About),
+        )
+        for ((args, entries) in cases) assertEquals("$args", entries, MenuPlan.rootEntries(args.first, args.second, args.third))
     }
 
     @Test

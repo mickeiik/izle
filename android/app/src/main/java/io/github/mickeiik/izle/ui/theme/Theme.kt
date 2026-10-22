@@ -37,7 +37,6 @@ object IzleColors {
     /** The focused element: border, and the fill of a focused button. */
     val Focus = Color(0xFFFFFFFF)
     val OnFocus = Color(0xFF0B0B0F)
-
     val Accent = Color(0xFFFFC94D)
     val OnAccent = Color(0xFF1A1300)
 
@@ -45,38 +44,29 @@ object IzleColors {
     val New = Color(0xFF7FE3C4)
     val OnNew = Color(0xFF002118)
 
-    /** The "Live" chip of a channel: solid red, white text (5.6:1). */
+    /** The "Live" chip of a channel: white text (5.6:1). */
     val Live = Color(0xFFC62828)
     val OnLive = Color(0xFFFFFFFF)
 
-    /** The tile chip naming the episode OK plays, or "Watch again": light, so it reads on dark posters too. */
+    /** The chip naming the episode OK plays, or "Watch again": light, so it reads on dark posters too. */
     val ChipNeutral = Color(0xFFE2E2EA)
     val OnChipNeutral = Color(0xFF15151B)
 
-    /** The new-episodes count at the poster's top: dark and quiet, it only informs. */
+    /** The new-episodes count: dark and quiet, it only informs. */
     val ChipInfo = Color(0xD90B0B0F)
     val OnChipInfo = Color(0xFFF5F5F7)
-
-    /** Error text on a dark background. */
     val Error = Color(0xFFFF8A80)
-
-    /** The "No connection" chip: solid red, dark text. */
     val Offline = Color(0xFFFF5C50)
     val OnOffline = Color(0xFF1F0000)
 
     /** Behind the hidden menu, the "No connection" message over Home and the player's pause symbol. */
     val Scrim = Color(0xCC000000)
 
-    /** The bottom of a card, behind its chip. */
+    /** The bottom of a card behind its chip, and the player's information panel. */
     val PosterShade = Color(0xE6000000)
-
-    /** Home's scroll indicator: neutral, it only informs. */
+    val InfoShade = Color(0xE6000000)
     val ScrollTrack = Color(0x24FFFFFF)
     val ScrollThumb = Color(0x99FFFFFF)
-
-    /** The player's information panel over the video. */
-    val InfoShade = Color(0xE6000000)
-
     val ProgressTrack = Color(0x55FFFFFF)
 
     /** Subtitles: white on a dark box. */
@@ -96,7 +86,6 @@ object IzleSpacing {
     val SafeHorizontal = 48.dp
     val SafeVertical = 27.dp
     val Safe = PaddingValues(horizontal = SafeHorizontal, vertical = SafeVertical)
-
     val XSmall = 4.dp
     val Small = 8.dp
     val Medium = 12.dp
@@ -106,22 +95,15 @@ object IzleSpacing {
     val Huge = 48.dp
 }
 
+/** Small: chips; Medium: tiles, menu rows, the address field; Large: posters, message boxes; Pill: buttons. */
 object IzleShapes {
-    /** Chips and the subtitle box. */
     val Small = RoundedCornerShape(8.dp)
-
-    /** Tiles, menu rows, the address field. */
     val Medium = RoundedCornerShape(12.dp)
-
-    /** Posters in panels, the owner's message, message boxes, the pairing code. */
     val Large = RoundedCornerShape(16.dp)
-
-    /** Buttons and the "No connection" chip. */
     val Pill = RoundedCornerShape(percent = 50)
 }
 
 object IzleBorders {
-    /** The one focused element's white border. */
     val FocusWidth = 4.dp
     val OutlineWidth = 2.dp
 
@@ -142,9 +124,8 @@ private fun style(size: Int, weight: FontWeight = FontWeight.Normal, lineHeight:
     TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = weight, fontSize = size.sp, lineHeight = lineHeight.sp)
 
 /**
- * Nothing on screen is smaller than 24 sp: the viewer sits far away and may not see well. The one exception are the
- * chips on Home's cards (`labelMedium`, `labelSmall`, used nowhere else) at 16 sp: the show's name under the card stays
- * at 24 sp. Only the roles in use.
+ * Nothing on screen is smaller than 24 sp: the viewer sits far away and may not see well. The one exception: the chips
+ * on Home's cards (`labelMedium`, `labelSmall`, used nowhere else) at 16 sp; the show's name under the card stays 24 sp.
  */
 private val IzleTypography = Typography(
     displayLarge = style(96, FontWeight.Bold, 104),

@@ -6,12 +6,10 @@ import android.view.KeyEvent
 enum class PlayerKeyAction { TogglePause, Play, Pause, SeekBack, SeekForward, Info, Stop, Nothing }
 
 /**
- * The player's columns of docs/ux/senior-tv.md's "Remote key map": "Player (video)" for an episode and "Player
- * (channel)" for a channel ([live]), which has no pause and no position. Back (Compose), Menu, OK's long press and the
- * channel keys are routed before these.
+ * The "Player (video)" and "Player (channel)" ([live]: no pause, no position) columns of docs/ux/senior-tv.md's "Remote
+ * key map". Back, Menu, OK's long press and the channel keys are routed before these (null: not the player's).
  */
 object PlayerKeys {
-    /** The action for [keyCode], or null for a key the player leaves to the rest of the app. */
     fun action(keyCode: Int, live: Boolean): PlayerKeyAction? = when (keyCode) {
         // A short OK (delivered on release).
         KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER ->
