@@ -556,7 +556,7 @@ export function homeCard(ctx) {
     setOff(right, at.i === n - 1);
     setOff(up, box.row || row === 0);
     setOff(down, box.row || row === box.rowTops.length - 1);
-    setOff(first, at.sec.itemIds[0] === e.itemId);
+    setOff(first, at.i === 0);
     const key = JSON.stringify(sections.map((s) => [s.id, s.title]));
     if (key !== choiceKey) {
       choiceKey = key;
@@ -744,13 +744,15 @@ function episodePicker(ctx, itemId, continued) {
     /** @param {any} next the row's home entry @param {boolean} open */
     sync(next, open) {
       entry = next;
-      const k = JSON.stringify([entry.continue?.episodeId, entry.continue?.status, entry.continue?.positionMs]);
       if (!open) {
         element.hidden = true;
         element.replaceChildren();
         key = "";
         seq++;
-      } else if (element.hidden || k !== key) {
+        return;
+      }
+      const k = JSON.stringify([entry.continue?.episodeId, entry.continue?.status, entry.continue?.positionMs]);
+      if (element.hidden || k !== key) {
         element.hidden = false;
         key = k;
         void load();

@@ -466,6 +466,8 @@ private fun SectionsGrid(
         fun CardTile(entry: HomeEntry, section: Int, index: Int, outer: Modifier) {
             val id = entry.item.id
             val requester = requesters.getOrPut(id) { FocusRequester() }
+            // A card that keeps the focus while the sections around it move lights its section's title at its new place.
+            LaunchedEffect(section) { if (gridHasFocus && focus.itemId == id) focus.section.intValue = section }
             Tile(
                 entry = entry,
                 grid = g,
