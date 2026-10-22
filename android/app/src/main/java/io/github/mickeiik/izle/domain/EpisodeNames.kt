@@ -7,7 +7,7 @@ import io.github.mickeiik.izle.data.api.ItemCard
 
 /** How an episode is named on screen; the UI turns it into localized text. */
 sealed interface EpisodeName {
-    /** Movies have no episode name. */
+    /** A movie's. */
     data object None : EpisodeName
 
     /** The catalog's own label ("Special", "Part 2"). */
@@ -23,8 +23,6 @@ sealed interface TileBadge {
     data object Continue : TileBadge
     data object WatchAgain : TileBadge
     data class Episode(val name: EpisodeName, val resume: Boolean) : TileBadge
-
-    /** A channel: red, short like "New", so it stays on the smallest cards. */
     data object Live : TileBadge
 }
 
@@ -35,10 +33,7 @@ object EpisodeNames {
         return EpisodeName.Numbered(season?.takeIf { it > 1 }, number ?: (index + 1))
     }
 
-    /**
-     * Channels say Live; movies New / Continue / Watch again; series name the episode OK plays, prefixed by Continue.
-     * [next] is the tile's `continue` (null for a channel; a show without one says New).
-     */
+    /** Movies say New / Continue / Watch again; series name the episode OK plays (the tile's `continue`, [next]). */
     fun badge(kind: String, next: ContinueInfo?): TileBadge {
         if (kind == ItemCard.KIND_LIVE) return TileBadge.Live
         if (next == null) return TileBadge.New
@@ -51,7 +46,7 @@ object EpisodeNames {
         }
     }
 
-    /** Fraction watched for the progress bar under a tile, or null when there is nothing to resume (a channel never). */
+    /** For the progress bar under a tile, or null when there is nothing to resume. */
     fun progressFraction(next: ContinueInfo?): Float? {
         if (next == null) return null
         val duration = next.durationMs ?: return null
@@ -60,16 +55,13 @@ object EpisodeNames {
         return (next.positionMs.toFloat() / duration).coerceIn(0f, 1f)
     }
 
-    /** The "2 new" count at a card's top right: the server's `newEpisodes`, never on a channel (0: no chip). */
+    /** The "2 new" chip at a card's top right (0: none, always on a channel). */
     fun newEpisodes(entry: HomeEntry): Int = if (entry.item.isLive) 0 else entry.newEpisodes.coerceAtLeast(0)
 }
 
-/** CH+/CH− (and the remote's |◀◀ ▶▶| keys, and the owner's next/previous commands) while an episode is playing. */
+/** CH+/CH− (and |◀◀ ▶▶|, and the owner's next/previous) while an episode is playing. */
 object EpisodeSteps {
-    /**
-     * The nearest episode after ([direction] > 0) or before ([direction] < 0) [currentEpisodeId] in play order that
-     * may be played; null at either end (no wrap-around) or when the current episode is not in the list.
-     */
+    /** The nearest playable episode after or before [currentEpisodeId]; null at either end (no wrap-around). */
     fun neighbour(episodes: List<EpisodeDetails>, currentEpisodeId: String, direction: Int): EpisodeDetails? {
         val at = episodes.indexOfFirst { it.id == currentEpisodeId }
         if (at < 0 || direction == 0) return null
@@ -77,7 +69,7 @@ object EpisodeSteps {
         return candidates.asSequence().map { episodes[it] }.firstOrNull { it.playbackAllowed }
     }
 
-    /** Whether the playing episode ([index] of [count]) can have one in that direction: movies and the ends cannot. */
+    /** Movies and the ends cannot. */
     fun mayHaveNeighbour(index: Int, count: Int, direction: Int): Boolean = when {
         direction > 0 -> index < count - 1
         direction < 0 -> index > 0

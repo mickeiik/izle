@@ -4,11 +4,7 @@ import io.github.mickeiik.izle.data.api.ServerEvent
 
 /** What an owner command asks the TV to do (`event: command` on the server's event stream). */
 sealed interface RemoteCommand {
-    /**
-     * Plays [episodeId] of [itemId] (the item may be absent) or, with [episodeId] null, the channel [itemId] at its
-     * live edge. [positionMs]: where to start an episode, 0 = from the beginning; null = the saved position under the
-     * resume rules (always for a channel).
-     */
+    /** [episodeId] null: the channel [itemId]. [positionMs] null: under the resume rules (always for a channel). */
     data class Play(val itemId: String?, val episodeId: String?, val positionMs: Long? = null) : RemoteCommand {
         init {
             require(episodeId != null || itemId != null) { "an episode or a channel" }
@@ -24,7 +20,7 @@ sealed interface RemoteCommand {
 
     /** Exactly one is set: [deltaMs] relative to the current position, or [positionMs] absolute. */
     data class Seek(val deltaMs: Long?, val positionMs: Long?) : RemoteCommand {
-        /** Where to seek from [currentMs], clamped to the episode ([durationMs] null = unknown, no upper bound). */
+        /** Clamped to the episode ([durationMs] null: no upper bound). */
         fun targetMs(currentMs: Long, durationMs: Long?): Long {
             val wanted = positionMs ?: (currentMs + (deltaMs ?: 0))
             val upper = durationMs?.takeIf { it > 0 } ?: Long.MAX_VALUE
@@ -32,13 +28,10 @@ sealed interface RemoteCommand {
         }
     }
 
-    /** A banner at the top of the screen for [durationSec] seconds. */
+    /** A banner at the top of the screen. */
     data class Message(val text: String, val durationSec: Int) : RemoteCommand
 
-    /**
-     * Install the TV app version the server offers; [versionCode]: the one the owner saw (null: whatever is offered).
-     * See [io.github.mickeiik.izle.update.UpdatePlan].
-     */
+    /** [versionCode]: the one the owner saw (null: whatever is offered). */
     data class Update(val versionCode: Long?) : RemoteCommand
 
     /** A type this TV does not know (a newer server) or an unusable payload: acknowledged, otherwise ignored. */

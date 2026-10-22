@@ -10,11 +10,10 @@ class RemoteCommandTest {
 
     @Test
     fun playbackCommandsWithoutPayload() {
-        assertEquals(RemoteCommand.Pause, command("""{"id":1,"type":"pause","payload":{}}"""))
-        assertEquals(RemoteCommand.Resume, command("""{"id":2,"type":"resume","payload":{}}"""))
-        assertEquals(RemoteCommand.Next, command("""{"id":3,"type":"next","payload":{}}"""))
-        assertEquals(RemoteCommand.Previous, command("""{"id":4,"type":"previous"}"""))
+        val simple = mapOf("pause" to RemoteCommand.Pause, "resume" to RemoteCommand.Resume, "next" to RemoteCommand.Next)
         assertEquals(RemoteCommand.Stop, command("""{"id":5,"type":"stop","payload":{}}"""))
+        assertEquals(simple, simple.mapValues { (type, _) -> command("""{"id":1,"type":"$type","payload":{}}""") })
+        assertEquals(RemoteCommand.Previous, command("""{"id":4,"type":"previous"}"""))
         assertEquals(RemoteCommand.Play("show", "show.e2"), command("""{"id":6,"type":"play","payload":{"itemId":"show","episodeId":"show.e2"}}"""))
     }
 

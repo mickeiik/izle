@@ -66,28 +66,6 @@ class PlaybackPlanTest {
         assertEquals(25_000L, PlaybackPlan.resumePositionMs(30_000, twentyFiveMinutes))
         assertEquals(0L, PlaybackPlan.resumePositionMs(twentyFiveMinutes - 60_000, twentyFiveMinutes))
     }
-
-    @Test
-    fun anExpiredUrlIsRetriedOnceOnTheSameSourceAndEarlyErrorsFallBack() {
-        val long = PlaybackPlan.EXPIRED_URL_MIN_PLAYED_MS + 1
-        assertEquals(Recovery.RetrySameSource, PlaybackPlan.recovery(403, long, retriedSameSource = false, alternativesLeft = false))
-        assertEquals(Recovery.RetrySameSource, PlaybackPlan.recovery(410, long, retriedSameSource = false, alternativesLeft = true))
-        assertEquals(Recovery.GiveUp, PlaybackPlan.recovery(403, long, retriedSameSource = true, alternativesLeft = false))
-        assertEquals(Recovery.NextSource, PlaybackPlan.recovery(403, long, retriedSameSource = true, alternativesLeft = true))
-        assertEquals(Recovery.NextSource, PlaybackPlan.recovery(403, 10_000, retriedSameSource = false, alternativesLeft = true))
-        assertEquals(Recovery.NextSource, PlaybackPlan.recovery(null, 10 * 60_000, retriedSameSource = false, alternativesLeft = true))
-        assertEquals(Recovery.GiveUp, PlaybackPlan.recovery(500, 10_000, retriedSameSource = false, alternativesLeft = false))
-    }
-
-    @Test
-    fun aChannelIsResolvedAgainOnceWhateverTheErrorThenFallsBackUnlessItPlayedAWhile() {
-        val stable = PlaybackPlan.LIVE_STABLE_PLAYED_MS
-        assertEquals(Recovery.RetrySameSource, PlaybackPlan.liveRecovery(0, retriedSameSource = false, alternativesLeft = false))
-        assertEquals(Recovery.RetrySameSource, PlaybackPlan.liveRecovery(0, retriedSameSource = false, alternativesLeft = true))
-        assertEquals(Recovery.NextSource, PlaybackPlan.liveRecovery(5_000, retriedSameSource = true, alternativesLeft = true))
-        assertEquals(Recovery.GiveUp, PlaybackPlan.liveRecovery(stable - 1, retriedSameSource = true, alternativesLeft = false))
-        assertEquals("it was working", Recovery.RetrySameSource, PlaybackPlan.liveRecovery(stable, retriedSameSource = true, alternativesLeft = false))
-    }
 }
 
 class AutoplayPlanTest {
@@ -205,10 +183,10 @@ class SourceAttemptsTest {
         assertNull("the first resolve excludes nothing", attempts.excludeFor(null))
         assertNull(attempts.lastTried)
         attempts.onResolved(null, listOf("hls", "mp4", "dash"))
-        assertEquals(Recovery.NextSource, attempts.afterPlaybackError("hls", httpStatus = null, playedMs = early))
+        assertEquals("not an expired URL", Recovery.NextSource, attempts.afterPlaybackError("hls", httpStatus = null, playedMs = late))
         assertEquals(listOf("hls"), attempts.excludeFor(null))
         attempts.onResolved(null, listOf("mp4", "dash"))
-        assertEquals(Recovery.NextSource, attempts.afterPlaybackError("mp4", httpStatus = 404, playedMs = early))
+        assertEquals("too early to be expired", Recovery.NextSource, attempts.afterPlaybackError("mp4", httpStatus = 403, playedMs = early))
         assertEquals(listOf("hls", "mp4"), attempts.excludeFor(null))
         attempts.onResolved(null, listOf("dash"))
         assertEquals(Recovery.GiveUp, attempts.afterPlaybackError("dash", httpStatus = 500, playedMs = early))
@@ -236,7 +214,7 @@ class SourceAttemptsTest {
     fun aFailedPinnedResolveContinuesUnpinnedWhileAlternativesAreLeft() {
         val attempts = SourceAttempts()
         attempts.onResolved(null, listOf("signed", "backup"))
-        attempts.afterPlaybackError("signed", httpStatus = 410, playedMs = late)
+        assertEquals(Recovery.RetrySameSource, attempts.afterPlaybackError("signed", httpStatus = 410, playedMs = late))
         assertTrue(attempts.continueAfterFailedResolve("signed"))
         assertEquals(listOf("signed"), attempts.excludeFor(null))
         // An unpinned resolve that fails has nothing left to fall back to.

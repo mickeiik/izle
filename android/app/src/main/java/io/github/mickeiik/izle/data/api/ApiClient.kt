@@ -19,6 +19,12 @@ import kotlin.coroutines.resumeWithException
 /** The server answered with an error status. `code` is the API error code (`not_allowed`, `expired`, …). */
 class ApiException(val status: Int, val code: String, val retryAfterSec: Long? = null) : Exception("HTTP $status $code")
 
+/** An error answer, with its API error code (`http_<status>` without one). */
+internal fun apiError(status: Int, body: String, retryAfter: String? = null): ApiException {
+    val code = runCatching { ApiJson.decodeFromString(ErrorBody.serializer(), body).error }.getOrNull() ?: "http_$status"
+    return ApiException(status, code, retryAfter?.toLongOrNull())
+}
+
 /** What [block] returns, or null when the server could not be reached or answered with an error. */
 inline fun <T> orNullOnFailure(block: () -> T): T? = try {
     block()
@@ -27,10 +33,9 @@ inline fun <T> orNullOnFailure(block: () -> T): T? = try {
 }
 
 /**
- * The TV side of the server API. Network failures surface as [IOException], error answers as [ApiException].
- * The device token is attached per request (never through an interceptor) so it cannot leak to media hosts that
- * share the OkHttp connection pool. So is [userAgent] (`izle-tv/0.2.0 (Android 25; 200; guided)`, read anew for each
- * request: it changes with the TV's update capability), on every API call and never on media.
+ * The TV side of the server API. Network failures surface as [IOException], error answers as [ApiException]. The
+ * device token and [userAgent] (read anew: it changes with the update capability) are attached per request, never
+ * through an interceptor, so they cannot leak to media hosts that share the OkHttp connection pool.
  */
 class ApiClient(
     private val baseUrl: HttpUrl,
@@ -41,7 +46,7 @@ class ApiClient(
 ) {
     private fun url(path: String): HttpUrl = baseUrl.resolve(path) ?: error("bad path $path")
 
-    /** A server-handed URL (poster, media, subtitle) made absolute; null when unusable. */
+    /** A server-handed URL made absolute; null when unusable. */
     fun resolve(reference: String?): HttpUrl? = reference?.let { ServerUrls.resolve(baseUrl, it) }
 
     val eventsUrl: HttpUrl get() = url("api/v1/tv/events")
@@ -79,10 +84,7 @@ class ApiClient(
     suspend fun item(itemId: String): ItemDetailsResponse =
         get(url("api/v1/tv/items/").newBuilder().addPathSegment(itemId).build(), ItemDetailsResponse.serializer())
 
-    /**
-     * The server may spend up to 30 s in the owner's resolver module, longer than the default read timeout. The
-     * answer carries the server's clock (`Date` header) as [ResolveResponse.serverDateMs] for expiry scheduling.
-     */
+    /** On the long-poll client: the server may spend up to 30 s in the owner's resolver module. */
     suspend fun resolve(request: ResolveRequest): ResolveResponse {
         val raw = exchange(jsonPost("api/v1/tv/resolve", ResolveRequest.serializer(), request), longPollHttp)
         return raw.decode(ResolveResponse.serializer()).copy(serverDateMs = raw.dateMs)
@@ -96,17 +98,15 @@ class ApiClient(
         exchange(authorize(Request.Builder().url(url("api/v1/tv/commands/$id/ack")).post(EMPTY_BODY)).build()).requireOk()
     }
 
-    /** `404 unknown_command` (another TV's, or a server from before results) and `409 already_reported` throw as usual. */
     suspend fun reportCommandResult(id: Long, result: CommandResult) {
         exchange(jsonPost("api/v1/tv/commands/$id/result", CommandResult.serializer(), result)).requireOk()
     }
 
-    /** `202 {"ok":true}`; a server too old for the route answers 4xx, which the caller ignores like any failure. */
     suspend fun reportProblem(report: ProblemReport) {
         exchange(jsonPost("api/v1/tv/problems", ProblemReport.serializer(), report)).requireOk()
     }
 
-    /** The TV app version the server offers, or null when it stores none (`204`). */
+    /** Null when the server stores none (`204`). */
     suspend fun app(): AvailableUpdate? {
         val raw = exchange(authorize(Request.Builder().url(url("api/v1/tv/app"))).build())
         if (raw.status == 204) return null
@@ -115,7 +115,7 @@ class ApiClient(
         return info.copy(sha256 = info.sha256.lowercase())
     }
 
-    /** `GET /tv/app/apk`, streamed by the caller ([io.github.mickeiik.izle.update.ApkDownloader]). */
+    /** Streamed by [io.github.mickeiik.izle.update.ApkDownloader]. */
     fun apkRequest(): Request = authorize(Request.Builder().url(url("api/v1/tv/app/apk"))).build()
 
     private suspend fun <T> get(url: HttpUrl, serializer: KSerializer<T>): T =
@@ -136,16 +136,10 @@ class ApiClient(
     }
 
     private fun RawResponse.requireOk() {
-        if (status in 200..299) return
-        val code = try {
-            ApiJson.decodeFromString(ErrorBody.serializer(), body).error
-        } catch (e: IllegalArgumentException) {
-            "http_$status"
-        }
-        throw ApiException(status, code, retryAfter?.toLongOrNull())
+        if (status !in 200..299) throw apiError(status, body, retryAfter)
     }
 
-    /** [dateMs]: the `Date` header (the server's clock, whole seconds), if any. */
+    /** [dateMs]: the `Date` header (the server's clock, whole seconds). */
     private class RawResponse(val status: Int, val body: String, val retryAfter: String?, val dateMs: Long? = null)
 
     /** Runs the call on OkHttp's threads (the body is read there too) and cancels it with the coroutine. */
@@ -162,8 +156,7 @@ class ApiClient(
                     val raw = try {
                         response.use { RawResponse(it.code, it.body.string(), it.header("Retry-After"), it.headers.getDate("Date")?.time) }
                     } catch (e: IOException) {
-                        cont.resumeWithException(e)
-                        return
+                        return cont.resumeWithException(e)
                     }
                     cont.resume(raw)
                 }

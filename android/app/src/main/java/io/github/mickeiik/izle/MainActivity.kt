@@ -22,11 +22,9 @@ import io.github.mickeiik.izle.update.AppInstaller
 import kotlinx.coroutines.launch
 
 /**
- * The only activity. Key routing lives here because a remote's OK has two meanings (click / long-press menu),
- * the player owns the D-pad while video is showing, channel keys must never reach the system, and the autoplay
- * countdown gives way to any key; everything else goes to Compose as usual (the update screen's buttons included).
- * It also receives the status of the app's own install sessions ([AppInstaller.ACTION_INSTALL_STATUS]) and starts the
- * system's Install dialog of a guided update.
+ * The only activity. Key routing lives here because OK has two meanings (click / long-press menu), the player owns
+ * the D-pad while video is showing, channel keys must never reach the system, and the autoplay countdown gives way to
+ * any key. It also receives the app's install session statuses and starts a guided update's system dialog.
  */
 class MainActivity : ComponentActivity() {
     private val vm: AppViewModel by viewModels {
@@ -125,10 +123,7 @@ class MainActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
-    /**
-     * The player has the keys ([PlayerKeys]): an episode seeks with Left/Right and pauses, a channel only shows its
-     * information; Up/Down do nothing. Back is handled by Compose.
-     */
+    /** Back is handled by Compose. */
     private fun handlePlayerKey(event: KeyEvent): Boolean {
         val action = PlayerKeys.action(event.keyCode, vm.player.ui.value.live) ?: return false
         run(action, event, first = event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0)
@@ -140,10 +135,9 @@ class MainActivity : ComponentActivity() {
         val down = event.action == KeyEvent.ACTION_DOWN
         val player = vm.player
         when (action) {
-            PlayerKeyAction.SeekBack ->
-                if (down) player.onSeekKeyDown(-1, event.eventTime, event.downTime, event.repeatCount) else player.onSeekKeyUp()
-            PlayerKeyAction.SeekForward ->
-                if (down) player.onSeekKeyDown(1, event.eventTime, event.downTime, event.repeatCount) else player.onSeekKeyUp()
+            PlayerKeyAction.SeekBack, PlayerKeyAction.SeekForward -> if (!down) player.onSeekKeyUp() else {
+                player.onSeekKeyDown(if (action == PlayerKeyAction.SeekBack) -1 else 1, event.eventTime, event.downTime, event.repeatCount)
+            }
             PlayerKeyAction.TogglePause -> if (first) player.togglePause()
             PlayerKeyAction.Play -> if (first) player.resume()
             PlayerKeyAction.Pause -> if (first) player.pause()

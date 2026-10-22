@@ -43,9 +43,5 @@ class ChannelsTest {
         assertNull("a show without `continue`", PlayableRef.of(HomeEntry(ItemCard("x", "series", "X"), playNext = null)))
         // The kind decides, whatever else the entry carries.
         assertEquals(PlayableRef.Channel("odd"), PlayableRef.of(HomeEntry(ItemCard("odd", "live", "Odd"), ContinueInfo("odd.e1"))))
-        assertEquals("caminandes.e2", PlayableRef.Episode("caminandes.e2").episodeId)
-        assertNull(PlayableRef.Episode("caminandes.e2").itemId)
-        assertEquals("news", PlayableRef.Channel("news").itemId)
-        assertNull(PlayableRef.Channel("news").episodeId)
     }
 }

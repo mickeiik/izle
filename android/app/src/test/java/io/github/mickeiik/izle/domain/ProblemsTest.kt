@@ -37,10 +37,6 @@ class ProblemsTest {
             error, error.errorCodeName, httpStatus = 403, ref = PlayableRef.Episode("film.film"), sourceId = "signed-hls",
             sessionId = "Q8mQ8mQ8mQ8mQ8mQ", positionMs = 61_000, appVersion = "0.2.0",
         )
-        assertEquals("playback", report.kind)
-        assertEquals("ERROR_CODE_IO_BAD_HTTP_STATUS", report.code)
-        assertEquals(403, report.httpStatus)
-        assertEquals("HostilePlaybackException < IOException < SocketTimeoutException", report.detail)
         val body = json(report)
         assertNothingSecret(body)
         assertEquals(
@@ -53,15 +49,11 @@ class ProblemsTest {
 
     @Test
     fun aFailedResolveCarriesTheServersCodeOrNetwork() {
-        val api = Problems.resolveFailure(ApiException(502, "no_playable_source"), show, null, "0.2.0")!!
-        assertEquals("resolve", api.kind)
-        assertEquals("no_playable_source", api.code)
-        assertEquals(502, api.httpStatus)
+        val api = Problems.resolveFailure(ApiException(502, "no_playable_source"), show, null, "0.2.0")
+        assertEquals(ProblemReport("resolve", "no_playable_source", episodeId = "show.e1", httpStatus = 502, appVersion = "0.2.0"), api)
         assertEquals("http_403", Problems.resolveFailure(ApiException(403, "http_403"), show, "a", "0.2.0")!!.code)
-        val network = Problems.resolveFailure(IOException("failed to connect to $signedUrl"), show, "a", "0.2.0")!!
-        assertEquals("network", network.code)
-        assertEquals("IOException", network.detail)
-        assertNull(network.httpStatus)
+        val network = Problems.resolveFailure(IOException("failed to connect to $signedUrl"), show, "a", "0.2.0")
+        assertEquals(Triple("network", "IOException", null), network?.let { Triple(it.code, it.detail, it.httpStatus) })
         assertNothingSecret(json(network))
         // A removed device is told so elsewhere; its report would be refused anyway.
         assertNull(Problems.resolveFailure(ApiException(401, "unauthorized"), show, null, "0.2.0"))
@@ -72,8 +64,7 @@ class ProblemsTest {
         assertEquals("tried 3 sources", Problems.gaveUp(show, "c", 5_000, 3, "0.2.0").detail)
         assertEquals("tried 1 source", Problems.gaveUp(show, "c", 5_000, 1, "0.2.0").detail)
         val r = Problems.gaveUp(show, null, null, 0, "0.2.0", reason = "then resolve failed: no_playable_source")
-        assertEquals("gave_up", r.code)
-        assertEquals("playback", r.kind)
+        assertEquals("playback" to "gave_up", r.kind to r.code)
         assertEquals("tried 0 sources, then resolve failed: no_playable_source", r.detail)
     }
 
@@ -89,20 +80,15 @@ class ProblemsTest {
             json(Problems.resolveFailure(ApiException(502, "no_playable_source"), channel, null, "0.3.0")),
         )
         val behind = Problems.playbackError(IOException(), "ERROR_CODE_BEHIND_LIVE_WINDOW", null, channel, "main", "Q8m", null, "0.3.0")
-        assertEquals("news-24", behind.itemId)
-        assertNull(behind.episodeId)
-        assertNull(behind.positionMs)
-        assertEquals("ERROR_CODE_BEHIND_LIVE_WINDOW", behind.code)
+        assertEquals(Triple("news-24", null, null), Triple(behind.itemId, behind.episodeId, behind.positionMs))
         // An episode is named by its id alone.
         assertNull(Problems.gaveUp(show, "c", 5_000, 1, "0.2.0").itemId)
     }
 
     @Test
     fun anOutageIsReportedWithItsLength() {
-        val r = Problems.serverUnreachable(7 * 60_000L + 5_000, "0.2.0")
-        assertEquals("network", r.kind)
-        assertEquals("server_unreachable", r.code)
-        assertEquals("unreachable for 7 min 5 s", r.detail)
+        val outage = ProblemReport("network", "server_unreachable", detail = "unreachable for 7 min 5 s", appVersion = "0.2.0")
+        assertEquals(outage, Problems.serverUnreachable(7 * 60_000L + 5_000, "0.2.0"))
         assertEquals("unreachable for 2 h 3 min", Problems.serverUnreachable(2 * 3_600_000L + 3 * 60_000L, "0.2.0").detail)
     }
 

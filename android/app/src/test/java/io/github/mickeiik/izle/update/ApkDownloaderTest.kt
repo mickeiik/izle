@@ -46,8 +46,10 @@ class ApkDownloaderTest {
         .body(Buffer().write(body))
         .build()
 
+    /** Why [downloader] fails on [update]; nothing is kept. */
     private fun failure(downloader: ApkDownloader, update: AvailableUpdate = this.update): String =
         assertThrows(UpdateException::class.java) { runBlocking { downloader.download(api(), update) } }.reason
+            .also { assertFalse(downloader.file.exists()) }
 
     @Test
     fun aVerifiedDownloadIsKeptWithItsBytes() = runBlocking {
@@ -62,11 +64,12 @@ class ApkDownloaderTest {
     }
 
     @Test
-    fun anotherHashIsRejectedAndNothingKept() {
+    fun anotherHashOrATruncatedBodyIsRejected() {
         server.enqueue(apk(bytes.copyOf().also { it[10] = (it[10] + 1).toByte() }))
-        val downloader = downloader()
-        assertEquals(CommandResult.VERIFY, failure(downloader))
-        assertFalse(downloader.file.exists())
+        assertEquals(CommandResult.VERIFY, failure(downloader()))
+        // The connection drops halfway through the body.
+        server.enqueue(apk().newBuilder().onResponseBody(SocketEffect.ShutdownConnection).build())
+        assertEquals(CommandResult.DOWNLOAD, failure(downloader()))
     }
 
     @Test
@@ -76,16 +79,6 @@ class ApkDownloaderTest {
         assertEquals("nothing was requested", 0, server.requestCount)
         server.enqueue(apk())
         assertEquals("the Content-Length", CommandResult.TOO_LARGE, failure(downloader, update.copy(size = 500)))
-        assertFalse(downloader.file.exists())
-    }
-
-    @Test
-    fun aTruncatedBodyIsADownloadFailure() {
-        // The connection drops halfway through the body.
-        server.enqueue(apk().newBuilder().onResponseBody(SocketEffect.ShutdownConnection).build())
-        val downloader = downloader()
-        assertEquals(CommandResult.DOWNLOAD, failure(downloader))
-        assertFalse(downloader.file.exists())
     }
 
     @Test

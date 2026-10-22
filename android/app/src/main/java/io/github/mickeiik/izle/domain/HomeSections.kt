@@ -3,10 +3,7 @@ package io.github.mickeiik.izle.domain
 import io.github.mickeiik.izle.data.api.HomeEntry
 import io.github.mickeiik.izle.data.api.HomeSectionInfo
 
-/**
- * A section as Home draws it: its [title] (null: the untitled section, drawn without one), whether it is one line
- * that scrolls sideways ([row]) or a grid, and its [entries] in order. Never empty.
- */
+/** [title] null: the untitled section; [row]: one line that scrolls sideways, else a grid. Never empty. */
 data class HomeSection(val id: String, val title: String?, val row: Boolean, val entries: List<HomeEntry>)
 
 /** How Home cuts `home` into the sections it draws (docs/ux/senior-tv.md, "Sections"). */
@@ -14,12 +11,9 @@ object HomeSections {
     const val UNTITLED_ID = "untitled"
 
     /**
-     * The sections to draw, in order, from the state's flat [home] (Home order) and its [sections]. Ids that are not
-     * in [home] (or already in an earlier section) are left out, and so are the sections left empty; an entry of
-     * [home] that no section holds goes to the end of the untitled section (one is added at the end if there is
-     * none), so every entry is drawn once. Without a titled section the result is the untitled section with all of
-     * [home] in its order, in its own layout: as a grid (or without sections at all) it is Home without sections
-     * exactly, as a row one line without a title. An unknown layout is a grid.
+     * Every entry of [home] is drawn once: ids not in [home] or already placed are left out, empty sections too, and
+     * entries no section holds go to the end of the untitled section (added last if there is none). Without a titled
+     * section: the untitled section with all of [home] in its order, in its own layout.
      */
     fun of(home: List<HomeEntry>, sections: List<HomeSectionInfo>): List<HomeSection> {
         if (home.isEmpty()) return emptyList()

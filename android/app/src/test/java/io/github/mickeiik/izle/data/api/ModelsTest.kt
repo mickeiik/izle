@@ -8,15 +8,24 @@ import org.junit.Test
 
 /** The DTOs against documents shaped like docs/spec/server-api-v1.md, including fields the TV does not know. */
 class ModelsTest {
+    private fun state(json: String = STATE) = ApiJson.decodeFromString(TvState.serializer(), json)
+
+    private fun resolve(json: String = RESOLVE) = ApiJson.decodeFromString(ResolveResponse.serializer(), json)
+
+    private fun wire(report: ProgressReport) = ApiJson.encodeToString(ProgressReport.serializer(), report)
+
+    private fun String.withDevice(fields: String) = replace("\"newField\": 1", fields)
+
+    private fun String.withItem(fields: String) = replace(POSTER, "$POSTER, $fields")
+
     @Test
     fun decodesTheHomeState() {
-        val state = ApiJson.decodeFromString(TvState.serializer(), STATE)
+        val state = state()
         assertEquals(7L, state.version)
         assertEquals("tr", state.device.uiLanguage)
         assertNull(state.device.subtitlesLanguage)
         assertFalse("autoplay on start is off unless the server says so", state.device.autoplayOnStart)
-        val autoplay = STATE.replace("\"newField\": 1", "\"autoplayOnStart\": true")
-        assertTrue(ApiJson.decodeFromString(TvState.serializer(), autoplay).device.autoplayOnStart)
+        assertTrue(state(STATE.withDevice("\"autoplayOnStart\": true")).device.autoplayOnStart)
         assertEquals("20261010-247b34f7", state.catalog.buildId)
         val entry = state.home.single()
         assertEquals("caminandes", entry.item.id)
@@ -26,62 +35,49 @@ class ModelsTest {
         assertEquals("new", entry.playNext?.status)
         assertFalse(entry.item.isLive)
         assertEquals("a server without new-episode counts means none", 0, entry.newEpisodes)
-
-        fun withCount(value: String) =
-            ApiJson.decodeFromString(TvState.serializer(), STATE.replace("\"continue\": {", "\"newEpisodes\": $value, \"continue\": {")).home.single()
-        val counted = withCount("3")
-        assertEquals(3, counted.newEpisodes)
-        assertEquals("caminandes.s01e02", counted.playNext?.episodeId)
-        assertEquals(0, withCount("0").newEpisodes)
-        assertEquals(0, withCount("null").newEpisodes)
+        for ((value, count) in listOf("3" to 3, "0" to 0, "null" to 0)) {
+            val counted = state(STATE.replace("\"continue\": {", "\"newEpisodes\": $value, \"continue\": {")).home.single()
+            assertEquals(value, count, counted.newEpisodes)
+        }
     }
 
     @Test
     fun decodesTheHomeGridAndBackdrops() {
-        // An older server: no grid size, no backdrop.
-        val old = ApiJson.decodeFromString(TvState.serializer(), STATE)
-        assertEquals(4, old.device.homeColumns)
-        assertEquals(2, old.device.homeRows)
-        assertNull(old.home.single().item.backdropUrl)
-
-        val grid = STATE.replace("\"newField\": 1", "\"homeColumns\": 6, \"homeRows\": 1")
-            .replace("\"posterUrl\": \"/assets/f3f9.jpg\"", "\"posterUrl\": \"/assets/f3f9.jpg\", \"backdropUrl\": \"/assets/b4c1.jpg\"")
-        val state = ApiJson.decodeFromString(TvState.serializer(), grid)
-        assertEquals(6, state.device.homeColumns)
-        assertEquals(1, state.device.homeRows)
+        // An older server (no grid size, no backdrop), or nulls: the defaults.
+        val nulls = STATE.withDevice("\"homeColumns\": null, \"homeRows\": null").withItem("\"backdropUrl\": null")
+        for (json in listOf(STATE, nulls)) {
+            val defaults = state(json)
+            assertEquals(4 to 2, defaults.device.homeColumns to defaults.device.homeRows)
+            assertNull(defaults.home.single().item.backdropUrl)
+        }
+        val state = state(STATE.withDevice("\"homeColumns\": 6, \"homeRows\": 1").withItem("\"backdropUrl\": \"/assets/b4c1.jpg\""))
+        assertEquals(6 to 1, state.device.homeColumns to state.device.homeRows)
         assertEquals("/assets/b4c1.jpg", state.home.single().item.backdropUrl)
         assertEquals("/assets/f3f9.jpg", state.home.single().item.posterUrl)
 
-        // Nulls fall back to the defaults.
-        val nulls = STATE.replace("\"newField\": 1", "\"homeColumns\": null, \"homeRows\": null")
-            .replace("\"posterUrl\": \"/assets/f3f9.jpg\"", "\"posterUrl\": \"/assets/f3f9.jpg\", \"backdropUrl\": null")
-        val defaults = ApiJson.decodeFromString(TvState.serializer(), nulls)
-        assertEquals(4, defaults.device.homeColumns)
-        assertEquals(2, defaults.device.homeRows)
-        assertNull(defaults.home.single().item.backdropUrl)
-
         // In item details and resolve answers too.
-        val details = ApiJson.decodeFromString(ItemDetailsResponse.serializer(), ITEM.replace("\"posterUrl\": null", "\"posterUrl\": null, \"backdropUrl\": \"/assets/b.jpg\""))
+        val backdrop = "\"posterUrl\": null, \"backdropUrl\": \"/assets/b.jpg\""
+        val details = ApiJson.decodeFromString(ItemDetailsResponse.serializer(), ITEM.replace("\"posterUrl\": null", backdrop))
         assertEquals("/assets/b.jpg", details.item.backdropUrl)
-        val resolve = ApiJson.decodeFromString(ResolveResponse.serializer(), RESOLVE.replace("\"posterUrl\": null", "\"posterUrl\": null, \"backdropUrl\": \"/assets/b.jpg\""))
-        assertEquals("/assets/b.jpg", resolve.item.backdropUrl)
+        assertEquals("/assets/b.jpg", resolve(RESOLVE.replace("\"posterUrl\": null", backdrop)).item.backdropUrl)
     }
 
     @Test
     fun decodesHomeSectionsAndKeepsThemInTheCachedState() {
         // An older server (and a state cached before sections): none.
-        assertEquals(emptyList<HomeSectionInfo>(), ApiJson.decodeFromString(TvState.serializer(), STATE).homeSections)
+        assertEquals(emptyList<HomeSectionInfo>(), state().homeSections)
 
-        val withSections = STATE.replace(
-            "\"somethingNew\":",
-            """"homeSections": [
-                 {"id": "untitled", "title": null, "layout": "grid", "itemIds": ["caminandes"], "extra": 1},
-                 {"id": "Hq7cP2xd", "title": "Channels", "layout": "row", "itemIds": ["news-24"]},
-                 {"id": "Zt3kQ9wm", "title": "Later"}
-               ],
-               "somethingNew":""",
+        val state = state(
+            STATE.replace(
+                "\"somethingNew\":",
+                """"homeSections": [
+                     {"id": "untitled", "title": null, "layout": "grid", "itemIds": ["caminandes"], "extra": 1},
+                     {"id": "Hq7cP2xd", "title": "Channels", "layout": "row", "itemIds": ["news-24"]},
+                     {"id": "Zt3kQ9wm", "title": "Later"}
+                   ],
+                   "somethingNew":""",
+            ),
         )
-        val state = ApiJson.decodeFromString(TvState.serializer(), withSections)
         assertEquals(
             listOf(
                 HomeSectionInfo("untitled", null, "grid", listOf("caminandes")),
@@ -91,13 +87,12 @@ class ModelsTest {
             state.homeSections,
         )
         // The offline cache is the state encoded with the same Json: the sections come back from it.
-        val cached = ApiJson.decodeFromString(TvState.serializer(), ApiJson.encodeToString(TvState.serializer(), state))
-        assertEquals(state, cached)
+        assertEquals(state, state(ApiJson.encodeToString(TvState.serializer(), state)))
     }
 
     @Test
     fun decodesAResolveAnswer() {
-        val r = ApiJson.decodeFromString(ResolveResponse.serializer(), RESOLVE)
+        val r = resolve()
         assertEquals("hls", r.media.kind)
         assertEquals(listOf("multi", "unknown"), r.alternatives)
         assertEquals("show.e2", r.next?.episodeId)
@@ -106,25 +101,22 @@ class ModelsTest {
         assertEquals(5, r.episode?.count)
         assertFalse(r.item.isLive)
         assertNull(r.expiresAt)
-        val withExpiry = RESOLVE.replace("\"resume\":", "\"expiresAt\": \"2026-10-14T12:01:40.000Z\", \"resume\":")
-        val expiring = ApiJson.decodeFromString(ResolveResponse.serializer(), withExpiry)
+        val expiring = resolve(RESOLVE.replace("\"resume\":", "\"expiresAt\": \"2026-10-14T12:01:40.000Z\", \"resume\":"))
         assertEquals("2026-10-14T12:01:40.000Z", expiring.expiresAt)
         assertNull("the Date header is not part of the body", expiring.serverDateMs)
     }
 
     @Test
-    fun decodesAResolveAnswerWithoutNextOrResume() {
-        val r = ApiJson.decodeFromString(
-            ResolveResponse.serializer(),
-            """{"sessionId":"s","sourceId":"mp4","media":{"kind":"mp4","url":"https://cdn.example.net/a.mp4"},
-               "subtitleTracks":[],"languages":{"audio":null,"subtitles":[]},"alternatives":[],"next":null,
-               "item":{"id":"m","kind":"movie","title":"M","year":null,"posterUrl":null},
-               "episode":{"id":"m.film","index":0,"count":1,"season":null,"number":null,"title":null,"label":null,"durationMs":null},
-               "resume":null,"expiresAt":null}""",
-        )
+    fun decodesAChannelsResolveAnswer() {
+        val r = resolve(CHANNEL_RESOLVE)
+        assertTrue(r.item.isLive)
+        assertNull(r.episode)
         assertNull(r.next)
         assertNull(r.resume)
-        assertNull(r.expiresAt)
+        assertEquals("ts", r.media.kind)
+        assertEquals("/p/Tk9uZQ/stream.ts", r.media.url)
+        assertEquals(listOf("backup"), r.alternatives)
+        assertEquals("2026-10-21T12:00:00.000Z", r.expiresAt)
     }
 
     @Test
@@ -134,6 +126,21 @@ class ModelsTest {
         assertEquals("finished", d.episodes[0].progress?.status)
         assertEquals(false, d.episodes[1].playbackAllowed)
         assertNull(d.episodes[1].progress)
+    }
+
+    @Test
+    fun aChannelOnHomeHasNoContinue() {
+        val channel = state(STATE.replace("\"home\": [", "\"home\": [$CHANNEL_ENTRY,")).home.first()
+        assertTrue(channel.item.isLive)
+        assertEquals("news-24", channel.item.id)
+        assertEquals("News 24", channel.item.title)
+        assertEquals("/assets/7b0e.png", channel.item.posterUrl)
+        assertNull("OK plays it at its live edge", channel.playNext)
+        assertEquals(0, channel.newEpisodes)
+        // A missing `continue` reads the same.
+        val bare = ApiJson.decodeFromString(HomeEntry.serializer(), """{"item":{"id":"n","kind":"live","title":"N"}}""")
+        assertNull(bare.playNext)
+        assertTrue(bare.item.isLive)
     }
 
     @Test
@@ -154,7 +161,6 @@ class ModelsTest {
     @Test
     fun progressReportsLeaveOutUnsetFieldsAndKeepTheirStatusNames() {
         // Resolve requests: see ApiClientTest.resolvePostsJson and PlaybackOriginTest.
-        fun wire(report: ProgressReport) = ApiJson.encodeToString(ProgressReport.serializer(), report)
         assertEquals(
             """{"episodeId":"e","positionMs":1000,"status":"stopped"}""",
             wire(ProgressReport(null, episodeId = "e", positionMs = 1_000, status = ProgressStatus.Stopped)),
@@ -170,39 +176,7 @@ class ModelsTest {
     }
 
     @Test
-    fun aChannelOnHomeHasNoContinue() {
-        val state = ApiJson.decodeFromString(TvState.serializer(), STATE.replace("\"home\": [", "\"home\": [$CHANNEL_ENTRY,"))
-        val (channel, show) = state.home
-        assertTrue(channel.item.isLive)
-        assertEquals("news-24", channel.item.id)
-        assertEquals("News 24", channel.item.title)
-        assertEquals("/assets/7b0e.png", channel.item.posterUrl)
-        assertNull("OK plays it at its live edge", channel.playNext)
-        assertEquals(0, channel.newEpisodes)
-        assertFalse(show.item.isLive)
-        assertEquals("caminandes.s01e02", show.playNext?.episodeId)
-        // A missing `continue` reads the same.
-        val bare = ApiJson.decodeFromString(HomeEntry.serializer(), """{"item":{"id":"n","kind":"live","title":"N"}}""")
-        assertNull(bare.playNext)
-        assertTrue(bare.item.isLive)
-    }
-
-    @Test
-    fun decodesAChannelsResolveAnswer() {
-        val r = ApiJson.decodeFromString(ResolveResponse.serializer(), CHANNEL_RESOLVE)
-        assertTrue(r.item.isLive)
-        assertNull(r.episode)
-        assertNull(r.next)
-        assertNull(r.resume)
-        assertEquals("ts", r.media.kind)
-        assertEquals("/p/Tk9uZQ/stream.ts", r.media.url)
-        assertEquals(listOf("backup"), r.alternatives)
-        assertEquals("2026-10-21T12:00:00.000Z", r.expiresAt)
-    }
-
-    @Test
     fun aChannelsProgressNamesItsItemWithoutAPosition() {
-        fun wire(report: ProgressReport) = ApiJson.encodeToString(ProgressReport.serializer(), report)
         assertEquals(
             """{"sessionId":"s","itemId":"news-24","status":"playing","playing":true,"ageMs":0}""",
             wire(ProgressReport.channel("s", "news-24", ProgressStatus.Playing, playing = true).copy(ageMs = 0)),
@@ -216,10 +190,7 @@ class ModelsTest {
         // A channel is never paused and never finishes: only `playing` and `stopped` go out.
         assertEquals(ProgressStatus.Playing, ProgressReport.channel(null, "n", ProgressStatus.Paused, playing = false).status)
         assertEquals(ProgressStatus.Stopped, ProgressReport.channel(null, "n", ProgressStatus.Finished, playing = false).status)
-    }
-
-    @Test
-    fun aProblemReportMayNameAChannel() {
+        // A problem report may name a channel too.
         assertEquals(
             """{"kind":"playback","code":"gave_up","itemId":"news-24","sourceId":"main"}""",
             ApiJson.encodeToString(ProblemReport.serializer(), ProblemReport(kind = "playback", code = "gave_up", itemId = "news-24", sourceId = "main")),
@@ -229,6 +200,8 @@ class ModelsTest {
     @Test
     fun parsesEvents() {
         assertEquals(ServerEvent.State(8), ServerEvent.parse("state", """{"version":8}"""))
+        // The owner removed the stored APK: the TV checks `/tv/app` again like for any other app event.
+        assertEquals(ServerEvent.App(0), ServerEvent.parse("app", """{"versionCode":0}"""))
         assertEquals(
             ServerEvent.Command(12, "play", "show", "show.e1"),
             ServerEvent.parse("command", """{"id":12,"type":"play","payload":{"itemId":"show","episodeId":"show.e1"}}"""),
@@ -246,6 +219,8 @@ class ModelsTest {
     }
 
     private companion object {
+        const val POSTER = "\"posterUrl\": \"/assets/f3f9.jpg\""
+
         val STATE = """
             {
               "version": 7,
@@ -280,27 +255,16 @@ class ModelsTest {
         """.trimIndent()
 
         val CHANNEL_ENTRY = """
-            {
-              "item": { "id": "news-24", "kind": "live", "title": "News 24", "year": null, "posterUrl": "/assets/7b0e.png", "backdropUrl": null },
-              "continue": null,
-              "newEpisodes": 0
-            }
+            { "item": { "id": "news-24", "kind": "live", "title": "News 24", "year": null, "posterUrl": "/assets/7b0e.png" },
+              "continue": null, "newEpisodes": 0 }
         """.trimIndent()
 
+        /** Explicit nulls for what a channel has not: no episode, no next, no resume. */
         val CHANNEL_RESOLVE = """
-            {
-              "sessionId": "Q8mQ8mQ8mQ8mQ8mQ",
-              "sourceId": "main",
-              "media": { "kind": "ts", "url": "/p/Tk9uZQ/stream.ts" },
-              "subtitleTracks": [],
-              "languages": { "audio": ["tr"], "subtitles": [] },
-              "alternatives": ["backup"],
-              "next": null,
+            { "sessionId": "Q8mQ8mQ8mQ8mQ8mQ", "sourceId": "main", "media": { "kind": "ts", "url": "/p/Tk9uZQ/stream.ts" },
+              "subtitleTracks": [], "languages": { "audio": ["tr"], "subtitles": [] }, "alternatives": ["backup"], "next": null,
               "item": { "id": "news-24", "kind": "live", "title": "News 24", "year": null, "posterUrl": null, "backdropUrl": null },
-              "episode": null,
-              "resume": null,
-              "expiresAt": "2026-10-21T12:00:00.000Z"
-            }
+              "episode": null, "resume": null, "expiresAt": "2026-10-21T12:00:00.000Z" }
         """.trimIndent()
 
         val ITEM = """

@@ -26,7 +26,7 @@ class FakeMediaEngine : MediaEngine {
         set(value) {
             if (field == value) return
             field = value
-            listener?.onPlayWhenReadyChanged(value)
+            listener?.onStateChanged()
             if (ready) setPlaying(value)
         }
 
@@ -86,12 +86,7 @@ class FakeMediaEngine : MediaEngine {
     override fun pause() { calls += "pause"; playWhenReady = false }
     override fun seekTo(positionMs: Long) { calls += "seek"; this.positionMs = positionMs }
     override fun stop() { calls += "stop"; ready = false; setPlaying(false) }
-    override fun release() {
-        calls += "release"
-        ready = false
-        playing = false
-        playWhenReady = false
-    }
+    override fun release() { calls += "release"; ready = false; playing = false; playWhenReady = false }
 
     override fun applyPreferences(preferredAudioLanguage: String?, subtitlesLanguage: String?) {
         calls += "preferences"

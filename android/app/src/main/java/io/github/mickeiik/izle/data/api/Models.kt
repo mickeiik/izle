@@ -13,11 +13,7 @@ val ApiJson: Json = Json {
     coerceInputValues = true
 }
 
-/**
- * `home` is the one list in Home order (autoplay's first tile, CH+/CH− among channels); `homeSections` says how Home
- * cuts it into sections (none from an older server or in an older cached state). See
- * [io.github.mickeiik.izle.domain.HomeSections].
- */
+/** `home` in Home order (autoplay's first tile, CH+/CH−); [io.github.mickeiik.izle.domain.HomeSections] cuts it. */
 @Serializable
 data class TvState(
     val version: Long,
@@ -27,10 +23,7 @@ data class TvState(
     val homeSections: List<HomeSectionInfo> = emptyList(),
 )
 
-/**
- * A section of Home: [title] null for the untitled section, [layout] `grid` or `row` (one line that scrolls sideways;
- * any other value is a grid), [itemIds] the ids of its entries in `home`, in order.
- */
+/** [layout] `grid` or `row` (any other value is a grid); [itemIds]: entries of `home`, in order. */
 @Serializable
 data class HomeSectionInfo(
     val id: String,
@@ -44,11 +37,7 @@ data class HomeSectionInfo(
     }
 }
 
-/**
- * `autoplayOnStart`: when the TV comes on and shows Home, start the last show after a countdown (owner setting).
- * `homeColumns` × `homeRows`: how many cards one screen of Home shows (owner setting, 3–6 × 1–4; older servers omit
- * them). The UI clamps them, see [io.github.mickeiik.izle.ui.home.HomeGrid].
- */
+/** `homeColumns` × `homeRows`: the cards one screen of Home shows, clamped by [io.github.mickeiik.izle.ui.home.HomeGrid]. */
 @Serializable
 data class DeviceInfo(
     val id: String,
@@ -64,18 +53,11 @@ data class DeviceInfo(
 @Serializable
 data class CatalogInfo(val id: String, val buildId: String, val name: String)
 
-/**
- * A home tile. [playNext] (`continue`) is the episode OK plays; null for a channel ([ItemCard.isLive]), which OK plays
- * at its live edge. `newEpisodes`: playable episodes added to the catalog since the viewer last watched this show (0
- * when none, and always for a channel). It only labels the tile.
- */
+/** [playNext] (`continue`): the episode OK plays, null for a channel. `newEpisodes` only labels the tile. */
 @Serializable
 data class HomeEntry(val item: ItemCard, @SerialName("continue") val playNext: ContinueInfo? = null, val newEpisodes: Int = 0)
 
-/**
- * `kind`: `movie`, `series` or `live` (a channel). `posterUrl` (2:3) and `backdropUrl` (16:9, optional) are relative
- * to the server (`/assets/<file>`).
- */
+/** `kind`: `movie`, `series` or `live` (a channel). `posterUrl` (2:3) and `backdropUrl` (16:9) are server-relative. */
 @Serializable
 data class ItemCard(val id: String, val kind: String, val title: String, val posterUrl: String? = null, val backdropUrl: String? = null) {
     /** A channel: no episodes, no position, played at its live edge and resolved by its item id. */
@@ -99,7 +81,7 @@ data class ContinueInfo(
     val status: String = "new",
 )
 
-/** `GET /tv/items/:itemId`: a show's episodes and cursor (a channel has none; the TV never asks for its details). */
+/** `GET /tv/items/:itemId` (never for a channel). */
 @Serializable
 data class ItemDetailsResponse(val item: ItemCard, val cursorEpisodeId: String? = null, val episodes: List<EpisodeDetails> = emptyList())
 
@@ -119,11 +101,7 @@ data class EpisodeDetails(
 @Serializable
 data class EpisodeProgress(val positionMs: Long, val status: String)
 
-/**
- * Exactly one of [episodeId] and [itemId] (a channel). `trigger` and `commandId` say who or what started the playback,
- * for the server's viewing history; every resolve of one playback (fallbacks, expiry refreshes, Try again) repeats
- * them. See [io.github.mickeiik.izle.domain.PlaybackOrigin].
- */
+/** Exactly one of [episodeId] and [itemId] (a channel); see [io.github.mickeiik.izle.domain.PlaybackOrigin]. */
 @Serializable
 data class ResolveRequest(
     val episodeId: String? = null,
@@ -138,24 +116,17 @@ data class ResolveRequest(
     }
 }
 
-/** A resolve's `trigger`, spelled on the wire as the server expects. */
 @Serializable
 enum class Trigger {
-    @SerialName("viewer") // OK on Home, the hidden menu's episode list or Start over
-    Viewer,
-    @SerialName("autoplay") // autoplay on start
-    Autoplay,
-    @SerialName("next") // auto-next, Up next's Play now, CH+/CH−
-    Next,
-    @SerialName("command") // the owner's play, next or previous, with its `commandId`
-    Command,
+    @SerialName("viewer") Viewer, // OK on Home, the hidden menu's episode list or Start over
+    @SerialName("autoplay") Autoplay,
+    @SerialName("next") Next, // auto-next, Up next's Play now, CH+/CH−
+    @SerialName("command") Command, // the owner's play, next or previous, with its `commandId`
 }
 
 /**
- * What to play. A channel ([ItemCard.isLive]) has no [episode], [next] or [resume]: it plays at its live edge.
- * `expiresAt` (ISO 8601) is the stream's validity hint, or null; the TV resolves the same source again shortly before
- * it. [serverDateMs] is not part of the body: it is the answer's `Date` header (the server's clock), filled in by
- * [ApiClient.resolve] so the expiry can be scheduled without trusting the TV's clock.
+ * A channel has no [episode], [next] or [resume]. `expiresAt` (ISO 8601): the stream's validity hint. [serverDateMs]
+ * is the answer's `Date` header, filled in by [ApiClient.resolve] so the expiry need not trust the TV's clock.
  */
 @Serializable
 data class ResolveResponse(
@@ -172,7 +143,7 @@ data class ResolveResponse(
     @Transient val serverDateMs: Long? = null,
 )
 
-/** `kind` is `hls`, `dash`, `mp4` or `ts` (progressive MPEG-TS); `url` may be relative to the server (proxied media). */
+/** `kind`: `hls`, `dash`, `mp4` or `ts` (progressive MPEG-TS); `url` may be server-relative (proxied media). */
 @Serializable
 data class Media(val kind: String, val url: String)
 
@@ -204,10 +175,8 @@ data class EpisodeRef(
 data class Resume(val positionMs: Long, val durationMs: Long? = null)
 
 /**
- * `POST /tv/progress`, for an episode ([episode]: its id and position) or a channel ([channel]: its item id, no
- * position). `playing` says whether the player was actually advancing when the report was sampled (false during a
- * rebuffer stall) and `ageMs` how old the sample is when the report is sent: the server anchors "Listen along" on
- * them. Null fields are left out.
+ * `POST /tv/progress`. The server anchors "Listen along" on `playing` (whether the player advanced when sampled: false
+ * during a stall) and `ageMs` (how old the sample is when sent).
  */
 @Serializable
 data class ProgressReport(
@@ -221,14 +190,10 @@ data class ProgressReport(
     val ageMs: Long? = null,
 ) {
     companion object {
-        /** Where the viewer is in an episode (never a negative position). */
         fun episode(sessionId: String?, episodeId: String, status: ProgressStatus, positionMs: Long, durationMs: Long?, playing: Boolean) =
             ProgressReport(sessionId, episodeId = episodeId, positionMs = positionMs.coerceAtLeast(0), durationMs = durationMs, status = status, playing = playing)
 
-        /**
-         * A channel's heartbeat, stall or stop: no position or duration, and only `playing` or `stopped` (a channel is
-         * never paused and never finishes): a final [status] is sent as `stopped`, any other as `playing`.
-         */
+        /** No position, and only `playing` or `stopped`: a channel is never paused and never finishes. */
         fun channel(sessionId: String?, itemId: String, status: ProgressStatus, playing: Boolean) = ProgressReport(
             sessionId,
             itemId = itemId,
@@ -238,28 +203,19 @@ data class ProgressReport(
     }
 }
 
-/** A progress report's `status`, spelled on the wire as the server expects. */
 @Serializable
 enum class ProgressStatus {
-    @SerialName("playing")
-    Playing,
-    @SerialName("paused")
-    Paused,
-    @SerialName("stopped") // the viewer left the player before the end
-    Stopped,
-    @SerialName("finished")
-    Finished,
+    @SerialName("playing") Playing,
+    @SerialName("paused") Paused,
+    @SerialName("stopped") Stopped, // the viewer left the player before the end
+    @SerialName("finished") Finished,
     ;
 
-    /** `stopped` and `finished` are the last word on an episode: Home's tile depends on them. */
+    /** The last word on an episode: Home's tile depends on them. */
     val isFinal: Boolean get() = this == Stopped || this == Finished
 }
 
-/**
- * `POST /tv/problems`: something went wrong on this TV, for the owner's admin page. `kind`: `playback`, `resolve`,
- * `network` or `other`; `code` matches `[A-Za-z0-9_.:-]{1,64}`; `ageMs` is how long ago it happened. Never carries
- * URLs, headers, tokens or exception messages (see [io.github.mickeiik.izle.domain.Problems]).
- */
+/** `POST /tv/problems`, for the owner's admin page; built by [io.github.mickeiik.izle.domain.Problems]. */
 @Serializable
 data class ProblemReport(
     val kind: String,
@@ -276,20 +232,14 @@ data class ProblemReport(
     val appVersion: String? = null,
 )
 
-/**
- * `POST /tv/commands/:id/result`: what became of an owner command, sent once per command after its acknowledgement.
- * `reason` matches `[A-Za-z0-9_.:-]{1,64}`; the server and its consumers accept reasons they do not know.
- */
+/** `POST /tv/commands/:id/result`, once per command after its acknowledgement; servers accept unknown reasons. */
 @Serializable
 data class CommandResult(val result: Outcome, val reason: String? = null) {
     @Serializable
     enum class Outcome {
-        @SerialName("done")
-        Done,
-        @SerialName("ignored")
-        Ignored,
-        @SerialName("failed")
-        Failed,
+        @SerialName("done") Done,
+        @SerialName("ignored") Ignored,
+        @SerialName("failed") Failed,
     }
 
     companion object {
