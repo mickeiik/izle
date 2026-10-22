@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -25,37 +26,58 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -63,6 +85,7 @@ import androidx.compose.ui.text.style.Hyphens
 import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -78,6 +101,8 @@ import io.github.mickeiik.izle.data.api.HomeEntry
 import io.github.mickeiik.izle.data.api.TvState
 import io.github.mickeiik.izle.domain.AutoplayPlan
 import io.github.mickeiik.izle.domain.EpisodeNames
+import io.github.mickeiik.izle.domain.HomeSection
+import io.github.mickeiik.izle.domain.HomeSections
 import io.github.mickeiik.izle.domain.TileBadge
 import io.github.mickeiik.izle.ui.AutoplayUi
 import io.github.mickeiik.izle.ui.HomeMessage
@@ -91,6 +116,11 @@ import io.github.mickeiik.izle.ui.theme.IzleBorders
 import io.github.mickeiik.izle.ui.theme.IzleColors
 import io.github.mickeiik.izle.ui.theme.IzleShapes
 import io.github.mickeiik.izle.ui.theme.IzleSpacing
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** The thin scroll indicator in the right safe margin, 22 dp from the screen's edge. */
@@ -105,7 +135,7 @@ private val PosterCrop = BiasAlignment(horizontalBias = 0f, verticalBias = -0.44
 
 /**
  * The only screen the viewer navigates: a grid of 16:9 cards filling the screen, the owner's columns × rows of them
- * at a time, OK plays. The card played last (or focused last) gets the focus back when the screen appears. Nothing is
+ * at a time (with the owner's sections: their titles, grids and sideways lines, see [HomeLayout]), OK plays. The card played last (or focused last) gets the focus back when the screen appears. Nothing is
  * above the grid: the owner's message is drawn over it by IzleRoot, and "No connection" sits over its top left corner.
  */
 @Composable
@@ -122,13 +152,12 @@ fun HomeScreen(
     onPlay: (HomeEntry) -> Unit,
 ) {
     Box(Modifier.fillMaxSize().background(IzleColors.Background)) {
-        Box(Modifier.fillMaxSize().padding(IzleSpacing.Safe)) {
-            when {
-                state == null && !online -> Message(stringResource(R.string.no_connection), stringResource(R.string.no_connection_detail))
-                state == null -> Message(stringResource(R.string.loading))
-                state.home.isEmpty() -> Message(stringResource(R.string.home_empty), stringResource(R.string.home_empty_detail))
-                else -> TileGrid(
-                    home = state.home,
+        if (state != null && state.home.isNotEmpty()) {
+            // The whole width: a row section's cards show into the side margins.
+            val sections = remember(state.home, state.homeSections) { HomeSections.of(state.home, state.homeSections) }
+            Box(Modifier.fillMaxSize().padding(vertical = IzleSpacing.SafeVertical)) {
+                SectionsGrid(
+                    sections = sections,
                     columns = state.device.homeColumns,
                     rows = state.device.homeRows,
                     initialFocusItemId = initialFocusItemId,
@@ -137,6 +166,13 @@ fun HomeScreen(
                     onFocused = onFocused,
                     onPlay = onPlay,
                 )
+            }
+        }
+        Box(Modifier.fillMaxSize().padding(IzleSpacing.Safe)) {
+            when {
+                state == null && !online -> Message(stringResource(R.string.no_connection), stringResource(R.string.no_connection_detail))
+                state == null -> Message(stringResource(R.string.loading))
+                state.home.isEmpty() -> Message(stringResource(R.string.home_empty), stringResource(R.string.home_empty_detail))
             }
             if (!online) OfflineChip(Modifier.align(Alignment.TopStart))
         }
@@ -179,32 +215,108 @@ private fun OfflineChip(modifier: Modifier) {
 }
 
 /**
- * Scrolls the grid as little as shows the focused row (card and title) in full: ↓ on the last row in view brings
- * exactly one row in from below, ↑ on the first one row from above. [paddingPx] is the room around the rows inside
- * the viewport, [rowPx] a row's height, as laid out. [offset] is where the focused card (at the top of its row) is in
- * the viewport; it is asked again while the scroll runs, so the distance must be exact, with no tolerance.
+ * Scrolls Home as little as shows the focused line whole (docs/ux/senior-tv.md, "Sections"): the padding above its
+ * row, or its section's title on the section's first line (Home's first line at the very top), down to the padding
+ * under its cell. [focusedLine] is the focused card's line in [layout]. [offset] and [size] are the focused card's
+ * bounds, which grow with its 110 % scale while that runs, so its unscaled top is worked out from its centre. The
+ * distance is asked again on every frame of the scroll, so it must be exact, with no tolerance.
  *
  * While Home is not [active] (the hidden menu or the autoplay countdown on top) the grid stays where it is: when the
  * tiles stop taking the focus, the focus passes through another tile for a moment, which would scroll it.
  */
 @OptIn(ExperimentalFoundationApi::class)
-private class RowInView(private val paddingPx: Float, private val rowPx: Float, private val active: () -> Boolean) : BringIntoViewSpec {
-    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+private class LineInView(
+    private val density: Density,
+    private val layout: () -> HomeLayout,
+    private val focusedLine: () -> Int?,
+    private val active: () -> Boolean,
+) : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = with(density) {
         if (!active()) return 0f
-        val top = paddingPx
-        val bottom = containerSize - paddingPx
-        return when {
-            offset < top -> offset - top
-            offset + rowPx > bottom -> offset + rowPx - bottom
+        val l = layout()
+        val g = l.grid
+        val line = focusedLine()?.let { l.lines.getOrNull(it) }
+        val cardTop = offset + size / 2 - g.cardHeight.dp.toPx() / 2
+        val top = cardTop - (if (line != null) line.cardTop - line.top else g.padding).dp.toPx()
+        val bottom = cardTop + g.cellHeight.dp.roundToPx() + g.padding.dp.toPx()
+        when {
+            top < 0f -> top
+            bottom > containerSize -> bottom - containerSize
             else -> 0f
         }
     }
 }
 
+/**
+ * Slides a row section as little as shows the focused card within the columns ([startPx] to [endPx] in the line,
+ * which spans the screen): one card at a time once the focus reaches the edge of what is in view. [cardPx] is a card's
+ * unscaled width, as laid out. Exact, like [LineInView].
+ */
+@OptIn(ExperimentalFoundationApi::class)
+private class CardInView(
+    private val startPx: Float,
+    private val endPx: Float,
+    private val cardPx: Float,
+    private val active: () -> Boolean,
+) : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float {
+        if (!active()) return 0f
+        val left = offset + size / 2 - cardPx / 2
+        return when {
+            left < startPx -> left - startPx
+            left + cardPx > endPx -> left + cardPx - endPx
+            else -> 0f
+        }
+    }
+}
+
+/** The focused card, known as soon as the focus moves: the scroll asks for its line in the same frame. */
+private class FocusTrack {
+    var itemId: String? = null
+
+    /** The section the focus is in (−1: none), for its title's colour. */
+    val section = mutableIntStateOf(-1)
+
+    /** A move to a card not laid out yet: the keys wait for it (a few frames). */
+    var pendingMove: Job? = null
+}
+
+/** How long a move waits for its card to be laid out, at most. */
+private const val PENDING_MOVE_MS = 1_000L
+
+/** A row section's first card in view: the one at the start of the columns. */
+private fun LazyListState.firstInView(): Int =
+    layoutInfo.visibleItemsInfo.minByOrNull { abs(it.offset) }?.index ?: firstVisibleItemIndex
+
+/** Where Home is scrolled to, in the layout's dp. */
+private fun HomeLayout.scrollOf(state: LazyGridState, density: Density): Float {
+    val slot = slots.getOrNull(state.firstVisibleItemIndex) ?: return 0f
+    return slot.top - grid.padding + state.firstVisibleItemScrollOffset / density.density
+}
+
+/** Scrolls Home to [offset] (the layout's dp) at once. */
+private suspend fun LazyGridState.scrollTo(layout: HomeLayout, offset: Float, density: Density) {
+    val padding = layout.grid.padding
+    val at = layout.slots.indexOfLast { it.top - padding <= offset }.coerceAtLeast(0)
+    scrollToItem(at, ((offset - (layout.slots[at].top - padding)) * density.density).roundToInt())
+}
+
+private const val TITLE_KEY = "\u0000title:"
+private const val ROW_KEY = "\u0000row:"
+
+/** The line between two sections: white at 18 %. */
+private val DividerColor = Color(0x2EFFFFFF)
+
+/**
+ * Home's cards in their sections, one lazy grid for all of them: rows of [columns] cards, a section's title as an item
+ * across the grid, a row section as one item holding a lazy row that spans the screen. The lines between sections are
+ * drawn over the grid where the layout puts them. ↑ ↓ ← → follow [HomeLayout] (the next line, nearest card; stop at a
+ * line's ends).
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TileGrid(
-    home: List<HomeEntry>,
+private fun SectionsGrid(
+    sections: List<HomeSection>,
     columns: Int,
     rows: Int,
     initialFocusItemId: String?,
@@ -217,95 +329,304 @@ private fun TileGrid(
     val rowsShown = rows.coerceIn(HomeGrid.MIN_ROWS, HomeGrid.MAX_ROWS)
     val cacheWindow = remember(rowsShown) { LazyLayoutCacheWindow(aheadFraction = 1f / rowsShown, behindFraction = 1f / rowsShown) }
     val gridState = rememberLazyGridState(cacheWindow)
+    // A row section keeps its place when it scrolls out of the grid and back.
+    val rowStates = remember { mutableMapOf<String, LazyListState>() }
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
+    val focus = remember { FocusTrack() }
+    val scope = rememberCoroutineScope()
     var gridHasFocus by remember { mutableStateOf(false) }
-    var lastFocusedIndex by remember { mutableStateOf(0) }
-    val ids = remember(home) { home.map { it.item.id } }
+    var lastFocusedIndex by remember { mutableIntStateOf(0) }
+    val ids = remember(sections) { sections.flatMap { s -> s.entries.map { it.item.id } } }
+    val sectionStarts = remember(sections) { sections.runningFold(0) { at, s -> at + s.entries.size } }
+    val places = remember(sections) {
+        HashMap<String, Pair<Int, Int>>().apply { sections.forEachIndexed { k, s -> s.entries.forEachIndexed { i, e -> put(e.item.id, k to i) } } }
+    }
+    // The focus is put back when this changes: which card is in which section, laid out how.
+    val structure = remember(sections) { sections.map { s -> Triple(s.id, s.row, s.entries.map { it.item.id }) } }
 
     val density = LocalDensity.current
-    val titleLine = with(density) { MaterialTheme.typography.titleSmall.lineHeight.toDp() }
+    val cardTitleStyle = MaterialTheme.typography.titleSmall
+    val titleLine = with(density) { cardTitleStyle.lineHeight.toDp() }
     val isActive by rememberUpdatedState(active)
     val chipSizes = rememberChipSizes()
+    val measurer = rememberTextMeasurer()
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        val grid = remember(columns, rows, maxWidth, maxHeight, titleLine) {
-            HomeGrid.compute(columns, rows, maxWidth.value, maxHeight.value, titleLine.value)
+        val safeWidth = maxWidth.value - 2 * IzleSpacing.SafeHorizontal.value
+        val titled = sections.any { it.title != null }
+        val g = remember(columns, rows, safeWidth, maxHeight, titleLine, titled) {
+            HomeLayout.grid(columns, rows, safeWidth, maxHeight.value, titleLine.value, titled)
         }
-        val currentGrid by rememberUpdatedState(grid)
+        // Whether a name in a section's last line (all of a row section's) takes two lines at the card's width: the
+        // line between sections sits lower when one does. Only what comes before another section is measured.
+        val lastNames = remember(sections, g.columns) {
+            sections.dropLast(1).map { s -> (if (s.row) s.entries else s.entries.drop((s.entries.size - 1) / g.columns * g.columns)).map { it.item.title } }
+        }
+        val twoLines = remember(lastNames, g.cardWidth, g.titleLines, cardTitleStyle, density) {
+            val width = with(density) { g.cardWidth.dp.roundToPx() }
+            lastNames.map { names ->
+                g.titleLines > 1 && names.any { measurer.measure(it, cardTitleStyle, constraints = Constraints(maxWidth = width), density = density).lineCount > 1 }
+            }
+        }
+        val layout = remember(sections, twoLines, columns, rows, safeWidth, maxHeight, titleLine) {
+            val shapes = sections.mapIndexed { k, s -> SectionShape(s.title != null, s.row, s.entries.size, twoLines.getOrElse(k) { false }) }
+            HomeLayout.compute(columns, rows, safeWidth, maxHeight.value, titleLine.value, shapes)
+        }
+        val currentLayout by rememberUpdatedState(layout)
+        val currentSections by rememberUpdatedState(sections)
+        val currentPlaces by rememberUpdatedState(places)
+        // The first column's left edge, from the screen's: the grid spans the screen, its content the columns.
+        val x0 = (maxWidth.value - g.viewportWidth) / 2 + g.padding
 
-        // Focus a tile when the screen appears, when the menu closes, and if the focused tile disappeared after a
-        // live update. Its row is brought into view the way moving there would: the grid stays put when the row is
-        // already on screen (back from the player, the screen looks as the viewer left it).
-        LaunchedEffect(ids, active) {
-            if (!active || gridHasFocus) return@LaunchedEffect
-            val target = ids.indexOf(initialFocusItemId).takeIf { it >= 0 } ?: lastFocusedIndex.coerceIn(0, ids.lastIndex)
-            val g = currentGrid
-            val firstRow = g.firstRowShowing(targetRow = target / g.columns, currentFirstRow = gridState.firstVisibleItemIndex / g.columns)
-            gridState.scrollToItem(firstRow * g.columns)
-            requestFocusWithin({ requesters[ids[target]] }, took = { gridHasFocus })
+        fun rowFirst(section: Int): Int = rowStates[currentSections[section].id]?.firstInView() ?: 0
+
+        // The card that had the focus when the sections changed: when it moved to another section its old place went
+        // away, and Compose hands the focus to another card (which then counts as focused last).
+        val focusedBefore = remember(structure) { focus.itemId }
+
+        // Focus a tile when the screen appears, when the menu closes, and if the focused tile disappeared or moved to
+        // another section after a live update. Its line is brought into view the way moving there would: Home stays
+        // put when the line is already on screen (back from the player, the screen looks as the viewer left it).
+        LaunchedEffect(structure, active) {
+            if (!active) return@LaunchedEffect
+            val moved = focusedBefore?.takeIf { it in places }
+            if (moved != null) withFrameNanos { }
+            val id = if (gridHasFocus) {
+                // The focused card may have kept the focus but moved out of view: its line comes back into view.
+                moved?.takeIf { it != focus.itemId } ?: focus.itemId?.takeIf { it in places } ?: return@LaunchedEffect
+            } else {
+                initialFocusItemId?.takeIf { it in places } ?: ids[lastFocusedIndex.coerceIn(0, ids.lastIndex)]
+            }
+            val (s, i) = places.getValue(id)
+            val l = currentLayout
+            if (l.sections[s].row) {
+                val row = rowStates.getOrPut(sections[s].id) { LazyListState() }
+                row.requestScrollToItem(HomeLayout.rowFirst(row.firstInView(), i, l.sections[s].count, l.grid.columns))
+            }
+            val now = l.scrollOf(gridState, density)
+            val to = l.scrollFor(l.lineOf(s, i), now)
+            // Already in view: a scroll under way (the viewer's) is left alone.
+            if (abs(to - now) >= 0.5f) gridState.scrollTo(l, to, density)
+            requestFocusWithin({ requesters[id] }, took = { gridHasFocus && focus.itemId == id })
         }
-        val rowInView = remember(density, grid) {
-            with(density) { RowInView(grid.padding.dp.toPx(), grid.cellHeight.dp.roundToPx().toFloat()) { isActive } }
+
+        /** Whether the card [id] of [section] is laid out (on screen, if only in part), so it can take the focus. */
+        fun laidOut(section: HomeSection, id: String): Boolean {
+            val visible = gridState.layoutInfo.visibleItemsInfo
+            return if (section.row) {
+                visible.any { it.key == ROW_KEY + section.id } && rowStates[section.id]?.layoutInfo?.visibleItemsInfo?.any { it.key == id } == true
+            } else {
+                visible.any { it.key == id }
+            }
         }
-        CompositionLocalProvider(LocalBringIntoViewSpec provides rowInView) {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(grid.columns),
-                state = gridState,
-                horizontalArrangement = Arrangement.spacedBy(grid.gap.dp),
-                verticalArrangement = Arrangement.spacedBy(grid.gap.dp),
-                contentPadding = PaddingValues(grid.padding.dp),
+
+        // ↑ ↓ ← → as the layout says. A card on a line beyond the edge is not laid out yet (Compose's own search would
+        // take the first card of that line it lays out): Home scrolls towards the line, and the card takes the focus
+        // as soon as it is laid out; its bringing into view then carries the scroll on to the same place.
+        fun move(key: Key): Boolean {
+            val direction = when (key) {
+                Key.DirectionLeft, Key.DirectionUp -> -1
+                Key.DirectionRight, Key.DirectionDown -> 1
+                else -> return false
+            }
+            if (focus.pendingMove?.isActive == true) return true
+            val (s, i) = focus.itemId?.let { currentPlaces[it] } ?: return false
+            val l = currentLayout
+            val (ts, ti) = if (key == Key.DirectionLeft || key == Key.DirectionRight) {
+                s to (l.horizontal(s, i, direction) ?: return true)
+            } else {
+                l.vertical(s, i, direction, ::rowFirst) ?: return true
+            }
+            val target = currentSections[ts]
+            val id = target.entries[ti].item.id
+            val requester = requesters[id]
+            if (requester != null && laidOut(target, id)) return requester.requestFocus(FocusDirection.Enter)
+            val from = l.scrollOf(gridState, density)
+            val to = l.scrollFor(l.lineOf(ts, ti), from)
+            scope.launch { gridState.animateScrollBy((to - from) * density.density) }
+            focus.pendingMove = scope.launch {
+                withTimeoutOrNull(PENDING_MOVE_MS) { snapshotFlow { laidOut(target, id) }.first { it } } ?: return@launch
+                requesters[id]?.requestFocus(FocusDirection.Enter)
+            }
+            return true
+        }
+
+        val lineInView = remember(density) {
+            LineInView(density, { currentLayout }, { focus.itemId?.let { currentPlaces[it] }?.let { (s, i) -> currentLayout.lineOf(s, i) } }) { isActive }
+        }
+        val cardInView = remember(density, g, x0) {
+            with(density) {
+                val start = x0.dp.roundToPx().toFloat()
+                val card = g.cardWidth.dp.roundToPx()
+                val end = start + g.columns * card + (g.columns - 1) * g.gap.dp.roundToPx()
+                CardInView(start, end, card.toFloat()) { isActive }
+            }
+        }
+
+        @Composable
+        fun CardTile(entry: HomeEntry, section: Int, index: Int, outer: Modifier) {
+            val id = entry.item.id
+            val requester = requesters.getOrPut(id) { FocusRequester() }
+            // A card that keeps the focus while the sections around it move lights its section's title at its new place.
+            LaunchedEffect(section) { if (gridHasFocus && focus.itemId == id) focus.section.intValue = section }
+            Tile(
+                entry = entry,
+                grid = g,
+                backdropUrl = imageUrl(entry.item.backdropUrl),
+                posterUrl = imageUrl(entry.item.posterUrl),
+                chipSizes = chipSizes,
+                outer = outer,
+                // While the hidden menu is open, focus must not fall through to the tiles behind it.
                 modifier = Modifier
-                    .size(grid.viewportWidth.dp, grid.viewportHeight.dp)
-                    .onFocusChanged { gridHasFocus = it.hasFocus },
+                    .focusRequester(requester)
+                    .focusProperties { canFocus = active }
+                    .onFocusChanged {
+                        if (it.isFocused) {
+                            focus.itemId = id
+                            focus.section.intValue = section
+                        }
+                    },
+                onFocused = {
+                    lastFocusedIndex = sectionStarts[section] + index
+                    onFocused(id)
+                },
+                onClick = { onPlay(entry) },
+            )
+        }
+
+        CompositionLocalProvider(LocalBringIntoViewSpec provides lineInView) {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(g.columns),
+                state = gridState,
+                horizontalArrangement = Arrangement.spacedBy(g.gap.dp),
+                verticalArrangement = Arrangement.spacedBy(g.gap.dp),
+                contentPadding = PaddingValues(horizontal = x0.dp, vertical = g.padding.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(layout.viewportHeight.dp)
+                    .drawWithContent {
+                        drawContent()
+                        // Over the cards: an unfocused card's veil would dim it where it crosses an unused title line.
+                        drawDividers(currentLayout, gridState, x0)
+                    }
+                    .onFocusChanged {
+                        gridHasFocus = it.hasFocus
+                        if (!it.hasFocus) focus.section.intValue = -1
+                    }
+                    .onPreviewKeyEvent { it.type == KeyEventType.KeyDown && move(it.key) },
             ) {
-                itemsIndexed(home, key = { _, entry -> entry.item.id }) { index, entry ->
-                    val requester = requesters.getOrPut(entry.item.id) { FocusRequester() }
-                    Tile(
-                        entry = entry,
-                        grid = grid,
-                        backdropUrl = imageUrl(entry.item.backdropUrl),
-                        posterUrl = imageUrl(entry.item.posterUrl),
-                        chipSizes = chipSizes,
-                        // While the hidden menu is open, focus must not fall through to the tiles behind it.
-                        modifier = Modifier.focusRequester(requester).focusProperties { canFocus = active },
-                        onFocused = {
-                            lastFocusedIndex = index
-                            onFocused(entry.item.id)
-                        },
-                        onClick = { onPlay(entry) },
-                    )
+                items(
+                    count = layout.slots.size,
+                    key = { i ->
+                        when (val slot = layout.slots[i]) {
+                            is HomeLayout.Card -> sections[slot.section].entries[slot.index].item.id
+                            is HomeLayout.Title -> TITLE_KEY + sections[slot.section].id
+                            is HomeLayout.Row -> ROW_KEY + sections[slot.section].id
+                        }
+                    },
+                    span = { i -> GridItemSpan((layout.slots[i] as? HomeLayout.Card)?.span ?: maxLineSpan) },
+                    contentType = { i -> layout.slots[i]::class },
+                ) { i ->
+                    when (val slot = layout.slots[i]) {
+                        is HomeLayout.Card -> CardTile(
+                            sections[slot.section].entries[slot.index],
+                            slot.section,
+                            slot.index,
+                            // A section's last card ending its grid row spans the rest of it, at one card's width.
+                            if (slot.span > 1) Modifier.wrapContentWidth(Alignment.Start).width(g.cardWidth.dp) else Modifier.fillMaxWidth(),
+                        )
+                        is HomeLayout.Title -> SectionTitle(sections[slot.section].title.orEmpty(), slot) { focus.section.intValue == slot.section }
+                        is HomeLayout.Row -> {
+                            val section = sections[slot.section]
+                            val rowState = rowStates.getOrPut(section.id) { LazyListState() }
+                            CompositionLocalProvider(LocalBringIntoViewSpec provides cardInView) {
+                                LazyRow(
+                                    state = rowState,
+                                    contentPadding = PaddingValues(horizontal = x0.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(g.gap.dp),
+                                    // From the screen's left edge to its right: the cards around the columns show in
+                                    // the side margins.
+                                    modifier = Modifier
+                                        .layout { measurable, constraints ->
+                                            val width = maxWidth.roundToPx()
+                                            val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+                                            layout(constraints.maxWidth, placeable.height) { placeable.place(-x0.dp.roundToPx(), 0) }
+                                        }
+                                        .height(g.cellHeight.dp),
+                                ) {
+                                    itemsIndexed(section.entries, key = { _, entry -> entry.item.id }) { index, entry ->
+                                        CardTile(entry, slot.section, index, Modifier.width(g.cardWidth.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
-        val totalRows = grid.rowCount(home.size)
-        if (totalRows > grid.rows) {
-            ScrollIndicator(
-                gridState,
-                grid,
-                totalRows,
-                // In the right safe margin, level with the rows.
-                Modifier.align(Alignment.CenterEnd).offset(x = IzleSpacing.SafeHorizontal - ScrollIndicatorEndGap),
+        if (layout.contentHeight > layout.viewportHeight) {
+            // In the right safe margin, level with the rows.
+            ScrollIndicator(gridState, layout, Modifier.align(Alignment.CenterEnd).offset(x = -ScrollIndicatorEndGap))
+        }
+    }
+}
+
+/**
+ * The lines between sections, where [layout] puts them relative to a section's first item or the last line above it
+ * (whichever is laid out), so they scroll with the cards; clipped to the grid.
+ */
+private fun DrawScope.drawDividers(layout: HomeLayout, state: LazyGridState, x0: Float) {
+    if (layout.sections.size < 2) return
+    val info = state.layoutInfo
+    val visible = info.visibleItemsInfo
+    val thickness = HomeLayout.DIVIDER_HEIGHT.dp.toPx()
+    clipRect {
+        for (k in 1 until layout.sections.size) {
+            val section = layout.sections[k]
+            val centre = section.divider ?: continue
+            val above = layout.lines[layout.sections[k - 1].lastLine].slot
+            val anchor = visible.firstOrNull { it.index == section.firstSlot } ?: visible.firstOrNull { it.index == above } ?: continue
+            val y = anchor.offset.y - info.viewportStartOffset + (centre - layout.slots[anchor.index].top).dp.toPx()
+            drawRoundRect(
+                DividerColor,
+                topLeft = Offset(x0.dp.toPx(), y - thickness / 2),
+                size = Size(layout.contentWidth.dp.toPx(), thickness),
+                cornerRadius = CornerRadius(thickness / 2),
             )
         }
     }
 }
 
-/** Track and thumb: where the rows in view are among all of them. It takes no focus and says nothing. */
+/** A section's title: one line, white while the focus is in the section, dimmed like the cards otherwise. No focus. */
 @Composable
-private fun ScrollIndicator(state: LazyGridState, grid: HomeGrid, totalRows: Int, modifier: Modifier) {
-    val trackHeight = (grid.viewportHeight - 2 * grid.padding).dp
+private fun SectionTitle(text: String, slot: HomeLayout.Title, focused: () -> Boolean) {
+    Box(Modifier.fillMaxWidth().height(slot.height.dp)) {
+        Text(
+            text,
+            style = MaterialTheme.typography.headlineSmall,
+            color = if (focused()) IzleColors.OnSurface else IzleColors.Dim,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier
+                .fillMaxWidth()
+                .wrapContentHeight(Alignment.Top, unbounded = true)
+                .offset(y = slot.textOffset.dp)
+                .semantics { heading() },
+        )
+    }
+}
+
+/** Track and thumb: where the screen is in all of Home. It takes no focus and says nothing. */
+@Composable
+private fun ScrollIndicator(state: LazyGridState, layout: HomeLayout, modifier: Modifier) {
+    val trackHeight = (layout.viewportHeight - 2 * layout.grid.padding).dp
     val density = LocalDensity.current
-    val pitchPx = with(density) { grid.rowPitch.dp.toPx() }
     val trackPx = with(density) { trackHeight.toPx() }
     Box(modifier.size(ScrollIndicatorWidth, trackHeight).background(IzleColors.ScrollTrack, IzleShapes.Pill)) {
         Box(
             Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(grid.rows.toFloat() / totalRows)
-                .offset {
-                    val scrolled = state.firstVisibleItemIndex / grid.columns + state.firstVisibleItemScrollOffset / pitchPx
-                    val rowsAbove = scrolled.coerceIn(0f, (totalRows - grid.rows).toFloat())
-                    IntOffset(0, (rowsAbove / totalRows * trackPx).roundToInt())
-                }
+                .fillMaxHeight(layout.thumbFraction)
+                .offset { IntOffset(0, (layout.thumbOffset(layout.scrollOf(state, density)) * trackPx).roundToInt()) }
                 .background(IzleColors.ScrollThumb, IzleShapes.Pill),
         )
     }
@@ -318,6 +639,9 @@ private fun Tile(
     backdropUrl: String?,
     posterUrl: String?,
     chipSizes: ChipSizes,
+    /** The cell's width: its grid cell's, or one card's. */
+    outer: Modifier,
+    /** The card's. */
     modifier: Modifier,
     onFocused: () -> Unit,
     onClick: () -> Unit,
@@ -329,7 +653,7 @@ private fun Tile(
     LaunchedEffect(interaction) { snapshotFlow { focused.value }.collect { if (it) currentOnFocused() } }
 
     Column(
-        Modifier.fillMaxWidth().height(grid.cellHeight.dp).drawWithContent {
+        outer.height(grid.cellHeight.dp).drawWithContent {
             drawContent()
             if (!focused.value) drawRect(UnfocusedVeil)
         },

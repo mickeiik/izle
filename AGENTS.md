@@ -1,7 +1,8 @@
 # AGENTS.md
 
 Guidance for coding agents (and humans) working in this repository. The specs in [docs/spec/](docs/spec/) and the
-UX rules in [docs/ux/senior-tv.md](docs/ux/senior-tv.md) describe what the software does. Append a few lines to
+UX rules in [docs/ux/senior-tv.md](docs/ux/senior-tv.md) (the TV) and [docs/ux/admin-home.md](docs/ux/admin-home.md)
+(a TV's Home on the admin page) describe what the software does. Append a few lines to
 [docs/decisions.md](docs/decisions.md) only for a choice that the code, the specs and this file do not explain.
 
 ## Product principles

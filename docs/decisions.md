@@ -393,3 +393,72 @@ The server side of the specification above, in one change (the admin page and th
   the mirror won because it shows the owner exactly what the viewer sees.
 - The grid size moved from Settings to this tab, previewed before it is saved. Enter on a card does not play it:
   a stray key would start something on someone's TV; Play is a button of the selected card.
+
+## Home sections: specification (2026-10-22)
+
+- How to keep the untitled section apart from a titled grid above it was prototyped four ways: titles only (the
+  untitled shows read as part of the section above), a line between sections, a lighter panel under each titled
+  section, and a "More" heading the TV adds. The owner chose the line, and asked for its boundary to take exactly the
+  step between two rows: a wider gap read as a hole in the screen.
+- `homeSections` sits beside the flat `home` rather than replacing it, so a TV without sections shows one grid in Home
+  order, and Home order (autoplay's first tile, CH+/CH− among channels) stays one list the TV already uses.
+- `PUT …/home {"itemIds"}` keeps each item's section instead of dropping the sections: an agent or script written
+  before sections cannot wipe the owner's titles by reordering. Deleting a section moves its shows to the untitled
+  section for the same reason: nothing leaves Home unless it is removed.
+- The untitled section has a fixed id (`untitled`) so the item routes can name it, and a layout like the others; it
+  can be moved, since the owner may want a titled section such as "Channels" first.
+- `layout` is an enum (`grid`, `row`) rather than a boolean, so a later layout is additive; the TV treats an unknown
+  one as `grid`.
+
+## Home sections, server (2026-10-22)
+
+- Sections are a `home_sections` table per TV; each home entry names its section through a composite foreign key
+  (TV, section), so an entry can never point at another TV's section or at a deleted one. Adding that key meant
+  rebuilding `home_entries` (migration 10). `layout` has no CHECK: the API holds the enum, so a later layout needs no
+  table rebuild.
+- Migration 10 stores the untitled section for every TV it finds; a TV paired later has no row until its Home is
+  first written, and reads as the untitled section alone (first) until then. One rule for reads, no write on pairing.
+- `expected` in the `{"sections"}` form needs each section's `id` and `itemIds`; `title` and `layout` are compared
+  only when given, so a caller that tracks only what is on Home is not refused over a renamed section.
+- In `PUT …/home {"sections"}` a section other than the untitled one without a string `title` is `400
+  invalid_request`, as is a blank one. `PATCH …/items/:itemId` naming the item's own section without `position`
+  leaves it where it is.
+- Every Home change runs one edit inside one transaction and checks the result (items, duplicates, sections, new
+  items), so `expected` is now checked before the body's own refusals (`duplicate_item` used to come first).
+
+## Home sections, admin page (2026-10-22)
+
+- With a titled section the viewport is HomeGrid's viewport for the reduced height plus the 44 dp title block, centred
+  as before: "the viewport as today" read so that one screen holds a title and that many rows, as senior-tv.md says.
+  The scroll bar sits where HomeScreen.kt puts it (22 dp from the screen's edge), not where the prototype drew it.
+- An empty titled section's dashed band fills its whole cell (card and title lines), so the line under it has no
+  unused title line to count. When the TV shows nothing at all, the mirror shows "Nothing here yet" as the TV does;
+  empty sections are then only in the Sections list.
+- Choosing a section in the list scrolls the screen without moving the selection, and the screen stays there across
+  refreshes until a card is selected again: the owner is editing that section.
+- A title or layout edit made while another change is saving waits for it instead of being dropped (the field would
+  otherwise show an unsaved title); moves and adds are still ignored, as each was computed from what the owner saw.
+- ▼ in a grid section moves the card to the nearest place in the next row (the last card when that row is shorter);
+  a show added to the untitled section reads "added to Home", "added to No title" being no sentence.
+
+## Home sections, TV app (2026-10-22)
+
+- One `LazyVerticalGrid` draws all of Home: a section title is an item across the grid, a row section one item
+  across the grid holding a `LazyRow` that spans the screen (its cards show in the side margins). The title items'
+  heights make the grid's single `spacedBy(gap)` give the specified tops (`HomeLayout.slots`), so a Home without a
+  titled section is the same grid items as before, and the lazy cache window stays as it was. A grid section's last
+  card spans the rest of its row (at one card's width) when an untitled grid follows. A custom layout was not needed.
+- The lines between sections are drawn over the grid from its layout info, each anchored to the item under it, or
+  else the last line above it: a line can lie in the unused second title line of the row above, where neither item
+  alone is always laid out, and an unfocused card's dimming would cover it if it were drawn behind.
+- ↑ ↓ ← → are handled from `HomeLayout`, not by Compose's focus search: a lazy grid lays out the next line item by
+  item and the search stops at its first card (↓ from the fourth column landed on the first). When the target card
+  is not laid out yet, Home scrolls towards its line and focuses it once laid out (other arrow keys wait for that,
+  at most 1 s); ← and → stop at a line's ends, which the search did not do with cards peeking into the margins.
+- Bring-into-view works out the focused card's unscaled bounds from its centre: the request grows with the 110 %
+  scale while that animates, and the target must not move with it.
+- When the sections change, the card that had the focus gets it back and its line is brought into view: moving a
+  card to another section disposes its old place, and Compose hands the focus to another card first.
+- An entry of `home` that no section holds is drawn at the end of the untitled section. The scroll bar is viewport / content height (as the admin
+  mirror), a fraction of a dp from the former rows / total rows. The line's centre is rounded halves up, as the
+  admin page's `Math.round`.

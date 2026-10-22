@@ -13,13 +13,36 @@ val ApiJson: Json = Json {
     coerceInputValues = true
 }
 
+/**
+ * `home` is the one list in Home order (autoplay's first tile, CH+/CH− among channels); `homeSections` says how Home
+ * cuts it into sections (none from an older server or in an older cached state). See
+ * [io.github.mickeiik.izle.domain.HomeSections].
+ */
 @Serializable
 data class TvState(
     val version: Long,
     val device: DeviceInfo,
     val catalog: CatalogInfo,
     val home: List<HomeEntry> = emptyList(),
+    val homeSections: List<HomeSectionInfo> = emptyList(),
 )
+
+/**
+ * A section of Home: [title] null for the untitled section, [layout] `grid` or `row` (one line that scrolls sideways;
+ * any other value is a grid), [itemIds] the ids of its entries in `home`, in order.
+ */
+@Serializable
+data class HomeSectionInfo(
+    val id: String,
+    val title: String? = null,
+    val layout: String = LAYOUT_GRID,
+    val itemIds: List<String> = emptyList(),
+) {
+    companion object {
+        const val LAYOUT_GRID = "grid"
+        const val LAYOUT_ROW = "row"
+    }
+}
 
 /**
  * `autoplayOnStart`: when the TV comes on and shows Home, start the last show after a countdown (owner setting).

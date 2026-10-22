@@ -1,5 +1,6 @@
-// The admin API: pairing approval, the TVs (list, page, settings, deletion, adopting a deleted TV's history, home
-// list, "continue from", what each has watched and is playing, remote commands and their results, problem reports),
+// The admin API: pairing approval, the TVs (list, page, settings, deletion, adopting a deleted TV's history,
+// "continue from", what each has watched and is playing, remote commands and their results, problem reports; the
+// home list's changes are admin-home.ts's),
 // the catalog (what is loaded and its builds, the browser, an item's details, the "test this episode or channel" diagnostics, the
 // reload), and "Listen along" (companion audio on the owner's phone: the candidate sources of what a TV plays,
 // resolving one for the phone, the timing links).
@@ -9,14 +10,14 @@ import { BROWSE_SORTS, ITEM_KINDS, type BrowseQuery, type BrowseSort, type ItemK
 import type { AppContext } from "../../context.ts";
 import { diagnosePlayable } from "../../diagnostics.ts";
 import { HttpError } from "../../errors.ts";
-import { HOME_MAX_ITEMS } from "../../home.ts";
+import { HOME_MAX_ITEMS, HOME_MAX_SECTIONS } from "../../home.ts";
 import { requireItem } from "../../lookup.ts";
 import { PAIR_CODE } from "../../pairing.ts";
 import { PROBLEM_LIST_DEFAULT, PROBLEM_LIST_MAX } from "../../problems.ts";
 import { iso } from "../../presenters.ts";
 import type { Device, Store } from "../../store.ts";
 import { MAX_NOW_WAIT_MS } from "../../playing.ts";
-import { adoptBody, approveBody, commandBody, companionLinkBody, companionResolveBody, cursorBody, devicePatchBody, diagnosticsBody, homeBody, intParam, intQuery, isId, limitQuery, listQuery, parseBody, parseWait, timeQuery } from "../../validation.ts";
+import { adoptBody, approveBody, commandBody, companionLinkBody, companionResolveBody, cursorBody, devicePatchBody, diagnosticsBody, intParam, intQuery, isId, limitQuery, listQuery, parseBody, parseWait, timeQuery } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
 
 /** The device a `/admin/devices/:id` route names; 404 `unknown_device` otherwise. */
@@ -75,7 +76,7 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
 
   app.get("/api/v1/admin/devices/:id", (c) => {
     const d = requireDevice(store, c.req.param("id"));
-    return c.json({ device: devices.view(d), home: devices.home(d), homeMax: HOME_MAX_ITEMS });
+    return c.json({ device: devices.view(d), home: devices.home(d), homeMax: HOME_MAX_ITEMS, sections: home.sections(d.id), sectionsMax: HOME_MAX_SECTIONS });
   });
 
   app.patch("/api/v1/admin/devices/:id", async (c) => {
@@ -93,13 +94,6 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
     const d = requireDevice(store, c.req.param("id"));
     const body = await parseBody(c, adoptBody);
     return c.json({ moved: devices.adoptHistory(d, body.fromDeviceId, c.get("actor")) });
-  });
-
-  app.put("/api/v1/admin/devices/:id/home", async (c) => {
-    const d = requireDevice(store, c.req.param("id"));
-    const body = await parseBody(c, homeBody);
-    const version = home.set(d.id, body.itemIds, c.get("actor"), body.expected);
-    return c.json({ version, home: devices.home(d) });
   });
 
   app.put("/api/v1/admin/devices/:id/cursor", async (c) => {

@@ -204,6 +204,8 @@ test("replacing a TV: the new TV takes over the device and everything stored for
   const old = await s.pair("Salon");
   const d = old.deviceId;
   await s.admin("PUT", `/devices/${d}/home`, { itemIds: ["show", "film"] });
+  const films = (await s.admin("POST", `/devices/${d}/home/sections`, { title: "Films", layout: "row", position: 0 })).json.sectionId;
+  await s.admin("PATCH", `/devices/${d}/home/items/film`, { sectionId: films });
   await s.admin("PATCH", `/devices/${d}`, { autoplayOnStart: true });
   await s.call("POST", "/api/v1/tv/progress", { token: old.token, body: { episodeId: "show.e1", positionMs: 60_000, durationMs: 1_200_000, status: "stopped" } });
   const oldStream = await openEvents(s.base, old.token);
@@ -227,7 +229,8 @@ test("replacing a TV: the new TV takes over the device and everything stored for
 
   const state = (await s.call("GET", "/api/v1/tv/state", { token: done.json.deviceToken })).json;
   assert.deepEqual([state.device.id, state.device.name, state.device.autoplayOnStart], [d, "Salon", true]);
-  assert.deepEqual(state.home.map((h: Json) => [h.item.id, h.continue.positionMs]), [["show", 60_000], ["film", 0]]);
+  assert.deepEqual(state.home.map((h: Json) => [h.item.id, h.continue.positionMs]), [["film", 0], ["show", 60_000]]);
+  assert.deepEqual(state.homeSections.map((x: Json) => [x.id, x.title, x.layout, x.itemIds]), [[films, "Films", "row", ["film"]], ["untitled", null, "grid", ["show"]]], "and its sections");
   assert.deepEqual((await s.admin("GET", "/devices")).json.devices.map((x: Json) => x.id).sort(), [d, pendingId].sort(), "no device was created");
   const paired = (await s.admin("GET", "/events?after=0&types=device.paired")).json.events.map((e: Json) => [e.deviceId, e.data]);
   assert.deepEqual(paired, [[d, { name: "Salon", replaced: false }], [d, { name: "Salon", replaced: true }]]);

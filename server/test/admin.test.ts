@@ -550,3 +550,96 @@ test("channels on the admin side: search hits and item details, playable on the 
   const gone = (await s.admin("GET", `/devices/${tv.deviceId}`)).json.home[0];
   assert.deepEqual([gone.itemId, gone.missing, gone.playable, gone.continue], ["news", true, false, null]);
 });
+
+test("home sections: the device page lists them, every route answers version, home and sections, refusals as specified", async (t) => {
+  const { s, tv } = await setup(t);
+  const home = (method: string, route: string, body?: unknown) => s.admin(method, `/devices/${tv.deviceId}/home${route}`, body);
+  const shape = (r: Json) => r.json.sections.map((x: Json) => [x.id, x.title, x.layout, x.itemIds]);
+  const ids = (r: Json) => r.json.home.map((h: { itemId: string }) => h.itemId);
+
+  const detail = await s.admin("GET", `/devices/${tv.deviceId}`);
+  assert.deepEqual([detail.json.sections, detail.json.sectionsMax], [[{ id: "untitled", title: null, layout: "grid", itemIds: [] }], 20]);
+  const v0 = detail.json.device.stateVersion;
+  const after = (await s.admin("GET", "/events")).json.last;
+
+  const put = await home("PUT", "", { itemIds: ["show", "film"] });
+  assert.deepEqual([put.json.version, ids(put), shape(put)], [v0 + 1, ["show", "film"], [["untitled", null, "grid", ["show", "film"]]]]);
+
+  const created = await home("POST", "/sections", { title: " Kanallar ", layout: "row", position: 0 });
+  assert.equal(created.status, 200);
+  const channels = created.json.sectionId;
+  assert.match(channels, /^[A-Za-z0-9]{8}$/);
+  assert.deepEqual([created.json.version, shape(created)], [v0 + 2, [[channels, "Kanallar", "row", []], ["untitled", null, "grid", ["show", "film"]]]]);
+
+  const added = await home("POST", "/items", { itemId: "news", sectionId: channels });
+  assert.deepEqual([ids(added), shape(added)[0][3]], [["news", "show", "film"], ["news"]], "home in Home order");
+  const moved = await home("PATCH", "/items/film", { sectionId: channels, position: 0 });
+  assert.deepEqual([ids(moved), shape(moved)[0][3]], [["film", "news", "show"], ["film", "news"]]);
+  const patched = await home("PATCH", `/sections/${channels}`, { title: "Channels", layout: "grid", position: 5 });
+  assert.deepEqual(shape(patched), [["untitled", null, "grid", ["show"]], [channels, "Channels", "grid", ["film", "news"]]]);
+  const untitledRow = await home("PATCH", "/sections/untitled", { layout: "row" });
+  assert.equal(untitledRow.json.sections[0].layout, "row");
+
+  const replaced = await home("PUT", "", {
+    sections: [{ id: channels, title: "Channels", itemIds: ["news"] }, { title: "Films", itemIds: ["film", "silent"] }, { id: "untitled", title: null, itemIds: ["show"] }],
+    expected: patched.json.sections.map((x: Json) => (x.id === "untitled" ? { ...x, layout: "row" } : x)),
+  });
+  assert.equal(replaced.status, 200);
+  const films = replaced.json.sections[1].id;
+  assert.deepEqual(shape(replaced), [[channels, "Channels", "grid", ["news"]], [films, "Films", "grid", ["film", "silent"]], ["untitled", null, "row", ["show"]]]);
+  assert.deepEqual(ids(replaced), ["news", "film", "silent", "show"]);
+
+  const deleted = await home("DELETE", `/sections/${films}`);
+  assert.deepEqual(shape(deleted), [[channels, "Channels", "grid", ["news"]], ["untitled", null, "row", ["show", "film", "silent"]]]);
+  assert.equal(deleted.json.version, v0 + 8);
+  const removed = await home("DELETE", "/items/news");
+  assert.deepEqual(shape(removed)[0], [channels, "Channels", "grid", []]);
+  assert.deepEqual((await s.admin("GET", `/devices/${tv.deviceId}`)).json.sections, removed.json.sections, "the device page agrees");
+
+  const events = (await s.admin("GET", `/events?after=${after}&types=home.changed`)).json.events.map((e: Json) => e.data);
+  assert.equal(events.length, 9, "every change emits home.changed");
+  assert.deepEqual(events[1], { itemIds: ["show", "film"], added: [], removed: [] }, "a section alone: nothing came or went");
+  assert.deepEqual(events[6], { itemIds: ["news", "film", "silent", "show"], added: ["silent"], removed: [] });
+
+  const refused: Array<[string, string, unknown, number, string]> = [
+    ["POST", "/sections", { title: "   " }, 400, "invalid_request"],
+    ["POST", "/sections", { title: "x".repeat(41) }, 400, "invalid_request"],
+    ["POST", "/sections", { title: "Ok", layout: "carousel" }, 400, "invalid_request"],
+    ["POST", "/sections", { layout: "row" }, 400, "invalid_request"],
+    ["POST", "/sections", { title: "Ok", position: -1 }, 400, "invalid_request"],
+    ["PATCH", `/sections/${channels}`, {}, 400, "invalid_request"],
+    ["PATCH", `/sections/${channels}`, { title: null }, 400, "invalid_request"],
+    ["PATCH", "/sections/untitled", { title: "More" }, 400, "untitled_section"],
+    ["PATCH", "/sections/nope1234", { layout: "row" }, 404, "unknown_section"],
+    ["PATCH", "/sections/not-an-id!", { layout: "row" }, 404, "unknown_section"],
+    ["DELETE", "/sections/untitled", undefined, 400, "untitled_section"],
+    ["DELETE", "/sections/nope1234", undefined, 404, "unknown_section"],
+    ["POST", "/items", { itemId: "news", sectionId: "nope1234" }, 404, "unknown_section"],
+    ["PATCH", "/items/show", { sectionId: "nope1234" }, 404, "unknown_section"],
+    ["PATCH", "/items/news", { sectionId: channels }, 404, "not_on_home"],
+    ["PUT", "", { sections: [{ title: "No untitled", itemIds: [] }] }, 400, "untitled_section"],
+    ["PUT", "", { sections: [{ id: "untitled", itemIds: [] }, { id: channels, title: "A", itemIds: [] }, { id: channels, title: "B", itemIds: [] }] }, 400, "duplicate_section"],
+    ["PUT", "", { sections: [{ id: "untitled", itemIds: [] }, { id: "nope1234", title: "A", itemIds: [] }] }, 404, "unknown_section"],
+    ["PUT", "", { sections: [{ id: "untitled", itemIds: ["show"] }, { id: channels, title: "A", itemIds: ["show"] }] }, 400, "duplicate_item"],
+    ["PUT", "", { sections: [{ id: "untitled", itemIds: [] }, { title: "", itemIds: [] }] }, 400, "invalid_request"],
+    ["PUT", "", { sections: [{ id: "untitled", itemIds: [], layout: "carousel" }] }, 400, "invalid_request"],
+    ["PUT", "", { itemIds: [], sections: [{ id: "untitled", itemIds: [] }] }, 400, "invalid_request"],
+    ["PUT", "", { itemIds: [], expected: [{ id: "untitled", itemIds: [] }] }, 400, "invalid_request"],
+    ["PUT", "", { sections: [{ id: "untitled", itemIds: [] }], expected: ["show"] }, 400, "invalid_request"],
+    ["PUT", "", { sections: [{ id: "untitled", itemIds: [] }], expected: [{ id: "untitled", itemIds: [] }] }, 409, "home_changed"],
+    ["PUT", "", { itemIds: [], expected: ["film", "silent", "show"] }, 409, "home_changed"],
+  ];
+  for (const [method, route, body, status, error] of refused) {
+    const r = await home(method, route, body);
+    assert.deepEqual([r.status, r.json.error], [status, error], `${method} ${route} ${JSON.stringify(body)}`);
+    if (error === "home_changed") assert.deepEqual([r.json.itemIds, r.json.sections], [ids(removed), removed.json.sections], "a conflict answers the current Home");
+  }
+
+  const many = await home("PUT", "", {
+    sections: [{ id: "untitled", itemIds: [] }, ...Array.from({ length: 20 }, (_, i) => ({ title: `S${i + 1}`, itemIds: [] }))],
+  });
+  assert.equal(many.json.sections.length, 21);
+  const oneMore = await home("POST", "/sections", { title: "S21" });
+  assert.deepEqual([oneMore.status, oneMore.json.error, oneMore.json.max], [400, "too_many_sections", 20]);
+  assert.equal((await s.admin("GET", `/devices/${tv.deviceId}`)).json.device.stateVersion, many.json.version, "refusals bump nothing");
+});

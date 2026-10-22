@@ -368,3 +368,42 @@ test("a channel's report: no position, no cursor, no state bump; now playing wit
   const show = await as("POST", "/progress", { itemId: "show", status: "playing" });
   assert.deepEqual([show.status, show.json.error], [400, "has_episodes"]);
 });
+
+test("state: homeSections cut home in Home order; sections left empty by missing or unplayable items are left out", async (t) => {
+  const { s, tv, as } = await setup(t);
+  assert.deepEqual((await as("GET", "/state")).json.homeSections, [], "an empty Home has no sections to show");
+  const home = (method: string, route: string, body?: unknown) => s.admin(method, `/devices/${tv.deviceId}/home${route}`, body);
+  const channels = (await home("POST", "/sections", { title: "Channels", layout: "row" })).json.sectionId;
+  const films = (await home("POST", "/sections", { title: "Films", position: 0 })).json.sectionId;
+  await home("POST", "/sections", { title: "Empty" });
+  await home("PUT", "", { itemIds: ["show", "silent", "news", "film"] });
+  await home("PATCH", "/items/news", { sectionId: channels });
+  const last = await home("PATCH", "/items/film", { sectionId: films });
+
+  let state = await as("GET", "/state");
+  assert.equal(state.json.version, last.json.version);
+  assert.deepEqual(state.json.homeSections, [
+    { id: films, title: "Films", layout: "grid", itemIds: ["film"] },
+    { id: "untitled", title: null, layout: "grid", itemIds: ["show", "silent"] },
+    { id: channels, title: "Channels", layout: "row", itemIds: ["news"] },
+  ]);
+  assert.deepEqual(state.json.home.map((h: Json) => h.item.id), ["film", "show", "silent", "news"], "home in Home order: the sections' items one after another");
+
+  const moved = await home("PATCH", "/sections/untitled", { position: 0 });
+  state = await as("GET", "/state");
+  assert.equal(state.json.version, moved.json.version, "a section change is a new state version");
+  assert.deepEqual(state.json.home.map((h: Json) => h.item.id), ["show", "silent", "film", "news"]);
+
+  // A reload takes "film" away and leaves "news" unplayable: their sections have nothing left to show.
+  const items = fixtureItems();
+  items.items = items.items.filter((i: Json) => i.id !== "film").map((i: Json) => (i.id === "news" ? { ...i, playbackAllowed: false } : i));
+  await writeBundle(s.bundleDir, { ...fixtureManifest(), buildId: "fixture-2" }, items);
+  assert.equal((await s.admin("POST", "/catalog/reload")).status, 200);
+  state = await as("GET", "/state");
+  assert.deepEqual(state.json.homeSections, [{ id: "untitled", title: null, layout: "grid", itemIds: ["show", "silent"] }]);
+  assert.deepEqual(state.json.home.map((h: Json) => h.item.id), ["show", "silent"]);
+  const detail = await s.admin("GET", `/devices/${tv.deviceId}`);
+  assert.deepEqual(detail.json.sections.map((x: Json) => [x.title, x.itemIds]), [[null, ["show", "silent"]], ["Films", ["film"]], ["Channels", ["news"]], ["Empty", []]],
+    "the admin page keeps every section and item");
+  assert.deepEqual(detail.json.home.map((h: Json) => [h.itemId, h.missing, h.playable]), [["show", false, true], ["silent", false, true], ["film", true, false], ["news", false, false]]);
+});

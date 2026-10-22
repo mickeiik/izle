@@ -6,7 +6,7 @@ import type { CompanionResolveInput, LinkInput } from "./companion.ts";
 import { LANGUAGE_TAG_PATTERN, objectSchema as object } from "./config.ts";
 import type { DiagnosticsInput } from "./diagnostics.ts";
 import { HttpError } from "./errors.ts";
-import { HOME_COLUMNS, HOME_ROWS } from "./home.ts";
+import { HOME_COLUMNS, HOME_ROWS, SECTION_LAYOUTS, SECTION_TITLE_MAX, type ExpectedSection, type ItemMove, type SectionInput, type SectionLayout, type SectionPatch } from "./home.ts";
 import { PAIR_CODE } from "./pairing.ts";
 import { LIVE_REPORT_STATUSES, PROGRESS_REPORT_STATUSES } from "./playback.ts";
 import type { ProgressInput } from "./playing.ts";
@@ -60,11 +60,34 @@ const episodeOrChannel = (shared: object, episode: Branch = {}, channel: Branch 
 const ITEM_IDS = { type: "array", items: ID, maxItems: 1000 };
 const POSITION = { type: "integer", minimum: 0 };
 
-export const homeBody = ajv.compile<{ itemIds: string[]; expected?: string[] }>(object({ itemIds: ITEM_IDS, expected: ITEM_IDS }, ["itemIds"]));
+const SECTION_TITLE = { type: "string", minLength: 1, maxLength: SECTION_TITLE_MAX, pattern: "\\S" };
+const LAYOUT = { enum: SECTION_LAYOUTS };
+/** Sections of `PUT …/home` (or what the caller saw); up to 100, so that a Home with too many answers `too_many_sections`. */
+const sectionList = (required: string[]) => ({
+  type: "array", maxItems: 100, items: object({ id: ID, title: { anyOf: [SECTION_TITLE, NULL] }, layout: LAYOUT, itemIds: ITEM_IDS }, required),
+});
 
-export const homeItemBody = ajv.compile<{ itemId: string; position?: number }>(object({ itemId: ID, position: POSITION }, ["itemId"]));
+/** `PUT …/home`: the items (sections kept) or the whole Home in sections, each with `expected` in its own shape. */
+export type HomeBody = { itemIds: string[]; expected?: string[] } | { sections: SectionInput[]; expected?: ExpectedSection[] };
 
-export const homeMoveBody = ajv.compile<{ position: number }>(object({ position: POSITION }, ["position"]));
+export const homeBody = ajv.compile<HomeBody>({
+  oneOf: [
+    object({ itemIds: ITEM_IDS, expected: ITEM_IDS }, ["itemIds"]),
+    object({ sections: sectionList(["itemIds"]), expected: sectionList(["id", "itemIds"]) }, ["sections"]),
+  ],
+});
+
+export const homeItemBody = ajv.compile<{ itemId: string; sectionId?: string; position?: number }>(
+  object({ itemId: ID, sectionId: ID, position: POSITION }, ["itemId"]),
+);
+
+export const homeMoveBody = ajv.compile<ItemMove>({ ...object({ position: POSITION, sectionId: ID }), minProperties: 1 });
+
+export const sectionCreateBody = ajv.compile<{ title: string; layout?: SectionLayout; position?: number }>(
+  object({ title: SECTION_TITLE, layout: LAYOUT, position: POSITION }, ["title"]),
+);
+
+export const sectionPatchBody = ajv.compile<SectionPatch>({ ...object({ title: SECTION_TITLE, layout: LAYOUT, position: POSITION }), minProperties: 1 });
 
 export const cursorBody = ajv.compile<{ itemId: string; episodeId: string }>(object({ itemId: ID, episodeId: ID }, ["itemId", "episodeId"]));
 

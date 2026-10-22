@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { MIGRATIONS, SCHEMA_VERSION, Store } from "../src/store.ts";
-import { tempDir } from "./helpers.ts";
+import { tempDir, untitled } from "./helpers.ts";
 
 test("migrations run once and record the schema version", async () => {
   const file = path.join(await tempDir(), "data", "izle.db");
@@ -28,12 +28,12 @@ test("refuses a database written by a newer server", async () => {
 test("deleting a device cascades to its rows; transactions roll back on error", async () => {
   const s = new Store(path.join(await tempDir(), "izle.db"));
   s.createDevice({ id: "d1", name: "TV", tokenHash: "h1", now: 1 });
-  s.setHome("d1", "c", ["a", "b"], 1);
+  s.setHome("d1", "c", untitled(["a", "b"]), 1);
   s.upsertProgress("d1", { catalogId: "c", itemId: "a", episodeId: "a.1", positionMs: 5, durationMs: 10, status: "watching", updatedAt: 2 });
   s.insertCommand("d1", "stop", {}, { type: "owner" }, 3);
   assert.throws(() =>
     s.transaction(() => {
-      s.setHome("d1", "c", ["x"], 2);
+      s.setHome("d1", "c", untitled(["x"]), 2);
       throw new Error("boom");
     }),
   );
@@ -132,16 +132,16 @@ test("migration 4: home entries keep the date they were added, cursors carry the
   const backfilled = s.getHomeEntries("d1", "c");
   const at = backfilled[0]!.addedAt!;
   assert.ok(at >= Math.floor(before / 1000) * 1000 && at <= Date.now(), "existing rows are backfilled to the migration time");
-  assert.deepEqual(backfilled, [{ itemId: "a", addedAt: at }, { itemId: "b", addedAt: at }]);
+  assert.deepEqual(backfilled, [{ itemId: "a", addedAt: at, sectionId: "untitled" }, { itemId: "b", addedAt: at, sectionId: "untitled" }]);
   assert.deepEqual(s.getCursor("d1", "c", "a"), { catalogId: "c", itemId: "a", episodeId: "a.2", updatedAt: 5, wrapped: false });
 
-  s.setHome("d1", "c", ["b", "a"], at + 1000);
-  const reordered = [{ itemId: "b", addedAt: at }, { itemId: "a", addedAt: at }];
+  s.setHome("d1", "c", untitled(["b", "a"]), at + 1000);
+  const reordered = [{ itemId: "b", addedAt: at, sectionId: "untitled" }, { itemId: "a", addedAt: at, sectionId: "untitled" }];
   assert.deepEqual(s.getHomeEntries("d1", "c"), reordered, "a reorder changes no date");
-  s.setHome("d1", "c", ["b", "x", "a"], at + 2000);
+  s.setHome("d1", "c", untitled(["b", "x", "a"]), at + 2000);
   assert.deepEqual(s.getHomeEntries("d1", "c").map((e) => [e.itemId, e.addedAt]), [["b", at], ["x", at + 2000], ["a", at]]);
-  s.setHome("d1", "c", ["x"], at + 3000);
-  s.setHome("d1", "c", ["x", "a"], at + 4000);
+  s.setHome("d1", "c", untitled(["x"]), at + 3000);
+  s.setHome("d1", "c", untitled(["x", "a"]), at + 4000);
   assert.deepEqual(s.getHomeEntries("d1", "c").map((e) => [e.itemId, e.addedAt]), [["x", at + 2000], ["a", at + 4000]], "taken off and put back: a new date");
 
   s.setCursor("d1", { catalogId: "c", itemId: "a", episodeId: "a.1", updatedAt: 6, wrapped: true });
@@ -409,4 +409,44 @@ test("catalog history rows for channels: seen by item id, removal and return", a
   assert.deepEqual(s.catalogSeenItems("other").map((i) => i.removedAt), [null]);
   assert.throws(() => s.insertSeenItems("c", "b3", 400, ["news"]), /UNIQUE|PRIMARY KEY/, "one row per channel");
   s.close();
+});
+
+test("migration 10: every Home from before is the untitled section alone, with its items in order; sections go with their device", async () => {
+  const file = path.join(await tempDir(), "izle.db");
+  const raw = new DatabaseSync(file);
+  for (const m of MIGRATIONS.slice(0, 9)) raw.exec(m);
+  raw.exec("PRAGMA user_version = 9");
+  raw.exec("INSERT INTO devices (id, name, token_hash, created_at) VALUES ('d1', 'Salon', 'h1', 1), ('d2', 'Mutfak', 'h2', 1)");
+  raw.exec(`INSERT INTO home_entries (device_id, position, catalog_id, item_id, added_at) VALUES
+    ('d1', 0, 'c', 'b', 10), ('d1', 1, 'c', 'a', 11), ('d1', 2, 'other', 'z', 12), ('d1', 3, 'c', 'c', 13)`);
+  raw.close();
+
+  const s = new Store(file);
+  assert.equal(s.schemaVersion, SCHEMA_VERSION);
+  const untitledGrid = { id: "untitled", title: null, layout: "grid" };
+  assert.deepEqual(s.getHomeSections("d1"), [untitledGrid]);
+  assert.deepEqual(s.getHomeEntries("d1", "c"), [
+    { itemId: "b", addedAt: 10, sectionId: "untitled" }, { itemId: "a", addedAt: 11, sectionId: "untitled" }, { itemId: "c", addedAt: 13, sectionId: "untitled" },
+  ]);
+  assert.deepEqual(s.getHomeEntries("d1", "other").map((e) => e.itemId), ["z"], "entries stay scoped to their catalog");
+  assert.deepEqual(s.getHomeSections("d2"), [untitledGrid], "a TV with an empty Home has it too");
+  s.createDevice({ id: "d3", name: "Yeni", tokenHash: null, now: 2 });
+  assert.deepEqual(s.getHomeSections("d3"), [untitledGrid], "a TV paired later reads as the untitled section before its first write");
+
+  s.setHome("d1", "c", [{ id: "Abc12345", title: "Kids", layout: "row", itemIds: ["a"] }, { ...untitledGrid, itemIds: ["b", "x"] }], 50);
+  assert.deepEqual(s.getHomeSections("d1"), [{ id: "Abc12345", title: "Kids", layout: "row" }, untitledGrid]);
+  assert.deepEqual(s.getHomeEntries("d1", "c"), [
+    { itemId: "a", addedAt: 11, sectionId: "Abc12345" }, { itemId: "b", addedAt: 10, sectionId: "untitled" }, { itemId: "x", addedAt: 50, sectionId: "untitled" },
+  ], "Home order; a move to another section keeps the date");
+  s.setHome("d3", "c", [{ id: "Abc12345", title: "Same id, other TV", layout: "grid", itemIds: [] }], 60);
+  assert.deepEqual(s.getHomeSections("d3"), [untitledGrid, { id: "Abc12345", title: "Same id, other TV", layout: "grid" }], "section ids are per TV");
+  s.close();
+
+  const check = new DatabaseSync(file, { enableForeignKeyConstraints: true });
+  assert.throws(() => check.exec("INSERT INTO home_entries (device_id, position, catalog_id, item_id, section_id) VALUES ('d1', 9, 'c', 'q', 'gone0000')"), /FOREIGN KEY/,
+    "an entry names a section of its own TV");
+  check.exec("DELETE FROM devices WHERE id = 'd1'");
+  assert.deepEqual(check.prepare("SELECT device_id FROM home_sections ORDER BY device_id").all().map((r) => r.device_id), ["d2", "d3"], "deleting a TV deletes its sections");
+  assert.equal(check.prepare("SELECT COUNT(*) AS n FROM home_entries WHERE device_id = 'd1'").get()?.n, 0);
+  check.close();
 });

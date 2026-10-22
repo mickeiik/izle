@@ -318,6 +318,34 @@ export const MIGRATIONS: string[] = [
     build_id TEXT NOT NULL, removed_at INTEGER,                     -- set while absent from the loaded catalog
     PRIMARY KEY (catalog_id, item_id));
   `,
+  // 10 — Home sections: each TV's Home is cut into sections in the owner's order, and each home entry names its
+  // section (a composite key, scoped to the device like the entries; rebuilding home_entries is the only way SQLite
+  // adds one). Every Home from before gets only the untitled section, holding its items in their order.
+  `
+  CREATE TABLE home_sections (
+    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    section_id TEXT NOT NULL,               -- 'untitled', or 8 alphanumeric characters made by the server
+    position INTEGER NOT NULL,              -- display order among the device's sections
+    title TEXT,                             -- NULL for the untitled section
+    layout TEXT NOT NULL DEFAULT 'grid',    -- grid | row (checked by the API, so a later layout needs no rebuild)
+    PRIMARY KEY (device_id, section_id)
+  );
+  INSERT INTO home_sections (device_id, section_id, position, title, layout) SELECT id, 'untitled', 0, NULL, 'grid' FROM devices;
+  CREATE TABLE home_entries_new (
+    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,              -- Home order: the sections in order, each with its items in order
+    catalog_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    added_at INTEGER,
+    section_id TEXT NOT NULL DEFAULT 'untitled',
+    PRIMARY KEY (device_id, position),
+    FOREIGN KEY (device_id, section_id) REFERENCES home_sections (device_id, section_id)
+  );
+  INSERT INTO home_entries_new (device_id, position, catalog_id, item_id, added_at)
+    SELECT device_id, position, catalog_id, item_id, added_at FROM home_entries;
+  DROP TABLE home_entries;
+  ALTER TABLE home_entries_new RENAME TO home_entries;
+  `,
 ];
 
 export const SCHEMA_VERSION = MIGRATIONS.length;
