@@ -234,7 +234,7 @@ test("watched time, played ranges, seeks, stalls and pauses, with their events a
   assert.deepEqual([film.title.status, film.title.episodes, film.title.shortViewings], ["watching", { total: 1, seen: 0, started: 1 }, 1]);
 });
 
-test("titles and episodes: seen by viewing or mark (a mark wins), imported viewings, status and sort", async (t) => {
+test("titles and episodes: seen by viewing or mark (a mark wins), another TV's viewing, status and sort", async (t) => {
   const { s, resolve, report } = await setup(t);
   const store = s.srv.ctx.store;
   /** Plays from `from` to `to` with a report every 15 s (the TV's cadence), then the final report. */
@@ -251,10 +251,10 @@ test("titles and episodes: seen by viewing or mark (a mark wins), imported viewi
   const e1SeenAt = new Date(s.clock.now() - 1_000).toISOString();
   await play("show.e2", "stopped", 0, 30_000);
   await play("film.main", "stopped", 0, 2_700_000, 5_400_000);
-  // Imported at the upgrade: a saved position of a TV that is long gone, with no ranges and no watched time.
-  const imported = { catalogId: "fixture", itemKind: "movie", itemTitle: "Silent", episodeTitle: null, season: null, number: null, sourceId: null, startPositionMs: null, watchedMs: null, commandId: null, imported: true, trigger: "unknown" as const, lastReportAt: null, lastPositionMs: null, lastPlaying: false, lastAnchorAt: null, lastState: null };
+  // A viewing of a TV that is long gone, stored without played ranges.
+  const oldTv = { catalogId: "fixture", itemKind: "movie", itemTitle: "Silent", episodeTitle: null, season: null, number: null, sourceId: "main", startPositionMs: 0, watchedMs: 1_000_000, commandId: null, trigger: "viewer" as const, lastReportAt: null, lastPositionMs: null, lastPlaying: false, lastAnchorAt: null, lastState: null };
   const old = Date.parse("2026-09-01T20:00:00Z");
-  store.insertViewing({ ...imported, deviceId: "oldtv0000001", deviceName: "Old TV", itemId: "silent", episodeId: "silent.main", startedAt: old, endedAt: old, endPositionMs: 3_000_000, durationMs: 3_000_000, endReason: "finished", seen: true, actor: { type: "tv", deviceId: "oldtv0000001" } });
+  store.insertViewing({ ...oldTv, deviceId: "oldtv0000001", deviceName: "Old TV", itemId: "silent", episodeId: "silent.main", startedAt: old, endedAt: old, endPositionMs: 3_000_000, durationMs: 3_000_000, endReason: "finished", seen: true, actor: { type: "tv", deviceId: "oldtv0000001" } });
   // A mark on an episode nobody watched, and one that says the finished episode was not seen after all.
   s.clock.advance(1_000);
   assert.deepEqual((await s.admin("POST", "/history/marks", { episodeIds: ["show.e4", "show.e1"], seen: false })).json, { updated: 2 });
@@ -269,7 +269,7 @@ test("titles and episodes: seen by viewing or mark (a mark wins), imported viewi
   assert.deepEqual([show.title, show.kind, show.viewings, show.watchedMs, show.rewatches, show.shortViewings], ["Şov Dünyası", "series", 2, 1_230_000, 0, 1]);
   assert.deepEqual(show.seasons, [{ season: 1, total: 2, seen: 0, started: 2 }, { season: 2, total: 2, seen: 0, started: 0 }]);
   assert.equal(show.firstWatchedAt, "2026-10-10T12:00:00.000Z");
-  assert.deepEqual(titles[2].watchedMs, 0, "imported viewings have no watched time");
+  assert.deepEqual(titles[2].watchedMs, 1_000_000);
 
   let detail = (await s.admin("GET", "/history/titles/show")).json;
   assert.deepEqual(detail.episodes.map((e: Json) => [e.episodeId, e.seen, e.mark, e.seenAt, e.viewings, e.coveredFraction, e.lastPositionMs]), [
@@ -289,7 +289,7 @@ test("titles and episodes: seen by viewing or mark (a mark wins), imported viewi
     ["owner", { episodeIds: ["show.e4", "show.e1"], seen: false }], ["owner", { episodeIds: ["show.e4", "show.e1"], seen: null }], ["owner", { episodeIds: ["show.e2"], seen: true }],
   ]);
   const silent = (await s.admin("GET", "/history/titles/silent")).json;
-  assert.deepEqual([silent.episodes[0].coveredFraction, silent.episodes[0].seenAt, silent.episodes[0].lastPositionMs], [null, "2026-09-01T20:00:00.000Z", 3_000_000], "only imported viewings: no covered fraction");
+  assert.deepEqual([silent.episodes[0].coveredFraction, silent.episodes[0].seenAt, silent.episodes[0].lastPositionMs], [0, "2026-09-01T20:00:00.000Z", 3_000_000], "no played ranges: nothing covered");
 
   // The marks need an episode the catalog or the history knows; `device` narrows the counts, not seen.
   const bad = await s.admin("POST", "/history/marks", { episodeIds: ["show.e5", "nope"], seen: true });
@@ -367,8 +367,8 @@ test("viewings: filters and paging, newest first; they outlive the TV and the ca
   assert.deepEqual(ids(all), ["film.main", "show.e1", "show.e2", "film.main", "show.e1"]);
   assert.equal(all.next, null);
   const runningOne = all.viewings[0];
-  assert.deepEqual([runningOne.endedAt, runningOne.endReason, runningOne.seen, runningOne.deviceName, runningOne.trigger, runningOne.actor, runningOne.commandId, runningOne.imported],
-    [null, null, false, "Salon", "unknown", { type: "tv", deviceId: tv.deviceId }, null, false]);
+  assert.deepEqual([runningOne.endedAt, runningOne.endReason, runningOne.seen, runningOne.deviceName, runningOne.trigger, runningOne.actor, runningOne.commandId],
+    [null, null, false, "Salon", "unknown", { type: "tv", deviceId: tv.deviceId }, null]);
   const page1 = await viewings(s, "?limit=2");
   assert.deepEqual([ids(page1), page1.next], [["film.main", "show.e1"], page1.viewings[1].id]);
   const page2 = await viewings(s, `?limit=2&before=${page1.next}`);

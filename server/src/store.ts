@@ -82,7 +82,7 @@ interface PairCode {
   code: string;
   pairTokenHash: string;
   /** sha256 of the client address that started the code. */
-  clientHash: string | null;
+  clientHash: string;
   deviceId: string | null;
   createdAt: number;
   expiresAt: number;
@@ -166,8 +166,8 @@ export interface Command {
   payload: Record<string, unknown>;
   createdAt: number;
   ackedAt: number | null;
-  /** Who sent it; null for commands stored before actors were recorded. */
-  actor: Actor | null;
+  /** Who sent it. */
+  actor: Actor;
   /** What the TV made of it (`POST /tv/commands/:id/result`); null until it reports, or with a TV that never does. */
   result: CommandResult | null;
   reason: string | null;
@@ -215,28 +215,26 @@ export interface Viewing {
   deviceName: string;
   catalogId: string;
   itemId: string;
-  itemKind: string | null;
-  itemTitle: string | null;
+  itemKind: string;
+  itemTitle: string;
   /** Null for a channel. */
   episodeId: string | null;
   episodeTitle: string | null;
   season: number | null;
   number: number | null;
-  sourceId: string | null;
+  sourceId: string;
   startedAt: number;
   /** Null while the viewing runs. */
   endedAt: number | null;
   startPositionMs: number | null;
   endPositionMs: number | null;
   durationMs: number | null;
-  watchedMs: number | null;
+  watchedMs: number;
   endReason: ViewingEndReason | null;
   seen: boolean;
   trigger: ViewingTrigger;
   actor: Actor;
   commandId: number | null;
-  /** Made from a saved position at the upgrade that introduced the history. */
-  imported: boolean;
   /** The last progress report applied: when it arrived, what it said, and where it was sampled (null: none yet). */
   lastReportAt: number | null;
   lastPositionMs: number | null;
@@ -270,10 +268,8 @@ export interface EpisodeViewingStats {
   firstStartedAt: number;
   lastStartedAt: number;
   seenViewings: number;
-  /** Ended viewings, not seen, with `watchedMs` under 10 minutes (imported ones, whose `watchedMs` is unknown, never count). */
+  /** Ended viewings, not seen, with `watchedMs` under 10 minutes. */
   shortViewings: number;
-  /** Whether every viewing of the episode is an imported one. */
-  onlyImported: boolean;
   /** The position of the newest viewing: its last report while it runs, else where it ended. */
   lastPositionMs: number | null;
   lastDurationMs: number | null;
@@ -333,8 +329,8 @@ export interface NowPlaying {
   updatedAt: number;
   /** Whether the player was actually advancing when it sampled `positionMs` (a rebuffer stall reports false). */
   playing: boolean;
-  /** When `positionMs` was sampled: the report's receipt time minus its age (epoch ms); null for old rows. */
-  anchorAt: number | null;
+  /** When `positionMs` was sampled: the report's receipt time minus its age (epoch ms). */
+  anchorAt: number;
   /** Bumped on every write; the admin "now" route long-polls on it. */
   seq: number;
 }
@@ -360,7 +356,7 @@ type Row = Record<string, SQLOutputValue>;
 
 const PATCHABLE = ["name", "uiLanguage", "preferredAudioLanguage", "subtitlesLanguage", "autoplayOnStart", "homeColumns", "homeRows"] as const;
 /** 0/1 columns, read as booleans. */
-const FLAGS = new Set(["autoplay_on_start", "wrapped", "playing", "baseline", "seen", "imported", "last_playing"]);
+const FLAGS = new Set(["autoplay_on_start", "wrapped", "playing", "baseline", "seen", "last_playing"]);
 const column = (key: string) => key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 const sqlValue = (v: unknown) => (typeof v === "boolean" ? Number(v) : v) as SQLInputValue;
 
@@ -603,9 +599,9 @@ export class Store {
 
   /**
    * The device's home list in Home order (its sections in order, each with its items in order), with each item's
-   * section and when it was put there (epoch ms; null for rows not written by the store).
+   * section and when it was put there (epoch ms).
    */
-  getHomeEntries(deviceId: string, catalogId: string): Array<{ itemId: string; addedAt: number | null; sectionId: string }> {
+  getHomeEntries(deviceId: string, catalogId: string): Array<{ itemId: string; addedAt: number; sectionId: string }> {
     return this.many(
       `SELECT e.item_id, e.added_at, e.section_id FROM home_entries e
          JOIN home_sections s ON s.device_id = e.device_id AND s.section_id = e.section_id
@@ -843,11 +839,11 @@ export class Store {
 
   /** The device's running viewing (there is at most one), or null. */
   runningViewing(deviceId: string): Viewing | null {
-    return this.one("SELECT * FROM viewings WHERE device_id = ? AND ended_at IS NULL AND imported = 0 ORDER BY id DESC LIMIT 1", [deviceId]);
+    return this.one("SELECT * FROM viewings WHERE device_id = ? AND ended_at IS NULL ORDER BY id DESC LIMIT 1", [deviceId]);
   }
 
   listRunningViewings(): Viewing[] {
-    return this.many("SELECT * FROM viewings WHERE ended_at IS NULL AND imported = 0 ORDER BY id", []);
+    return this.many("SELECT * FROM viewings WHERE ended_at IS NULL ORDER BY id", []);
   }
 
   /** Writes the given fields of a viewing (the store's own field names, never request input). */
@@ -883,18 +879,17 @@ export class Store {
 
   /** One row per episode with a viewing (of `deviceId` when given, else of every TV), in `itemId` when given. */
   episodeViewingStats(catalogId: string, deviceId: string | null, itemId: string | null = null): EpisodeViewingStats[] {
-    const sql = `SELECT item_id, episode_id, COUNT(*) AS viewings, SUM(COALESCE(watched_ms, 0)) AS watched_ms,
+    const sql = `SELECT item_id, episode_id, COUNT(*) AS viewings, SUM(watched_ms) AS watched_ms,
          MIN(started_at) AS first_started_at, MAX(started_at) AS last_started_at, SUM(seen) AS seen_viewings,
-         SUM(ended_at IS NOT NULL AND seen = 0 AND imported = 0 AND COALESCE(watched_ms, 0) < 600000) AS short_viewings,
-         MIN(imported) AS only_imported, MAX(season) AS season, MAX(number) AS number, MAX(episode_title) AS episode_title,
+         SUM(ended_at IS NOT NULL AND seen = 0 AND watched_ms < 600000) AS short_viewings,
+         MAX(season) AS season, MAX(number) AS number, MAX(episode_title) AS episode_title,
          (SELECT COALESCE(n.last_position_ms, n.end_position_ms) FROM viewings n WHERE n.catalog_id = v.catalog_id AND n.episode_id = v.episode_id
             AND (? IS NULL OR n.device_id = ?) ORDER BY n.started_at DESC, n.id DESC LIMIT 1) AS last_position_ms,
          (SELECT n.duration_ms FROM viewings n WHERE n.catalog_id = v.catalog_id AND n.episode_id = v.episode_id AND n.duration_ms IS NOT NULL
             AND (? IS NULL OR n.device_id = ?) ORDER BY n.started_at DESC, n.id DESC LIMIT 1) AS last_duration_ms
        FROM viewings v WHERE catalog_id = ? AND (? IS NULL OR device_id = ?) AND (? IS NULL OR item_id = ?)
        GROUP BY item_id, episode_id`;
-    type Raw = Omit<EpisodeViewingStats, "onlyImported"> & { onlyImported: number };
-    return this.many<Raw>(sql, [deviceId, deviceId, deviceId, deviceId, catalogId, deviceId, deviceId, itemId, itemId]).map((r) => ({ ...r, onlyImported: r.onlyImported === 1 }));
+    return this.many(sql, [deviceId, deviceId, deviceId, deviceId, catalogId, deviceId, deviceId, itemId, itemId]);
   }
 
   /** When each episode was first seen by a viewing of any TV (`itemId` narrows to one item). */
@@ -915,10 +910,10 @@ export class Store {
   }
 
   /** The title and kind the history last knew each item under (its newest viewing's), by item id; `itemId` narrows to one. */
-  historyItems(catalogId: string, itemId: string | null = null): Map<string, { kind: string | null; title: string | null }> {
+  historyItems(catalogId: string, itemId: string | null = null): Map<string, { kind: string; title: string }> {
     // SQLite's bare columns with MAX come from the row holding the maximum: the newest viewing of each item.
     const sql = "SELECT item_id, item_kind AS kind, item_title AS title, MAX(started_at) FROM viewings WHERE catalog_id = ? AND (? IS NULL OR item_id = ?) GROUP BY item_id";
-    return new Map(this.many<{ itemId: string; kind: string | null; title: string | null }>(sql, [catalogId, itemId, itemId]).map(({ itemId: id, kind, title }) => [id, { kind, title }]));
+    return new Map(this.many<{ itemId: string; kind: string; title: string }>(sql, [catalogId, itemId, itemId]).map(({ itemId: id, kind, title }) => [id, { kind, title }]));
   }
 
   /** The item ids with a viewing or a mark. */

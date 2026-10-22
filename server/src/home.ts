@@ -116,7 +116,7 @@ export interface HomeEntry {
   /** What OK plays and where it starts; null for a channel or when nothing is playable. */
   continue: Continue | null;
   newEpisodes: number;
-  addedAt: number | null;
+  addedAt: number;
   /** The section it is in. */
   sectionId: string;
 }
@@ -431,9 +431,9 @@ export class HomeService {
    * report on the item and the moment the item went on its home list (`addedAt`). Episodes of the first load of
    * the catalog (the history's baseline) never count.
    */
-  private newEpisodesWith(item: EpisodicItem, addedAt: number | null, facts: ItemFacts): number {
+  private newEpisodesWith(item: EpisodicItem, addedAt: number, facts: ItemFacts): number {
     const lastProgressAt = Math.max(0, ...[...facts.progress.values()].map((p) => p.updatedAt));
-    const added = facts.seenAfter(Math.max(lastProgressAt, addedAt ?? 0));
+    const added = facts.seenAfter(Math.max(lastProgressAt, addedAt));
     const allowed = new Set(item.episodes.filter((e) => e.playbackAllowed).map((e) => e.id));
     return added.filter((id) => allowed.has(id)).length;
   }

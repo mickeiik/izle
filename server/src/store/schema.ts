@@ -1,7 +1,7 @@
 // The database schema. A new database gets SCHEMA and PRAGMA user_version = INITIAL_VERSION; a later change is
 // appended to MIGRATIONS (never edit one once released), and user_version counts INITIAL_VERSION plus the migrations
 // that ran. A database below INITIAL_VERSION was made by a pre-release izle and is refused, not migrated.
-export const INITIAL_VERSION = 10;
+export const INITIAL_VERSION = 11;
 
 export const SCHEMA = `
   CREATE TABLE devices (
@@ -31,7 +31,7 @@ export const SCHEMA = `
     expires_at INTEGER NOT NULL,
     approved_at INTEGER,
     delivered_at INTEGER,
-    client_hash TEXT                        -- sha256 of the client address that started it
+    client_hash TEXT NOT NULL               -- sha256 of the client address that started it
   );
 
   -- Each TV's Home: sections in the owner's order, each entry naming its section (scoped to the device).
@@ -48,8 +48,8 @@ export const SCHEMA = `
     position INTEGER NOT NULL,              -- Home order: the sections in order, each with its items in order
     catalog_id TEXT NOT NULL,
     item_id TEXT NOT NULL,
-    added_at INTEGER,                       -- when the item first went on this TV's list (epoch ms)
-    section_id TEXT NOT NULL DEFAULT 'untitled',
+    added_at INTEGER NOT NULL,              -- when the item first went on this TV's list (epoch ms)
+    section_id TEXT NOT NULL,
     PRIMARY KEY (device_id, position),
     FOREIGN KEY (device_id, section_id) REFERENCES home_sections (device_id, section_id)
   );
@@ -82,7 +82,7 @@ export const SCHEMA = `
     payload_json TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     acked_at INTEGER,
-    actor_json TEXT,                        -- who sent it
+    actor_json TEXT NOT NULL,               -- who sent it
     result TEXT,                            -- done | ignored | failed, as the TV reported
     reason TEXT,
     result_at INTEGER
@@ -101,7 +101,7 @@ export const SCHEMA = `
     state TEXT NOT NULL,
     updated_at INTEGER NOT NULL,
     playing INTEGER NOT NULL DEFAULT 0,     -- the player was actually advancing
-    anchor_at INTEGER,                      -- when position_ms was sampled (epoch ms)
+    anchor_at INTEGER NOT NULL,             -- when position_ms was sampled (epoch ms)
     seq INTEGER NOT NULL DEFAULT 0          -- bumped on every write (admin long-polls)
   );
 
@@ -201,25 +201,24 @@ export const SCHEMA = `
     device_name TEXT NOT NULL,
     catalog_id TEXT NOT NULL,
     item_id TEXT NOT NULL,
-    item_kind TEXT,
-    item_title TEXT,
+    item_kind TEXT NOT NULL,
+    item_title TEXT NOT NULL,
     episode_id TEXT,                        -- NULL for a channel
     episode_title TEXT,
     season INTEGER,
     number INTEGER,
-    source_id TEXT,
+    source_id TEXT NOT NULL,
     started_at INTEGER NOT NULL,
     ended_at INTEGER,                       -- NULL while the viewing runs
     start_position_ms INTEGER,
     end_position_ms INTEGER,
     duration_ms INTEGER,
-    watched_ms INTEGER,
+    watched_ms INTEGER NOT NULL,
     end_reason TEXT,                        -- finished | stopped | replaced | lost; NULL while running
     seen INTEGER NOT NULL DEFAULT 0,
     trigger TEXT NOT NULL,                  -- viewer | autoplay | next | command | unknown
     actor_json TEXT NOT NULL,
     command_id INTEGER,
-    imported INTEGER NOT NULL DEFAULT 0,
     last_report_at INTEGER,                 -- running state, kept by the history: the last report and its anchor
     last_position_ms INTEGER,
     last_playing INTEGER,

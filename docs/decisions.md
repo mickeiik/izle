@@ -139,10 +139,11 @@ each. Earlier entries, and the history of how each feature was built, are in git
   page keeps and flags them, so the owner sees what a reload took away. Every Home change runs one edit inside one
   transaction and checks the result, so `expected` is checked before the body's own refusals.
 - Every module declares the deps interface it uses; `AppContext` is the routes' flat view of the running server.
-- The pre-release migration chain was collapsed into one initial schema at `user_version` 10, its last version, so a
-  database made since opens as it is. One below 10 (izle 0.4.0 or earlier, or a backup of one) is refused rather than
-  migrated: nothing was deployed, and keeping the chain meant testing upgrades nobody needs. Later changes append to
-  `MIGRATIONS` after the schema.
+- The pre-release migration chain was collapsed into one initial schema at `user_version` 11, without what only
+  migrated rows needed (imported viewings, commands without an actor, pair codes without a client hash, home entries
+  and now-playing rows without a date). One below 11 (izle 0.4.0 or earlier, a build before the collapse, or a backup
+  of one) is refused rather than migrated: nothing was deployed, and keeping the chain meant testing upgrades nobody
+  needs. Later changes append to `MIGRATIONS` after the schema.
 
 ## TV app architecture
 

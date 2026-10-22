@@ -458,7 +458,7 @@ test("admin helpers: the event stream, durations, viewings, titles, episodes, co
     rest: "data: part",
   }, "comments and retry are skipped; the unfinished message stays for the next chunk");
   assert.deepEqual(parseSse("data: a\r\ndata: b\r\n\r\n"), { events: [{ id: null, event: "message", data: "a\nb" }], rest: "" });
-  const ended = { endedAt: ago(1000), endPositionMs: 754_000, seen: false, imported: false };
+  const ended = { endedAt: ago(1000), endPositionMs: 754_000, seen: false };
   cases([
     [formatDuration(0), "under a minute"], [formatDuration(45 * 60_000), "45 min"], [formatDuration(2 * 3_600_000 + 5 * 60_000), "2 h 05 min"],
     [formatDuration(null), "–"],
@@ -471,7 +471,7 @@ test("admin helpers: the event stream, durations, viewings, titles, episodes, co
     [viewingEnd({ ...ended, endReason: "stopped" }), "stopped at 12:34"],
     [viewingEnd({ ...ended, endReason: "replaced", seen: true }), "switched away at 12:34 · seen", "the 90 % rule"],
     [viewingEnd({ ...ended, endReason: "lost" }), "lost at 12:34"],
-    [viewingEnd({ ...ended, endReason: "stopped", imported: true }), "stopped", "an imported viewing has no position worth a time"],
+    [viewingEnd({ ...ended, endReason: "stopped", endPositionMs: null }), "stopped", "a channel's viewing has no position"],
     [titleStatusLabel("finished"), { label: "Finished", tone: "ok" }], [titleStatusLabel("new_episodes"), { label: "New episodes", tone: "info" }],
     [titleStatusLabel("watching"), { label: "Watching", tone: "" }], [titleStatusLabel("idle"), { label: "Idle", tone: "" }],
     [titleLine({ kind: "series", inCatalog: true, episodes: { total: 12, seen: 5 }, lastWatchedAt: ago(2 * 86400_000), watchedMs: 12_000_000 }, NOW), "Series · 5 of 12 episodes seen · last watched 2 days ago · 3 h 20 min"],

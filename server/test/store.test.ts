@@ -34,7 +34,7 @@ function versionAndJournal(file: string): [number, string] {
 }
 
 test("a new database gets the initial schema and its version, and opens again as it is", async () => {
-  assert.equal(INITIAL_VERSION, 10, "the last version of the pre-release migration chain; it never changes");
+  assert.equal(INITIAL_VERSION, 11, "the schema without the pre-release migrations' leftovers; it never changes");
   const file = path.join(await tempDir(), "data", "izle.db");
   const a = new Store(file);
   assert.equal(a.schemaVersion, SCHEMA_VERSION);
@@ -311,7 +311,7 @@ test("catalog history rows: episodes seen after a date, removal and return, buil
 test("now playing and viewings may name a channel; viewing ids are never reused; ranges go with their viewing", async () => {
   const { s, file } = await storeWithDevice("Salon");
   const actor = { type: "tv" as const, deviceId: "d1" };
-  const base = { deviceId: "d1", deviceName: "Salon", catalogId: "c", itemId: "news", itemKind: "live", itemTitle: "News", episodeTitle: null, season: null, number: null, sourceId: "hls", startedAt: 70, endedAt: null, startPositionMs: null, endPositionMs: null, durationMs: null, watchedMs: 0, endReason: null, seen: false, trigger: "viewer" as const, actor, commandId: null, imported: false, lastReportAt: null, lastPositionMs: null, lastPlaying: false, lastAnchorAt: null, lastState: null };
+  const base = { deviceId: "d1", deviceName: "Salon", catalogId: "c", itemId: "news", itemKind: "live", itemTitle: "News", episodeTitle: null, season: null, number: null, sourceId: "hls", startedAt: 70, endedAt: null, startPositionMs: null, endPositionMs: null, durationMs: null, watchedMs: 0, endReason: null, seen: false, trigger: "viewer" as const, actor, commandId: null, lastReportAt: null, lastPositionMs: null, lastPlaying: false, lastAnchorAt: null, lastState: null };
   const episode = (episodeId: string, startedAt: number, seen: boolean) =>
     s.insertViewing({ ...base, itemId: "i", itemKind: "series", itemTitle: "Show", episodeId, startedAt, endedAt: startedAt + 10, seen, endReason: seen ? "finished" : "stopped" });
   episode("e1", 10, false);
@@ -343,7 +343,7 @@ test("now playing and viewings may name a channel; viewing ids are never reused;
   assert.deepEqual(s.viewingRanges(2), [], "deleting a viewing deletes its ranges");
   const db = new DatabaseSync(file);
   assert.deepEqual(db.prepare("SELECT name, seq FROM sqlite_sequence WHERE name LIKE 'viewings%'").all().map((r) => [r.name, r.seq]), [["viewings", 4]]);
-  assert.throws(() => db.exec("INSERT INTO now_playing (device_id, catalog_id, item_id, state, updated_at) VALUES ('ghost', 'c', 'i', 'playing', 1)"), /FOREIGN KEY/);
+  assert.throws(() => db.exec("INSERT INTO now_playing (device_id, catalog_id, item_id, state, updated_at, anchor_at) VALUES ('ghost', 'c', 'i', 'playing', 1, 1)"), /FOREIGN KEY/);
   db.close();
   s.close();
 });
@@ -386,7 +386,7 @@ test("Home is cut into sections in the owner's order, per TV; sections go with t
   s.close();
 
   const check = new DatabaseSync(file, { enableForeignKeyConstraints: true });
-  assert.throws(() => check.exec("INSERT INTO home_entries (device_id, position, catalog_id, item_id, section_id) VALUES ('d1', 9, 'c', 'q', 'gone0000')"), /FOREIGN KEY/,
+  assert.throws(() => check.exec("INSERT INTO home_entries (device_id, position, catalog_id, item_id, added_at, section_id) VALUES ('d1', 9, 'c', 'q', 1, 'gone0000')"), /FOREIGN KEY/,
     "an entry names a section of its own TV");
   check.exec("DELETE FROM devices WHERE id = 'd1'");
   assert.deepEqual(check.prepare("SELECT device_id FROM home_sections ORDER BY device_id").all().map((r) => r.device_id), ["d3"], "deleting a TV deletes its sections");

@@ -155,7 +155,7 @@ export class DeviceService {
         viewingId: n.viewingId,
       },
       // Where the TV is: positionMs as of atMs (server clock), advancing at `rate` while `playing`.
-      anchor: n && n.positionMs !== null ? { positionMs: n.positionMs, atMs: n.anchorAt ?? n.updatedAt, playing: n.playing, rate: 1 } : null,
+      anchor: n && n.positionMs !== null ? { positionMs: n.positionMs, atMs: n.anchorAt, playing: n.playing, rate: 1 } : null,
     };
   }
 

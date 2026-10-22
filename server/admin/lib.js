@@ -945,13 +945,13 @@ export function triggerLabel(v) {
 /**
  * How a viewing ended (or that it runs): `watched to the end`, `stopped at 12:34`, `switched away at 1:02`,
  * `lost at 0:40` (a power cut, a dead app); `· seen` when it counts as seen without a finished report. Without a
- * position (a channel's viewing, an imported one): `stopped`, `switched away`, `lost`.
- * @param {{ endedAt: string | null, endReason: string | null, endPositionMs: number | null, seen: boolean, imported?: boolean }} v
+ * position (a channel's viewing): `stopped`, `switched away`, `lost`.
+ * @param {{ endedAt: string | null, endReason: string | null, endPositionMs: number | null, seen: boolean }} v
  */
 export function viewingEnd(v) {
   if (v.endedAt === null) return "playing now";
   if (v.endReason === "finished") return "watched to the end";
-  const at = v.imported || v.endPositionMs === null || v.endPositionMs === undefined ? "" : ` at ${formatClock(v.endPositionMs)}`;
+  const at = v.endPositionMs === null || v.endPositionMs === undefined ? "" : ` at ${formatClock(v.endPositionMs)}`;
   const how = v.endReason === "stopped" ? "stopped" : v.endReason === "replaced" ? "switched away" : v.endReason === "lost" ? "lost" : (v.endReason ?? "ended");
   return `${how}${at}${v.seen ? " · seen" : ""}`;
 }

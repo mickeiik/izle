@@ -255,8 +255,8 @@ test("history adopt: a deleted TV's viewings go to an existing one, under its na
   const tv = await s.pair("New TV");
   const db = new DatabaseSync(databaseFile(s.config));
   t.after(() => db.close());
-  const insert = db.prepare(`INSERT INTO viewings (device_id, device_name, catalog_id, item_id, episode_id, started_at, trigger, actor_json)
-    VALUES (?, ?, 'fixture', 'show', 'show.e1', 0, 'viewer', '{"type":"server"}')`);
+  const insert = db.prepare(`INSERT INTO viewings (device_id, device_name, catalog_id, item_id, item_kind, item_title, episode_id, source_id, started_at, watched_ms, trigger, actor_json)
+    VALUES (?, ?, 'fixture', 'show', 'series', 'Show', 'show.e1', 'main', 0, 60000, 'viewer', '{"type":"server"}')`);
   for (const [id, name] of [[gone.deviceId, "Old TV"], [gone.deviceId, "Old TV"], ["elsewhere00", "Third"]]) insert.run(id, name);
   const adopt = (body: unknown, id = tv.deviceId) => s.admin("POST", `/devices/${id}/history/adopt`, body);
 

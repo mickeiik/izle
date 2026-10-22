@@ -408,7 +408,7 @@ function historyCard(ctx) {
         const live = v.itemKind === "live";
         const episode = v.itemKind === "movie" || live ? "" : episodeName({ season: v.season, number: v.number, title: v.episodeTitle }, v.itemKind);
         const ended = live ? `${viewingSpan(v)} · ${viewingEnd(v)}` : viewingEnd(v);
-        const cells = [v.itemTitle ?? v.itemId, episode, v.imported ? "–" : formatDuration(v.watchedMs), ended, triggerLabel(v)].map((c) => h("td", null, c));
+        const cells = [v.itemTitle, episode, formatDuration(v.watchedMs), ended, triggerLabel(v)].map((c) => h("td", null, c));
         return h("tr", null, time(h("td", { class: "muted" }), () => formatRelative(v.startedAt)), cells);
       };
       const caption = h("caption", null, "The last 30 viewings on this TV, the latest first; every viewing is kept in the history.");

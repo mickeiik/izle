@@ -130,7 +130,7 @@ function hear(v: Viewing, r: Report, t: number): Heard {
   const after = r.status === "playing" || r.status === "paused" ? playerState(r.status, r.playing) : null;
   const advancing = before === "playing";
   const elapsed = Math.max(0, r.anchorAt - (v.lastAnchorAt ?? v.lastReportAt ?? t));
-  const watchedMs = (v.watchedMs ?? 0) + (v.lastReportAt !== null && advancing ? Math.min(elapsed, MAX_REPORT_GAP_MS) : 0);
+  const watchedMs = v.watchedMs + (v.lastReportAt !== null && advancing ? Math.min(elapsed, MAX_REPORT_GAP_MS) : 0);
   const patch: ViewingPatch = { lastReportAt: t, lastPlaying: r.playing, lastAnchorAt: r.anchorAt, lastState: r.status, watchedMs };
   const at = r.position;
   const data = { viewingId: v.id, positionMs: at?.positionMs ?? null };
@@ -279,7 +279,7 @@ export class PlayingService {
     const v = store.insertViewing({
       deviceId: device.id, deviceName: device.name, catalogId: this.s.catalog.catalogId, ...playing, itemKind, itemTitle, episodeTitle, season, number, sourceId,
       startedAt: t, endedAt: null, startPositionMs: positionMs, endPositionMs: null, durationMs: position?.durationMs ?? null, watchedMs: 0, endReason: null,
-      seen: false, trigger, actor, commandId, imported: false, lastReportAt: null, lastPositionMs: null, lastPlaying: false, lastAnchorAt: null, lastState: null,
+      seen: false, trigger, actor, commandId, lastReportAt: null, lastPositionMs: null, lastPlaying: false, lastAnchorAt: null, lastState: null,
     });
     const viewingId = v.id;
     const { itemId, episodeId } = playing;
@@ -317,7 +317,7 @@ export class PlayingService {
    */
   private end(v: Viewing, reason: ViewingEndReason, at: number, positionMs: number | null, actor: Actor): void {
     const { store, eventLog } = this.s;
-    const watchedMs = v.watchedMs ?? 0;
+    const { watchedMs } = v;
     const seen = reason === "finished" || (positionMs !== null && v.durationMs !== null && v.durationMs > 0 && positionMs >= SEEN_FRACTION * v.durationMs);
     const dropped = !seen && watchedMs < DROP_UNDER_MS;
     if (dropped) store.deleteViewing(v.id);

@@ -65,7 +65,7 @@ export interface PlayingDescription {
  * The description of a ref itself, with no lookup: a viewing records the titles of what was resolved, not what the
  * catalog says by the time the adapter answered (a reload may have happened in between).
  */
-export function describePlayable(ref: PlayableRef): PlayingDescription {
+export function describePlayable(ref: PlayableRef): PlayingDescription & { itemKind: string; itemTitle: string } {
   const episode = ref.kind === "episode" ? ref.episode : null;
   return {
     itemId: ref.item.id, itemKind: ref.item.kind, itemTitle: ref.item.title,

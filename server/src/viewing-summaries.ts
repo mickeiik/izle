@@ -30,10 +30,10 @@ interface SummaryDeps {
 /** A viewing as the admin API shows it (the running state stays inside). */
 export function viewingJson(v: Viewing) {
   const { id, deviceId, deviceName, itemId, itemKind, itemTitle, episodeId, episodeTitle, season, number, sourceId, startedAt, endedAt } = v;
-  const { startPositionMs, endPositionMs, durationMs, watchedMs, endReason, seen, trigger, actor, commandId, imported } = v;
+  const { startPositionMs, endPositionMs, durationMs, watchedMs, endReason, seen, trigger, actor, commandId } = v;
   return {
     id, deviceId, deviceName, itemId, itemKind, itemTitle, episodeId, episodeTitle, season, number, sourceId, startedAt: iso(startedAt), endedAt: iso(endedAt),
-    startPositionMs, endPositionMs, durationMs, watchedMs, endReason, seen, trigger, actor, commandId, imported,
+    startPositionMs, endPositionMs, durationMs, watchedMs, endReason, seen, trigger, actor, commandId,
   };
 }
 
@@ -64,7 +64,7 @@ class HistoryView {
   /** When each present catalog episode first appeared (the "new episodes" status). */
   private readonly firstSeen: Map<string, number>;
   /** What the history last called each item (for one that left the catalog). */
-  private readonly known: Map<string, { kind: string | null; title: string | null }>;
+  private readonly known: Map<string, { kind: string; title: string }>;
   private readonly d: SummaryDeps;
 
   constructor(d: SummaryDeps, deviceId: string | null, itemId: string | null) {
@@ -140,7 +140,7 @@ class HistoryView {
   episode(episodeId: string, episode: Episode | undefined, ranges: ReadonlyArray<readonly [number, number]>) {
     const stats = this.statsByEpisode.get(episodeId);
     const durationMs = episode?.durationMs ?? stats?.lastDurationMs ?? null;
-    const covered = stats && !stats.onlyImported && durationMs ? coveredFraction(ranges, durationMs) : null;
+    const covered = stats && durationMs ? coveredFraction(ranges, durationMs) : null;
     return {
       episodeId, season: episode?.season ?? stats?.season ?? null, number: episode?.number ?? stats?.number ?? null, title: episode?.title ?? stats?.episodeTitle ?? null,
       inCatalog: episode !== undefined, seen: this.isSeen(episodeId), seenAt: iso(this.seenSince(episodeId)), mark: this.marks.get(episodeId)?.seen ?? null,
@@ -224,12 +224,11 @@ export function dayCounts(d: SummaryDeps, opts: { deviceId: string | null; tz: s
     if (date < from || date > to) continue;
     const day = days.get(date) ?? { date, watchedMs: 0, viewings: 0, items: new Map() };
     days.set(date, day);
-    const watched = v.watchedMs ?? 0;
-    day.watchedMs += watched;
+    day.watchedMs += v.watchedMs;
     day.viewings += 1;
-    const entry = day.items.get(v.itemId) ?? { itemId: v.itemId, title: d.catalog.item(v.itemId)?.title ?? v.itemTitle ?? v.itemId, watchedMs: 0 };
+    const entry = day.items.get(v.itemId) ?? { itemId: v.itemId, title: d.catalog.item(v.itemId)?.title ?? v.itemTitle, watchedMs: 0 };
     day.items.set(v.itemId, entry);
-    entry.watchedMs += watched;
+    entry.watchedMs += v.watchedMs;
   }
   return {
     days: [...days.values()].sort((a, b) => a.date.localeCompare(b.date)).map((day) => ({

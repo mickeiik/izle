@@ -772,7 +772,7 @@ scoped by `catalogId`: its lists, summaries, marks and deletions cover the loade
 
 `Viewing` = `{"id", "deviceId", "deviceName", "itemId", "itemKind", "itemTitle", "episodeId", "episodeTitle",
 "season", "number", "sourceId", "startedAt", "endedAt", "startPositionMs", "endPositionMs", "durationMs",
-"watchedMs", "endReason", "seen", "trigger", "actor", "commandId", "imported"}`:
+"watchedMs", "endReason", "seen", "trigger", "actor", "commandId"}`:
 
 - `id` is an integer. Titles, `season`, `number`, `itemKind` and `deviceName` are copied when the viewing starts.
   `sourceId` is the source played last (a re-resolve may change it). `durationMs` is the reports' duration, else the
@@ -799,10 +799,6 @@ scoped by `catalogId`: its lists, summaries, marks and deletions cover the loade
   (consecutive reports, the first with `playing: true`); `episodeId`, `episodeTitle`, `season`, `number`,
   `startPositionMs`, `endPositionMs` and `durationMs` are null, `seen` is false and `endReason` is `stopped`,
   `replaced` or `lost`. It has no played ranges. The 10 s drop rule and the `lost` rule apply as to an episode.
-- `imported: true`: made once, at the upgrade that introduces history, from every saved episode position: `startedAt`
-  and `endedAt` its last update, `endReason` `finished` or `stopped` (`seen` accordingly), `endPositionMs` its
-  position, `startPositionMs`, `sourceId`, `watchedMs`, `commandId`, `itemKind`, the titles, `season` and `number`
-  null, `trigger` `unknown`, `actor` the TV.
 
 A viewing is **seen** when it ends with a `finished` report, or ends (`stopped`, `replaced`, `lost`) at 90 % of
 `durationMs` or later. The TV reports `finished` at the end of the stream and when the viewer leaves within its
@@ -818,7 +814,7 @@ are the family's, so `device` narrows the viewings and the counts, not `seen`.
 | Route | Body | Response |
 |---|---|---|
 | `GET /api/v1/admin/history/viewings?device=&item=&episode=&from=&to=&before=&limit=` | | `{"viewings": [Viewing], "next"}`: newest first (by `startedAt`, then id), running ones included; `from`/`to` (ISO) bound `startedAt`; `limit` ≤ 200 (default 50); `next` (a viewing id, or null) is the `before` of the next page |
-| `GET /api/v1/admin/history/viewings/:id` | | `{"viewing": Viewing, "ranges": [[fromMs, toMs], …]}`: the ranges played at least once, merged, in position order (empty for an imported viewing and for a channel's); `404 unknown_viewing` |
+| `GET /api/v1/admin/history/viewings/:id` | | `{"viewing": Viewing, "ranges": [[fromMs, toMs], …]}`: the ranges played at least once, merged, in position order (empty for a channel's); `404 unknown_viewing` |
 | `GET /api/v1/admin/history/titles?device=&status=&sort=&limit=` | | `{"titles": [TitleSummary]}`: titles with a viewing or a mark; `sort`: `recent` (default, last watched first), `watched` (most `watchedMs`), `title` (as the catalog search orders); `status`: one or more statuses, comma-separated; `limit` ≤ 500 (default 100) |
 | `GET /api/v1/admin/history/titles/:itemId?device=` | | `{"title": TitleSummary, "episodes": [EpisodeHistory]}` (`episodes: []` for a channel); `404 unknown_item` (never in the catalog nor the history) |
 | `GET /api/v1/admin/history/days?device=&from=&to=&tz=` | | `{"days": [{"date", "watchedMs", "viewings", "items": [{"itemId", "title", "watchedMs"}]}]}`: one entry per calendar day with a viewing, in `tz` (an IANA zone, default the server's), a viewing counted on the day it started (a channel's like an episode's, by its `watchedMs`); `from`/`to` are dates, default the last 30 days, at most 366 days; `400 invalid_request` for an unknown zone |
@@ -855,8 +851,8 @@ catalog:
   decimals): the union of the position ranges between consecutive reports while the player advanced. Where playback
   should be at a report is the previous report's position, plus the time since its anchor when it said
   `playing: true`; a report more than 10 s from there is a seek (`playback.seeked`): it covers nothing and the next
-  range starts at it. Null without a known duration or with only imported viewings. For information only: `seen`
-  with a low `coveredFraction` means the end was reached by skipping.
+  range starts at it. Null without a known duration. For information only: `seen` with a low `coveredFraction` means
+  the end was reached by skipping.
 
 ### Remote play and command results
 
