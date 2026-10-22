@@ -16,13 +16,9 @@ class UpstreamError extends Error {
 }
 
 /**
- * @typedef {object} StreamsAnswer what the example upstream's `/api/streams/<video>` returns
- * @property {string} referer
- * @property {string} expiresAt
- * @property {string} [url]
- * @property {string} [playlist]
- * @property {string} [baseUrl]
- * @property {LanguageFacts} [languages]
+ * What the example upstream's `/api/streams/<video>` returns.
+ * @typedef {{ referer: string, expiresAt: string, url?: string, playlist?: string, baseUrl?: string,
+ *   languages?: LanguageFacts }} StreamsAnswer
  */
 
 /**
@@ -31,20 +27,16 @@ class UpstreamError extends Error {
  * @returns {Adapter[]}
  */
 export function createAdapters(ctx) {
-  const { apiBase, apiKey: key } = ctx.config;
+  const { apiBase, apiKey } = ctx.config;
   if (typeof apiBase !== "string" || !/^https?:\/\//.test(apiBase)) throw new TypeError("config.apiBase must be an http(s) URL");
-  if (typeof key !== "string" || key === "") throw new TypeError("config.apiKey is required");
-  const apiKey = key; // narrowed for the functions below
+  if (typeof apiKey !== "string" || apiKey === "") throw new TypeError("config.apiKey is required");
   const base = apiBase.endsWith("/") ? apiBase : `${apiBase}/`;
+  const headers = { "X-Api-Key": apiKey, Accept: "application/json" };
 
   /**
-   * Refs (opaque to izle): `{ video }` HLS by signed URL; plus `inline: true` for the master playlist text instead
-   * of a URL, `format: "mp4"` for a progressive MP4, `junkBytes: <n>` for segments prefixed with junk bytes. For a
-   * channel: `live: true` for the video's live playlist, `format: "ts"` for its raw MPEG-TS stream.
-   *
-   * Every call asks the site anew and the same ref always gets the same stream: izle resolves an episode again for
-   * the owner's phone, and a channel at `expiresAt`, after a 410 and after a player error, each time from its live
-   * edge.
+   * Refs (see README.md) are opaque to izle. Every call asks the site anew and the same ref always gets the same
+   * stream: izle resolves an episode again for the owner's phone, and a channel at `expiresAt`, after a 410 and after
+   * a player error, each time from its live edge.
    * @param {ResolveRequest} req
    * @returns {Promise<ResolveResult[]>}
    */
@@ -62,7 +54,7 @@ export function createAdapters(ctx) {
     if (typeof junkBytes === "number") url.searchParams.set("junk", String(junkBytes));
 
     // Always pass the signal: it fires when the TV goes away or the deadline (req.deadlineMs) passes.
-    const res = await ctx.fetch(url, { headers: { "X-Api-Key": apiKey, Accept: "application/json" }, signal: req.signal });
+    const res = await ctx.fetch(url, { headers, signal: req.signal });
     if (res.status === 404) {
       // Nothing to play for this source right now; izle moves on to the episode's (or the channel's) next source.
       ctx.log("warn", "video not found upstream", { video, itemId: req.itemId, episodeId: req.episodeId });
@@ -70,24 +62,18 @@ export function createAdapters(ctx) {
     }
     if (!res.ok) throw new UpstreamError(`upstream answered ${res.status} for ${url.href}`);
     const answer = /** @type {StreamsAnswer} */ (await res.json());
-
-    /** @type {ResolveResult} */
-    const result = {
-      media:
-        answer.playlist !== undefined && answer.baseUrl !== undefined
-          ? { kind: "hls", playlist: answer.playlist, baseUrl: answer.baseUrl }
-          : { kind, url: /** @type {string} */ (answer.url) },
-      // The Referer the site insists on. izle sees headers and proxies the stream; the TV never sees them.
-      headers: { Referer: answer.referer },
-      expiresAt: answer.expiresAt,
-    };
-    if (answer.languages) result.languages = answer.languages;
-    return [result];
+    const { playlist, baseUrl, referer, expiresAt, languages } = answer;
+    /** @type {ResolveResult["media"]} */
+    const media = playlist !== undefined && baseUrl !== undefined
+      ? { kind: "hls", playlist, baseUrl }
+      : { kind, url: /** @type {string} */ (answer.url) };
+    // The Referer the site insists on. izle sees headers and proxies the stream; the TV never sees them.
+    return [{ media, headers: { Referer: referer }, expiresAt, ...(languages && { languages }) }];
   }
 
   /** @param {AbortSignal} signal */
   async function healthcheck(signal) {
-    const res = await ctx.fetch(new URL("api/health", base), { headers: { "X-Api-Key": apiKey }, signal });
+    const res = await ctx.fetch(new URL("api/health", base), { headers, signal });
     if (!res.ok) throw new UpstreamError(`health check answered ${res.status}`);
   }
 

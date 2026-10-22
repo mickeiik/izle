@@ -1,20 +1,23 @@
 #!/usr/bin/env node
 // @ts-check
 // A local stand-in for a streaming site (see README.md), used by the example resolver module and by the server tests.
-// Media comes from a directory made by make-media.sh (real video, for the emulator) or, without one, is
-// synthesized in memory (tests). Playlists may contain `{{base}}`, replaced by the absolute URL of the video's
-// directory, so absolute URIs can be tested. Each video also has a channel view, `live.m3u8` and `stream.ts`: the
-// video played in a loop as if it were broadcast, its clock taken from `now`.
+// Media comes from a directory made by make-media.sh or, without one, is synthesized in memory. Playlists may contain
+// `{{base}}`, replaced by the absolute URL of the video's directory. Each video also has a channel view (`live.m3u8`,
+// `stream.ts`): the video played in a loop as if it were broadcast, its clock taken from `now`.
 //
 //   node upstream.js [--media <dir>] [--port 8788] [--token-ttl <seconds>] [--verbose]   (listens on 127.0.0.1)
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { once } from "node:events";
 import { createReadStream } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+
+/** @typedef {import("node:http").IncomingMessage} Req @typedef {import("node:http").ServerResponse} Res */
 
 export const DEFAULT_API_KEY = "example-api-key";
 export const DEFAULT_REFERER = "https://player.example.test/";
@@ -27,19 +30,18 @@ const TYPES = /** @type {Record<string, string>} */ ({
   json: "application/json",
 });
 const VIDEO_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
-
-/** Channel view: segments last 6 s and are numbered from the epoch, so every view of a channel agrees on "now". */
+/** Live segments last 6 s and are numbered from the epoch, so every view of a channel agrees on "now". */
 const LIVE_SEGMENT_MS = 6000;
 /** Segments a live playlist lists. A raw stream starts with all of them at once: the player's buffer. */
 const LIVE_WINDOW = 5;
 /** MPEG-TS clocks (PCR base, PTS, DTS) count 90 kHz ticks modulo 2^33. */
 const TS_CLOCK = 2 ** 33;
-/** The channel view's paths under a video: its live playlist, a segment of it (the number), the raw stream. */
+/** The channel view under a video: its live playlist, a segment of it (the number), the raw stream. */
 const LIVE_PATH = /^(?:live\.m3u8|stream\.ts|live\/seg(\d{1,15})\.ts)$/;
 
 /**
- * The live window at `nowMs`: the first and the last segment a live playlist lists. Segment `n` covers
- * [n × 6 s, (n + 1) × 6 s) since the epoch and is listed once it is complete.
+ * The first and the last segment a live playlist lists at `nowMs`. Segment `n` covers [n × 6 s, (n + 1) × 6 s) since
+ * the epoch and is listed once it is complete.
  * @param {number} nowMs
  */
 export function liveWindow(nowMs) {
@@ -56,13 +58,7 @@ export function liveWindow(nowMs) {
  *   ticks); null for synthetic media, whose segments never repeat
  */
 
-/**
- * @typedef {object} UpstreamRequest
- * @property {string} path the request path with the signed token replaced by `<token>`
- * @property {string | null} referer
- * @property {string | null} range
- * @property {number} status
- */
+/** @typedef {{ path: string, referer: string | null, range: string | null, status: number }} UpstreamRequest */
 
 /**
  * A deterministic MPEG-TS-looking segment: `packets` 188-byte packets, each starting with the 0x47 sync byte.
@@ -92,7 +88,7 @@ export function junkBytes(n) {
 }
 
 /** @param {string[]} names @param {number} seconds */
-function mediaPlaylist(names, seconds) {
+function vodPlaylist(names, seconds) {
   const tags = [`#EXT-X-TARGETDURATION:${seconds}`, "#EXT-X-PLAYLIST-TYPE:VOD", "#EXT-X-MEDIA-SEQUENCE:0"];
   const segments = names.flatMap((n) => [`#EXTINF:${seconds}.000,`, n]);
   return ["#EXTM3U", "#EXT-X-VERSION:3", ...tags, ...segments, "#EXT-X-ENDLIST", ""].join("\n");
@@ -105,32 +101,28 @@ function mediaPlaylist(names, seconds) {
  */
 export function syntheticMedia() {
   const files = new Map();
-  const put = (/** @type {string} */ name, /** @type {string | Buffer} */ data) => files.set(name, Buffer.from(data));
+  /** @param {string} name @param {string | Buffer} data */
+  const put = (name, data) => files.set(`demo/${name}`, Buffer.from(data));
+  put("master.m3u8", [
+    "#EXTM3U", "#EXT-X-VERSION:4", "#EXT-X-INDEPENDENT-SEGMENTS",
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",LANGUAGE="en",NAME="English",DEFAULT=YES,AUTOSELECT=YES,URI="audio/en/index.m3u8"',
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",LANGUAGE="tr",NAME="Türkçe",DEFAULT=NO,AUTOSELECT=YES,URI="audio/tr/index.m3u8"',
+    '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",LANGUAGE="en",NAME="English",DEFAULT=NO,AUTOSELECT=YES,URI="subs/en/index.m3u8"',
+    '#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=640x360,AUDIO="aud",SUBTITLES="subs"',
+    "video/360p/index.m3u8",
+    '#EXT-X-STREAM-INF:BANDWIDTH=300000,RESOLUTION=320x180,AUDIO="aud",SUBTITLES="subs"',
+    "{{base}}video/180p/index.m3u8",
+    "",
+  ].join("\n"));
   const segs = ["seg000.ts", "seg001.ts", "seg002.ts"];
-  put(
-    "demo/master.m3u8",
-    [
-      "#EXTM3U",
-      "#EXT-X-VERSION:4",
-      "#EXT-X-INDEPENDENT-SEGMENTS",
-      '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",LANGUAGE="en",NAME="English",DEFAULT=YES,AUTOSELECT=YES,URI="audio/en/index.m3u8"',
-      '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",LANGUAGE="tr",NAME="Türkçe",DEFAULT=NO,AUTOSELECT=YES,URI="audio/tr/index.m3u8"',
-      '#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",LANGUAGE="en",NAME="English",DEFAULT=NO,AUTOSELECT=YES,URI="subs/en/index.m3u8"',
-      '#EXT-X-STREAM-INF:BANDWIDTH=900000,RESOLUTION=640x360,AUDIO="aud",SUBTITLES="subs"',
-      "video/360p/index.m3u8",
-      '#EXT-X-STREAM-INF:BANDWIDTH=300000,RESOLUTION=320x180,AUDIO="aud",SUBTITLES="subs"',
-      "{{base}}video/180p/index.m3u8",
-      "",
-    ].join("\n"),
-  );
-  for (const [dir, seed] of /** @type {const} */ ([["video/360p", 1], ["video/180p", 2], ["audio/en", 3], ["audio/tr", 4]])) {
-    put(`demo/${dir}/index.m3u8`, mediaPlaylist(segs, 6));
-    segs.forEach((s, i) => put(`demo/${dir}/${s}`, syntheticTsSegment(seed * 10 + i)));
-  }
-  put("demo/subs/en/index.m3u8", mediaPlaylist(["0.vtt"], 18));
-  put("demo/subs/en/0.vtt", "WEBVTT\n\n00:00:01.000 --> 00:00:05.000\nHello from the example upstream\n");
-  put("demo/video.mp4", Buffer.from(Array.from({ length: 256 * 1024 }, (_, i) => (i * 7 + (i >> 8)) & 0xff)));
-  put("demo/info.json", JSON.stringify({ title: "Demo", languages: { audio: ["en", "tr"], subtitles: ["en"] } }));
+  ["video/360p", "video/180p", "audio/en", "audio/tr"].forEach((dir, d) => {
+    put(`${dir}/index.m3u8`, vodPlaylist(segs, 6));
+    segs.forEach((s, i) => put(`${dir}/${s}`, syntheticTsSegment((d + 1) * 10 + i)));
+  });
+  put("subs/en/index.m3u8", vodPlaylist(["0.vtt"], 18));
+  put("subs/en/0.vtt", "WEBVTT\n\n00:00:01.000 --> 00:00:05.000\nHello from the example upstream\n");
+  put("video.mp4", Buffer.from(Array.from({ length: 256 * 1024 }, (_, i) => (i * 7 + (i >> 8)) & 0xff)));
+  put("info.json", JSON.stringify({ title: "Demo", languages: { audio: ["en", "tr"], subtitles: ["en"] } }));
   return files;
 }
 
@@ -141,14 +133,13 @@ export function syntheticMedia() {
 function vodSegments(text) {
   /** @type {Array<{ seconds: number, name: string }>} */
   const out = [];
-  /** @type {number | null} */
-  let seconds = null;
+  let seconds = 0;
   for (const line of text.split(/\r?\n/).map((l) => l.trim())) {
     const inf = /^#EXTINF:([\d.]+)/.exec(line);
     if (inf) seconds = Number(inf[1]);
     else if (line !== "" && !line.startsWith("#")) {
       if (seconds && /^[\w-]+\.ts$/.test(line)) out.push({ seconds, name: line });
-      seconds = null;
+      seconds = 0;
     }
   }
   return out;
@@ -203,8 +194,8 @@ function tsJoiner(loopTicks) {
         p += 1 + out[p];
       }
       // A PES header at the start of a payload: its flags say whether a PTS, or a PTS and a DTS, follow.
-      if (!(control & 1) || !(out[o + 1] & 0x40) || p + 9 > end || out[p] !== 0 || out[p + 1] !== 0 || out[p + 2] !== 1) continue;
-      if ((out[p + 6] & 0xc0) !== 0x80) continue;
+      const pesStart = control & 1 && out[o + 1] & 0x40 && p + 9 <= end;
+      if (!pesStart || out[p] !== 0 || out[p + 1] !== 0 || out[p + 2] !== 1 || (out[p + 6] & 0xc0) !== 0x80) continue;
       const flags = out[p + 7] >> 6;
       if (flags & 2 && p + 14 <= end) shiftTimestamp(out, p + 9, shift);
       if (flags === 3 && p + 19 <= end) shiftTimestamp(out, p + 14, shift);
@@ -218,14 +209,11 @@ function tsJoiner(loopTicks) {
  * @param {Buffer} b @param {number} i @param {number} shift
  */
 function shiftTimestamp(b, i, shift) {
-  const old = ((b[i] >> 1) & 7) * 2 ** 30 + ((b[i + 1] << 7) | (b[i + 2] >> 1)) * 2 ** 15 + ((b[i + 3] << 7) | (b[i + 4] >> 1));
-  const v = (old + shift) % TS_CLOCK;
-  const [high, mid, low] = [Math.floor(v / 2 ** 30), Math.floor(v / 2 ** 15) % 2 ** 15, v % 2 ** 15];
-  b[i] = (b[i] & 0xf1) | (high << 1);
-  b[i + 1] = mid >> 7;
-  b[i + 2] = ((mid & 0x7f) << 1) | 1;
-  b[i + 3] = low >> 7;
-  b[i + 4] = ((low & 0x7f) << 1) | 1;
+  const old = ((b[i] >> 1) & 7) * 2 ** 30 + ((b[i + 1] << 7) | (b[i + 2] >> 1)) * 2 ** 15;
+  const v = (old + ((b[i + 3] << 7) | (b[i + 4] >> 1)) + shift) % TS_CLOCK;
+  const [mid, low] = [Math.floor(v / 2 ** 15) % 2 ** 15, v % 2 ** 15];
+  b[i] = (b[i] & 0xf1) | (Math.floor(v / 2 ** 30) << 1);
+  b.set([mid >> 7, ((mid & 0x7f) << 1) | 1, low >> 7, ((low & 0x7f) << 1) | 1], i + 1);
 }
 
 /**
@@ -236,10 +224,7 @@ function shiftTimestamp(b, i, shift) {
 function shiftPcr(b, i, shift) {
   const old = b[i] * 2 ** 25 + b[i + 1] * 2 ** 17 + b[i + 2] * 2 ** 9 + b[i + 3] * 2 + (b[i + 4] >> 7);
   const v = (old + shift) % TS_CLOCK;
-  b[i] = Math.floor(v / 2 ** 25);
-  b[i + 1] = Math.floor(v / 2 ** 17) & 0xff;
-  b[i + 2] = Math.floor(v / 2 ** 9) & 0xff;
-  b[i + 3] = Math.floor(v / 2) & 0xff;
+  b.set([2 ** 25, 2 ** 17, 2 ** 9, 2].map((unit) => Math.floor(v / unit) & 0xff), i);
   b[i + 4] = ((v % 2) << 7) | (b[i + 4] & 0x7f);
 }
 
@@ -253,6 +238,16 @@ function parseRange(header, size) {
   if ((suffix && Number(m[2]) === 0) || start >= size || start > end) return "unsatisfiable";
   return { start, end };
 }
+
+/** @param {Res} res @param {number} status @param {string} body @param {string} [type] */
+function send(res, status, body, type = "text/plain; charset=utf-8") {
+  res.writeHead(status, { "Content-Type": type, "Content-Length": Buffer.byteLength(body) }).end(body);
+}
+
+/** @param {Res} res @param {number} status @param {unknown} value */
+const sendJson = (res, status, value) => send(res, status, JSON.stringify(value), TYPES.json);
+/** @param {Res} res */
+const notFound = (res) => send(res, 404, "not found");
 
 /**
  * Starts the upstream. Resolves once it listens.
@@ -273,21 +268,21 @@ export async function startUpstream(opts = {}) {
   const requests = [];
 
   /** @param {string} video @param {number} exp @param {number} junk */
-  const sign = (video, exp, junk) => createHmac("sha256", secret).update(`${video}:${exp}:${junk}`).digest().subarray(0, 16).toString("base64url");
+  const sign = (video, exp, junk) =>
+    createHmac("sha256", secret).update(`${video}:${exp}:${junk}`).digest().subarray(0, 16);
 
-  /** @param {string} token @param {string} video */
+  /** The junk byte count of a valid, unexpired token for `video`, else null.
+   *  @param {string} token @param {string} video */
   const checkToken = (token, video) => {
     const m = /^(\d{1,12})-(\d{1,7})-([A-Za-z0-9_-]{22})$/.exec(token);
     if (!m) return null;
     const [exp, junk] = [Number(m[1]), Number(m[2])];
     const given = Buffer.from(/** @type {string} */ (m[3]), "base64url");
-    const expected = Buffer.from(sign(video, exp, junk), "base64url");
-    if (given.length !== expected.length || !timingSafeEqual(given, expected) || now() / 1000 >= exp) return null;
-    return { junk };
+    return given.length === 16 && timingSafeEqual(given, sign(video, exp, junk)) && now() / 1000 < exp ? junk : null;
   };
 
   /**
-   * @param {string} name path relative to the media root
+   * @param {string} name path under the media root
    * @returns {Promise<{ size: number, read: (start?: number, end?: number) => NodeJS.ReadableStream | Buffer } | null>}
    */
   const lookup = async (name) => {
@@ -296,8 +291,7 @@ export async function startUpstream(opts = {}) {
       return data ? { size: data.length, read: (start = 0, end = data.length - 1) => data.subarray(start, end + 1) } : null;
     }
     const file = path.join(mediaDir, name);
-    if (!file.startsWith(`${mediaDir}${path.sep}`)) return null;
-    const st = await stat(file).catch(() => null);
+    const st = file.startsWith(`${mediaDir}${path.sep}`) ? await stat(file).catch(() => null) : null;
     if (!st?.isFile()) return null;
     return { size: st.size, read: (start = 0, end = st.size - 1) => createReadStream(file, { start, end }) };
   };
@@ -308,12 +302,12 @@ export async function startUpstream(opts = {}) {
     return readFile(path.join(mediaDir, name), "utf8").catch(() => null);
   };
 
-  /** @param {import("node:http").IncomingMessage} req */
+  /** @param {Req} req */
   const originOf = (req) => `http://${req.headers.host ?? "127.0.0.1"}`;
 
   /**
    * The channel view of `video`: its `video/360p` rendition in a loop (real media), or one synthetic segment per
-   * number (tests). Null when the video has no such rendition.
+   * number. Null when the video has no such rendition.
    * @param {string} video @returns {Promise<LiveSource | null>}
    */
   const liveSource = async (video) => {
@@ -333,86 +327,73 @@ export async function startUpstream(opts = {}) {
   /**
    * `stream.ts`: the channel as one endless MPEG-TS response. It starts with the whole live window at once (the
    * player's buffer), then sends one segment per its duration, so a TV stays a few segments ahead instead of reading
-   * the loop as fast as it can. It stops when the client goes away. `Range` is ignored (200): an endless stream has no
-   * byte positions to go back to.
-   * @param {import("node:http").ServerResponse} res @param {LiveSource} src @param {number} nowMs
+   * the loop as fast as it can, until the client goes away. `Range` is ignored (200): an endless stream has no byte
+   * positions to go back to.
+   * @param {Res} res @param {LiveSource} src @param {number} nowMs
    */
   const streamLive = async (res, src, nowMs) => {
-    let closed = false;
-    let wake = () => {};
-    /** @type {NodeJS.Timeout | undefined} */
-    let timer;
-    res.on("close", () => {
-      closed = true;
-      clearTimeout(timer);
-      wake();
-    });
-    /** Waits for what `start` sets up, or for the client to go away. @param {(done: () => void) => void} start */
-    const until = (start) =>
-      closed
-        ? Promise.resolve()
-        : new Promise((resolve) => {
-            wake = () => resolve(undefined);
-            start(wake);
-          });
+    const gone = new AbortController();
+    res.on("close", () => gone.abort());
+    const until = (/** @type {Promise<unknown>} */ p) => p.catch(() => {}); // rejects when the client goes away
     res.writeHead(200, { "Content-Type": TYPES.ts, "Accept-Ranges": "none", "Cache-Control": "no-store" });
-    const join = src.loop ? tsJoiner(src.loop.ticks) : null;
+    const join = src.loop && tsJoiner(src.loop.ticks);
     const { first } = liveWindow(nowMs);
     const started = performance.now();
     let paced = 0; // seconds of media sent after the window
-    for (let n = first; !closed; n++) {
+    for (let n = first; !gone.signal.aborted; n++) {
       const raw = await src.read(n);
-      if (closed) break;
+      if (gone.signal.aborted) break;
       const bytes = join && src.loop ? join(raw, Math.floor(n / src.loop.segments)) : raw;
-      if (!res.write(bytes)) await until((done) => res.once("drain", done));
+      if (!res.write(bytes)) await until(once(res, "drain", { signal: gone.signal }));
       if (n - first + 1 < LIVE_WINDOW) continue;
       paced += src.seconds(n);
-      await until((done) => (timer = setTimeout(done, started + paced * 1000 - performance.now())));
+      await until(sleep(Math.max(0, started + paced * 1000 - performance.now()), undefined, { signal: gone.signal }));
     }
   };
 
   /**
    * The channel view of `video`: `live.m3u8`, a segment of it (`segment`: its number) or `stream.ts`.
-   * @param {import("node:http").ServerResponse} res
-   * @param {string} video @param {string} rest @param {string | undefined} segment @param {number} junk
+   * @param {Res} res @param {string} video @param {string} rest @param {string | undefined} segment
+   * @param {number} junk
    */
   const serveLive = async (res, video, rest, segment, junk) => {
     const src = await liveSource(video);
-    if (!src) return send(res, 404, "not found");
+    if (!src) return notFound(res);
     const t = now();
     if (rest === "live.m3u8") return send(res, 200, livePlaylist(src, t), TYPES.m3u8);
     if (rest === "stream.ts") return await streamLive(res, src, t);
     const n = Number(segment);
-    if (n > liveWindow(t).last) return send(res, 404, "not found"); // not broadcast yet
-    const bytes = await src.read(n);
-    const body = junk > 0 ? Buffer.concat([junkBytes(junk), bytes]) : bytes;
-    res.writeHead(200, { "Content-Type": TYPES.ts, "Content-Length": body.length, "Accept-Ranges": "none" });
-    res.end(body);
+    if (n > liveWindow(t).last) return notFound(res); // not broadcast yet
+    const body = Buffer.concat([junkBytes(junk), await src.read(n)]);
+    res.writeHead(200, { "Content-Type": TYPES.ts, "Content-Length": body.length, "Accept-Ranges": "none" }).end(body);
   };
 
   /**
    * Serves `<video>/<rest>` after the access checks.
-   * @param {import("node:http").IncomingMessage} req @param {import("node:http").ServerResponse} res
-   * @param {string} video @param {string} rest @param {string} base absolute URL of the video directory @param {number} junk
+   * @param {Req} req @param {Res} res @param {string} video @param {string} rest
+   * @param {string} base absolute URL of the video directory @param {number} junk
    */
   const serveFile = async (req, res, video, rest, base, junk) => {
-    if (rest.split("/").some((p) => p === ".." || p === "" || p === ".")) return send(res, 404, "not found");
+    if (rest.split("/").some((p) => p === ".." || p === "" || p === ".")) return notFound(res);
     const name = `${video}/${rest}`;
     const ext = path.extname(rest).slice(1).toLowerCase();
     const type = TYPES[ext] ?? "application/octet-stream";
     if (ext === "m3u8") {
       const text = await readText(name);
-      return text === null ? send(res, 404, "not found") : send(res, 200, text.replaceAll("{{base}}", base), type);
+      return text === null ? notFound(res) : send(res, 200, text.replaceAll("{{base}}", base), type);
     }
     const file = await lookup(name);
-    if (!file) return send(res, 404, "not found");
+    if (!file) return notFound(res);
     const prefix = ext === "ts" && junk > 0 ? junkBytes(junk) : null;
     const size = file.size + (prefix?.length ?? 0);
     const range = req.headers.range && !prefix ? parseRange(req.headers.range, size) : null;
     if (range === "unsatisfiable") return void res.writeHead(416, { "Content-Range": `bytes */${size}` }).end();
-    const headers = { "Content-Type": type, "Accept-Ranges": prefix ? "none" : "bytes" };
-    if (range) res.writeHead(206, { ...headers, "Content-Length": range.end - range.start + 1, "Content-Range": `bytes ${range.start}-${range.end}/${size}` });
-    else res.writeHead(200, { ...headers, "Content-Length": size });
+    const headers = { "Content-Type": type, "Accept-Ranges": prefix ? "none" : "bytes", "Content-Length": size };
+    if (range) {
+      const { start, end } = range;
+      const partial = { "Content-Length": end - start + 1, "Content-Range": `bytes ${start}-${end}/${size}` };
+      res.writeHead(206, { ...headers, ...partial });
+    } else res.writeHead(200, headers);
     if (prefix) res.write(prefix);
     const body = range ? file.read(range.start, range.end) : file.read();
     if (Buffer.isBuffer(body)) res.end(body);
@@ -422,8 +403,7 @@ export async function startUpstream(opts = {}) {
   /**
    * `GET /api/streams/<video>`: a signed, expiring URL (or the master playlist text) and the Referer it needs.
    * `?live=1` names the channel view as a live playlist, `?format=ts` as one endless MPEG-TS stream.
-   * @param {import("node:http").IncomingMessage} req @param {import("node:http").ServerResponse} res
-   * @param {string} video @param {URL} url
+   * @param {Req} req @param {Res} res @param {string} video @param {URL} url
    */
   const streamsApi = async (req, res, video, url) => {
     const asked = url.searchParams.get("format");
@@ -437,26 +417,46 @@ export async function startUpstream(opts = {}) {
     const known = channel ? await liveSource(video) : await lookup(`${video}/${entry}`);
     if (!known) return sendJson(res, 404, { error: "not_found" });
     const exp = Math.floor(now() / 1000) + tokenTtlSec;
-    const base = `${originOf(req)}/s/${exp}-${junk}-${sign(video, exp, junk)}/${video}/`;
+    const base = `${originOf(req)}/s/${exp}-${junk}-${sign(video, exp, junk).toString("base64url")}/${video}/`;
     const info = JSON.parse((await readText(`${video}/info.json`)) ?? "{}");
     // The channel view has no subtitles and only the video rendition: it leaves the languages to the catalog.
     const languages = info.languages && !channel ? { languages: info.languages } : {};
     const answer = { referer: DEFAULT_REFERER, expiresAt: new Date(exp * 1000).toISOString(), ...languages };
-    if (inline) {
-      const text = /** @type {string} */ (await readText(`${video}/master.m3u8`));
-      return sendJson(res, 200, { ...answer, playlist: text.replaceAll("{{base}}", base), baseUrl: base });
+    if (!inline) return sendJson(res, 200, { ...answer, url: `${base}${entry}` });
+    const playlist = /** @type {string} */ (await readText(`${video}/master.m3u8`)).replaceAll("{{base}}", base);
+    sendJson(res, 200, { ...answer, playlist, baseUrl: base });
+  };
+
+  /** @param {Req} req @param {Res} res @param {URL} url @param {string[]} parts */
+  const route = async (req, res, url, parts) => {
+    if (parts[0] === "api") {
+      if (req.headers["x-api-key"] !== DEFAULT_API_KEY) return sendJson(res, 401, { error: "bad_api_key" });
+      if (parts[1] === "health" && parts.length === 2) return sendJson(res, 200, { ok: true });
+      const video = parts[2] ?? "";
+      const streams = parts[1] === "streams" && parts.length === 3 && VIDEO_ID.test(video);
+      return streams ? await streamsApi(req, res, video, url) : sendJson(res, 404, { error: "not_found" });
     }
-    return sendJson(res, 200, { ...answer, url: `${base}${entry}` });
+    const signed = parts[0] === "s" && parts.length >= 4;
+    if (!signed && !(parts[0] === "static" && parts.length >= 3)) return notFound(res);
+    if (req.headers.referer !== DEFAULT_REFERER) return send(res, 403, "referer required");
+    const [video = "", rest] = signed ? [parts[2], parts.slice(3).join("/")] : [parts[1], parts.slice(2).join("/")];
+    if (!VIDEO_ID.test(video)) return notFound(res);
+    const junk = signed ? checkToken(parts[1] ?? "", video) : 0;
+    if (junk === null) return send(res, 403, "expired or invalid token");
+    const live = LIVE_PATH.exec(rest);
+    if (live) return await serveLive(res, video, rest, live[1], junk);
+    await serveFile(req, res, video, rest, `${originOf(req)}/${signed ? `s/${parts[1]}` : "static"}/${video}/`, junk);
   };
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://upstream");
-    const record = /** @type {UpstreamRequest} */ ({
-      path: url.pathname.replace(/^\/s\/[^/]+/, "/s/<token>"),
+    /** @type {UpstreamRequest} */
+    const record = {
+      path: url.pathname.replace(/^\/s\/[^/]+/, "/s/<token>"), // the signed token is not recorded
       referer: req.headers.referer ?? null,
       range: req.headers.range ?? null,
       status: 0,
-    });
+    };
     requests.push(record);
     // "close" also fires when the client stops reading a stream early (players do that all the time).
     res.on("close", () => {
@@ -464,27 +464,7 @@ export async function startUpstream(opts = {}) {
       opts.onRequest?.(record);
     });
     try {
-      const parts = url.pathname.split("/").slice(1);
-      if (parts[0] === "api") {
-        if (req.headers["x-api-key"] !== DEFAULT_API_KEY) return sendJson(res, 401, { error: "bad_api_key" });
-        if (parts[1] === "health" && parts.length === 2) return sendJson(res, 200, { ok: true });
-        if (parts[1] === "streams" && parts.length === 3 && VIDEO_ID.test(parts[2] ?? "")) return await streamsApi(req, res, /** @type {string} */ (parts[2]), url);
-        return sendJson(res, 404, { error: "not_found" });
-      }
-      if ((parts[0] === "s" && parts.length >= 4) || (parts[0] === "static" && parts.length >= 3)) {
-        if (req.headers.referer !== DEFAULT_REFERER) return send(res, 403, "referer required");
-        const signed = parts[0] === "s";
-        const video = /** @type {string} */ (signed ? parts[2] : parts[1]);
-        if (!VIDEO_ID.test(video)) return send(res, 404, "not found");
-        const token = signed ? checkToken(/** @type {string} */ (parts[1]), video) : { junk: 0 };
-        if (!token) return send(res, 403, "expired or invalid token");
-        const rest = parts.slice(signed ? 3 : 2).join("/");
-        const live = LIVE_PATH.exec(rest);
-        if (live) return await serveLive(res, video, rest, live[1], token.junk);
-        const base = `${originOf(req)}/${signed ? `s/${parts[1]}` : "static"}/${video}/`;
-        return await serveFile(req, res, video, rest, base, token.junk);
-      }
-      return send(res, 404, "not found");
+      await route(req, res, url, url.pathname.split("/").slice(1));
     } catch {
       if (!res.headersSent) send(res, 500, "error");
       else res.destroy();
@@ -507,30 +487,19 @@ export async function startUpstream(opts = {}) {
   };
 }
 
-/**
- * @param {import("node:http").ServerResponse} res @param {number} status @param {string} body @param {string} [type]
- */
-function send(res, status, body, type = "text/plain; charset=utf-8") {
-  res.writeHead(status, { "Content-Type": type, "Content-Length": Buffer.byteLength(body) });
-  res.end(body);
-}
-
-/** @param {import("node:http").ServerResponse} res @param {number} status @param {unknown} value */
-function sendJson(res, status, value) {
-  send(res, status, JSON.stringify(value), TYPES.json);
-}
-
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const [str, bool] = /** @type {const} */ ([{ type: "string" }, { type: "boolean" }]);
   const { values } = parseArgs({ options: { media: str, port: str, "token-ttl": str, verbose: bool } });
+  const out = (/** @type {string} */ line) => process.stdout.write(`${line}\n`);
   const up = await startUpstream({
     mediaDir: values.media ?? null,
     port: values.port ? Number(values.port) : undefined,
     tokenTtlSec: values["token-ttl"] ? Number(values["token-ttl"]) : undefined,
     onRequest: values.verbose
-      ? (r) => void process.stdout.write(`${r.status} ${r.path}${r.range ? ` range=${r.range}` : ""}${r.referer ? "" : " (no referer)"}\n`)
+      ? (r) => void out(`${r.status} ${r.path}${r.range ? ` range=${r.range}` : ""}${r.referer ? "" : " (no referer)"}`)
       : undefined,
   });
-  process.stdout.write(`example upstream on ${up.url} (${values.media ? `media from ${path.resolve(values.media)}` : "synthetic media"})\n`);
-  for (const sig of /** @type {const} */ (["SIGINT", "SIGTERM"])) process.once(sig, () => void up.close().then(() => process.exit(0)));
+  const media = values.media ? `media from ${path.resolve(values.media)}` : "synthetic media";
+  out(`example upstream on ${up.url} (${media})`);
+  for (const sig of ["SIGINT", "SIGTERM"]) process.once(sig, () => void up.close().then(() => process.exit(0)));
 }

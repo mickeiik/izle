@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 // @ts-check
-// Builds the self-contained server package `dist/izle-server-<version>.tgz` (an `npm pack` tarball).
-//
-// The server and @izle/contract are bundled with their npm dependencies into one ES module, so the package has no
-// dependencies, installs offline and runs exactly the dependency versions the tests ran against. The bundle finds
-// its files through the same relative paths as the sources do (`../admin`, `../schema`, `../../sample-catalog`
-// from `server/dist/`), which is why the package mirrors that layout:
+// Builds the self-contained server package `dist/izle-server-<version>.tgz` (an `npm pack` tarball): the server and
+// @izle/contract bundled with their npm dependencies into one ES module, so the package installs offline and runs the
+// dependency versions the tests ran against. It mirrors the source tree, so the bundle finds its files through the
+// same relative paths (`../admin`, `../schema`, `../../sample-catalog` from `server/dist/`):
 //
 //   bin/izle-server.js               checks the Node.js version, then runs the bundle
 //   server/dist/izle-server.js       the bundle
@@ -33,15 +31,13 @@ const { values: args } = parseArgs({ options: { out: { type: "string" } } });
 const outDir = path.resolve(args.out ?? at("dist"));
 
 const rootPackage = await readJson(at("package.json"));
-const serverPackage = await readJson(at("server", "package.json"));
-const { version } = serverPackage;
+const { name, version, description, license } = await readJson(at("server", "package.json"));
 const nodeRange = rootPackage.engines.node;
 const [, major, minor] = /^>=(\d+)\.(\d+)$/.exec(nodeRange) ?? [];
 if (!minor) throw new Error(`unexpected engines.node "${nodeRange}" in package.json`);
 
 const stage = path.join(await mkdtemp(path.join(tmpdir(), "izle-pack-")), "package");
 const to = (/** @type {string[]} */ ...p) => path.join(stage, ...p);
-await mkdir(stage, { recursive: true });
 
 const result = await build({
   entryPoints: [at("server", "src", "cli.ts")],
@@ -93,8 +89,7 @@ for (const input of Object.keys(result.metafile.inputs)) {
   const m = /^(.*node_modules\/(?:@[^/]+\/)?[^/]+)\//.exec(input);
   if (m) packageDirs.add(path.resolve(m[1]));
 }
-const notices = [];
-const bundled = [];
+const [notices, bundled, vendored] = /** @type {string[][]} */ ([[], [], []]);
 for (const dir of [...packageDirs].sort()) {
   const pkg = await readJson(path.join(dir, "package.json"));
   bundled.push(`${pkg.name}@${pkg.version}`);
@@ -102,7 +97,6 @@ for (const dir of [...packageDirs].sort()) {
   if (!licenseFile) throw new Error(`${pkg.name} has no LICENSE file; add its notice by hand`);
   notices.push(fence(`${pkg.name} ${pkg.version} (${pkg.license})`, await readFile(path.join(dir, licenseFile), "utf8")));
 }
-const vendored = [];
 for (const name of (await readdir(at("server", "admin", "vendor"))).filter((n) => n.startsWith("LICENSE-")).sort()) {
   const text = await readFile(at("server", "admin", "vendor", name), "utf8");
   vendored.push(fence(`${name.slice("LICENSE-".length)} (vendored in server/admin/vendor/)`, text));
@@ -113,7 +107,6 @@ await writeFile(
     `The admin page (\`server/admin/\`) vendors the following files; see \`server/admin/vendor/README.md\`.\n\n${vendored.join("\n\n")}\n`,
 );
 
-const { name, description, license } = serverPackage;
 const manifest = {
   name, version, private: true, // never published to a registry; installed from the release tarball
   description, license, repository: rootPackage.repository, type: "module", engines: { node: nodeRange },

@@ -37,18 +37,14 @@ export async function makeBundle(opts: FixtureOptions = {}): Promise<string> {
     items: [
       {
         id: "movie-a", kind: "movie", title: "Movie A", year: 2001, poster: `assets/${TINY_PNG_NAME}`,
-        episodes: [
-          {
-            id: "movie-a.film", playbackAllowed: true,
-            sources: [
-              {
-                id: "hls", type: "direct", languages: { audio: ["en"], subtitles: [] },
-                media: { kind: "hls", url: "https://media.example.test/a/master.m3u8" },
-                subtitleTracks: [{ url: "https://media.example.test/a/en.vtt", language: "en", format: "vtt" }],
-              },
-            ],
-          },
-        ],
+        episodes: [{
+          id: "movie-a.film", playbackAllowed: true,
+          sources: [{
+            id: "hls", type: "direct", languages: { audio: ["en"], subtitles: [] },
+            media: { kind: "hls", url: "https://media.example.test/a/master.m3u8" },
+            subtitleTracks: [{ url: "https://media.example.test/a/en.vtt", language: "en", format: "vtt" }],
+          }],
+        }],
       },
       {
         id: "series-b", kind: "series", title: "Series B", poster: null,
@@ -62,12 +58,10 @@ export async function makeBundle(opts: FixtureOptions = {}): Promise<string> {
       },
       {
         id: "live-c", kind: "live", title: "Channel C", poster: null, playbackAllowed: true,
-        sources: [
-          {
-            id: "hls", type: "direct", languages: { audio: ["tr"], subtitles: [] },
-            media: { kind: "hls", url: "https://media.example.test/c/live.m3u8" },
-          },
-        ],
+        sources: [{
+          id: "hls", type: "direct", languages: { audio: ["tr"], subtitles: [] },
+          media: { kind: "hls", url: "https://media.example.test/c/live.m3u8" },
+        }],
       },
     ],
   };

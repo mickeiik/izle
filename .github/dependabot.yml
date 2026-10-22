@@ -1,18 +1,13 @@
-# Weekly version updates: one grouped pull request per ecosystem for minor and patch updates, one per major update.
+# Weekly (Monday) version updates: one grouped pull request per ecosystem for minor and patch updates, one per major
+# update; at most five open at a time (both Dependabot defaults).
 version: 2
 updates:
   - package-ecosystem: npm
     directory: /
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: Deps
+    schedule: { interval: weekly }
+    commit-message: { prefix: Deps }
     groups:
-      npm-minor-patch:
-        patterns: ["*"]
-        update-types: [minor, patch]
+      npm-minor-patch: { patterns: ["*"], update-types: [minor, patch] }
     ignore:
       # Type-checking must catch APIs newer than the engine floor (Node 22.13), so @types/node stays on 22.x.
       - dependency-name: "@types/node"
@@ -20,16 +15,10 @@ updates:
 
   - package-ecosystem: gradle
     directory: /android
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: Deps
+    schedule: { interval: weekly }
+    commit-message: { prefix: Deps }
     groups:
-      gradle-minor-patch:
-        patterns: ["*"]
-        update-types: [minor, patch]
+      gradle-minor-patch: { patterns: ["*"], update-types: [minor, patch] }
     ignore:
       # The framework jar must be the one the robolectric version names (libs.versions.toml): bumped by hand with it.
       - dependency-name: "org.robolectric:android-all-instrumented"
@@ -38,23 +27,13 @@ updates:
   # Actions are pinned by commit SHA with the release as a comment (`@<sha> # vX.Y.Z`); Dependabot updates both.
   - package-ecosystem: github-actions
     directory: /
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: Deps
+    schedule: { interval: weekly }
+    commit-message: { prefix: Deps }
     groups:
-      actions-minor-patch:
-        patterns: ["*"]
-        update-types: [minor, patch]
+      actions-minor-patch: { patterns: ["*"], update-types: [minor, patch] }
 
   # No group: the Dockerfile's tags carry only the major (`node:<major>-slim`), so every update is a major one.
   - package-ecosystem: docker
     directory: /
-    schedule:
-      interval: weekly
-      day: monday
-    open-pull-requests-limit: 5
-    commit-message:
-      prefix: Deps
+    schedule: { interval: weekly }
+    commit-message: { prefix: Deps }

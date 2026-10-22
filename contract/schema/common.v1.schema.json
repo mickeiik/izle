@@ -17,12 +17,7 @@
     "LanguageList": {
       "description": "null = unknown, [] = known to have none.",
       "anyOf": [
-        {
-          "type": "array",
-          "items": { "$ref": "#/$defs/LanguageTag" },
-          "uniqueItems": true,
-          "maxItems": 64
-        },
+        { "type": "array", "items": { "$ref": "#/$defs/LanguageTag" }, "uniqueItems": true, "maxItems": 64 },
         { "type": "null" }
       ]
     },
@@ -36,11 +31,7 @@
       "patternProperties": { "^x-": true },
       "additionalProperties": false
     },
-    "HttpUrl": {
-      "type": "string",
-      "pattern": "^https?://[^\\s]+$",
-      "maxLength": 8192
-    },
+    "HttpUrl": { "type": "string", "pattern": "^https?://[^\\s]+$", "maxLength": 8192 },
     "DateTime": {
       "description": "ISO 8601 date-time with an explicit offset.",
       "type": "string",

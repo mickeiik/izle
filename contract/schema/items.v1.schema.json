@@ -10,12 +10,8 @@
   "patternProperties": { "^x-": true },
   "additionalProperties": false,
   "$defs": {
-    "NullableString": {
-      "anyOf": [{ "type": "string", "maxLength": 10000 }, { "type": "null" }]
-    },
-    "NullableCount": {
-      "anyOf": [{ "type": "integer", "minimum": 0, "maximum": 100000 }, { "type": "null" }]
-    },
+    "NullableString": { "anyOf": [{ "type": "string", "maxLength": 10000 }, { "type": "null" }] },
+    "NullableCount": { "anyOf": [{ "type": "integer", "minimum": 0, "maximum": 100000 }, { "type": "null" }] },
     "Title": { "type": "string", "minLength": 1, "maxLength": 300 },
     "Genres": {
       "type": "array",
@@ -30,9 +26,7 @@
     "CatalogItem": {
       "type": "object",
       "required": ["kind"],
-      "properties": {
-        "kind": { "enum": ["movie", "series", "live"] }
-      },
+      "properties": { "kind": { "enum": ["movie", "series", "live"] } },
       "discriminator": { "propertyName": "kind" },
       "oneOf": [{ "$ref": "#/$defs/EpisodicItem" }, { "$ref": "#/$defs/LiveItem" }]
     },
@@ -44,14 +38,10 @@
         "kind": { "enum": ["movie", "series"] },
         "title": { "$ref": "#/$defs/Title" },
         "originalTitle": { "anyOf": [{ "$ref": "#/$defs/Title" }, { "type": "null" }] },
-        "year": {
-          "anyOf": [{ "type": "integer", "minimum": 1870, "maximum": 2200 }, { "type": "null" }]
-        },
+        "year": { "anyOf": [{ "type": "integer", "minimum": 1870, "maximum": 2200 }, { "type": "null" }] },
         "synopsis": { "$ref": "#/$defs/NullableString" },
         "genres": { "$ref": "#/$defs/Genres" },
-        "rating": {
-          "anyOf": [{ "type": "number", "minimum": 0, "maximum": 10 }, { "type": "null" }]
-        },
+        "rating": { "anyOf": [{ "type": "number", "minimum": 0, "maximum": 10 }, { "type": "null" }] },
         "poster": { "$ref": "#/$defs/ImagePath" },
         "backdrop": { "$ref": "#/$defs/ImagePath" },
         "autoAdvance": { "type": "boolean" },
@@ -86,12 +76,8 @@
         "season": { "$ref": "#/$defs/NullableCount" },
         "number": { "$ref": "#/$defs/NullableCount" },
         "title": { "anyOf": [{ "$ref": "#/$defs/Title" }, { "type": "null" }] },
-        "label": {
-          "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 100 }, { "type": "null" }]
-        },
-        "durationMs": {
-          "anyOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
-        },
+        "label": { "anyOf": [{ "type": "string", "minLength": 1, "maxLength": 100 }, { "type": "null" }] },
+        "durationMs": { "anyOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
         "playbackAllowed": { "type": "boolean" },
         "autoAdvance": { "type": "boolean" },
         "sources": { "$ref": "#/$defs/Sources" }
@@ -102,9 +88,7 @@
     "Source": {
       "type": "object",
       "required": ["type"],
-      "properties": {
-        "type": { "enum": ["direct", "adapter"] }
-      },
+      "properties": { "type": { "enum": ["direct", "adapter"] } },
       "discriminator": { "propertyName": "type" },
       "oneOf": [{ "$ref": "#/$defs/DirectSource" }, { "$ref": "#/$defs/AdapterSource" }]
     },

@@ -48,17 +48,15 @@ test("probe range-GETs direct media and subtitles, follows redirects, forwards h
   };
   try {
     const results = await probeBundle(bundle, { concurrency: 2 });
-    const byId = Object.fromEntries(results.map((r) => [`${r.target.sourceId}:${r.target.what}`, r]));
-    assert.equal(results.length, 5, "adapter sources are not probed");
-    assert.equal(byId["live:media"]?.ok, true);
-    assert.deepEqual([byId["live:media"]?.target.itemId, byId["live:media"]?.target.episodeId], ["ch", null], "a live item's own sources");
-    assert.equal(byId["ok:media"]?.target.episodeId, "e");
-    assert.equal(byId["ok:media"]?.ok, true);
-    assert.equal(byId["ok:media"]?.status, 206);
-    assert.equal(byId["ok:subtitle"]?.ok, false);
-    assert.equal(byId["ok:subtitle"]?.status, 404);
-    assert.equal(byId["redirect:media"]?.ok, true);
-    assert.equal(byId["hdr:media"]?.ok, true);
+    const outcome = (r: (typeof results)[number]) => [r.target.itemId, r.target.episodeId, r.ok, r.status];
+    const bySource = Object.fromEntries(results.map((r) => [`${r.target.sourceId}:${r.target.what}`, outcome(r)]));
+    assert.deepEqual(bySource, {
+      "ok:media": ["i", "e", true, 206],
+      "ok:subtitle": ["i", "e", false, 404],
+      "redirect:media": ["i", "e", true, 206],
+      "hdr:media": ["i", "e", true, 200],
+      "live:media": ["ch", null, true, 206], // a live item's own sources
+    }, "adapter sources are not probed");
     assert.ok(seen.every((s) => s.method === "GET" && s.headers.range === "bytes=0-0"));
   } finally {
     server.close();

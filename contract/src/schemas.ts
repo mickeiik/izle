@@ -15,24 +15,15 @@ export const validateResolveResultsSchema = ajv.compile(loadSchema("resolve-resu
   ResolveResult[]
 >;
 
-/** One-line, human-readable description of an ajv error. */
-function describeSchemaError(err: ErrorObject): string {
-  const p = err.params as Record<string, unknown>;
-  switch (err.keyword) {
-    case "additionalProperties":
-      return `unknown property "${String(p.additionalProperty)}"`;
-    case "required":
-      return `missing required property "${String(p.missingProperty)}"`;
-    case "const":
-      return `must be ${JSON.stringify(p.allowedValue)}`;
-    case "enum":
-      return `must be one of ${(p.allowedValues as unknown[]).map((v) => JSON.stringify(v)).join(", ")}`;
-    case "propertyNames":
-      return `invalid property name "${String(p.propertyName)}"`;
-    default:
-      return err.message ?? err.keyword;
-  }
-}
+/** One-line, human-readable descriptions of the ajv errors whose own message is not one. */
+const DESCRIBE: Record<string, (p: Record<string, any>) => string> = {
+  additionalProperties: (p) => `unknown property "${p.additionalProperty}"`,
+  required: (p) => `missing required property "${p.missingProperty}"`,
+  const: (p) => `must be ${JSON.stringify(p.allowedValue)}`,
+  enum: (p) => `must be one of ${(p.allowedValues as unknown[]).map((v) => JSON.stringify(v)).join(", ")}`,
+  propertyNames: (p) => `invalid property name "${p.propertyName}"`,
+};
+const describeSchemaError = (err: ErrorObject) => DESCRIBE[err.keyword]?.(err.params) ?? err.message ?? err.keyword;
 
 /**
  * Reduces ajv's error list to the useful ones: `anyOf`/`oneOf` summaries are dropped when a more specific error

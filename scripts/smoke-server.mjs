@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 // @ts-check
-// Installs a server package the way the self-hosting guide does (`npm install --global --prefix`, offline: the
-// package has no dependencies) into a temporary directory and checks that the installed server works: version,
-// catalog validation, admin token and sign-in link, the admin page, pairing (admin API and shell), the home state
-// with posters, resolve, a database backup while the server runs, catalog reload on SIGHUP and a clean stop on
-// SIGTERM. Only loopback HTTP; nothing is fetched from the network.
+// Installs a server package the way the self-hosting guide does (`npm install --global --prefix`, offline) into a
+// temporary directory and checks that the installed server works, from `--version` to a clean stop on SIGTERM (each
+// check prints a line). Only loopback HTTP; nothing is fetched from the network.
 import { execFile, spawn } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
