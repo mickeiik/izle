@@ -19,6 +19,15 @@ contract share one version number. How to update (back up, update the server, th
 
 ### Changed
 
+- **Admin page:** a TV's page is split into tabs instead of one long page: Now playing, Home screen, Listen along,
+  History, Settings and Problems (with a count when there are any). The tab is kept in the address
+  (`#/devices/<id>/settings`), so a reload or a shared link opens it. Settings now holds the TV app's version and
+  "Install now", the TV's settings, and "Forget this TV".
+- **Admin page:** a TV's Home screen tab draws the TV's Home to scale instead of a list: the same grid, cards, chips,
+  progress bars and titles, with further rows scrolling inside the screen as on the TV. Select a card (or move with
+  the arrow keys) to play it, move it left, right, up or down a row or to the first place, open its episodes, or
+  remove it. What the TV hides (missing from the catalog, not playable) is listed under the screen. The grid's
+  columns and rows moved here from Settings: a new size is previewed on the screen before "Save grid".
 - **TV app:** the chips on Home's cards ("Live", "New", "Episode 5", "2 new") are smaller (16 sp, was 20 sp), so
   they cover less of the picture.
 - **TV app:** Home scrolls more smoothly. The row beyond each edge of the screen is prepared ahead, so ↓ or ↑ onto it

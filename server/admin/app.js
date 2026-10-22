@@ -65,10 +65,10 @@ startRouter({
   app,
   nav: /** @type {HTMLElement} */ (document.getElementById("nav")),
   before: signInFromLink,
-  pick([section, id, itemId], query) {
+  pick([section, id, sub], query) {
     if (!getToken() || section === "login") return { view: loginView };
-    if (section === "devices" && id) return { view: (scope) => deviceView(scope, id), nav: "#/devices" };
-    if (section === "catalog" && id === "items" && itemId) return { view: (scope) => itemView(scope, itemId), nav: "#/catalog" };
+    if (section === "devices" && id) return { view: (scope) => deviceView(scope, id, sub), nav: "#/devices" };
+    if (section === "catalog" && id === "items" && sub) return { view: (scope) => itemView(scope, sub), nav: "#/catalog" };
     if (section === "catalog") return { view: (scope) => catalogView(scope, query), nav: "#/catalog" };
     if (section === "history" && id) return { view: (scope) => historyItemView(scope, id), nav: "#/history" };
     if (section === "history") return { view: historyView, nav: "#/history" };

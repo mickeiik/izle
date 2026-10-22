@@ -380,3 +380,16 @@ The server side of the specification above, in one change (the admin page and th
   is ticked stays listed, as "On Home", until the next search, so the focus can move on to the next Add.
 - Facets ride on `GET /admin/catalog`, which the browser reads anyway for the builds of "New"; a genre is matched
   case- and accent-insensitively and shown under the first spelling the catalog uses.
+
+## A TV's admin page in tabs, Home screen to scale (2026-10-22)
+
+- The tabs keep their key in the address with `history.replaceState`, not a hash navigation: the router renders a
+  view again on every hash change, which would reload the TV and restart its polls on each tab. Every tab keeps
+  polling while hidden, so switching shows current data at once.
+- The Home screen tab draws the TV's Home from the TV app's own numbers: `tvGrid` (lib.js) is HomeGrid.compute on the
+  960 × 540 dp screen, `tvCard` is EpisodeNames.badge with tileBadgeText, and the screen is laid out in dp as px
+  and scaled to the card. A change to the TV's grid or chips has to be made in both. Three layouts were prototyped
+  (this mirror with an inspector, a tile grid with controls on every tile, a drag-and-drop board with a drawer);
+  the mirror won because it shows the owner exactly what the viewer sees.
+- The grid size moved from Settings to this tab, previewed before it is saved. Enter on a card does not play it:
+  a stray key would start something on someone's TV; Play is a button of the selected card.

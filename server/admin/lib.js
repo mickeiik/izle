@@ -492,6 +492,76 @@ export function gridSummary(columns, rows, homeCount) {
   return `${plural(columns * rows, "show")} per screen${below > 0 ? ` · ${plural(below, "more row")} below` : ""}`;
 }
 
+/**
+ * The TV's Home grid, in dp: HomeGrid.compute of the TV app (keep the two in step) on its 960 × 540 dp screen less the
+ * safe margins (48 dp at the sides, 27 dp above and below). `columns` × `rows` 16:9 cards (clamped to 3–6 × 1–4) as
+ * large as fit, each with its title (24 sp, 32 dp lines) under it, on two lines unless a second line makes the cards
+ * smaller. The viewport is exactly `rows` rows tall; further rows scroll into it.
+ * @param {number} columns @param {number} rows
+ */
+export function tvGrid(columns, rows) {
+  const width = 960 - 2 * 48;
+  const height = 540 - 2 * 27;
+  const gap = 20;
+  const padding = 14;
+  const titleGap = 10;
+  const titleLine = 32;
+  const cols = Math.min(HOME_COLUMNS[HOME_COLUMNS.length - 1], Math.max(HOME_COLUMNS[0], columns));
+  const rowsShown = Math.min(HOME_ROWS[HOME_ROWS.length - 1], Math.max(HOME_ROWS[0], rows));
+  const widthBound = (width - 2 * padding - (cols - 1) * gap) / cols;
+  const titleHeight = (/** @type {number} */ lines) => titleGap + titleLine * lines;
+  const heightBound = (/** @type {number} */ lines) => (((height - 2 * padding - (rowsShown - 1) * gap) / rowsShown - titleHeight(lines)) * 16) / 9;
+  const widthFor = (/** @type {number} */ lines) => Math.max(1, Math.floor(Math.min(widthBound, heightBound(lines))));
+  const titleLines = widthFor(2) < widthFor(1) ? 1 : 2;
+  const cardWidth = widthFor(titleLines);
+  const cardHeight = (cardWidth * 9) / 16;
+  const cellHeight = cardHeight + titleHeight(titleLines);
+  return {
+    columns: cols, rows: rowsShown, cardWidth, cardHeight, titleLines, cellHeight, gap, padding, titleGap,
+    viewportWidth: cols * cardWidth + (cols - 1) * gap + 2 * padding,
+    viewportHeight: rowsShown * cellHeight + (rowsShown - 1) * gap + 2 * padding,
+  };
+}
+
+/** Whether the TV shows a home entry: it leaves out what is missing from the catalog or cannot be played. @param {{ missing?: boolean, playable?: boolean }} e */
+export const onTv = (e) => !e.missing && e.playable !== false;
+
+/**
+ * Whether the TV resumes `c` (PlaybackPlan.resumePositionMs): watching, from 30 s on, and not within the credits
+ * allowance of the end (5 % of the duration, at least 2 min, at most 10 %).
+ * @param {ContinueInfo | null | undefined} c
+ */
+function tvResumes(c) {
+  if (!c || c.status !== "watching" || c.positionMs < RESUME_MIN_MS) return false;
+  const d = c.durationMs;
+  if (!d || d <= 0) return true;
+  return d - c.positionMs > Math.min(Math.max(120_000, d * 0.05), d * 0.1);
+}
+
+/**
+ * What a card on the TV's Home shows over its picture (EpisodeNames.badge and tileBadgeText): the chip at the bottom
+ * (`tone` "live" for a channel, "new" for New), the progress bar's percent (null: none) and the "2 new" count at the
+ * top right (0: none).
+ * @param {{ kind: string, continue: (ContinueInfo & { index?: number }) | null, newEpisodes?: number }} e
+ */
+export function tvCard(e) {
+  if (e.kind === "live") return { chip: "Live", tone: "live", progress: null, newEpisodes: 0 };
+  const c = e.continue;
+  const newEpisodes = Math.max(0, e.newEpisodes ?? 0);
+  if (!c) return { chip: "New", tone: "new", progress: null, newEpisodes };
+  const resume = tvResumes(c);
+  const progress = resume && c.durationMs ? percent(c.positionMs, c.durationMs) : null;
+  if (e.kind === "series") {
+    const label = c.label?.trim();
+    const number = c.number ?? (c.index ?? 0) + 1;
+    const name = label || (c.season !== null && c.season !== undefined && c.season > 1 ? `Season ${c.season}, Episode ${number}` : `Episode ${number}`);
+    return { chip: resume ? `Continue · ${name}` : name, tone: "", progress, newEpisodes };
+  }
+  if (resume) return { chip: "Continue", tone: "", progress, newEpisodes };
+  if (c.status === "finished") return { chip: "Watch again", tone: "", progress, newEpisodes };
+  return { chip: "New", tone: "new", progress, newEpisodes };
+}
+
 /** What a failed source attempt means, for the diagnostics view. */
 const TRIED = /** @type {Record<string, string>} */ ({
   empty: "the adapter found nothing to play",

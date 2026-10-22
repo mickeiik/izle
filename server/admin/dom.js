@@ -56,7 +56,7 @@ export function page({ back, title, aside = [] }, ...content) {
 }
 
 /**
- * A card: a section with its heading (focusable from script, for the section nav), an optional intro and content.
+ * A card: a section with its heading (focusable from script), an optional intro and content.
  * `aside` goes next to the title (a count, a button), `intro` is a muted paragraph under it.
  * @param {string | { title: string, aside?: Child | Child[], intro?: Child | Child[] }} opts
  * @param {...(Child | Child[])} children
@@ -65,6 +65,66 @@ export function card(opts, ...children) {
   const o = typeof opts === "string" ? { title: opts } : opts;
   const head = h("div", { class: "card-head" }, h("h2", { tabindex: "-1" }, o.title), o.aside);
   return h("section", { class: "card" }, head, o.intro ? h("p", { class: "intro muted" }, o.intro) : null, ...children);
+}
+
+/**
+ * Tabs: a tab list and one panel per tab, only the selected one shown. ← → Home End move between the tabs and select
+ * them (the selected tab is the only one in the Tab order). `select(key)` selects a tab without moving the focus;
+ * `onSelect` runs when another tab was selected (not for the one selected at first). `setBadge(key, text)` shows a
+ * count next to a tab's label (empty: none).
+ * @param {{ label: string, tabs: Array<{ key: string, label: string, content: Child[] }>, selected: string,
+ *   onSelect?: (key: string) => void }} o
+ */
+export function tabs({ label, tabs: defs, selected, onSelect }) {
+  const id = uid("tab");
+  const items = defs.map((t) => {
+    const badge = h("span", { class: "badge", hidden: true });
+    const tab = h("button", { type: "button", role: "tab", id: `${id}-${t.key}`, "aria-controls": `${id}-${t.key}-panel` }, t.label, badge);
+    const panel = h("div", { role: "tabpanel", id: `${id}-${t.key}-panel`, "aria-labelledby": tab.id, class: "tab-panel" }, ...t.content);
+    return { key: t.key, tab, panel, badge };
+  });
+  let current = "";
+  /** @param {string} key */
+  const select = (key) => {
+    const at = items.find((t) => t.key === key) ?? items[0];
+    for (const t of items) {
+      const on = t === at;
+      t.tab.setAttribute("aria-selected", String(on));
+      t.tab.tabIndex = on ? 0 : -1;
+      t.panel.hidden = !on;
+    }
+    if (at.key === current) return;
+    const first = current === "";
+    current = at.key;
+    if (!first) onSelect?.(at.key);
+  };
+  const tablist = h("div", { role: "tablist", class: "tabs", "aria-label": label }, items.map((t) => t.tab));
+  for (const [i, t] of items.entries()) {
+    t.tab.addEventListener("click", () => select(t.key));
+    t.tab.addEventListener("keydown", (e) => {
+      const to = { ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: items.length - 1 }[e.key];
+      if (to === undefined) return;
+      e.preventDefault();
+      const next = items[(to + items.length) % items.length];
+      select(next.key);
+      next.tab.focus();
+      // Keep the selected tab in view when the list scrolls sideways (phones).
+      next.tab.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+  }
+  select(selected);
+  return {
+    list: tablist,
+    panels: items.map((t) => t.panel),
+    select,
+    /** @param {string} key @param {string} text */
+    setBadge(key, text) {
+      const t = items.find((x) => x.key === key);
+      if (!t || t.badge.textContent === text) return;
+      t.badge.textContent = text;
+      t.badge.hidden = !text;
+    },
+  };
 }
 
 /** @param {string | null} url @param {string} [alt] */
