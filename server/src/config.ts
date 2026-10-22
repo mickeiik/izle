@@ -22,20 +22,14 @@ export interface ServerConfig {
   admin: { tokenFile: string; token: string | null };
   /**
    * `alignTsSegments` trims junk bytes before the first MPEG-TS sync byte of proxied HLS segments;
-   * `privateUpstreams` lists the loopback, private or link-local upstreams the proxy may reach anyway (hosts,
-   * addresses or CIDR ranges, optionally with a port).
+   * `privateUpstreams` lists the loopback, private or link-local upstreams the proxy may reach anyway.
    */
   proxy: { always: boolean; sessionTtlSec: number; alignTsSegments: boolean; privateUpstreams: string[] };
   /** Server-wide defaults for devices without their own setting (null = fall back to the catalog's hints). */
   defaults: { uiLanguage: "tr" | "en" | null; preferredAudioLanguage: string | null };
   log: { level: Level };
-  /** How long the event log is kept. */
   events: { retentionDays: number };
-  /**
-   * The TV app's updates: where the APK the server offers its TVs comes from (`github`: the latest release of
-   * `repo`, checked every `checkIntervalHours`; `manual`: only what the owner uploads), and whether TVs that can
-   * install silently do so on their own (`auto`).
-   */
+  /** `github`: the latest release of `repo`; `manual`: only the owner's uploads. `auto`: TVs install on their own. */
   appUpdates: { source: AppUpdateSource; repo: string; checkIntervalHours: number; auto: boolean };
 }
 
@@ -48,14 +42,10 @@ export class ConfigError extends Error {
 /** The sample catalog shipped in this repository, used when no catalog is configured. */
 export const SAMPLE_CATALOG_DIR = fileURLToPath(new URL("../../sample-catalog", import.meta.url));
 
-const DEFAULT_PORT = 8787;
-const DEFAULT_EVENT_RETENTION_DAYS = 7;
 export const DEFAULT_RESOLVE_DEADLINE_MS = 12_000;
 export const DEFAULT_RESOLVE_BUDGET_MS = 30_000;
-export const DEFAULT_APP_REPO = "mickeiik/izle";
 /** `owner/name` of a GitHub repository (neither part `.` or `..`). */
-export const REPO_PATTERN = "^(?!\\.\\.?/)[A-Za-z0-9_.-]+/(?!\\.\\.?$)[A-Za-z0-9_.-]+$";
-
+const REPO_PATTERN = "^(?!\\.\\.?/)[A-Za-z0-9_.-]+/(?!\\.\\.?$)[A-Za-z0-9_.-]+$";
 /** Simplified BCP 47 language tag, as in the catalog contract (`LanguageTag`). */
 export const LANGUAGE_TAG_PATTERN = "^[A-Za-z]{2,3}(-[A-Za-z0-9]{1,8})*$";
 
@@ -112,35 +102,21 @@ interface ConfigFile {
   appUpdates?: { source?: AppUpdateSource; repo?: string; checkIntervalHours?: number; auto?: boolean };
 }
 
-interface LoadConfigOptions {
-  /** Config file path; relative paths inside it resolve against its directory. */
-  path?: string | null;
-  env?: NodeJS.ProcessEnv;
-  /** Base for a relative `path` and, without a file, for the default data directory. */
-  cwd?: string;
-}
-
 /** Whether a listen host binds every interface (`0.0.0.0`, `::`, or an empty host, which the config file refuses). */
 export function isWildcardHost(host: string): boolean {
   return host === "" || host === "0.0.0.0" || host === "::";
 }
 
-/**
- * Where this host's own server answers: the listen address, with a wildcard host turned into loopback. `port`
- * defaults to the configured one; the running server passes the port it bound.
- */
+/** Where this host's own server answers: a wildcard listen host is loopback; the running server passes its port. */
 export function localServerUrl(config: Pick<ServerConfig, "listen">, port = config.listen.port): string {
   const host = config.listen.host;
-  const h = isWildcardHost(host) ? "127.0.0.1" : host.includes(":") ? `[${host}]` : host;
-  return `http://${h}:${port}`;
+  return `http://${isWildcardHost(host) ? "127.0.0.1" : host.includes(":") ? `[${host}]` : host}:${port}`;
 }
 
-/** The server's SQLite database, in the data directory. */
 export function databaseFile(config: Pick<ServerConfig, "dataDir">): string {
   return path.join(config.dataDir, "izle.db");
 }
 
-/** Reads, parses and validates a config file; a ConfigError says what is wrong with it. */
 function readConfigFile(configPath: string): ConfigFile {
   let parsed: unknown;
   try {
@@ -166,7 +142,8 @@ function readConfigFile(configPath: string): ConfigFile {
   return file;
 }
 
-export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
+/** `path`'s relative paths resolve against its directory; `cwd` is the base for `path` and, without one, the data. */
+export function loadConfig(opts: { path?: string | null; env?: NodeJS.ProcessEnv; cwd?: string } = {}): ServerConfig {
   const cwd = opts.cwd ?? process.cwd();
   const configPath = opts.path ? path.resolve(cwd, opts.path) : null;
   const file: ConfigFile = configPath ? readConfigFile(configPath) : {};
@@ -175,7 +152,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
   const r = file.resolver;
   return {
     configPath,
-    listen: { host: "0.0.0.0", port: DEFAULT_PORT, ...file.listen },
+    listen: { host: "0.0.0.0", port: 8787, ...file.listen },
     publicUrl: file.publicUrl ? file.publicUrl.replace(/\/+$/, "") : null,
     trustedProxies: file.trustedProxies ?? [],
     dataDir,
@@ -190,7 +167,7 @@ export function loadConfig(opts: LoadConfigOptions = {}): ServerConfig {
     proxy: { always: false, sessionTtlSec: 21600, alignTsSegments: false, privateUpstreams: [], ...file.proxy },
     defaults: { uiLanguage: null, preferredAudioLanguage: null, ...file.defaults },
     log: { level: "info", ...file.log },
-    events: { retentionDays: DEFAULT_EVENT_RETENTION_DAYS, ...file.events },
-    appUpdates: { source: "github", repo: DEFAULT_APP_REPO, checkIntervalHours: 24, auto: true, ...file.appUpdates },
+    events: { retentionDays: 7, ...file.events },
+    appUpdates: { source: "github", repo: "mickeiik/izle", checkIntervalHours: 24, auto: true, ...file.appUpdates },
   };
 }

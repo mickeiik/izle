@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig, type ServerConfig } from "../src/config.ts";
+import { loadConfig } from "../src/config.ts";
 import { createLogger } from "../src/log.ts";
 import { startServer } from "../src/server.ts";
 
@@ -145,26 +145,16 @@ export function fakeClock(start = Date.parse("2026-10-10T12:00:00Z")) {
 }
 
 type Answer = { status: number; json: Json; headers: Headers };
+type CallOptions = { token?: string | null; body?: unknown; raw?: string; headers?: Record<string, string> };
 
-export interface TestServer {
-  srv: Awaited<ReturnType<typeof startServer>>;
-  base: string;
-  config: ServerConfig;
-  bundleDir: string;
-  logs: string[];
-  clock: ReturnType<typeof fakeClock>;
-  call(method: string, route: string, opts?: { token?: string | null; body?: unknown; raw?: string; headers?: Record<string, string> }): Promise<Answer>;
-  admin(method: string, route: string, body?: unknown): Promise<Answer>;
-  pair(name?: string): Promise<{ deviceId: string; token: string }>;
-  close(): Promise<void>;
-}
+export type TestServer = Awaited<ReturnType<typeof startTestServer>>;
 
 export interface TestServerOptions extends Partial<Omit<Parameters<typeof startServer>[0], "config">> {
   bundleDir?: string;
   configFile?: Json;
 }
 
-export async function startTestServer(opts: TestServerOptions = {}): Promise<TestServer> {
+export async function startTestServer(opts: TestServerOptions = {}) {
   const { bundleDir: givenBundle, configFile, ...startOptions } = opts;
   const root = await tempDir();
   const bundleDir = givenBundle ?? (await writeBundle(path.join(root, "bundle")));
@@ -179,7 +169,7 @@ export async function startTestServer(opts: TestServerOptions = {}): Promise<Tes
   const srv = await startServer({ config, log, now: clock.now, ...startOptions });
   const base = srv.url;
 
-  const call: TestServer["call"] = async (method, route, o = {}) => {
+  const call = async (method: string, route: string, o: CallOptions = {}): Promise<Answer> => {
     const body = o.raw ?? (o.body === undefined ? undefined : JSON.stringify(o.body));
     const headers: Record<string, string> = { ...o.headers };
     if (o.token) headers.Authorization = `Bearer ${o.token}`;
@@ -194,9 +184,9 @@ export async function startTestServer(opts: TestServerOptions = {}): Promise<Tes
     }
     return { status: res.status, json, headers: res.headers };
   };
-  const admin: TestServer["admin"] = (method, route, body) => call(method, `/api/v1/admin${route}`, { token: ADMIN_TOKEN, body });
+  const admin = (method: string, route: string, body?: unknown) => call(method, `/api/v1/admin${route}`, { token: ADMIN_TOKEN, body });
 
-  const pair: TestServer["pair"] = async (name = "TV") => {
+  const pair = async (name = "TV"): Promise<{ deviceId: string; token: string }> => {
     const start = await call("POST", "/api/v1/pair/start");
     if (start.status !== 200) throw new Error(`pair/start ${start.status} ${JSON.stringify(start.json)}`);
     const approve = await admin("POST", "/pair/approve", { code: start.json.code, name });
@@ -206,7 +196,7 @@ export async function startTestServer(opts: TestServerOptions = {}): Promise<Tes
     return { deviceId: wait.json.deviceId, token: wait.json.deviceToken };
   };
 
-  return { srv, base, config, bundleDir, logs, clock, call, admin, pair, close: () => srv.close() };
+  return { srv, base, config, bundleDir, logs, clock, call, admin, pair, close: (): Promise<void> => srv.close() };
 }
 
 /** The server's log lines with this message, parsed. */
@@ -242,7 +232,6 @@ export async function openEvents(base: string, token: string, route = "/api/v1/t
   const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
   const queue: SseMessage[] = [];
-  let waiting = null as (() => void) | null;
   let ended = false;
 
   void (async () => {
@@ -263,14 +252,12 @@ export async function openEvents(base: string, token: string, route = "/api/v1/t
             else if (key === "event" || key === "data" || key === "id" || key === "retry") msg[key] = val;
           }
           queue.push(msg);
-          waiting?.();
         }
       }
     } catch {
       // aborted
     } finally {
       ended = true;
-      waiting?.();
     }
   })();
 
@@ -284,16 +271,8 @@ export async function openEvents(base: string, token: string, route = "/api/v1/t
         const i = queue.findIndex(filter);
         if (i >= 0) return queue.splice(i, 1)[0]!;
         if (ended) throw new Error("stream ended");
-        const left = deadline - Date.now();
-        if (left <= 0) throw new Error("timed out waiting for SSE message");
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, left);
-          waiting = () => {
-            clearTimeout(timer);
-            waiting = null;
-            resolve();
-          };
-        });
+        if (Date.now() > deadline) throw new Error("timed out waiting for SSE message");
+        await new Promise((resolve) => setTimeout(resolve, 5));
       }
     },
     close() {

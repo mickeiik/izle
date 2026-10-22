@@ -1,5 +1,4 @@
-// The access tokens (owner token only, every method): list, create (the secret is in this answer and nowhere else),
-// revoke.
+// The access tokens (owner token only): list, create (the secret is in this answer and nowhere else), revoke.
 
 import type { Hono } from "hono";
 import type { AppContext } from "../../context.ts";
@@ -8,9 +7,7 @@ import { accessTokenJson } from "../../tokens.ts";
 import { isId, parseBody, tokenBody } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
 
-export function registerAdminTokens(app: Hono<Env>, ctx: AppContext): void {
-  const { tokens } = ctx;
-
+export function registerAdminTokens(app: Hono<Env>, { tokens }: AppContext): void {
   app.get("/api/v1/admin/tokens", (c) => c.json({ tokens: tokens.list().map(accessTokenJson) }));
 
   app.post("/api/v1/admin/tokens", async (c) => {
