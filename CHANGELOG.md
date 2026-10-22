@@ -21,6 +21,9 @@ contract share one version number. How to update (back up, update the server, th
 
 - **TV app:** the chips on Home's cards ("Live", "New", "Episode 5", "2 new") are smaller (16 sp, was 20 sp), so
   they cover less of the picture.
+- **TV app:** Home scrolls more smoothly. The row beyond each edge of the screen is prepared ahead, so ↓ or ↑ onto it
+  no longer builds a whole row of cards at once; the dimmed cards around the focused one are drawn without an extra
+  layer each; a chip's label is measured once for the whole screen.
 
 ### Fixed
 
