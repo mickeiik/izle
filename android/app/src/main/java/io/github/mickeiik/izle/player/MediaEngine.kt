@@ -33,19 +33,18 @@ interface MediaEngine {
         fun onEnded()
         fun onError(error: MediaError)
         fun onIsPlayingChanged(isPlaying: Boolean)
-        fun onPlayWhenReadyChanged(playWhenReady: Boolean)
-        /** After every state change (after [onReady] or [onEnded] for those): the controller refreshes its flags. */
+
+        /** After every state or `playWhenReady` change (after [onReady] or [onEnded] for those). */
         fun onStateChanged()
         fun onCues(text: String?)
     }
 }
 
-/** Resolved addresses and stream facts, independent of the decoder's media item representation. */
 data class MediaSpec(val url: String, val kind: String, val subtitles: List<SubtitleSpec>, val mediaId: String, val live: Boolean)
 
 data class SubtitleSpec(val url: String, val language: String, val format: String, val label: String?)
 
-/** Keeps the original exception for diagnostics, which use class names and never its message. */
+/** [cause] is for diagnostics, which use class names and never its message. */
 data class MediaError(val codeName: String, val httpStatus: Int?, val cause: Throwable)
 
 /** An audio or text track of the current media, for the hidden menu. */

@@ -4,6 +4,7 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.EventsClient
 import io.github.mickeiik.izle.data.api.ServerEvent
+import io.github.mickeiik.izle.json
 import io.github.mickeiik.izle.settings.DeviceStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,13 +59,12 @@ class ServerRepositoryTest {
                 paths += path
                 return when {
                     path == "/api/v1/tv/state" ->
-                        if (stateCode == 200) MockResponse.Builder().body(STATE).build()
-                        else MockResponse.Builder().code(stateCode).body("""{"error":"unauthorized"}""").build()
-                    path == "/api/v1/tv/events" && stateCode >= 500 -> MockResponse.Builder().code(stateCode).body("down").build()
+                        if (stateCode == 200) json(200, STATE) else json(stateCode, """{"error":"unauthorized"}""")
+                    path == "/api/v1/tv/events" && stateCode >= 500 -> json(stateCode, "down")
                     path == "/api/v1/tv/events" ->
                         MockResponse.Builder().addHeader("Content-Type", "text/event-stream").body(eventsBody).build()
-                    path.endsWith("/ack") -> MockResponse.Builder().body("""{"ok":true}""").build()
-                    else -> MockResponse.Builder().code(404).body("""{"error":"not_found"}""").build()
+                    path.endsWith("/ack") -> json(200, """{"ok":true}""")
+                    else -> json(404, """{"error":"not_found"}""")
                 }
             }
         }
@@ -79,9 +79,13 @@ class ServerRepositoryTest {
         server.close()
     }
 
-    private fun repository(
+    private val api by lazy { ApiClient(server.url("/"), "device-token", http) }
+
+    /** A repository, already using [api] unless [use] is false. */
+    private suspend fun repository(
         clock: () -> Long = { System.nanoTime() / 1_000_000 },
         appCheckMs: Long = 6 * 3_600_000L,
+        use: Boolean = true,
         onAppCheck: suspend (ApiClient) -> Unit = {},
     ) = ServerRepository(
         scope, store, EventsClient(http),
@@ -89,42 +93,37 @@ class ServerRepositoryTest {
             pollMs = 60_000, offlinePollMs = 60_000, minBackoffMs = 50, maxBackoffMs = 100, appCheckMs = appCheckMs, clock = clock,
         ),
         onAppCheck = onAppCheck,
-    )
+    ).also { if (use) it.use(api) }
 
-    private fun api() = ApiClient(server.url("/"), "device-token", http)
+    /** The server fails while the repository refreshes, then answers again [laterMs] later. */
+    private suspend fun outage(repo: ServerRepository, now: AtomicLong, laterMs: Long) {
+        stateCode = 503
+        assertFalse(repo.refresh(api))
+        now.addAndGet(laterMs)
+        stateCode = 200
+        assertTrue(repo.refresh(api))
+    }
 
     @Test
-    fun refreshShowsAndCachesTheState() = runBlocking {
+    fun refreshShowsAndCachesTheStateAndAnUnreachableServerMeansOffline() = runBlocking {
         val repo = repository()
-        val api = api()
-        repo.use(api)
         assertTrue(repo.refresh(api))
         assertEquals(5L, repo.state.value?.version)
         assertTrue(repo.online.value)
         assertNotNull(store.cachedState())
 
-        // A restart without the server still shows the last home screen.
-        val again = repository()
-        again.use(ApiClient(server.url("/"), "device-token", http))
-        assertEquals("caminandes", again.state.value?.home?.single()?.item?.id)
-    }
-
-    @Test
-    fun unreachableServerMeansOffline() = runBlocking {
-        val repo = repository()
-        val api = api()
-        repo.use(api)
+        // A restart without the server still shows the last home screen, offline.
         server.close()
-        assertFalse(repo.refresh(api))
-        assertFalse(repo.online.value)
+        val again = repository()
+        assertEquals("caminandes", again.state.value?.home?.single()?.item?.id)
+        assertFalse(again.refresh(api))
+        assertFalse(again.online.value)
     }
 
     @Test
     fun aRemovedDeviceMustPairAgain() = runBlocking {
         stateCode = 401
         val repo = repository()
-        val api = api()
-        repo.use(api)
         val signal = async { withTimeoutOrNull(5_000) { repo.unauthorized.first() } }
         delay(50)
         assertFalse(repo.refresh(api))
@@ -140,7 +139,6 @@ class ServerRepositoryTest {
             "event: command\ndata: {\"id\":7,\"type\":\"stop\",\"payload\":{}}\n\n" +
             "event: command\ndata: {\"id\":9,\"type\":\"dance\",\"payload\":{\"style\":[1,2]}}\n\n"
         val repo = repository()
-        repo.use(api())
         val first = async { withTimeout(5_000) { repo.commands.take(2).toList() } }
         delay(50)
         repo.start()
@@ -160,8 +158,6 @@ class ServerRepositoryTest {
             delay(20) // a check under way: the next one asked for meanwhile is skipped
             checks += api
         }
-        val api = api()
-        repo.use(api)
         repo.start()
         withTimeout(5_000) { while (checks.size < 3) delay(20) }
         repo.stop()
@@ -174,12 +170,9 @@ class ServerRepositoryTest {
 
     @Test
     fun onlyStatesFromTheServerAreFresh() = runBlocking {
-        val api = api()
-        val first = repository()
-        first.use(api)
-        assertTrue(first.refresh(api)) // caches it
+        assertTrue(repository().refresh(api)) // caches it
 
-        val repo = repository()
+        val repo = repository(use = false)
         val fromCache = async { withTimeoutOrNull(500) { repo.fetched.first() } }
         delay(50)
         repo.use(api)
@@ -196,8 +189,6 @@ class ServerRepositoryTest {
     fun aLongOutageIsAnnouncedOnceTheServerAnswersAgain() = runBlocking {
         val now = AtomicLong(1_000_000L)
         val repo = repository(clock = { now.get() })
-        val api = api()
-        repo.use(api)
         val outages = CopyOnWriteArrayList<Long>()
         val collector = scope.launch { repo.outages.collect { outages += it } }
         delay(50)
@@ -206,20 +197,12 @@ class ServerRepositoryTest {
 
         // Two minutes down: too short to report. (The clock moves before the server comes back, so a refresh
         // from the background loops measures the same length as this one.)
-        stateCode = 503
-        assertFalse(repo.refresh(api))
-        now.addAndGet(2 * 60_000L)
-        stateCode = 200
-        assertTrue(repo.refresh(api))
+        outage(repo, now, 2 * 60_000L)
         delay(100)
         assertEquals(emptyList<Long>(), outages.toList())
 
         // Seven minutes down: reported once, with its length.
-        stateCode = 503
-        assertFalse(repo.refresh(api))
-        now.addAndGet(7 * 60_000L)
-        stateCode = 200
-        assertTrue(repo.refresh(api))
+        outage(repo, now, 7 * 60_000L)
         withTimeout(5_000) { while (outages.isEmpty()) delay(20) }
         delay(100)
         assertEquals(listOf(7 * 60_000L), outages.toList())

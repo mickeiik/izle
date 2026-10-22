@@ -34,29 +34,19 @@ class CommandResultReporterTest {
         answers.removeFirstOrNull()?.invoke()
     }
 
-    private fun failWith(e: Exception): () -> Unit = { throw e }
-
-    @Test
-    fun aResultIsSentOnce() = runTest {
-        val reporter = reporter()
-        reporter.report(api, 12, CommandResult.Done)
-        advanceUntilIdle()
-        assertEquals(listOf(Sent(0, api, 12, CommandResult.Done)), sent)
-    }
+    /** The next sends fail with [failures], in turn. */
+    private fun failWith(vararg failures: Exception) = failures.forEach { e -> answers += { throw e } }
 
     @Test
     fun networkFailuresAndServerErrorsAreTriedFourTimesTwoFourAndSixSecondsApart() = runTest {
         val reporter = reporter()
-        answers += failWith(IOException("unreachable"))
-        answers += failWith(ApiException(502, "http_502"))
-        answers += failWith(ApiException(503, "http_503"))
-        answers += failWith(IOException("unreachable"))
+        failWith(IOException("unreachable"), ApiException(502, "http_502"), ApiException(503, "http_503"), IOException("unreachable"))
         reporter.report(api, 12, CommandResult.failed(CommandResult.NO_PLAYABLE_SOURCE))
         advanceUntilIdle()
         assertEquals(listOf(0L, 2_000L, 6_000L, 12_000L), sent.map { it.atMs })
 
         sent.clear()
-        answers += failWith(IOException("unreachable"))
+        failWith(IOException("unreachable"))
         reporter.report(api, 13, CommandResult.Done)
         advanceUntilIdle()
         assertEquals("delivered on the second attempt", listOf(12_000L, 14_000L), sent.map { it.atMs })
@@ -65,9 +55,8 @@ class CommandResultReporterTest {
     @Test
     fun clientErrorsDropTheResultSilently() = runTest {
         val reporter = reporter()
-        answers += failWith(ApiException(404, "unknown_command")) // a server from before results
-        answers += failWith(ApiException(409, "already_reported"))
-        answers += failWith(ApiException(400, "invalid_request"))
+        // 404: a server from before results.
+        failWith(ApiException(404, "unknown_command"), ApiException(409, "already_reported"), ApiException(400, "invalid_request"))
         reporter.report(api, 1, CommandResult.Done)
         reporter.report(api, 2, CommandResult.Done)
         reporter.report(api, 3, CommandResult.ignored("something_new"))
@@ -78,8 +67,7 @@ class CommandResultReporterTest {
     @Test
     fun aResultSentNowThatDidNotArriveLeavesTheCommandOpen() = runTest {
         val reporter = reporter()
-        answers += failWith(IOException("unreachable"))
-        answers += failWith(IOException("unreachable"))
+        failWith(IOException("unreachable"), IOException("unreachable"))
         assertFalse(reporter.reportNow(api, 12, CommandResult.done(CommandResult.INSTALLING)))
         assertEquals(listOf(0L, 2_000L), sent.map { it.atMs })
 
@@ -112,7 +100,7 @@ class CommandResultReporterTest {
         reporter.report(api, 12, CommandResult.Done)
         reporter.report(api, 12, CommandResult.failed(CommandResult.PLAYBACK_ERROR))
         advanceUntilIdle()
-        assertEquals(listOf(CommandResult.Done), sent.map { it.result })
+        assertEquals("sent at once", listOf(Sent(0, api, 12, CommandResult.Done)), sent)
 
         // Another server (or a new pairing) numbers its commands from 1 again.
         val other = ApiClient("http://other.test/".toHttpUrl(), "device-token", http)

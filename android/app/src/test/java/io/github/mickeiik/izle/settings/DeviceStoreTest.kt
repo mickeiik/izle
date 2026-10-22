@@ -34,39 +34,35 @@ class DeviceStoreTest {
     fun tearDown() = scope.cancel()
 
     @Test
-    fun pairingIsKeptForTheSameServerOnly() = runBlocking {
+    fun pairingTheCacheAndTheShowPlayedLastAreKeptForTheSameServerOnly() = runBlocking {
         store.setServer("http://10.0.2.2:8787/")
         store.savePairing("abcdefabcdef", "token")
         store.saveCachedState("{}")
         assertTrue(store.current().isPaired)
-
-        store.setServer("http://10.0.2.2:8787/")
-        assertEquals("token", store.current().deviceToken)
-        assertEquals("{}", store.cachedState())
-
-        store.setServer("http://192.168.1.10:8787/")
-        assertFalse(store.current().isPaired)
-        assertNull(store.cachedState())
-    }
-
-    @Test
-    fun theShowPlayedLastBelongsToThisPairing() = runBlocking {
-        store.setServer("http://10.0.2.2:8787/")
-        store.savePairing("abcdefabcdef", "token")
         assertNull(store.current().lastPlayedItemId)
         store.setLastPlayedItem("caminandes")
         store.setLastPlayedItem("sintel")
         assertEquals("sintel", store.current().lastPlayedItemId)
 
         store.setServer("http://10.0.2.2:8787/")
+        assertEquals("token", store.current().deviceToken)
+        assertEquals("{}", store.cachedState())
         assertEquals("the same server keeps it", "sintel", store.current().lastPlayedItemId)
+
+        store.setServer("http://192.168.1.10:8787/")
+        assertFalse(store.current().isPaired)
+        assertNull(store.cachedState())
+        assertNull("another server's catalog", store.current().lastPlayedItemId)
+    }
+
+    @Test
+    fun forgettingThePairingForgetsTheShowPlayedLastButKeepsTheServer() = runBlocking {
+        store.setServer("http://10.0.2.2:8787/")
+        store.savePairing("abcdefabcdef", "token")
+        store.setLastPlayedItem("sintel")
         store.forgetPairing()
         assertNull(store.current().lastPlayedItemId)
-        assertEquals("forgetting the pairing keeps the server", "http://10.0.2.2:8787/", store.current().serverUrl)
-
-        store.setLastPlayedItem("tears")
-        store.setServer("http://192.168.1.10:8787/")
-        assertNull("another server's catalog", store.current().lastPlayedItemId)
+        assertEquals("http://10.0.2.2:8787/", store.current().serverUrl)
     }
 
     @Test

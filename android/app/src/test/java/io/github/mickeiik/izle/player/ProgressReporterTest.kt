@@ -37,26 +37,33 @@ class ProgressReporterTest {
     private var finalsDelivered = 0
 
     /** The queue runs on the test's virtual clock, outside the test's job (like the application scope it stands for). */
-    private fun TestScope.reporter() = ProgressReporter(
-        CoroutineScope(StandardTestDispatcher(testScheduler)),
-        send = { _, report ->
-            sent += Sent(testScheduler.currentTime, report)
-            answers.removeFirstOrNull()?.invoke()
-        },
-        onFinalDelivered = { finalsDelivered++ },
-        clock = { testScheduler.currentTime },
-    )
+    private fun test(body: suspend TestScope.(ProgressReporter) -> Unit) = runTest {
+        val reporter = ProgressReporter(
+            CoroutineScope(StandardTestDispatcher(testScheduler)),
+            send = { _, report ->
+                sent += Sent(testScheduler.currentTime, report)
+                answers.removeFirstOrNull()?.invoke()
+            },
+            onFinalDelivered = { finalsDelivered++ },
+            clock = { testScheduler.currentTime },
+        )
+        body(reporter)
+    }
 
-    private fun failWith(e: Exception): suspend () -> Unit = { throw e }
+    /** The next sends throw [errors], in order. */
+    private fun failNext(vararg errors: Exception) = errors.forEach { e -> answers += { throw e } }
+
+    private fun unreachable(times: Int) = Array(times) { IOException("unreachable") }
 
     private fun ProgressReporter.report(status: ProgressStatus, positionMs: Long = 60_000, playing: Boolean = status == Playing) =
-        report(api, "session-1", "show.e1", status, positionMs, durationMs = 1_200_000, playing = playing)
+        enqueue(api, ProgressReport.episode("session-1", "show.e1", status, positionMs, durationMs = 1_200_000, playing = playing))
+
+    private fun ProgressReporter.channel(status: ProgressStatus, playing: Boolean) =
+        enqueue(api, ProgressReport.channel("session-9", "news-24", status, playing))
 
     @Test
-    fun aHeartbeatIsTriedOnce() = runTest {
-        val reporter = reporter()
-        answers += failWith(IOException("unreachable"))
-        answers += failWith(ApiException(503, "http_503"))
+    fun aHeartbeatIsTriedOnce() = test { reporter ->
+        failNext(IOException("unreachable"), ApiException(503, "http_503"))
         reporter.report(Playing)
         reporter.report(Paused)
         advanceUntilIdle()
@@ -65,17 +72,15 @@ class ProgressReporterTest {
     }
 
     @Test
-    fun stoppedAndFinishedAreTriedFourTimesTwoFourAndSixSecondsApart() = runTest {
-        val reporter = reporter()
-        repeat(4) { answers += failWith(IOException("unreachable")) }
+    fun stoppedAndFinishedAreTriedFourTimesTwoFourAndSixSecondsApart() = test { reporter ->
+        failNext(*unreachable(4))
         reporter.report(Stopped)
         advanceUntilIdle()
         assertEquals(listOf(0L, 2_000L, 6_000L, 12_000L), sent.map { it.atMs })
         assertEquals("given up: Home is not refreshed", 0, finalsDelivered)
 
         sent.clear()
-        answers += failWith(ApiException(502, "http_502"))
-        answers += failWith(IOException("unreachable"))
+        failNext(ApiException(502, "http_502"), IOException("unreachable"))
         reporter.report(Finished)
         advanceUntilIdle()
         assertEquals(listOf(12_000L, 14_000L, 18_000L), sent.map { it.atMs })
@@ -83,10 +88,8 @@ class ProgressReporterTest {
     }
 
     @Test
-    fun otherClientErrorsDropTheReport() = runTest {
-        val reporter = reporter()
-        answers += failWith(ApiException(404, "unknown_episode"))
-        answers += failWith(ApiException(401, "unauthorized"))
+    fun otherClientErrorsDropTheReport() = test { reporter ->
+        failNext(ApiException(404, "unknown_episode"), ApiException(401, "unauthorized"))
         reporter.report(Stopped)
         reporter.report(Finished)
         advanceUntilIdle()
@@ -95,35 +98,28 @@ class ProgressReporterTest {
         // Nothing was learnt about the server: the next report still carries the anchor fields.
         reporter.report(Playing)
         advanceUntilIdle()
-        assertEquals(true, sent.last().report.playing)
-        assertEquals(0L, sent.last().report.ageMs)
+        assertEquals(true to 0L, sent.last().report.let { it.playing to it.ageMs })
     }
 
     @Test
-    fun aServerThatRejectsTheAnchorGetsReportsWithoutIt() = runTest {
-        val reporter = reporter()
-        answers += failWith(ApiException(400, "bad_request"))
+    fun aServerThatRejectsTheAnchorGetsReportsWithoutIt() = test { reporter ->
+        failNext(ApiException(400, "bad_request"))
         reporter.report(Playing)
         advanceUntilIdle()
-        assertEquals(2, sent.size)
-        assertEquals(true, sent[0].report.playing)
-        assertEquals(0L, sent[0].report.ageMs)
-        assertEquals("sent again at once", 0L, sent[1].atMs)
+        assertEquals(true to 0L, sent[0].report.let { it.playing to it.ageMs })
+        assertEquals("sent again at once", listOf(0L, 0L), sent.map { it.atMs })
         assertEquals(sent[0].report.copy(playing = null, ageMs = null), sent[1].report)
 
         // From then on every report leaves them out; a final one still gets its four attempts.
-        repeat(3) { answers += failWith(IOException("unreachable")) }
+        failNext(*unreachable(3))
         reporter.report(Stopped)
         advanceUntilIdle()
         assertEquals(6, sent.size)
-        sent.drop(2).forEach {
-            assertNull(it.report.playing)
-            assertNull(it.report.ageMs)
-        }
+        assertEquals(List(4) { null to null }, sent.drop(2).map { it.report.playing to it.report.ageMs })
         assertEquals(1, finalsDelivered)
 
         // A 400 without anchor fields is like any other 4xx: dropped.
-        answers += failWith(ApiException(400, "bad_request"))
+        failNext(ApiException(400, "bad_request"))
         reporter.report(Finished)
         advanceUntilIdle()
         assertEquals(7, sent.size)
@@ -131,13 +127,13 @@ class ProgressReporterTest {
     }
 
     @Test
-    fun theAgeIsMeasuredWhenTheReportIsSent() = runTest {
-        val reporter = reporter()
-        answers += failWith(IOException("unreachable"))
+    fun theAgeIsMeasuredWhenTheReportIsSent() = test { reporter ->
+        failNext(*unreachable(1))
         reporter.report(Stopped)
         reporter.report(Playing) // queued behind the stopped report's retry
         advanceUntilIdle()
-        assertEquals(listOf(Triple(0L, Stopped, 0L), Triple(2_000L, Stopped, 2_000L), Triple(2_000L, Playing, 2_000L)), sent.map { Triple(it.atMs, it.report.status, it.report.ageMs) })
+        val expected = listOf(Triple(0L, Stopped, 0L), Triple(2_000L, Stopped, 2_000L), Triple(2_000L, Playing, 2_000L))
+        assertEquals(expected, sent.map { Triple(it.atMs, it.report.status, it.report.ageMs) })
 
         // A sample older than the server accepts is sent with the largest age it takes.
         sent.clear()
@@ -149,10 +145,8 @@ class ProgressReporterTest {
     }
 
     @Test
-    fun reportsLeaveInTheOrderTheyWereMade() = runTest {
-        val reporter = reporter()
-        answers += failWith(IOException("unreachable"))
-        answers += failWith(IOException("unreachable"))
+    fun reportsLeaveInTheOrderTheyWereMade() = test { reporter ->
+        failNext(*unreachable(2))
         reporter.report(Finished, positionMs = 1_200_000, playing = false)
         reporter.report(Playing, positionMs = 1_199_000) // a late heartbeat never overtakes `finished`
         advanceUntilIdle()
@@ -160,49 +154,42 @@ class ProgressReporterTest {
     }
 
     @Test
-    fun aReportCarriesThePlaybackAndNeverANegativePosition() = runTest {
-        val reporter = reporter()
-        reporter.report(api, "session-1", "show.e1", Paused, positionMs = -40, durationMs = null, playing = false)
+    fun aReportCarriesThePlaybackAndNeverANegativePosition() = test { reporter ->
+        reporter.enqueue(api, ProgressReport.episode("session-1", "show.e1", Paused, positionMs = -40, durationMs = null, playing = false))
         advanceUntilIdle()
         assertEquals(ProgressReport("session-1", episodeId = "show.e1", positionMs = 0, status = Paused, playing = false, ageMs = 0), sent.single().report)
         assertEquals("only a final report refreshes Home", 0, finalsDelivered)
     }
 
     @Test
-    fun aChannelsReportsNameItsItemWithoutPositionAndItsStopIsFinal() = runTest {
-        val reporter = reporter()
-        reporter.reportChannel(api, "session-9", "news-24", Playing, playing = false)
-        reporter.reportChannel(api, "session-9", "news-24", Paused, playing = false) // never paused
+    fun aChannelsReportsNameItsItemWithoutPositionAndItsStopIsFinal() = test { reporter ->
+        reporter.channel(Playing, playing = false)
+        reporter.channel(Paused, playing = false) // never paused
         advanceUntilIdle()
         val playing = ProgressReport("session-9", itemId = "news-24", status = Playing, playing = false, ageMs = 0)
         assertEquals(listOf(playing, playing), sent.map { it.report })
         assertEquals(0, finalsDelivered)
         // Leaving the channel ends its viewing: retried like an episode's final report.
-        repeat(3) { answers += failWith(IOException("unreachable")) }
-        reporter.reportChannel(api, "session-9", "news-24", Stopped, playing = false)
+        failNext(*unreachable(3))
+        reporter.channel(Stopped, playing = false)
         advanceUntilIdle()
         assertEquals(listOf(0L, 2_000L, 6_000L, 12_000L), sent.drop(2).map { it.atMs })
-        assertEquals(Stopped, sent.last().report.status)
-        assertNull(sent.last().report.positionMs)
+        assertEquals(playing.copy(status = Stopped, ageMs = 12_000), sent.last().report)
         assertEquals(1, finalsDelivered)
     }
 
     @Test
-    fun aRefusedChannelReportIsDroppedAndKeepsTheAnchor() = runTest {
-        val reporter = reporter()
-        answers += failWith(ApiException(400, "has_episodes")) // the item became a show in a catalog reload
-        reporter.reportChannel(api, "session-9", "news-24", Playing, playing = true)
+    fun aRefusedChannelReportIsDroppedAndKeepsTheAnchor() = test { reporter ->
+        failNext(ApiException(400, "has_episodes")) // the item became a show in a catalog reload
+        reporter.channel(Playing, playing = true)
         reporter.report(Playing)
         advanceUntilIdle()
         assertEquals(2, sent.size)
-        assertEquals("show.e1", sent.last().report.episodeId)
-        assertEquals(true, sent.last().report.playing)
-        assertEquals(0L, sent.last().report.ageMs)
+        assertEquals(Triple("show.e1", true, 0L), sent.last().report.let { Triple(it.episodeId, it.playing, it.ageMs) })
     }
 
     @Test
-    fun aNewResolveWaitsForQueuedReportsAtMostThreeSeconds() = runTest {
-        val reporter = reporter()
+    fun aNewResolveWaitsForQueuedReportsAtMostThreeSeconds() = test { reporter ->
         var waitedUntil = -1L
         val awaitDelivered = { launch { reporter.awaitDelivered(); waitedUntil = testScheduler.currentTime } }
         awaitDelivered()

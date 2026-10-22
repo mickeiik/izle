@@ -21,19 +21,15 @@ import java.io.IOException
 
 /** Live events from `GET /api/v1/tv/events`. */
 sealed interface ServerEvent {
-    /** The stream is connected. */
     data object Open : ServerEvent
-
-    /** The device's state version changed; re-fetch `/tv/state` when it differs from the one shown. */
     data class State(val version: Long) : ServerEvent
 
-    /** The TV app version the server offers changed (also sent on connect when it stores one): re-fetch `/tv/app`. */
+    /** The TV app version the server offers changed (also sent on connect when it stores one). */
     data class App(val versionCode: Long) : ServerEvent
 
     /**
-     * An owner command; the TV acknowledges it once handled. The payload fields of every known type are flattened
-     * here (null when absent or of the wrong JSON type), so a command of a type this TV does not know, or with an
-     * unexpected payload, still arrives and is acknowledged instead of being replayed for two minutes.
+     * The payload fields of every known type flattened (null when absent or of the wrong JSON type), so a command of
+     * an unknown type or with an odd payload still arrives and is acknowledged instead of being replayed for minutes.
      */
     data class Command(
         val id: Long,
@@ -48,7 +44,7 @@ sealed interface ServerEvent {
     ) : ServerEvent
 
     companion object {
-        /** Maps one SSE message to an event; unknown event types and malformed data are ignored (null). */
+        /** Null for unknown event types and malformed data. */
         fun parse(type: String?, data: String): ServerEvent? = try {
             when (type) {
                 "state" -> State(ApiJson.decodeFromString(StateData.serializer(), data).version)
@@ -89,9 +85,8 @@ private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimiti
 private fun JsonObject.number(key: String): JsonPrimitive? = (this[key] as? JsonPrimitive)?.takeIf { !it.isString }
 
 /**
- * Server-sent events as a cold [Flow]. The flow fails with [ApiException] (401 = the device was removed) or
- * [IOException] when the stream breaks; the caller reconnects with backoff. The client's read timeout is the
- * dead-connection watchdog: the server sends a `: ping` comment every 20 s, so 60 s of silence fails the read.
+ * A cold [Flow] that fails with [ApiException] (401: the device was removed) or [IOException] when the stream breaks.
+ * The client's read timeout is the watchdog: the server pings every 20 s, so 60 s of silence fails the read.
  */
 class EventsClient(sseHttp: OkHttpClient) {
     private val factory: EventSource.Factory = EventSources.createFactory(sseHttp)

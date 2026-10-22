@@ -46,7 +46,6 @@ class ExoMediaEngine(
     override fun setListener(listener: MediaEngine.Listener?) { this.listener = listener }
 
     override fun load(media: MediaSpec, startAtMs: Long?) {
-        val live = media.live
         val p = ensurePlayer()
         val subtitles = media.subtitles.map { track ->
             MediaItem.SubtitleConfiguration.Builder(Uri.parse(track.url))
@@ -62,8 +61,8 @@ class ExoMediaEngine(
             .setMediaId(media.mediaId)
             .build()
         when {
-            restartsInsteadOfResuming(media.kind, live) -> p.setMediaSource(liveStreamSources.createMediaSource(item))
-            live || startAtMs == null -> p.setMediaItem(item)
+            restartsInsteadOfResuming(media.kind, media.live) -> p.setMediaSource(liveStreamSources.createMediaSource(item))
+            media.live || startAtMs == null -> p.setMediaItem(item)
             else -> p.setMediaItem(item, startAtMs)
         }
         p.prepare()
@@ -75,10 +74,8 @@ class ExoMediaEngine(
     override fun stop() { player?.stop() }
 
     override fun release() {
-        player?.let {
-            it.removeListener(playerListener)
-            it.release()
-        }
+        player?.removeListener(playerListener)
+        player?.release()
         player = null
     }
 
@@ -125,9 +122,7 @@ class ExoMediaEngine(
             listener?.onStateChanged()
         }
 
-        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
-            listener?.onPlayWhenReadyChanged(playWhenReady)
-        }
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) { listener?.onStateChanged() }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) { listener?.onIsPlayingChanged(isPlaying) }
 
@@ -164,10 +159,7 @@ class ExoMediaEngine(
         }
         .also { player = it }
 
-    /**
-     * Preferred audio from the server (owner-controlled); subtitles off unless the owner chose a language.
-     * Preferences may arrive before the first load, while creating the decoder still has to wait.
-     */
+    /** The owner's audio language; subtitles off unless the owner chose a language. Also on a decoder created later. */
     private fun applyTrackPreferences(p: ExoPlayer) {
         val builder = p.trackSelectionParameters.buildUpon()
             .clearOverrides()
