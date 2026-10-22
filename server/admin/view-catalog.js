@@ -62,7 +62,7 @@ export function catalogView(scope, query) {
       const r = await api("POST", "/catalog/reload");
       toast(`Catalog reloaded: build ${r.catalog.buildId}. Every TV refreshes its home screen.`);
       renderInfo(r.catalog);
-      await shows.reload();
+      await shows.reload(r.catalog);
     } catch (err) {
       if (isUnauthorized(err)) return; // signed out
       if (!(err instanceof ApiError && err.code === "invalid_catalog")) return toast(errorText(err), "error");

@@ -169,6 +169,11 @@ export const DEFAULT_FILTERS = { q: "", kind: "", genre: "", yearFrom: "", yearT
 /** @typedef {typeof DEFAULT_FILTERS} BrowseFilters */
 /** @typedef {{ buildId: string, loadedAt: string, baseline: boolean }} BrowseBuild */
 
+/** Case-, accent- and dotless-ı-insensitive form of a text, as the server matches genres and titles. @param {string} text */
+export function foldText(text) {
+  return text.normalize("NFD").replace(/\p{M}/gu, "").replace(/ı/g, "i").toLowerCase();
+}
+
 /** A year box's value as a year (an integer the schema allows), or null. @param {string} text */
 export function yearValue(text) {
   const t = text.trim();

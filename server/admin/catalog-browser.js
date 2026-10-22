@@ -3,8 +3,8 @@
 // years, playable only, new since a build and, for a TV, not on its Home), an order, and the matching shows 50 at a
 // time ("Show more"). The caller draws each row; the browser owns the controls, the requests and the paging.
 
-import { actionButton, focusInto, h, keyedRows, loadError, loading, setOff, uid } from "./dom.js";
-import { BROWSE_PAGE, BROWSE_SORTS, DEFAULT_FILTERS, browsePath, browseSummary, isFiltered, newSinceOptions, sinceAt } from "./lib.js";
+import { actionButton, focusFirst, h, keyedRows, loadError, loading, setOff, toast, uid } from "./dom.js";
+import { BROWSE_PAGE, BROWSE_SORTS, DEFAULT_FILTERS, browsePath, browseSummary, errorText, foldText, isFiltered, newSinceOptions, sinceAt } from "./lib.js";
 
 /** How long the search and year boxes wait after the last keystroke. */
 const TYPING_MS = 200;
@@ -84,6 +84,8 @@ export function catalogBrowser(scope, o) {
     yearFrom.value = yearTo.value = "";
     playable.input.checked = false;
     if (notOnHome) notOnHome.input.checked = false;
+    // Before the facets came, the genre and "new since" choices from the address live only in `filters`.
+    filters = { ...filters, genre: "", since: "" };
     search.focus();
     await run();
   });
@@ -97,14 +99,15 @@ export function catalogBrowser(scope, o) {
     await load(before);
     // Everything is listed: the button went away, the keyboard goes on with the first new show.
     const first = list.children[before];
-    if (moreBox.hidden && first instanceof HTMLElement) focusInto(first, "add");
+    if (moreBox.hidden && first instanceof HTMLElement) focusFirst(first, "add");
   });
   const moreBox = h("div", { class: "more", hidden: true }, more);
 
+  /** The controls into `filters`; until the facets came, the genre and "new since" selects are empty and the address's choices stay. */
   const readControls = () => {
     filters = {
-      q: search.value, kind: kind.value, genre: genre.value, yearFrom: yearFrom.value, yearTo: yearTo.value,
-      playable: playable.input.checked, notOnHome: notOnHome?.input.checked ?? false, since: since.value, sort: sort.value,
+      q: search.value, kind: kind.value, genre: info ? genre.value : filters.genre, yearFrom: yearFrom.value, yearTo: yearTo.value,
+      playable: playable.input.checked, notOnHome: notOnHome?.input.checked ?? false, since: info ? since.value : filters.since, sort: sort.value,
     };
   };
 
@@ -116,9 +119,9 @@ export function catalogBrowser(scope, o) {
     /** @type {Array<[string, string]>} */
     const genres = f.genres.map((/** @type {{ name: string, count: number }} */ g) => [g.name, `${g.name}${count(g.count)}`]);
     // A genre from the address that the catalog spells differently (or no longer has) stays chosen.
-    const wanted = filters.genre;
-    if (wanted && !genres.some(([name]) => name.toLocaleLowerCase() === wanted.toLocaleLowerCase())) genres.unshift([wanted, wanted]);
-    const match = genres.find(([name]) => name.toLocaleLowerCase() === wanted.toLocaleLowerCase());
+    const wanted = foldText(filters.genre);
+    if (wanted && !genres.some(([name]) => foldText(name) === wanted)) genres.unshift([filters.genre, filters.genre]);
+    const match = genres.find(([name]) => foldText(name) === wanted);
     setOptions(genre, [["", "Every genre"], ...genres], match ? match[0] : "");
     genre.hidden = genres.length === 0;
     years.hidden = f.years === null;
@@ -144,7 +147,10 @@ export function catalogBrowser(scope, o) {
       r = await scope.read(path);
     } catch (err) {
       if (mine !== seq || !scope.alive()) return;
+      // A later page that failed leaves the shown ones; "Show more" tries again.
+      if (offset > 0) return toast(errorText(err), "error");
       summary.textContent = "";
+      moreBox.hidden = true;
       resultsArea.replaceChildren(loadError(err, () => load(offset), "Could not search the catalog."));
       return;
     }
@@ -167,6 +173,8 @@ export function catalogBrowser(scope, o) {
     readControls();
     setOff(reset, !isFiltered(filters));
     o.onFilters?.(filters);
+    // No "Show more" of the old list while its new first page loads.
+    moreBox.hidden = true;
     await load(0);
   };
   const later = () => {
@@ -176,13 +184,13 @@ export function catalogBrowser(scope, o) {
   for (const box of [search, yearFrom, yearTo]) box.addEventListener("input", later);
   for (const control of [kind, genre, since, sort, playable.input, notOnHome?.input]) control?.addEventListener("change", () => void run());
 
-  /** Reads the catalog's facets and builds, then the first page. */
-  const start = async () => {
+  /** Reads the catalog's facets and builds (unless given: the answer of GET /catalog or of a reload), then the first page. */
+  const start = async (/** @type {any} */ given = null) => {
     try {
-      info = await scope.read("/catalog");
+      info = given ?? (await scope.read("/catalog"));
     } catch (err) {
       if (!scope.alive()) return;
-      resultsArea.replaceChildren(loadError(err, start, "Could not load the catalog."));
+      resultsArea.replaceChildren(loadError(err, () => start(), "Could not load the catalog."));
       return;
     }
     if (!scope.alive()) return;
@@ -204,7 +212,7 @@ export function catalogBrowser(scope, o) {
     run,
     /** Redraws the shown rows (their state changed, such as "On Home"), with no request. */
     refresh: () => rows.set(items),
-    /** Re-reads the catalog's facets and builds (after a reload of the catalog), then the first page. */
+    /** After a reload of the catalog: its facets and builds (the reload's answer), then the first page. */
     reload: start,
     /** The shows listed now, in order. */
     items: () => items,

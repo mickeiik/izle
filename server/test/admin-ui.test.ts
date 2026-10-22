@@ -5,7 +5,7 @@ import {
   APK_MAX_BYTES, HOME_COLUMNS, HOME_MAX, HOME_ROWS, androidText, apkVersion, appCheckReasonText, appCheckText, appUpdateChip, capabilityText, checkResultText,
   formatBytes, installNowBlocked, newApkText,
   BROWSE_PAGE, BROWSE_SORTS, DEFAULT_FILTERS, browseHash, browsePath, browseSummary, isFiltered, newSinceOptions, parseBrowseHash,
-  sinceAt, yearValue,
+  foldText, sinceAt, yearValue,
   actorLabel, buildSummary, candidateOptions, catalogContents, clockOffset, commandResultText, companionTarget,
   continueText, episodeHistoryLine, episodeName, episodeStateLabel, episodeStates, errorText, formatClock, formatCode,
   formatCountdown, formatDrift, formatDuration, formatPosition, formatRelative, gridSummary, groupEpisodeChanges, isActive, issueLine,
@@ -199,6 +199,7 @@ test("admin helpers: the catalog browser's paths, summaries, hash state and 'new
     [DEFAULT_FILTERS, { q: "", kind: "", genre: "", yearFrom: "", yearTo: "", playable: false, notOnHome: false, since: "", sort: "title" }],
 
     [yearValue("2024"), 2024], [yearValue(" 1999 "), 1999], [yearValue("1870"), 1870], [yearValue("2200"), 2200],
+    [foldText("Comédie"), "comedie"], [foldText("BİLİM ılık"), "bilim ilik"],
     [yearValue(""), null], [yearValue("abc"), null], [yearValue("1869"), null, "below the schema's bounds"],
     [yearValue("2201"), null], [yearValue("2024.5"), null, "not an integer"], [yearValue("-2024"), null], [yearValue("1e3"), null],
 

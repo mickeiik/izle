@@ -516,6 +516,7 @@ test("catalog browsing: facets, filters, orders, pages, not on a Home, new since
   const since = await search(`since=${loadedAt}`);
   assert.deepEqual(since.items.map((i: Json) => [i.id, i.firstSeenAt, i.newEpisodes]), [["fresh", loadedAt, 1], ["show", null, 1]]);
   assert.deepEqual(await ids(`since=${Date.parse(loadedAt) + 1}`), [], "epoch ms; later than the build");
+  assert.deepEqual(await ids(`since=${loadedAt.replace(/Z$/, "")}`), since.items.map((i: Json) => i.id), "no offset: UTC, not the server's zone");
   assert.deepEqual(await ids("sort=newest&limit=3"), ["fresh", "show", "filler-01"], "the newest first, then by title");
   assert.equal((await search("q=sov")).items[0].newEpisodes, 0, "no since, no new episodes");
 });

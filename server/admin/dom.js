@@ -301,16 +301,13 @@ const FOCUSABLE = "button, a[href], input, select, textarea, [tabindex]";
  * button the owner was on). Whether it found one.
  * @param {HTMLElement} root @param {string} [control]
  */
-function focusFirst(root, control) {
+export function focusFirst(root, control) {
   const all = [root, ...root.querySelectorAll(FOCUSABLE)].filter((el) => el.matches(FOCUSABLE) && canFocus(el));
   const el = (control && all.find((e) => e instanceof HTMLElement && e.dataset.control === control)) || all[0];
   if (!(el instanceof HTMLElement)) return false;
   el.focus({ preventScroll: true });
   return true;
 }
-
-/** Focuses the first control in `root`, preferably one of `data-control` = `control`; whether it found one. */
-export const focusInto = focusFirst;
 
 /**
  * Runs `update`, which may rebuild, move or remove part of the page, and puts the keyboard focus back where the
