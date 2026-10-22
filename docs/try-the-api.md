@@ -32,6 +32,17 @@ curl -s -X POST $B/api/v1/tv/progress -H "Authorization: Bearer $TV" -H "$JSON" 
 curl -s $B/api/v1/tv/state -H "Authorization: Bearer $TV" | jq '.home[0].continue | {episodeId, status}'   # caminandes.s01e02, new
 ```
 
+Home can be cut into sections ([spec](spec/server-api-v1.md#home-sections)): a titled section first, laid out as one
+line, with Sintel in it; the rest stays in the untitled section. The TV reads the sections next to `home`.
+
+```bash
+SECTION=$(curl -s -X POST $B/api/v1/admin/devices/$DEVICE/home/sections -H "Authorization: Bearer $ADMIN" -H "$JSON" \
+  -d '{"title":"Films","layout":"row","position":0}' | jq -r .sectionId)
+curl -s -X POST $B/api/v1/admin/devices/$DEVICE/home/items -H "Authorization: Bearer $ADMIN" -H "$JSON" \
+  -d "{\"itemId\":\"sintel\",\"sectionId\":\"$SECTION\"}" | jq -c '.sections[] | {title, layout, itemIds}'
+curl -s $B/api/v1/tv/state -H "Authorization: Bearer $TV" | jq -c '.homeSections[]'
+```
+
 Live updates for the TV stream from `GET /api/v1/tv/events` (server-sent events): run
 `curl -N $B/api/v1/tv/events -H "Authorization: Bearer $TV"` and change the home list from another terminal.
 

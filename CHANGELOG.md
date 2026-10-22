@@ -16,6 +16,13 @@ contract share one version number. How to update (back up, update the server, th
   returns to the same list. It replaces the search that stopped at 200 shows and its "Show all". The admin API's
   `GET /api/v1/admin/catalog/search` takes the matching parameters plus `offset` and answers `total`;
   `GET /api/v1/admin/catalog` gains `facets`.
+- **Server: sections on Home.** A TV's Home can be cut into up to 20 titled sections, in an order the owner sets,
+  each laid out as a grid or as one line; shows put on Home without a section stay in the untitled section, which is
+  where every Home from before starts (the database is migrated on the first start). The admin API gains
+  `POST`/`PATCH`/`DELETE /api/v1/admin/devices/:id/home/sections[/:sectionId]`, `sectionId` on the single item changes,
+  and `PUT …/home {"sections"}`; `PUT …/home {"itemIds"}` keeps each show in its section. A TV's page and every Home
+  change answer `sections`, and the TV's state carries `homeSections` next to `home`, which now lists the shows
+  section after section. Deleting a section moves its shows to the untitled one.
 
 ### Changed
 

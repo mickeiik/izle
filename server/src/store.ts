@@ -38,6 +38,21 @@ export interface Device {
 
 export type UpdateCapability = "silent" | "guided";
 
+/** The id of the one section every Home has: what was put on Home without a section. */
+export const UNTITLED_SECTION = "untitled";
+
+/** A section of a TV's Home as stored: `title` null for the untitled section; `layout` as the API set it. */
+export interface HomeSectionRow {
+  id: string;
+  title: string | null;
+  layout: string;
+}
+
+/** A section with its items in display order, as `setHome` writes it. */
+export interface HomeSectionWrite extends HomeSectionRow {
+  itemIds: string[];
+}
+
 /** What a TV's User-Agent says about its app. */
 export interface TvAppInfo {
   version: string;
@@ -566,21 +581,45 @@ export class Store {
 
   // --- home ----------------------------------------------------------------------------------------------------
 
-  /** The device's home list, with when each item was put there (epoch ms; null for rows not written by the store). */
-  getHomeEntries(deviceId: string, catalogId: string): Array<{ itemId: string; addedAt: number | null }> {
-    return this.many("SELECT item_id, added_at FROM home_entries WHERE device_id = ? AND catalog_id = ? ORDER BY position", [deviceId, catalogId]);
+  /**
+   * The device's home list in Home order (its sections in order, each with its items in order), with each item's
+   * section and when it was put there (epoch ms; null for rows not written by the store).
+   */
+  getHomeEntries(deviceId: string, catalogId: string): Array<{ itemId: string; addedAt: number | null; sectionId: string }> {
+    return this.many(
+      `SELECT e.item_id, e.added_at, e.section_id FROM home_entries e
+         JOIN home_sections s ON s.device_id = e.device_id AND s.section_id = e.section_id
+       WHERE e.device_id = ? AND e.catalog_id = ? ORDER BY s.position, e.position`,
+      [deviceId, catalogId],
+    );
   }
 
   /**
-   * Replaces the device's home list. Items already on it keep the date they were put there (a reorder changes
-   * nothing); new ones get `now`. Episodes added to the catalog before an item went on the list are not new to it.
+   * The device's sections in display order, always with the untitled one: a TV paired after migration 10 has no
+   * row until its Home is first written, and reads as the untitled section alone (the write stores it).
    */
-  setHome(deviceId: string, catalogId: string, itemIds: string[], now: number): void {
+  getHomeSections(deviceId: string): HomeSectionRow[] {
+    const rows = this.many<HomeSectionRow>("SELECT section_id AS id, title, layout FROM home_sections WHERE device_id = ? ORDER BY position", [deviceId]);
+    return rows.some((r) => r.id === UNTITLED_SECTION) ? rows : [{ id: UNTITLED_SECTION, title: null, layout: "grid" }, ...rows];
+  }
+
+  /**
+   * Replaces the device's Home: its sections in display order, each with its items. Items already on it keep the
+   * date they were put there (a reorder or a move to another section changes nothing); new ones get `now`. Episodes
+   * added to the catalog before an item went on the list are not new to it.
+   */
+  setHome(deviceId: string, catalogId: string, sections: HomeSectionWrite[], now: number): void {
     this.transaction(() => {
       const addedAt = new Map(this.getHomeEntries(deviceId, catalogId).map((e) => [e.itemId, e.addedAt]));
       this.run("DELETE FROM home_entries WHERE device_id = ?", deviceId);
-      const insert = this.db.prepare("INSERT INTO home_entries (device_id, position, catalog_id, item_id, added_at) VALUES (?, ?, ?, ?, ?)");
-      itemIds.forEach((itemId, i) => insert.run(deviceId, i, catalogId, itemId, addedAt.get(itemId) ?? now));
+      this.run("DELETE FROM home_sections WHERE device_id = ?", deviceId);
+      const section = this.db.prepare("INSERT INTO home_sections (device_id, section_id, position, title, layout) VALUES (?, ?, ?, ?, ?)");
+      const entry = this.db.prepare("INSERT INTO home_entries (device_id, position, catalog_id, item_id, added_at, section_id) VALUES (?, ?, ?, ?, ?, ?)");
+      let position = 0;
+      sections.forEach((s, i) => {
+        section.run(deviceId, s.id, i, s.title, s.layout);
+        for (const itemId of s.itemIds) entry.run(deviceId, position++, catalogId, itemId, addedAt.get(itemId) ?? now, s.id);
+      });
     });
   }
 

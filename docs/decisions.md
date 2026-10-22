@@ -409,3 +409,19 @@ The server side of the specification above, in one change (the admin page and th
   can be moved, since the owner may want a titled section such as "Channels" first.
 - `layout` is an enum (`grid`, `row`) rather than a boolean, so a later layout is additive; the TV treats an unknown
   one as `grid`.
+
+## Home sections, server (2026-10-22)
+
+- Sections are a `home_sections` table per TV; each home entry names its section through a composite foreign key
+  (TV, section), so an entry can never point at another TV's section or at a deleted one. Adding that key meant
+  rebuilding `home_entries` (migration 10). `layout` has no CHECK: the API holds the enum, so a later layout needs no
+  table rebuild.
+- Migration 10 stores the untitled section for every TV it finds; a TV paired later has no row until its Home is
+  first written, and reads as the untitled section alone (first) until then. One rule for reads, no write on pairing.
+- `expected` in the `{"sections"}` form needs each section's `id` and `itemIds`; `title` and `layout` are compared
+  only when given, so a caller that tracks only what is on Home is not refused over a renamed section.
+- In `PUT …/home {"sections"}` a section other than the untitled one without a string `title` is `400
+  invalid_request`, as is a blank one. `PATCH …/items/:itemId` naming the item's own section without `position`
+  leaves it where it is.
+- Every Home change runs one edit inside one transaction and checks the result (items, duplicates, sections, new
+  items), so `expected` is now checked before the body's own refusals (`duplicate_item` used to come first).

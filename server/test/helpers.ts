@@ -119,6 +119,11 @@ export async function tempDir(prefix = "izle-test-"): Promise<string> {
   return mkdtemp(path.join(tmpdir(), prefix));
 }
 
+/** A Home of the untitled section alone, holding `itemIds` (for `Store#setHome`). */
+export function untitled(itemIds: string[]) {
+  return [{ id: "untitled", title: null, layout: "grid", itemIds }];
+}
+
 /** Starts a local HTTP server on a free loopback port: its base URL, and a close that ends its connections. */
 export async function listen(server: Server) {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

@@ -42,16 +42,19 @@ export class TvService {
     return effectiveSettings(device, this.s.config, this.s.catalog);
   }
 
-  /** The TV's Home: the entries it can play (items gone after a catalog reload, or not playable, are left out). */
+  /**
+   * The TV's Home: the entries it can play in Home order (items gone after a catalog reload, or not playable, are
+   * left out), and the sections that still hold one of them, which cut `home` into consecutive runs.
+   */
   state(device: Device) {
     const { catalog } = this.s;
     const { manifest } = catalog.current;
-    const home = this.s.home.list(device.id).flatMap(({ item, playable, continue: cont, newEpisodes }) =>
-      item && playable ? [{ item: itemCard(catalog, item), continue: cont, newEpisodes }] : [],
-    );
+    const shown = this.s.home.list(device.id).filter((e) => e.item && e.playable);
+    const home = shown.map(({ item, continue: cont, newEpisodes }) => ({ item: itemCard(catalog, item!), continue: cont, newEpisodes }));
+    const homeSections = this.s.home.sectionsOf(device.id, shown).filter((s) => s.itemIds.length > 0);
     return {
       version: device.stateVersion, device: { id: device.id, name: device.name, ...this.settings(device) },
-      catalog: { id: manifest.catalogId, buildId: manifest.buildId, name: manifest.name }, home,
+      catalog: { id: manifest.catalogId, buildId: manifest.buildId, name: manifest.name }, home, homeSections,
     };
   }
 
