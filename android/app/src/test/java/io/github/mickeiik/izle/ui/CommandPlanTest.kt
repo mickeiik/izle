@@ -89,10 +89,19 @@ class CommandPlanTest {
         assertEquals(listOf(Action.CloseMenu(resume = true), Action.Zap(1)), onVideo(RemoteCommand.Next, menuOpen = true, live = true))
         assertEquals(listOf(Action.Play("show", "show.e2")), onVideo(play, live = true))
         assertEquals(listOf(Action.ShowMessage(message), done), onVideo(message, live = true))
-        // Its error screen takes transport commands no more than a show's; Home has no channel playing.
-        for (command in transport) {
+        // Its error screen still changes channels (next/previous zap, as CH+/CH− do) but takes no other transport
+        // command (no video showing); Home has no channel playing.
+        for (command in listOf(RemoteCommand.Pause, RemoteCommand.Resume, seek)) {
             assertEquals(notInPlayer, CommandPlan.actions(command, Screen.Player, PlayerPhase.Failed(30), menuOpen = false, live = true))
+        }
+        assertEquals(listOf(Action.Zap(1)), CommandPlan.actions(RemoteCommand.Next, Screen.Player, PlayerPhase.Failed(30), menuOpen = false, live = true))
+        assertEquals(listOf(Action.Zap(-1)), CommandPlan.actions(RemoteCommand.Previous, Screen.Player, PlayerPhase.Failed(30), menuOpen = false, live = true))
+        for (command in transport) {
             assertEquals(notInPlayer, CommandPlan.actions(command, Screen.Home, PlayerPhase.Idle, menuOpen = false, live = true))
+        }
+        // A show's error screen takes none of them (its CH+/CH− do nothing there either).
+        for (command in transport) {
+            assertEquals(notInPlayer, CommandPlan.actions(command, Screen.Player, PlayerPhase.Failed(30), menuOpen = false, live = false))
         }
     }
 

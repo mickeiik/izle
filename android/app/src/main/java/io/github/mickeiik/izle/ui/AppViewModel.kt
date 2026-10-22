@@ -272,8 +272,8 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     /**
-     * CH+/CH− and |◀◀ ▶▶|: switch episodes while video is showing, or channels while one plays or loads; everywhere
-     * else they do nothing (but are consumed).
+     * CH+/CH− and |◀◀ ▶▶|: switch episodes while video is showing, or channels while one plays, loads or shows its
+     * error screen; everywhere else they do nothing (but are consumed).
      */
     fun onChannelKey(direction: Int) {
         if (_screen.value != Screen.Player || _menu.value != null) return
