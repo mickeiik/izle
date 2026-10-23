@@ -1,6 +1,7 @@
 package io.github.mickeiik.izle
 
 import android.content.Intent
+import android.graphics.drawable.ColorDrawable
 import android.os.SystemClock
 import android.view.KeyEvent
 import androidx.compose.ui.semantics.SemanticsActions
@@ -33,6 +34,13 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import coil3.ImageLoader
+import coil3.annotation.DelicateCoilApi
+import coil3.SingletonImageLoader
+import coil3.asImage
+import coil3.decode.DecodeResult
+import coil3.decode.Decoder
+import coil3.network.okhttp.OkHttpNetworkFetcherFactory
 import io.github.mickeiik.izle.data.api.ItemCard
 import io.github.mickeiik.izle.player.PlayerPhase
 import io.github.mickeiik.izle.player.PlayerUi
@@ -153,7 +161,9 @@ class SeniorInvariantsTest {
     }
 
     @After
+    @OptIn(DelicateCoilApi::class)
     fun tearDown() {
+        SingletonImageLoader.reset()
         app.graph.appScope.cancel()
         server.close()
     }
@@ -388,9 +398,22 @@ class SeniorInvariantsTest {
     }
 
     @Test
-    // Native graphics decode the pictures (the default "legacy" ones fail, and a card then shows its name instead).
-    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @OptIn(DelicateCoilApi::class)
     fun thePosterFillsTheCardAndTheOpenCardsPanelLiesOverTheBackdrop() {
+        // The pictures are fetched from the server as on a TV, then "decoded" as grey: the default "legacy" graphics
+        // cannot decode them (a card then shows its name), and native graphics decoding on Coil's threads aborts the
+        // test JVM on CI (JniConstants: "Class not found: java/nio/LongBuffer").
+        SingletonImageLoader.setUnsafe(
+            ImageLoader.Builder(app).components {
+                add(OkHttpNetworkFetcherFactory(callFactory = { app.graph.http }))
+                add(Decoder.Factory { result, _, _ ->
+                    Decoder {
+                        result.source.close()
+                        DecodeResult(ColorDrawable(android.graphics.Color.GRAY).asImage(), isSampled = false)
+                    }
+                })
+            }.build(),
+        )
         entries = mapOf(
             "b" to """{"item":{"id":"b","kind":"movie","title":"Show B","posterUrl":"/assets/b-poster.png",""" +
                 """"backdropUrl":"/assets/b-backdrop.png"},"continue":{"episodeId":"b.film","status":"new"}}""",
