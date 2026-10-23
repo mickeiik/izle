@@ -183,8 +183,9 @@ Within v1 the report only gains fields: none is removed or changes meaning. Cons
 Within format version 1 only **additive, optional** changes are allowed: new optional properties with a documented
 default, recorded in the changelog below. Consumers built for an earlier 1.x text MUST keep working (they reject
 unknown non-`x-` properties, so producers SHOULD NOT emit new optional properties until consumers support them).
-Anything else (a new required property, a changed meaning, a removed value) requires `formatVersion: 2`. Until the
-first deployment the owner may change v1 in place, marked **breaking (pre-release)** in the changelog.
+Anything else (a new required property, a changed meaning, a removed value) requires `formatVersion: 2`. Before the
+first deployment (2026-10-23) v1 changed in place, marked **breaking (pre-release)** in the changelog; it no longer
+does.
 
 ## Changelog
 

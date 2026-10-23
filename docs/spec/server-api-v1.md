@@ -1,8 +1,8 @@
 # izle-server API v1
 
 Status: **draft, implemented**. Changes within v1 are additive only (new optional request fields, new response
-fields, new routes); clients MUST ignore unknown response fields. Until the first deployment the owner may change v1
-in place, marked **breaking (pre-release)** in the [changelog](#changelog).
+fields, new routes); clients MUST ignore unknown response fields. Before the first deployment (2026-10-23) v1 changed
+in place, marked **breaking (pre-release)** in the [changelog](#changelog); it no longer does.
 
 ## Conventions
 

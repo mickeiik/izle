@@ -125,7 +125,8 @@ Results are validated against `resolve-result.v1.schema.json`; an invalid result
 
 Additive, optional changes (new optional context members, new optional result fields) stay within API version 1
 and are listed below. Anything else bumps `RESOLVER_API_VERSION`; the server refuses modules declaring a version it
-does not implement. Until the first deployment v1 may change in place, marked **breaking (pre-release)** below.
+does not implement. Before the first deployment (2026-10-23) v1 changed in place, marked **breaking (pre-release)**
+below; it no longer does.
 
 ## Changelog
 
