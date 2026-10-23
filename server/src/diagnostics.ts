@@ -13,10 +13,11 @@ import { newId } from "./auth.ts";
 import { episodeIdOf, liveRef, playableOf, type CatalogService, type PlayableRef } from "./catalog.ts";
 import { egressRefusal } from "./egress.ts";
 import { HttpError } from "./errors.ts";
-import { isPlaylistText, masterPlaylist, mediaPlaylist, rangeHeader, tsSyncOffset, type Variant } from "./hls.ts";
+import { isPlaylistText, masterPlaylist, mediaPlaylist, rangeHeader, type Variant } from "./hls.ts";
 import { requireItem, requirePlayableRef, requireSource, type PlayableId } from "./lookup.ts";
 import { iso } from "./presenters.ts";
 import { entryPath, linkHost, MAX_PLAYLIST_BYTES, REWRITE_LIMITS, subtitlePath, type ProxyProblem, type ProxyService, type ProxyTarget } from "./proxy.ts";
+import { isMedia, sniffContainer, type Container } from "./sniff.ts";
 import { checkScope, deliveryPlan, proxyKind, proxySessionFor, type DeliveryPlan, type ResolveService, type UpstreamStream } from "./resolve.ts";
 import { stopwatch } from "./stopwatch.ts";
 import type { SourceCheck, SourceCheckKey, Store } from "./store.ts";
@@ -46,7 +47,6 @@ type StepWhat = "playlist" | "variant" | "rendition" | "segment" | "init" | "key
 type StepError =
   | "timeout" | "network" | "http" | "not_a_playlist" | "too_large" | "not_media" | "bad_key" | "egress_denied"
   | "not_subtitles" | "not_mpd" | "aborted" | "budget" | "bad_uri";
-type Container = "ts" | "mp4" | "fmp4" | "aac" | "id3" | "webvtt" | "srt" | "ttml" | "mpd" | "m3u8";
 type CheckWarning =
   | "risky_codec" | "high_resolution" | "sample_aes" | "no_range" | "subtitle_failed" | "manifest_only"
   | "playlists_unchecked";
@@ -130,43 +130,6 @@ function summarize(r: ResolveResult | UpstreamStream, proxyAlways: boolean) {
 
 // --- what came back ------------------------------------------------------------------------------------------
 
-const decoder = new TextDecoder("utf-8", { fatal: true });
-
-/** Text, not media: no control characters but whitespace and valid UTF-8 (an HTML error page, JSON, plain text). */
-function looksLikeText(head: Uint8Array): boolean {
-  const sample = head.subarray(0, 512);
-  if (sample.some((b) => b < 0x09 || (b > 0x0d && b < 0x20 && b !== 0x1b) || b === 0x7f)) return false;
-  try {
-    decoder.decode(sample.subarray(0, Math.max(0, sample.length - 3)));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-const boxType = (head: Uint8Array): string => (head.length >= 8 ? Buffer.from(head.subarray(4, 8)).toString("latin1") : "");
-
-/** What the first bytes of a body are, by their signature; null when none is recognized. */
-export function sniffContainer(head: Uint8Array): Container | null {
-  if (head.length >= 3 && head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33) return "id3";
-  // At least one whole packet: a short text answer may well start with a "G" (a lone packet must not read as text).
-  if (head.length >= 188 && head[0] === 0x47 && (head.length >= 376 ? head[188] === 0x47 : !looksLikeText(head))) return "ts";
-  if (tsSyncOffset(head) > 0) return "ts";
-  const box = boxType(head);
-  if (["ftyp", "moov", "free", "skip", "wide", "mdat"].includes(box)) return "mp4";
-  if (["styp", "moof", "sidx", "emsg", "prft"].includes(box)) return "fmp4";
-  if (head.length >= 2 && head[0] === 0xff && (head[1]! & 0xf6) === 0xf0) return "aac";
-  if (!looksLikeText(head)) return null;
-  const text = Buffer.from(head.subarray(0, 4096)).toString("utf8").replace(/^﻿/, "").trimStart();
-  if (text.startsWith("WEBVTT")) return "webvtt";
-  if (text.startsWith("#EXTM3U")) return "m3u8";
-  if (/^\d+\r?\n\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*-->/.test(text)) return "srt";
-  const xml = text.replace(/^<\?xml[^>]*>\s*/, "").replace(/^(<!--[\s\S]*?-->\s*)+/, "");
-  if (/^<MPD[\s>]/.test(xml)) return "mpd";
-  if (/^<(\w+:)?tt[\s>]/.test(xml)) return "ttml";
-  return null;
-}
-
 /** A body that answered: its status and its first bytes (`truncated` when more came than were read). */
 interface Got {
   status: number;
@@ -179,19 +142,19 @@ interface Got {
 type Missed = { error: StepError; status?: number };
 type Judged = Pick<Step, "ok" | "error" | "container" | "bytes">;
 
-const MEDIA_TEXT = new Set<Container>(["webvtt", "srt", "ttml", "mpd", "m3u8"]);
-
 function judgePlaylist(got: Got): Judged {
   if (got.truncated) return { ok: false, error: "too_large" };
   return isPlaylistText(got.bytes.toString("utf8")) ? { ok: true, container: "m3u8" } : { ok: false, error: "not_a_playlist" };
 }
 
-/** Media where media was expected: an error page that answered 200 is the classic dead link. */
+/**
+ * Media where media was expected, by the proxy's own rule (sniff.ts): an error page that answered 200 is the classic
+ * dead link.
+ */
 function judgeMedia(got: Got): Judged {
   const container = sniffContainer(got.bytes);
   const bytes = got.bytes.length;
-  const isText = container ? MEDIA_TEXT.has(container) : looksLikeText(got.bytes);
-  if (bytes === 0 || isText) return { ok: false, error: "not_media", bytes, ...(container ? { container } : {}) };
+  if (!isMedia(got.bytes, container)) return { ok: false, error: "not_media", bytes, ...(container ? { container } : {}) };
   return { ok: true, bytes, ...(container ? { container } : {}) };
 }
 

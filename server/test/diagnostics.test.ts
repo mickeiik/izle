@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { ServerResponse } from "node:http";
 import { syntheticTsSegment } from "../examples/resolver-example/upstream.js";
-import { sniffContainer } from "../src/diagnostics.ts";
+import { sniffContainer } from "../src/sniff.ts";
 import { assertNoLeaks, CHANNEL_REFERER, fixtureItems, logged, testServer, TEST_RESOLVER, type Json, type TestServerOptions } from "./helpers.ts";
 import { adapterSource, bundleOf, channel, direct, movie, upstream } from "./media-helpers.ts";
 
@@ -197,6 +197,11 @@ const FILES: Record<string, Reply> = {
   "/refused/s0.ts": status(403),
   "/egress/index.m3u8": playlist(vod("#EXTINF:6,", "s0.ts", "#EXTINF:6,", "s1.ts")),
   "/egress/s0.ts": status(302, { Location: "http://10.11.12.13/internal/s0.ts" }),
+  // Segments labelled as playlists: media and an error page.
+  "/mislabel/index.m3u8": playlist(vod("#EXTINF:6,", "s0.ts")),
+  "/mislabel/s0.ts": bytes(TS, "application/x-mpegURL"),
+  "/mislabel-html/index.m3u8": playlist(vod("#EXTINF:6,", "s0.ts")),
+  "/mislabel-html/s0.ts": bytes(HTML, "application/x-mpegURL"),
 };
 
 /** Paths under `/hdr/` need the secret Referer, like a site's player would send. */
@@ -230,6 +235,8 @@ async function hostile(t: { after(fn: () => unknown): void }) {
     one("header", at("/hdr/fmp4/index.m3u8", "hls", { headers: { Referer: SECRET_REFERER } })),
     one("refused", at("/hdr/refused/index.m3u8", "hls", { headers: { Referer: SECRET_REFERER } })),
     one("egress", at("/hdr/egress/index.m3u8", "hls", { headers: { Referer: SECRET_REFERER } })),
+    one("mislabel", at("/hdr/mislabel/index.m3u8", "hls", { headers: { Referer: SECRET_REFERER } })),
+    one("mislabel-html", at("/hdr/mislabel-html/index.m3u8", "hls", { headers: { Referer: SECRET_REFERER } })),
   ];
   // The upstream listens on loopback, which the proxy refuses unless the owner lists it.
   const s = await testServer(t, { bundleDir: await bundleOf(items), configFile: { proxy: { privateUpstreams: ["127.0.0.1"] } } });
@@ -329,6 +336,17 @@ test("deep check through the proxy: the upstream header reaches every request, a
   assert.deepEqual([logged(s, "problem recorded"), logged(s, "problem not recorded")], [[], []], "a check's proxy problems are no TV's");
   assert.equal(s.srv.ctx.store.sourceCheckKeys().length, 3);
   for (const r of [header, refused, egress]) assertNoLeaks(s, r.answer, leaks);
+});
+
+test("deep check through the proxy: a segment labelled as a playlist passes as media, an error page so labelled fails", async (t) => {
+  const { s, check, leaks } = await hostile(t);
+  const media = await check("mislabel");
+  assert.deepEqual(stepsOf(media.source), [["playlist", null, true, 200, null, "m3u8"], ["segment", null, true, 200, null, "ts"]], "as the TV gets it");
+  assert.equal(media.source.verdict, "ok");
+  const html = await check("mislabel-html");
+  assert.deepEqual(stepsOf(html.source).at(-1), ["segment", null, false, 200, "not_a_playlist", null], "the proxy's 502, with the upstream's status");
+  assert.equal(html.source.verdict, "fail");
+  for (const r of [media, html]) assertNoLeaks(s, r.answer, leaks);
 });
 
 test("container signatures: TS (aligned or behind junk), MP4 boxes, ADTS, ID3; text is never media", () => {

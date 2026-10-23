@@ -271,6 +271,65 @@ test("junk before the first TS packet passes unchanged unless proxy.alignTsSegme
   assert.match(aligned.vtt, /^WEBVTT/, "non-TS resources are left alone");
 });
 
+test("a segment labelled as a playlist streams through as media; an error page so labelled is still not_a_playlist", async (t) => {
+  // Some sites answer a segment now and then as `application/x-mpegURL`: its first bytes tell media from a playlist
+  // (rewritten, as a playlist named under a segment URI) and from an error page (refused, as before).
+  const mislabelled = "application/x-mpegURL";
+  const box = (type: string, size = 64) => Buffer.concat([Buffer.from([0, 0, 0, size]), Buffer.from(type, "latin1"), Buffer.alloc(size - 8, 1)]);
+  const ts = syntheticTsSegment(3);
+  const junky = Buffer.concat([junkBytes(5), ts]);
+  const fmp4 = Buffer.concat([box("moof"), box("mdat", 4096)]);
+  const nested = "#EXTM3U\n#EXT-X-TARGETDURATION:6\n#EXTINF:6,\nn0.ts\n#EXT-X-ENDLIST\n";
+  const segmentUris = ["s0.ts", "s1.ts", "s2.m4s", "s3.ts", "s4.ts"];
+  const index = ["#EXTM3U", "#EXT-X-TARGETDURATION:6", ...segmentUris.flatMap((u) => ["#EXTINF:6,", u]), "#EXT-X-ENDLIST", ""].join("\n");
+  const bodies: Record<string, [string, Buffer | string]> = {
+    "/index.m3u8": ["application/vnd.apple.mpegurl", index],
+    "/s0.ts": [mislabelled, ts],
+    "/s1.ts": [mislabelled, junky],
+    "/s2.m4s": [mislabelled, fmp4],
+    "/s3.ts": [mislabelled, "<!doctype html><html><body>Too many requests</body></html>"],
+    "/s4.ts": [mislabelled, nested],
+    "/binary.m3u8": [mislabelled, ts],
+  };
+  const local = await upstream(t, (req, res) => {
+    const [type, body] = bodies[req.url ?? ""] ?? [];
+    if (body === undefined) return void res.writeHead(404).end();
+    res.writeHead(200, { "Content-Type": type, "Content-Length": Buffer.byteLength(body) }).end(body);
+  });
+  const hls = (id: string, p: string) => movie(id, [direct(id, { kind: "hls", url: `${local.url}${p}`, headers: REF })]);
+  const items = () => [hls("mixed", "/index.m3u8"), hls("binary", "/binary.m3u8")];
+
+  const segments = async (env: Awaited<ReturnType<typeof setupProxy>>) => {
+    const r = await env.resolve("mixed.main");
+    const pl = await env.text(r.json.media.url);
+    assert.equal(pl.status, 200);
+    return Promise.all(uris(pl.body).map((u) => env.get(entry(r).dir + u)));
+  };
+  const env = await setupProxy(t, { items });
+  const [s0, s1, s2, s3, s4] = await segments(env);
+  assert.deepEqual(heads(s0!, "content-type", "content-length"), [200, "video/mp2t", String(ts.length)]);
+  assert.deepEqual(Buffer.from(await s0!.arrayBuffer()), ts);
+  assert.deepEqual(heads(s1!, "content-type"), [200, "video/mp2t"]);
+  assert.deepEqual(Buffer.from(await s1!.arrayBuffer()), junky, "junk passes unchanged unless proxy.alignTsSegments is on");
+  assert.deepEqual(heads(s2!, "content-type"), [200, "video/mp4"]);
+  assert.deepEqual(Buffer.from(await s2!.arrayBuffer()), fmp4);
+  assert.deepEqual([s3!.status, await s3!.json()], [502, { error: "not_a_playlist" }], "an error page is no media");
+  assert.deepEqual(heads(s4!, "content-type"), [200, "application/vnd.apple.mpegurl"]);
+  assert.match(uris(await s4!.text())[0]!, /^r\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{22}\.ts$/, "a real playlist is still rewritten");
+  assert.deepEqual((await env.problems()).map((p) => [p.code, p.httpStatus, p.detail]), [["not_a_playlist", 200, `segment: ${mislabelled}`]]);
+  assert.equal(logged(env.s, "media labelled as a playlist passed as media").length, 3);
+
+  // A playlist link stays strict: media where a playlist was named is refused (and reported) as before.
+  env.s.clock.advance(60_001);
+  const binary = await env.get((await env.resolve("binary.main")).json.media.url);
+  assert.deepEqual([binary.status, await binary.json()], [502, { error: "not_a_playlist" }]);
+  assert.deepEqual((await env.problems()).map((p) => p.detail).sort(), [`playlist: ${mislabelled}`, `segment: ${mislabelled}`]);
+
+  const aligned = await segments(await setupProxy(t, { items, configFile: { proxy: { alignTsSegments: true } } }));
+  assert.deepEqual(heads(aligned[1]!, "content-type", "content-length"), [200, "video/mp2t", String(ts.length)]);
+  assert.deepEqual(Buffer.from(await aligned[1]!.arrayBuffer()), ts, "aligned as any segment");
+});
+
 test("adapter failures reach the TV and the log only as {adapterId, code, name}; fallback continues server-side", async (t) => {
   const { s, resolve } = await setupProxy(t);
   const r = await resolve("hostile.main");

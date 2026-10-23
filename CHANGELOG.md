@@ -22,6 +22,12 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
   `code`, and an error's `code`) a value shaped like an id or a code is now written as given; tokens, UUIDs, URLs and
   anything else there, and ids in any other field or in nested objects, are still scrubbed.
 
+- **A proxied segment labelled as a playlist no longer stops playback.** Some sites now and then answer a segment
+  with a playlist content type (`application/x-mpegURL`); the proxy answered `502 not_a_playlist` and the TV gave up.
+  It now looks at the first bytes: media (MPEG-TS, MP4/fMP4, ADTS, ID3 or other binary data) streams through as the
+  segment with a media content type, a real playlist is still rewritten, and an error page is still refused and
+  reported. Catalog checks judge such segments the same way.
+
 ## [0.6.0] - 2026-10-23
 
 ### Changed

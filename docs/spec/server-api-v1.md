@@ -318,6 +318,12 @@ the phone never ends the TV's sessions) keeps at most two: resolving a third end
 - **Streaming:** segments, MP4 and MPEG-TS bodies pass through as they arrive, never buffered (a channel's
   `stream.ts` never ends); a TV that disconnects cancels the upstream request. Only `Content-Type`,
   `Content-Length`, `Content-Range`, `Accept-Ranges`, `Last-Modified` and `ETag` are passed back.
+- **Playlist or segment:** `index.m3u8` and `p` links are always read as playlists. An `r` link (a segment, key or init
+  section) whose upstream answers `200` with a playlist type (`…mpegurl`) is told by its first bytes (about 5 KiB are
+  read ahead; the rest streams): `#EXTM3U` is a playlist, rewritten like any; media, as the [checks](#checks)
+  recognize it (MPEG-TS sync bytes, also behind up to 4 KiB of junk, MP4 boxes, ADTS, ID3, or binary data of no known
+  container), streams through as a segment with its type corrected (`video/mp2t`, `video/mp4`, `audio/aac`, or none);
+  text that is no playlist (an error page) answers `502 not_a_playlist`. Some sites label a segment so now and then.
 - **Errors:** a malformed token, an entry file of another kind than the session's, or an unknown subtitle track
   `404 not_found`; unknown or expired session `410 {"error":"gone"}`. An upstream `401`/`403`/`410` marks the session
   **stale**: this and every later request answer `410 {"error":"stale"}`, so the TV re-resolves (the same source
@@ -1046,3 +1052,5 @@ The example's values are the defaults, except the samples for `publicUrl`, `trus
 - **v1 (2026-10-23)** — [logging](#logging): catalog ids in their own top-level fields (`catalogId`, `buildId`,
   `itemId`, `episodeId`, `sourceId`, `adapterId`, `adapters`) and identifier-shaped codes (`code`, an error's `code`)
   are written as given instead of `<token>`; nothing else changes.
+- **v1 (2026-10-23)** — the [media proxy](#media-proxy) streams a segment labelled as a playlist whose first bytes
+  are media through as media, instead of answering `502 not_a_playlist` (additive: a tolerance).
