@@ -52,8 +52,9 @@ remotely from the admin page or, on the TV itself, behind a hidden menu.
   darkened enough for white text; a channel's or a picture-less show's panel is plain. From the top: the name (26 sp
   bold, up to 3 lines, cut with "…"); then at the bottom "2 new episodes" (24 sp), the chip saying what OK will do in
   24 sp ("Continue · Episode 2"; when that does not fit, "Continue" with "Episode 2" in 24 sp under it), and the
-  progress bar. A chip too wide for 24 sp is drawn at 16 sp. Whatever does not fit the panel's height is left out, in
-  this order: "2 new episodes", the episode line, then name lines down to one. A channel's panel: its name and the red
+  progress bar. A chip that does not fit at 24 sp (too wide, or too tall under one line of name) is drawn at 16 sp.
+  Whatever else does not fit the panel's height is left out, in this order: "2 new episodes", the episode line, then
+  name lines down to one. A channel's panel: its name and the red
   **Live** chip.
 - The tile played last gets the focus back; the focus stays on its card when the owner reorders or moves cards.
 - No shows: "Nothing here yet" in large type and a line saying that the owner adds shows from the admin page. A first
