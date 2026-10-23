@@ -6,6 +6,13 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 
 ## [Unreleased]
 
+### Changed
+
+- **The v1 contracts change only additively.** Since 0.6.0, the server API, the catalog bundle format and the
+  resolver module API change within v1 only in the additive ways each spec lists; anything else gets a new version
+  (`/api/v2`, `formatVersion: 2`, a new resolver API version). The server API spec is now marked stable and says
+  what counts as additive.
+
 ## [0.6.0] - 2026-10-23
 
 ### Changed

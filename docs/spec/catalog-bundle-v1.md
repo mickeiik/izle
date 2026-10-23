@@ -183,9 +183,9 @@ Within v1 the report only gains fields: none is removed or changes meaning. Cons
 Within format version 1 only **additive, optional** changes are allowed: new optional properties with a documented
 default, recorded in the changelog below. Consumers built for an earlier 1.x text MUST keep working (they reject
 unknown non-`x-` properties, so producers SHOULD NOT emit new optional properties until consumers support them).
-Anything else (a new required property, a changed meaning, a removed value) requires `formatVersion: 2`. Before the
-first deployment (2026-10-23) v1 changed in place, marked **breaking (pre-release)** in the changelog; it no longer
-does.
+Anything else (a new required property, a changed meaning, a removed value) requires `formatVersion: 2`. Up to and
+including izle 0.6.0, the first deployment, v1 changed in place, marked **breaking (pre-release)** in the changelog;
+since then it does not.
 
 ## Changelog
 
@@ -195,3 +195,4 @@ does.
   `BundleStats.live` and media kind `ts` (breaking (pre-release), changed in place).
 - **v1 (2026-10-23)** — the validator's two commands and its `--json` report are documented as a stable interface
   ([Running the validator](#running-the-validator), [JSON report](#json-report)) (additive).
+- **v1 (izle 0.6.0, 2026-10-23)** — the first deployment; from here on v1 changes only additively.
