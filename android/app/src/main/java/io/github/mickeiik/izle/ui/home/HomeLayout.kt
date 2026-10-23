@@ -5,11 +5,8 @@ import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
-/**
- * A section as the layout needs it: titled or not, one line that scrolls sideways ([row]) or a grid, how many cards
- * (at least one), and whether a card title in its last line (every card of a [row]) needs two lines.
- */
-data class SectionShape(val titled: Boolean, val row: Boolean, val count: Int, val lastLineNeedsTwoTitleLines: Boolean = false)
+/** A section as the layout needs it: titled or not, one line that scrolls sideways ([row]) or a grid, how many cards (at least one). */
+data class SectionShape(val titled: Boolean, val row: Boolean, val count: Int)
 
 /**
  * Where everything on Home goes (docs/ux/senior-tv.md, "Sections"), in dp from the viewport's top. One card size for
@@ -44,8 +41,8 @@ data class HomeLayout(
     data class Line(val section: Int, val first: Int, val count: Int, val cardTop: Float, val top: Float, val bottom: Float, val slot: Int)
 
     /**
-     * An item of the lazy grid that draws Home, with `spacedBy(gap)` between lines and the padding above and below:
-     * [Card]s (one [Row] for a row section) and a full-width [Title] before a titled section's first line.
+     * An item of the lazy column that draws Home, with `spacedBy(gap)` between items and the padding above and below:
+     * a line of [Cards], and a full-width [Title] before a titled section's first line.
      */
     sealed interface Slot {
         val top: Float
@@ -55,13 +52,11 @@ data class HomeLayout(
     /** [textOffset]: where the title's text is drawn in the item (above it on Home's first line). */
     data class Title(override val section: Int, override val top: Float, val height: Float, val textOffset: Float) : Slot
 
-    /** [span]: more than one column for a grid section's last card when an untitled grid follows, to end the row. */
-    data class Card(override val section: Int, val index: Int, override val top: Float, val span: Int) : Slot
+    /** The cards of [line]: a grid row, or a whole row section. */
+    data class Cards(override val section: Int, val line: Int, override val top: Float) : Slot
 
-    data class Row(override val section: Int, override val top: Float) : Slot
-
-    /** From the first column's left edge to the last column's right edge. */
-    val contentWidth: Float get() = grid.viewportWidth - 2 * grid.padding
+    /** From the first column's left edge to the last column's right edge, one card open. */
+    val contentWidth: Float get() = grid.rowWidth
 
     val maxScroll: Float get() = max(0f, contentHeight - viewportHeight)
 
@@ -104,7 +99,7 @@ data class HomeLayout(
         return to.section to best
     }
 
-    /** The column a card's left edge is at: its place in a grid row, or in what a row section shows. */
+    /** The column a card's left edge is at (all cards closed): its place in a grid row, or in what a row section shows. */
     private fun column(section: Int, index: Int, rowFirst: (Int) -> Int): Int =
         if (sections[section].row) index - rowFirst(section) else index % grid.columns
 
@@ -121,21 +116,24 @@ data class HomeLayout(
         fun grid(columns: Int, rows: Int, width: Float, height: Float, titleLine: Float, titled: Boolean): HomeGrid =
             HomeGrid.compute(columns, rows, width, height - if (titled) SECTION_HEADER else 0f, titleLine)
 
-        /** A row section's first card in view once the focus moved to [focus]: it slides only at the edge of what is in view. */
+        /**
+         * A row section's first card in view once the focus moved to [focus]: it slides only at the edge of what is in
+         * view ([columns] cards, one of them open).
+         */
         fun rowFirst(first: Int, focus: Int, count: Int, columns: Int): Int =
             minOf(max(first, focus - columns + 1), focus, max(0, count - columns)).coerceAtLeast(0)
 
         /** JavaScript's `Math.round` (halves up), as the admin page's mirror of this layout rounds. */
         private fun round(value: Float): Float = floor(value + 0.5f)
 
-        /** [sections] (none empty) on a Home of [columns] × [rows] in the safe area, card titles of [titleLine] dp a line. */
+        /** [sections] (none empty) on a Home of [columns] × [rows] in the safe area, names in cards [titleLine] dp a line. */
         fun compute(columns: Int, rows: Int, width: Float, height: Float, titleLine: Float, sections: List<SectionShape>): HomeLayout {
             val titled = sections.any { it.titled }
             val g = grid(columns, rows, width, height, titleLine, titled)
             val placed = ArrayList<Section>(sections.size)
             val lines = ArrayList<Line>()
             val slots = ArrayList<Slot>()
-            var cellBottom = 0f
+            var cardBottom = 0f
             for ((k, s) in sections.withIndex()) {
                 val top: Float
                 val divider: Float?
@@ -145,10 +143,9 @@ data class HomeLayout(
                     divider = null
                     firstCardTop = (if (s.titled) SECTION_HEADER else 0f) + g.padding
                 } else {
-                    val nextTop = cellBottom + g.gap
-                    val needed = if (sections[k - 1].lastLineNeedsTwoTitleLines) 2 else 1
-                    val unused = g.titleLines - min(g.titleLines, needed)
-                    divider = round((cellBottom - unused * titleLine + nextTop) / 2)
+                    // The line lies in the middle of the gap above the next section.
+                    val nextTop = cardBottom + g.gap
+                    divider = round((cardBottom + nextTop) / 2)
                     top = if (s.titled) nextTop else nextTop - g.padding
                     firstCardTop = if (s.titled) nextTop + SECTION_HEADER + g.padding else nextTop
                 }
@@ -165,24 +162,16 @@ data class HomeLayout(
                     val cardTop = firstCardTop + r * g.rowPitch
                     val first = if (s.row) 0 else r * g.columns
                     val count = if (s.row) s.count else min(g.columns, s.count - first)
-                    lines += Line(k, first, count, cardTop, top = if (r == 0) top else cardTop - g.padding, bottom = cardTop + g.cellHeight + g.padding, slot = slots.size)
-                    if (s.row) {
-                        slots += Row(k, cardTop)
-                    } else {
-                        val endsRow = r == lineCount - 1 && sections.getOrNull(k + 1)?.let { !it.titled && !it.row } == true
-                        for (j in first until first + count) {
-                            val span = if (endsRow && j == first + count - 1) g.columns - (count - 1) else 1
-                            slots += Card(k, j, cardTop, span)
-                        }
-                    }
-                    cellBottom = cardTop + g.cellHeight
+                    lines += Line(k, first, count, cardTop, top = if (r == 0) top else cardTop - g.padding, bottom = cardTop + g.cardHeight + g.padding, slot = slots.size)
+                    slots += Cards(k, lines.lastIndex, cardTop)
+                    cardBottom = cardTop + g.cardHeight
                 }
                 placed += Section(s.titled, s.row, s.count, top, divider, firstLine, lines.size - 1, firstSlot)
             }
             return HomeLayout(
                 grid = g,
                 viewportHeight = g.viewportHeight + if (titled) SECTION_HEADER else 0f,
-                contentHeight = if (lines.isEmpty()) 0f else cellBottom + g.padding,
+                contentHeight = if (lines.isEmpty()) 0f else cardBottom + g.padding,
                 sections = placed,
                 lines = lines,
                 slots = slots,

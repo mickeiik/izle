@@ -114,9 +114,11 @@ entries, and how each feature was built, are in git history.
   section by a composite foreign key (TV, section). A TV has no section row until its Home is first written.
 - Admin page: a section chosen in the list stays chosen across refreshes until a card is selected; moves and adds made
   while a change saves are dropped, since each was computed from what the owner saw.
-- TV app: one `LazyVerticalGrid` draws Home (a title spans the grid, a row section is one item holding a `LazyRow`).
-  Section lines are drawn over the grid from its layout info (a line can lie where no item is, and dimming would cover
-  it). ↑ ↓ ← → come from `HomeLayout`, since Compose's focus search stopped at a lazy line's first laid-out card.
+- TV app: one `LazyColumn` draws Home, an item a line: a grid row is a plain `Row` (a lazy grid's cell cannot widen
+  for the open card), a row section a `LazyRow` slid by `HomeLayout.rowFirst`, not by bringing the focused card into
+  view (it opens as it gets the focus). Section lines are drawn over the column from its layout info (a line can lie
+  where no item is). ↑ ↓ ← → come from `HomeLayout`, since Compose's focus search stopped at a lazy line's first
+  laid-out card.
 - Home cards: posters that open on focus won over the whole poster in a wide card and a poster wall with a caption
   line (prototypes, 2026-10-23): the focused card is the clearest. A grid row is sized to fit one open card, so only
   the cards after it move; a grid never slides sideways.

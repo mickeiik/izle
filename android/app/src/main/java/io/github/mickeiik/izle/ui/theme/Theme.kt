@@ -65,6 +65,9 @@ object IzleColors {
     /** The bottom of a card behind its chip, and the player's information panel. */
     val PosterShade = Color(0xE6000000)
     val InfoShade = Color(0xE6000000)
+
+    /** Over the backdrop or blurred poster behind an open card's panel: white text reads on any picture. */
+    val PanelScrim = Color(0xB3000000)
     val ScrollTrack = Color(0x24FFFFFF)
     val ScrollThumb = Color(0x99FFFFFF)
     val ProgressTrack = Color(0x55FFFFFF)
@@ -125,7 +128,8 @@ private fun style(size: Int, weight: FontWeight = FontWeight.Normal, lineHeight:
 
 /**
  * Nothing on screen is smaller than 24 sp: the viewer sits far away and may not see well. The one exception: the chips
- * on Home's cards (`labelMedium`, `labelSmall`, used nowhere else) at 16 sp; the show's name under the card stays 24 sp.
+ * on Home's cards (`labelMedium`, `labelSmall`, used nowhere else) at 16 sp; an open card's chip is 24 sp
+ * (`labelLarge`), down to 16 sp only when the panel is too narrow or short for it.
  */
 private val IzleTypography = Typography(
     displayLarge = style(96, FontWeight.Bold, 104),
@@ -137,6 +141,7 @@ private val IzleTypography = Typography(
     titleSmall = style(24, FontWeight.Bold),
     bodyLarge = style(28),
     bodySmall = style(24),
+    labelLarge = style(24, FontWeight.Bold),
     labelMedium = style(16, FontWeight.Bold, 20),
     labelSmall = style(16, lineHeight = 22),
 )
