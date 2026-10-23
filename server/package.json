@@ -1,6 +1,6 @@
 {
   "name": "@izle/server",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.1.5",
-    "@izle/contract": "^0.6.0",
+    "@izle/contract": "^0.6.1",
     "ajv": "^8.20.0",
     "hono": "^4.13.13",
     "tsx": "^4.23.15",
