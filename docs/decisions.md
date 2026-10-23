@@ -62,7 +62,9 @@ entries, and how each feature was built, are in git history.
 
 - `homeColumns`/`homeRows` have no server or catalog default (the right grid depends on each screen) and no `CHECK`:
   the admin API is the only writer (`HOME_COLUMNS`/`HOME_ROWS` in home.ts, mirrored in lib.js, checked by a test).
-- The owner preferred the cropped poster to the whole poster on a blurred copy of itself.
+- Cards: portrait posters that open on focus (2026-10-23) replaced the 16:9 card with a cropped poster, chosen from
+  prototypes over the whole poster in a wide card and a poster wall with a caption line: the open card makes the
+  focus clearest. A grid row is sized to fit one open card, so only the cards after it move, never the row.
 
 ## Live channels
 
@@ -119,6 +121,3 @@ entries, and how each feature was built, are in git history.
   view (it opens as it gets the focus). Section lines are drawn over the column from its layout info (a line can lie
   where no item is). ↑ ↓ ← → come from `HomeLayout`, since Compose's focus search stopped at a lazy line's first
   laid-out card.
-- Home cards: posters that open on focus won over the whole poster in a wide card and a poster wall with a caption
-  line (prototypes, 2026-10-23): the focused card is the clearest. A grid row is sized to fit one open card, so only
-  the cards after it move; a grid never slides sideways.
