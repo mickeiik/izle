@@ -34,7 +34,40 @@ test("problem text from a TV: URLs and tokens go, error names stay; the log itse
     assert.equal(redactReportText(`x ${token} y`), "x <token> y", token);
   }
   assert.equal(redactReportText("ab ".repeat(200)).length, 501, "capped like log strings");
-  assert.equal(redact("ERROR_CODE_IO_BAD_HTTP_STATUS"), "<token>", "log lines keep the strict rule");
+  assert.equal(redact("ERROR_CODE_IO_BAD_HTTP_STATUS"), "<token>", "free text in log lines keeps the strict rule");
+});
+
+test("catalog ids and problem codes survive in their own fields; secrets there and ids elsewhere are scrubbed", () => {
+  const { lines, log } = capture();
+  const ids = {
+    catalogId: "home-catalog-2026-a1b2c3d4", buildId: "20261023-78ece5b2deea", itemId: "the-simpsons-1989-1c18970a",
+    episodeId: "the-simpsons-1989-1c18970a.s1e1", sourceId: "dub_hls-1080p-78ece5b2deea", adapterId: "example-adapter-v2",
+    code: "ERROR_CODE_IO_BAD_HTTP_STATUS",
+  };
+  log.info("ids", ids);
+  assert.deepEqual(JSON.parse(lines[0]!), { time: "1970-01-01T00:00:00.000Z", level: "info", msg: "ids", ...ids });
+
+  const hostile = [
+    `izat_${DEVICE_TOKEN}`, DEVICE_TOKEN, "q8Zt-3Rk_v0WmXa9LpYc2NdE7fBhJ4sUo1", "9f86d081884c7d659a2feaa0c55ad015", // gitleaks:allow (made-up hostile fixtures)
+    `/p/${DEVICE_TOKEN}/seg.ts`, "https://cdn.example.test/v/master.m3u8", `the-show-1c18970a?sig=${DEVICE_TOKEN}`, "auth.<token>",
+  ];
+  for (const value of hostile) {
+    lines.length = 0;
+    log.info("hostile", Object.fromEntries(Object.keys(ids).map((k) => [k, value])));
+    const line = JSON.parse(lines[0]!);
+    for (const k of Object.keys(ids)) assert.equal(line[k], redact(value), `${k}: ${value}`);
+    assert.ok(!lines[0]!.includes(DEVICE_TOKEN) && !lines[0]!.includes("cdn.example.test/"), lines[0]);
+  }
+  assert.equal(redact(`izat_${DEVICE_TOKEN}`), "<token>");
+  assert.equal(redact(`/p/${DEVICE_TOKEN}/seg.ts`), "/p/<token>/seg.ts");
+
+  // The same ids anywhere else are free text: they look like tokens there.
+  lines.length = 0;
+  log.info(`loaded ${ids.buildId}`, { note: ids.itemId, id: ids.episodeId, list: [ids.code], nested: { buildId: ids.buildId } });
+  assert.deepEqual(JSON.parse(lines[0]!), {
+    time: "1970-01-01T00:00:00.000Z", level: "info", msg: "loaded <token>", note: "<token>", id: "<token>.s1e1", list: ["<token>"],
+    nested: { buildId: ids.buildId },
+  });
 });
 
 test("hostile fixture: nothing secret survives a log line", () => {

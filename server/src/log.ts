@@ -1,7 +1,8 @@
 // The one place where anything reaches the log. Stream URLs, upstream headers, adapter refs, tokens and playlist
 // text must never be written (AGENTS.md, "Hard invariants"): keys that can hold them are dropped, strings are
-// scrubbed of URLs, playlist text and token-like runs. It is a heuristic: a value under an innocent key that looks
-// like none of these (a short API key) is written as given, so the code must not hand such values to the log.
+// scrubbed of URLs, playlist text and token-like runs, except catalog ids and problem codes in their own fields. It is a
+// heuristic: a value under an innocent key that looks like none of these (a short API key) is written as given, so the
+// code must not hand such values to the log.
 
 import { errorName } from "./errors.ts";
 
@@ -57,6 +58,29 @@ export function redactReportText(value: string): string {
   return scrub(value, (run) => (IDENTIFIER_RE.test(run) ? run : "<token>"));
 }
 
+/**
+ * A catalog id as catalogs write them: lowercase words, and runs of at most 12 lowercase letters and digits (a number,
+ * an 8- or 12-hex suffix, `s1e1`, `1080p`), joined by `-`, `.` or `_`.
+ */
+const SLUG_RE = /^(?:[a-z]+|[a-z0-9]{1,12})(?:[-._](?:[a-z]+|[a-z0-9]{1,12}))*$/;
+
+/**
+ * Fields whose value is written as given when it has their shape (anything else is scrubbed like free text): catalog
+ * ids, which the catalog serves to every TV and the admin page shows, and problem codes, already redacted for storage.
+ * The shapes leave out what secrets look like: mixed case (base64url: access, device and proxy session tokens, signed
+ * links), 13+ letters and digits in a row (hex digests), and `/`, `:`, `?` or `=` (URLs, paths, query strings). A
+ * passphrase of lowercase words would pass, so only values the code takes from the catalog or a problem go here.
+ */
+const ID_FIELDS = new Map<string, RegExp>([
+  ["catalogId", SLUG_RE], ["buildId", SLUG_RE], ["itemId", SLUG_RE], ["episodeId", SLUG_RE], ["sourceId", SLUG_RE],
+  ["adapterId", SLUG_RE], ["code", IDENTIFIER_RE],
+]);
+
+function isIdField(key: string, value: unknown): value is string {
+  const shape = ID_FIELDS.get(key);
+  return shape !== undefined && typeof value === "string" && value.length <= 200 && shape.test(value);
+}
+
 export function redact(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
   if (value === null || value === undefined) return value;
   if (typeof value === "string") return redactString(value);
@@ -84,7 +108,7 @@ export function redact(value: unknown, depth = 0, seen = new WeakSet<object>()):
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value)) {
     if (isSecretKey(k)) continue;
-    const r = redact(v, depth + 1, seen);
+    const r = isIdField(k, v) ? v : redact(v, depth + 1, seen);
     if (r !== undefined) out[redactString(k)] = r;
   }
   return out;

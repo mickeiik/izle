@@ -39,6 +39,8 @@ test("a TV's report is stored with its time, episode and source, and listed for 
   const [row] = s.srv.ctx.store.listProblems(tv.deviceId, 10);
   assert.equal(row!.at, s.clock.now() - 90_000, "at = receipt − ageMs");
   assert.deepEqual([row!.catalogId, row!.itemId], ["fixture", "show"], "the catalog's item is stored with the episode");
+  const logged = s.logs.map((l) => JSON.parse(l)).find((l) => l.msg === "problem reported");
+  assert.equal(logged.code, "ERROR_CODE_IO_BAD_HTTP_STATUS", "the log names the player's error code");
 
   // Newest first by when it happened; reports without an episode, or with one the catalog does not have.
   await report({ kind: "network", code: "server_unreachable", ageMs: 30_000 });

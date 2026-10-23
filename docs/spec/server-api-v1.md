@@ -965,16 +965,20 @@ Viewings of a deleted TV keep its id and name; `POST /api/v1/admin/devices/:id/h
 
 One JSON object per line on stdout: `time`, `level`, `msg` and fields. Every line passes through one redaction step:
 fields whose name contains a word like `url`, `uri`, `href`, `header(s)`, `authorization`, `cookie`, `token`, `ref`,
-`config`, `playlist`, `password`, `secret` or `body` are dropped; a string starting with `#EXTM3U` becomes `<playlist>`;
-`scheme://…` and protocol-relative `//host…` in strings become `<url host>`; runs of 20 or more base64url characters
-become `<token>`; errors are reduced to their class name (an identifier of at most 60 characters, else `Error`) and a
-short `code`. The access log records the **route template** (e.g. `/api/v1/tv/items/:itemId`), status, duration and
-device id, never the raw path or query; health checks and successful proxy requests at `debug` level only, proxy
-errors at `info`. Commands are logged with their type and ids (never a message's text), problem reports with their
-kind and code (never their detail), a request made with an [access token](#access-tokens) with the token's id (field
-`actorId`, since a key containing `token` would be dropped), never the secret. The TV app APK is logged with its
-version, size, source and the first 12 hex digits of its sha256 (`sha256Prefix`), never the whole digest, a file path
-or a download URL; a failed GitHub check with its `reason` and `repo`.
+`config`, `playlist`, `password`, `secret` or `body` are dropped; a string starting with `#EXTM3U` becomes
+`<playlist>`; `scheme://…` and protocol-relative `//host…` in strings become `<url host>`; runs of 20 or more
+base64url characters become `<token>`, except a whole value in `catalogId`, `buildId`, `itemId`, `episodeId`,
+`sourceId` or `adapterId` made of lowercase words and runs of at most 12 lowercase letters and digits joined by `-`,
+`.` or `_` (`20261023-78ece5b2deea`, `show-1989-1c18970a.s1e1`), or in `code` an identifier like
+`ERROR_CODE_IO_BAD_HTTP_STATUS`, which is written as given; errors are reduced to their class name (an identifier of
+at most 60 characters, else `Error`) and a short `code`. The access log records the **route template** (e.g.
+`/api/v1/tv/items/:itemId`), status, duration and device id, never the raw path or query; health checks and successful
+proxy requests at `debug` level only, proxy errors at `info`. Commands are logged with their type and ids (never a
+message's text), problem reports with their kind and code (never their detail), a request made with an [access
+token](#access-tokens) with the token's id (field `actorId`, since a key containing `token` would be dropped), never
+the secret. The TV app APK is logged with its version, size, source and the first 12 hex digits of its sha256
+(`sha256Prefix`), never the whole digest, a file path or a download URL; a failed GitHub check with its `reason` and
+`repo`.
 
 ## Configuration
 

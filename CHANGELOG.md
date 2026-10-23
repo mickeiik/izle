@@ -13,6 +13,14 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
   (`/api/v2`, `formatVersion: 2`, a new resolver API version). The server API spec is now marked stable and says
   what counts as additive.
 
+### Fixed
+
+- **Logs show catalog, item, episode and source ids and TV problem codes again.** Redaction took any run of 20 or
+  more letters, digits, `-` and `_` for a token, so a build id like `20261023-78ece5b2deea`, most item and episode
+  ids and codes like `ERROR_CODE_IO_BAD_HTTP_STATUS` were logged as `<token>`. In their own fields (`catalogId`,
+  `buildId`, `itemId`, `episodeId`, `sourceId`, `adapterId`, `code`) a value shaped like an id or a code is now
+  written as given; tokens, URLs and anything else there, and ids in any other field, are still scrubbed.
+
 ## [0.6.0] - 2026-10-23
 
 ### Changed
