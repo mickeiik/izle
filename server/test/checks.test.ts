@@ -180,7 +180,12 @@ test("summaries: in the item and TV answers, stale once a source changes, gone w
   assert.deepEqual([stored.itemId, stored.episodeId, stored.check.stale], ["film", "film.main", true]);
   assert.deepEqual(stored.sources.map((x: Json) => [x.sourceId, x.verdict, x.checkedAt, x.stale, x.steps.length]), [["a", "ok", at, false, 3], ["b", "ok", at, true, 2]]);
   assert.deepEqual((await s.admin("GET", "/checks/playables/news")).json.sources.map((x: Json) => x.sourceId), ["hls", "ts", "en"], "a channel by its item id");
-  const lookups: Array<[string, number, string]> = [["ghost", 404, "unknown_item"], ["show", 400, "has_episodes"]];
+  assert.deepEqual((await s.admin("GET", "/checks/playables/news?itemId=news")).json.sources.map((x: Json) => x.sourceId), ["hls", "ts", "en"], "the channel itself");
+  assert.equal((await s.admin("GET", "/checks/playables/film.main?itemId=film")).json.episodeId, "film.main");
+  const lookups: Array<[string, number, string]> = [
+    ["ghost", 404, "unknown_item"], ["show", 400, "has_episodes"], ["film.main?itemId=news", 404, "unknown_episode"], ["film.main?itemId=show", 404, "unknown_episode"],
+    ["news?itemId=ghost", 404, "unknown_item"],
+  ];
   for (const [id, status, error] of lookups) assert.deepEqual([(await s.admin("GET", `/checks/playables/${id}`)).status, (await s.admin("GET", `/checks/playables/${id}`)).json.error], [status, error]);
 
   // Checked again, the summary is the newest; a film whose sources all left reads as not checked, its rows purged.

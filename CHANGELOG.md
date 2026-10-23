@@ -27,7 +27,7 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
   MP4 without range requests). A pass means the server reached real media now, not that the TV can decode it.
   - Server: `POST /api/v1/admin/checks` (`{itemId}`, or `{deviceId, mode: "quick" | "full"}` for what OK plays or
     every episode of a TV's Home), `GET …/checks/current`, `GET …/checks/:id?seq=&wait=`, `DELETE …/checks/:id`,
-    `GET …/checks/playables/:id`; one run at a time, two playables at once; `check.started` and `check.finished`
+    `GET …/checks/playables/:id?itemId=`; one run at a time, two playables at once; `check.started` and `check.finished`
     events. The last result of every source is kept until the source changes, and summarized as `check` on an
     item's episodes and a Home's entries (`checkAll` for a show's every episode).
   - Admin page: "Check all episodes" on a show's page and "Check Home…" (quick or full) on a TV's Home screen tab,

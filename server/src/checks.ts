@@ -6,7 +6,7 @@
 import { isLiveItem, type CatalogItem, type Episode } from "@izle/contract";
 import { SERVER, type Actor } from "./actor.ts";
 import { newId } from "./auth.ts";
-import { episodeIdOf, liveRef, type CatalogService, type PlayableRef } from "./catalog.ts";
+import { allowedRefs, episodeIdOf, liveRef, type CatalogService, type PlayableRef } from "./catalog.ts";
 import type { ServerConfig } from "./config.ts";
 import { effectiveSettings } from "./devices.ts";
 import { CheckAborted, playableIdOf, type SourceChecker, type Verdict } from "./diagnostics.ts";
@@ -67,7 +67,6 @@ interface RunState {
   deviceId: string | null;
   actor: Actor;
   controller: AbortController;
-  settled: Promise<void>;
 }
 
 interface CheckDeps {
@@ -79,12 +78,6 @@ interface CheckDeps {
   eventLog: EventLog;
   log: Logger;
   now: () => number;
-}
-
-/** Every episode of an item that may be played, or the channel itself if it may. */
-function allowed(item: CatalogItem): PlayableRef[] {
-  if (isLiveItem(item)) return item.playbackAllowed ? [liveRef(item)] : [];
-  return item.episodes.flatMap((episode, index) => (episode.playbackAllowed ? [{ kind: "episode" as const, item, episode, index }] : []));
 }
 
 /** How a run's result names an episode (`S1 E2 · Pilot`); null for a film's or a channel's. */
@@ -100,6 +93,8 @@ export class CheckService {
   /** The running run, else the last one that ended. */
   private last: RunState | null = null;
   private readonly waiters = new Waiters<string>();
+  /** The runs whose checks have not wound down yet: a stopped one may still be ending when the next starts. */
+  private readonly settling = new Set<Promise<void>>();
 
   constructor(deps: CheckDeps) {
     this.o = deps;
@@ -110,7 +105,7 @@ export class CheckService {
     const { catalog, home } = this.o;
     if ("itemId" in target) {
       const item = requireItem(catalog, target.itemId, 404, "unknown_item");
-      return { title: item.title, refs: allowed(item), skipped: [] };
+      return { title: item.title, refs: allowedRefs(item), skipped: [] };
     }
     const refs: PlayableRef[] = [];
     const skipped: Skipped[] = [];
@@ -126,7 +121,7 @@ export class CheckService {
         continue;
       }
       const quick = isLiveItem(e.item) ? [liveRef(e.item)] : [catalog.episode(e.continue!.episodeId)].filter((r) => r !== undefined);
-      for (const ref of target.mode === "quick" ? quick : allowed(e.item)) {
+      for (const ref of target.mode === "quick" ? quick : allowedRefs(e.item)) {
         const key = `${ref.item.id}\u0000${episodeIdOf(ref) ?? ""}`;
         if (seen.has(key)) continue;
         seen.add(key);
@@ -151,9 +146,20 @@ export class CheckService {
     log.info("check started", { runId: run.id, total: run.total, ...(deviceId ? { deviceId } : {}) });
     // A Home is checked with its TV's audio language (adapters may pick a stream by it).
     const language = device ? effectiveSettings(device, this.o.config, this.o.catalog).preferredAudioLanguage : null;
-    const state: RunState = { run, deviceId, actor, controller: new AbortController(), settled: Promise.resolve() };
+    const state: RunState = { run, deviceId, actor, controller: new AbortController() };
     this.last = state;
-    state.settled = this.execute(state, refs, language);
+    const settled: Promise<void> = this.execute(state, refs, language)
+      .catch((err) => {
+        // Only the end's bookkeeping can throw (the store): the run ends all the same, for whoever follows it.
+        log.warn("check run failed", { runId: run.id, error: errorName(err) });
+        if (run.state === "running") {
+          run.state = "done";
+          run.finishedAt = iso(now());
+        }
+        this.changed(run);
+      })
+      .finally(() => this.settling.delete(settled));
+    this.settling.add(settled);
     return run;
   }
 
@@ -234,11 +240,9 @@ export class CheckService {
     return state.run;
   }
 
-  /** Cancels a running run and waits for its checks to wind down (server shutdown). */
+  /** Cancels a running run and waits for the checks of every run to wind down (server shutdown). */
   async stop(): Promise<void> {
-    const state = this.last;
-    if (!state) return;
-    if (state.run.state === "running") this.cancel(state.run.id, SERVER);
-    await state.settled;
+    if (this.last?.run.state === "running") this.cancel(this.last.run.id, SERVER);
+    await Promise.all(this.settling);
   }
 }

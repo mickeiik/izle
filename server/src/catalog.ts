@@ -24,6 +24,12 @@ export const episodeIdOf = (ref: PlayableRef): string | null => (ref.kind === "e
 
 export const liveRef = (item: LiveItem): LiveRef => ({ kind: "live", item });
 
+/** Every episode of an item that may be played, or the channel itself if it may. */
+export function allowedRefs(item: CatalogItem): PlayableRef[] {
+  if (isLiveItem(item)) return item.playbackAllowed ? [liveRef(item)] : [];
+  return item.episodes.flatMap((episode, index) => (episode.playbackAllowed ? [{ kind: "episode" as const, item, episode, index }] : []));
+}
+
 /**
  * What a stored row, a session or a report plays: an episode of an item, or (`episodeId` null) a channel. Stored
  * rows outlive catalogs, so `CatalogService.playing` looks a key up leniently; a request body names what to play with

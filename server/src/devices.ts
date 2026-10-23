@@ -1,9 +1,9 @@
 // The owner's side of the paired TVs (admin API): the device list and page, settings changes, and deletion.
 
+import { isLiveItem, type CatalogItem } from "@izle/contract";
 import { tvActor, type Actor } from "./actor.ts";
 import type { AppUpdateService } from "./app-updates.ts";
-import { isLiveItem, type CatalogItem } from "@izle/contract";
-import { liveRef, type CatalogService, type PlayableRef, type PlayingKey } from "./catalog.ts";
+import { allowedRefs, liveRef, type CatalogService, type PlayableRef, type PlayingKey } from "./catalog.ts";
 import type { ServerConfig } from "./config.ts";
 import type { CheckSummary, SourceChecker } from "./diagnostics.ts";
 import { HttpError } from "./errors.ts";
@@ -37,7 +37,7 @@ interface DeviceDeps {
 /** The stored checks of every allowed episode of a show: the worst verdict, counts and the oldest check; null for a channel. */
 function checkAllOf(item: CatalogItem, check: (ref: PlayableRef) => CheckSummary) {
   if (isLiveItem(item)) return null;
-  const allowed = item.episodes.flatMap((episode, index) => (episode.playbackAllowed ? [check({ kind: "episode", item, episode, index })] : []));
+  const allowed = allowedRefs(item).map(check);
   const checked = allowed.filter((s) => s !== null);
   const failed = checked.filter((s) => s.verdict === "fail").length;
   const warned = checked.filter((s) => s.verdict === "warn").length;

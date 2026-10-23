@@ -157,6 +157,10 @@ const FILES: Record<string, Reply> = {
   "/dead/s0.ts": bytes(TS, "video/mp2t"),
   "/html/index.m3u8": playlist(vod("#EXTINF:6,", "s0.ts")),
   "/html/s0.ts": bytes(HTML, "text/html"),
+  // A plain-text refusal that starts with the MPEG-TS sync byte ("G") and is one packet long.
+  "/geo/index.m3u8": playlist(vod("#EXTINF:6,", "s0.ts")),
+  "/geo/s0.ts": bytes(`Geo-blocked: ${"this video is not available in your country. ".repeat(5)}`, "text/plain"),
+  "/bad-uri/master.m3u8": playlist(master("#EXT-X-STREAM-INF:BANDWIDTH=900000", "ftp://files.example.test/v.m3u8")),
   "/key/index.m3u8": playlist(vod('#EXT-X-KEY:METHOD=AES-128,URI="k.bin",IV=0x0', "#EXTINF:6,", "s0.ts")),
   "/key/s0.ts": bytes(Buffer.alloc(4096, 0x9c)),
   "/short-key/index.m3u8": playlist(vod('#EXT-X-KEY:METHOD=AES-128,URI="k.bin"', "#EXTINF:6,", "s0.ts")),
@@ -210,6 +214,8 @@ async function hostile(t: { after(fn: () => unknown): void }) {
   const items = [
     one("dead", at("/dead/master.m3u8")),
     one("html", at("/html/index.m3u8")),
+    one("geo", at("/geo/index.m3u8")),
+    one("bad-uri", at("/bad-uri/master.m3u8")),
     one("key", at("/key/index.m3u8")),
     one("short-key", at("/short-key/index.m3u8")),
     one("sample-aes", at("/sample-aes/index.m3u8")),
@@ -249,11 +255,16 @@ test("deep check: a dead variant, an error page for a segment, a missing or shor
 
   const html = await check("html");
   assert.deepEqual(stepsOf(html.source).at(-1), ["segment", null, false, 200, "not_media", null], "an HTML page that answered 200 is not media");
+  const geo = await check("geo");
+  assert.deepEqual(stepsOf(geo.source).at(-1), ["segment", null, false, 200, "not_media", null], "short text that starts with a G is not MPEG-TS");
+  const badUri = await check("bad-uri");
+  assert.deepEqual([stepsOf(badUri.source), badUri.source.verdict], [[["playlist", null, true, 200, null, "m3u8"], ["variant", 0, false, null, "bad_uri", null]], "fail"],
+    "a variant that cannot be fetched fails, it is not skipped");
   const key = await check("key");
   assert.deepEqual(stepsOf(key.source).slice(1), [["key", null, false, 404, "http", null], ["segment", null, true, 200, null, null]], "encrypted bytes have no signature");
   const short = await check("short-key");
   assert.deepEqual([short.source.steps[1].what, short.source.steps[1].error, short.source.steps[1].bytes, short.source.verdict], ["key", "bad_key", 8, "fail"]);
-  for (const r of [dead, html, key, short]) assertNoLeaks(s, r.answer, leaks);
+  for (const r of [dead, html, geo, badUri, key, short]) assertNoLeaks(s, r.answer, leaks);
 });
 
 test("deep check: fMP4 init and segment, SAMPLE-AES, an MP4 without Range, HEVC/4K codecs and a failing subtitle track warn", async (t) => {
@@ -329,5 +340,6 @@ test("container signatures: TS (aligned or behind junk), MP4 boxes, ADTS, ID3; t
   assert.deepEqual([sniffContainer(Buffer.from("\uFEFFWEBVTT\n\n")), sniffContainer(Buffer.from("1\n00:00:01,000 --> 00:00:02,000\nhi\n"))], ["webvtt", "srt"]);
   assert.deepEqual([sniffContainer(Buffer.from('<?xml version="1.0"?><tt xmlns="x">')), sniffContainer(Buffer.from("<MPD>"))], ["ttml", "mpd"]);
   assert.deepEqual([sniffContainer(Buffer.from(HTML)), sniffContainer(Buffer.from('{"error":"gone"}')), sniffContainer(Buffer.from("Gone"))], [null, null, null]);
+  assert.equal(sniffContainer(Buffer.from(`G${"o".repeat(200)}`)), null, "one packet's worth of text is not MPEG-TS");
   assert.equal(sniffContainer(Buffer.alloc(64, 0x9c)), null, "unknown bytes: no container, but not text either");
 });

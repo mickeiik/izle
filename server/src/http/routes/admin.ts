@@ -177,8 +177,9 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
 
   app.get("/api/v1/admin/checks/playables/:playableId", (c) => {
     const id = c.req.param("playableId");
-    if (!isId(id)) throw new HttpError(404, "unknown_item");
-    return c.json(checker.stored(id));
+    const itemId = c.req.query("itemId");
+    if (!isId(id) || (itemId !== undefined && !isId(itemId))) throw new HttpError(404, "unknown_item");
+    return c.json(checker.stored(id, itemId));
   });
 
   // `?seq=<n>&wait=<ms>` long-polls until the run changes.

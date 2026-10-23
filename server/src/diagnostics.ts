@@ -10,13 +10,13 @@
 import { createHash } from "node:crypto";
 import { isLiveItem, type ResolveResult, type Source } from "@izle/contract";
 import { newId } from "./auth.ts";
-import { episodeIdOf, playableOf, type CatalogService, type PlayableRef } from "./catalog.ts";
+import { episodeIdOf, liveRef, playableOf, type CatalogService, type PlayableRef } from "./catalog.ts";
 import { egressRefusal } from "./egress.ts";
 import { HttpError } from "./errors.ts";
 import { isPlaylistText, masterPlaylist, mediaPlaylist, rangeHeader, tsSyncOffset, type Variant } from "./hls.ts";
-import { requirePlayableRef, requireSource, type PlayableId } from "./lookup.ts";
+import { requireItem, requirePlayableRef, requireSource, type PlayableId } from "./lookup.ts";
 import { iso } from "./presenters.ts";
-import { entryPath, linkHost, MAX_PLAYLIST_BYTES, subtitlePath, type ProxyProblem, type ProxyService, type ProxyTarget } from "./proxy.ts";
+import { entryPath, linkHost, MAX_PLAYLIST_BYTES, REWRITE_LIMITS, subtitlePath, type ProxyProblem, type ProxyService, type ProxyTarget } from "./proxy.ts";
 import { checkScope, deliveryPlan, proxyKind, proxySessionFor, type DeliveryPlan, type ResolveService, type UpstreamStream } from "./resolve.ts";
 import { stopwatch } from "./stopwatch.ts";
 import type { SourceCheck, SourceCheckKey, Store } from "./store.ts";
@@ -45,16 +45,16 @@ export type Verdict = "ok" | "warn" | "fail";
 type StepWhat = "playlist" | "variant" | "rendition" | "segment" | "init" | "key" | "subtitle" | "file" | "manifest";
 type StepError =
   | "timeout" | "network" | "http" | "not_a_playlist" | "too_large" | "not_media" | "bad_key" | "egress_denied"
-  | "not_subtitles" | "not_mpd" | "aborted" | "budget";
+  | "not_subtitles" | "not_mpd" | "aborted" | "budget" | "bad_uri";
 type Container = "ts" | "mp4" | "fmp4" | "aac" | "id3" | "webvtt" | "srt" | "ttml" | "mpd" | "m3u8";
 type CheckWarning =
   | "risky_codec" | "high_resolution" | "sample_aes" | "no_range" | "subtitle_failed" | "manifest_only"
   | "playlists_unchecked";
 
-/** One request of a deep check. `host`: the upstream the TV's path reached (for a proxied stream, not the server). */
 /** Which variant, rendition or subtitle track a step belongs to. */
 type StepAt = Pick<Step, "index" | "of">;
 
+/** One request of a deep check. `host`: the upstream the TV's path reached (for a proxied stream, not the server). */
 interface Step {
   what: StepWhat;
   /** The variant, rendition or subtitle track (a segment, init section or key: its variant's or rendition's, `of`). */
@@ -149,8 +149,8 @@ const boxType = (head: Uint8Array): string => (head.length >= 8 ? Buffer.from(he
 /** What the first bytes of a body are, by their signature; null when none is recognized. */
 export function sniffContainer(head: Uint8Array): Container | null {
   if (head.length >= 3 && head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33) return "id3";
-  // At least one whole packet: a short text answer may well start with a "G".
-  if (head.length >= 188 && head[0] === 0x47 && (head.length < 376 || head[188] === 0x47)) return "ts";
+  // At least one whole packet: a short text answer may well start with a "G" (a lone packet must not read as text).
+  if (head.length >= 188 && head[0] === 0x47 && (head.length >= 376 ? head[188] === 0x47 : !looksLikeText(head))) return "ts";
   if (tsSyncOffset(head) > 0) return "ts";
   const box = boxType(head);
   if (["ftyp", "moov", "free", "skip", "wide", "mdat"].includes(box)) return "mp4";
@@ -296,6 +296,11 @@ class TvPath {
     return this.plan.proxySubtitles[index] ? subtitlePath(this.token!, index, t.format) : t.url;
   }
 
+  /** How much of a playlist is read: a proxied one is the proxy's rewrite, which grows past what it reads upstream. */
+  playlistLimit(link: string): number {
+    return this.proxied(link) ? REWRITE_LIMITS.maxLength : MAX_PLAYLIST_BYTES;
+  }
+
   private proxied(link: string): boolean {
     return this.token !== null && link.startsWith(this.base);
   }
@@ -389,8 +394,15 @@ class DeepCheck {
   }
 
   /** A step that could not even be asked (nothing to fetch). */
-  missing(what: StepWhat, at: StepAt | undefined, error: StepError): void {
-    this.push({ what, ...at, host: null, ok: false, ms: 0, error }, false);
+  missing(what: StepWhat, at: StepAt | undefined, error: StepError, optional = false): void {
+    this.push({ what, ...at, host: null, ok: false, ms: 0, error }, optional);
+  }
+
+  /** The link of a URI a playlist names; null when there is nothing to fetch (`data:`) or it cannot be (`bad_uri`). */
+  private link(what: StepWhat, at: StepAt | undefined, uri: string, from: string, optional = false): string | null {
+    const link = this.path.resolve(uri, from);
+    if (link === null && !/^data:/i.test(uri.trim())) this.missing(what, at, "bad_uri", optional);
+    return link;
   }
 
   /** Fetches `link` as a step; `judge` says whether what came is what was expected. What came, or null if not. */
@@ -449,7 +461,7 @@ class DeepCheck {
 
   /** The playlist, every variant and rendition playlist, and the media of the first variant and each audio rendition. */
   private async hls(): Promise<void> {
-    const main = await this.fetch("playlist", undefined, this.path.entry, { limit: MAX_PLAYLIST_BYTES }, judgePlaylist);
+    const main = await this.fetch("playlist", undefined, this.path.entry, { limit: this.path.playlistLimit(this.path.entry) }, judgePlaylist);
     if (!main) return;
     const { variants, renditions } = masterPlaylist(main.bytes.toString("utf8"));
     if (variants.length === 0 && renditions.length === 0) return this.media(main, undefined);
@@ -466,10 +478,11 @@ class DeepCheck {
     if (lists.length > MAX_PLAYLISTS) this.warnings.add("playlists_unchecked");
     const loaded: Array<(typeof lists)[number] & { got: Got }> = [];
     for (const l of lists.slice(0, MAX_PLAYLISTS)) {
-      const link = this.path.resolve(l.uri, main.link);
-      if (link === null) continue;
       // A subtitle rendition that fails is a warning: the picture and the sound play without it.
-      const got = await this.fetch(l.what, { index: l.index }, link, { limit: MAX_PLAYLIST_BYTES, optional: l.type === "SUBTITLES" }, judgePlaylist);
+      const optional = l.type === "SUBTITLES";
+      const link = this.link(l.what, { index: l.index }, l.uri, main.link, optional);
+      if (link === null) continue;
+      const got = await this.fetch(l.what, { index: l.index }, link, { limit: this.path.playlistLimit(link), optional }, judgePlaylist);
       if (got) loaded.push({ ...l, got });
     }
     const first = loaded.find((l) => l.what === "variant");
@@ -483,14 +496,14 @@ class DeepCheck {
     if (!segment) return this.missing("segment", at, "not_media");
     const from = playlist.link;
     const range = (r: { offset: number; length: number } | null) => (r ? rangeHeader(r) : null);
-    const map = segment.map && this.path.resolve(segment.map.uri, from);
+    const map = segment.map && this.link("init", at, segment.map.uri, from);
     if (map) await this.fetch("init", at, map, { range: range(segment.map!.range), limit: SEGMENT_READ }, judgeMedia);
     if (segment.key?.method === "AES-128") {
-      const key = segment.key.uri === null ? null : this.path.resolve(segment.key.uri, from);
+      const key = segment.key.uri === null ? null : this.link("key", at, segment.key.uri, from);
       if (segment.key.uri === null) this.missing("key", at, "bad_key");
       else if (key) await this.fetch("key", at, key, { limit: KEY_READ }, judgeKey);
     } else if (segment.key) this.warnings.add("sample_aes");
-    const link = this.path.resolve(segment.uri, from);
+    const link = this.link("segment", at, segment.uri, from);
     if (link) await this.fetch("segment", at, link, { range: range(segment.range), limit: SEGMENT_READ }, judgeMedia);
   }
 }
@@ -610,10 +623,13 @@ export class SourceChecker {
     return (ref) => summaryOf(playableOf(ref).sources, rows.get(`${ref.item.id}\u0000${playableIdOf(ref)}`) ?? []);
   }
 
-  /** `GET /admin/checks/playables/:playableId`: an episode by its id, else a channel by its item id. */
-  stored(playableId: string) {
+  /**
+   * `GET /admin/checks/playables/:playableId?itemId=`: an episode by its id, else a channel by its item id; with
+   * `itemId`, that item's (an episode id may equal a channel's id).
+   */
+  stored(playableId: string, itemId?: string) {
     const { catalog, store } = this.o;
-    const ref = catalog.episode(playableId) ?? requirePlayableRef(catalog, { itemId: playableId }, 404);
+    const ref = itemId === undefined ? catalog.episode(playableId) ?? requirePlayableRef(catalog, { itemId: playableId }, 404) : playableOfItem(catalog, itemId, playableId);
     const sources = playableOf(ref).sources;
     const rows = store.getSourceChecks(catalog.catalogId, ref.item.id, playableIdOf(ref));
     return {
@@ -636,6 +652,18 @@ export class SourceChecker {
     const gone = store.sourceCheckKeys().filter((k) => !present(k));
     if (gone.length > 0) store.deleteSourceChecks(gone);
   }
+}
+
+/** The channel `itemId` itself (`playableId` its id), or its episode `playableId`; 404 otherwise. */
+function playableOfItem(catalog: CatalogService, itemId: string, playableId: string): PlayableRef {
+  const item = requireItem(catalog, itemId, 404, "unknown_item");
+  if (isLiveItem(item)) {
+    if (item.id !== playableId) throw new HttpError(404, "unknown_episode");
+    return liveRef(item);
+  }
+  const ref = catalog.episode(playableId);
+  if (!ref || ref.item.id !== item.id) throw new HttpError(404, "unknown_episode");
+  return ref;
 }
 
 function summaryOf(sources: readonly Source[], rows: readonly StoredRow[]): CheckSummary {

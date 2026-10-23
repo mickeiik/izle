@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isPlaylistText, masterPlaylist, mediaPlaylist, parseMasterAttributes, PlaylistTooLarge, rangeHeader, rewritePlaylist, summarizePlaylist, tagAttributes, tsSyncOffset } from "../src/hls.ts";
+import { isPlaylistText, masterPlaylist, mediaPlaylist, PlaylistTooLarge, rangeHeader, rewritePlaylist, tagAttributes, tsSyncOffset } from "../src/hls.ts";
 import { junkBytes, syntheticTsSegment } from "../examples/resolver-example/upstream.js";
 
 const BASE = "https://cdn.example.test/vod/show/master.m3u8?sig=abc";
@@ -57,12 +57,8 @@ test("media playlist: segments, keys, maps, parts and preload hints are raw reso
   ], `${v}/480p/index.m3u8`);
 });
 
-test("summaries and playlist detection", () => {
+test("playlist detection", () => {
   assert.deepEqual([isPlaylistText("﻿  #EXTM3U\n"), isPlaylistText("<html>")], [true, false]);
-  const master = summarizePlaylist("#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,URI=\"a.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n");
-  assert.deepEqual(master, { master: true, variants: 1, renditions: 1, segments: 0, endList: false });
-  const media = summarizePlaylist("#EXTM3U\r\n#EXTINF:4,\r\na.ts\r\n\r\n#EXTINF:4,\nb.ts\n#EXT-X-ENDLIST\n");
-  assert.deepEqual(media, { master: false, variants: 0, renditions: 0, segments: 2, endList: true });
 });
 
 test("TS sync detection: aligned data, junk prefixes, and data that is not TS", () => {
@@ -122,9 +118,6 @@ test("master playlists: variants with CODECS, RESOLUTION and BANDWIDTH; renditio
     ],
     renditions: [{ type: "AUDIO", uri: "audio/en.m3u8" }, { type: "SUBTITLES", uri: "subs/tr.m3u8" }],
   });
-  assert.deepEqual(parseMasterAttributes(text), [
-    { codecs: "hvc1.2.4.L153.B0,ec-3", resolution: "3840x2160", bandwidth: 6000000 }, { codecs: null, resolution: null, bandwidth: null },
-  ]);
   assert.deepEqual(masterPlaylist("#EXTM3U\n#EXTINF:6,\ns0.ts\n"), { variants: [], renditions: [] }, "a media playlist has neither");
 });
 

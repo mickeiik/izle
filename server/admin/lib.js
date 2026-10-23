@@ -817,6 +817,7 @@ const STEP_ERRORS = /** @type {Record<string, string>} */ ({
   not_mpd: "not a DASH manifest",
   aborted: "cancelled",
   budget: "the source's time ran out",
+  bad_uri: "not a URL the TV can fetch",
 });
 
 /** What a step found. */

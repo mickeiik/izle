@@ -60,7 +60,7 @@ function episodeEntry(e, item) {
   // The stored result, as it was: nothing is checked again.
   const last = actionButton("Last result", { "aria-label": `Last result of ${label}` }, async () => {
     out.replaceChildren(loading());
-    const r = await attempt(() => api("GET", `/checks/playables/${encodeURIComponent(playableId)}`));
+    const r = await attempt(() => api("GET", `/checks/playables/${encodeURIComponent(playableId)}?itemId=${encodeURIComponent(item.id)}`));
     if (!r.ok) return out.replaceChildren(h("p", { class: "error" }, "The last result could not be read."));
     const { check: c, sources } = r.value;
     if (sources.length === 0) return out.replaceChildren(h("p", { class: "muted" }, "Not checked yet."));

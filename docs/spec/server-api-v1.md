@@ -529,7 +529,8 @@ resolving (0 without a stream).
   (`variant` or `rendition`) names. `host`: the upstream reached (for a
   proxied stream, not the server). `status`: the upstream's HTTP status when one came. `error`: `timeout`, `network`,
   `http`, `not_a_playlist`, `too_large`, `not_media`, `bad_key`, `egress_denied`, `not_subtitles`, `not_mpd`,
-  `aborted` or `budget` (the source's 20 s ran out). `bytes`: bytes read. `container`: `ts`, `mp4`, `fmp4`, `aac`,
+  `aborted`, `budget` (the source's 20 s ran out) or `bad_uri` (a URI the playlist names that is not an http(s) URL;
+  `data:` URIs are inline and not fetched). `bytes`: bytes read. `container`: `ts`, `mp4`, `fmp4`, `aac`,
   `id3`, `webvtt`, `srt`, `ttml`, `mpd` or `m3u8`.
 - `codecs`: the master playlist's variants, `[{"codecs", "resolution", "bandwidth"}]` (each null when absent).
 - `warnings`: `risky_codec` (`hvc1`/`hev1`, `av01`, `ec-3`/`ac-3`, `dvh1`/`dvhe`: may not decode on every TV),
@@ -570,7 +571,7 @@ and in [`GET …/devices/:id`](#devices).
 
 | Route | Response |
 |---|---|
-| `GET /api/v1/admin/checks/playables/:playableId` | an episode by its id, else a channel by its item id: `{"itemId", "episodeId", "check": CheckSummary, "sources": [SourceReport & {"checkedAt", "stale"}]}`, the sources still in the catalog that have a report, in bundle order (`stale`: the source changed since); `404 unknown_item`, `400 has_episodes` |
+| `GET /api/v1/admin/checks/playables/:playableId?itemId=` | an episode by its id, else a channel by its item id; with `itemId`, the channel `itemId` itself or its episode (an episode id may equal a channel's id): `{"itemId", "episodeId", "check": CheckSummary, "sources": [SourceReport & {"checkedAt", "stale"}]}`, the sources still in the catalog that have a report, in bundle order (`stale`: the source changed since); `404 unknown_item`, `404 unknown_episode` (with `itemId`), `400 has_episodes` |
 | `POST /api/v1/admin/checks` | `{"itemId"}` (every episode of a show that may play, or the channel) or `{"deviceId", "mode": "quick"\|"full"}` (a TV's Home: `quick` what OK plays on each entry, a channel itself; `full` every episode that may play, and the channels) → `202 {"run": Run}`; `409 check_running` (`runId`) while a run is going, `404 unknown_item`, `404 unknown_device`, `400 nothing_to_check` |
 | `GET /api/v1/admin/checks/current` | `{"run": Run \| null}`: the running run, else the last one that ended, else null |
 | `GET /api/v1/admin/checks/:runId?seq=&wait=` | `{"run": Run}`; with `seq` it waits until the run's `seq` is past it, at most `wait` ms (0–25000, default 0); `404 unknown_check` (only the last run is kept) |

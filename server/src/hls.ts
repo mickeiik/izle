@@ -70,33 +70,6 @@ export function rewritePlaylist(text: string, baseUrl: string, link: (url: strin
     .join("\n");
 }
 
-export interface PlaylistSummary {
-  master: boolean;
-  variants: number;
-  renditions: number;
-  segments: number;
-  endList: boolean;
-}
-
-export function summarizePlaylist(text: string): PlaylistSummary {
-  const s: PlaylistSummary = { master: false, variants: 0, renditions: 0, segments: 0, endList: false };
-  let nextIsPlaylist = false;
-  for (const line of text.split(LINE_BREAK).map((l) => l.trim())) {
-    const tag = line.startsWith("#") ? tagName(line) : null;
-    if (tag === "#EXT-X-STREAM-INF") s.master = nextIsPlaylist = true;
-    else if (tag === "#EXT-X-MEDIA") {
-      s.master = true;
-      s.renditions++;
-    } else if (tag === "#EXT-X-ENDLIST") s.endList = true;
-    else if (tag === null && line !== "") {
-      if (nextIsPlaylist) s.variants++;
-      else s.segments++;
-      nextIsPlaylist = false;
-    }
-  }
-  return s;
-}
-
 const TS_PACKET = 188;
 const TS_ALIGN_WINDOW = 4096;
 /** Consecutive sync bytes (one per packet) that identify an MPEG-TS stream. */
@@ -167,11 +140,6 @@ export function masterPlaylist(text: string): { variants: Variant[]; renditions:
     pending = null;
   }
   return { variants, renditions };
-}
-
-/** CODECS, RESOLUTION and BANDWIDTH of each variant of a master playlist. */
-export function parseMasterAttributes(text: string): Array<Omit<Variant, "uri">> {
-  return masterPlaylist(text).variants.map(({ codecs, resolution, bandwidth }) => ({ codecs, resolution, bandwidth }));
 }
 
 /** A byte range of a resource (`#EXT-X-BYTERANGE`, a map's `BYTERANGE`), as an HTTP `Range` value. */
