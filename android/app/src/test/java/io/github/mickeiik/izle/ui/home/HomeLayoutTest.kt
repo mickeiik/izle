@@ -1,21 +1,20 @@
 package io.github.mickeiik.izle.ui.home
 
-import io.github.mickeiik.izle.ui.home.HomeLayout.Card
-import io.github.mickeiik.izle.ui.home.HomeLayout.Row
+import io.github.mickeiik.izle.ui.home.HomeLayout.Cards
 import io.github.mickeiik.izle.ui.home.HomeLayout.Title
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Home's sections in the safe area of the 960×540 dp canvas (864×486 dp), titles at 32 dp a line. */
+/** Home's sections in the safe area of the 960×540 dp canvas (864×486 dp), names in cards at 32 dp a line. */
 class HomeLayoutTest {
     private fun layout(columns: Int, rows: Int, vararg sections: SectionShape) =
         HomeLayout.compute(columns, rows, width = 864f, height = 486f, titleLine = 32f, sections = sections.toList())
 
-    private fun grid(count: Int, title: Boolean = false, twoLines: Boolean = false) = SectionShape(title, row = false, count = count, lastLineNeedsTwoTitleLines = twoLines)
+    private fun grid(count: Int, title: Boolean = false) = SectionShape(title, row = false, count = count)
 
-    private fun row(count: Int, title: Boolean = false, twoLines: Boolean = false) = SectionShape(title, row = true, count = count, lastLineNeedsTwoTitleLines = twoLines)
+    private fun row(count: Int, title: Boolean = false) = SectionShape(title, row = true, count = count)
 
     @Test
     fun withoutATitledSectionHomeIsTodaysGrid() {
@@ -36,8 +35,8 @@ class HomeLayoutTest {
                 }
             }
             assertEquals(count * g.rowPitch - g.gap + 2 * g.padding, l.contentHeight, 0.001f)
-            // Exactly the grid's items: no title, no span.
-            assertEquals((0 until 11).map { Card(0, it, g.padding + it / g.columns * g.rowPitch, 1) }, l.slots)
+            // One item a row, no title.
+            assertEquals((0 until count).map { Cards(0, it, g.padding + it * g.rowPitch) }, l.slots)
         }
     }
 
@@ -53,8 +52,8 @@ class HomeLayoutTest {
             assertEquals(1, l.lines.size)
             assertEquals(14f, l.lines.single().cardTop)
             assertEquals(0f, l.lines.single().top)
-            assertEquals(listOf(Row(0, 14f)), l.slots)
-            assertEquals(14f + g.cellHeight + 14f, l.contentHeight, 0.001f)
+            assertEquals(listOf(Cards(0, 0, 14f)), l.slots)
+            assertEquals(14f + g.cardHeight + 14f, l.contentHeight, 0.001f)
             assertEquals(0f, l.maxScroll)
             assertEquals(0f, l.scrollFor(0, current = 0f))
             assertNull(l.vertical(0, 5, 1) { 3 })
@@ -64,18 +63,17 @@ class HomeLayoutTest {
 
     @Test
     fun aTitleSetsItsHeightAsideFromTheCardSize() {
-        // 4 × 3: two title lines would leave smaller cards, as without sections, but the cards are now 146 wide.
-        val l = layout(4, 3, grid(4, title = true), grid(4))
-        assertEquals(HomeGrid.compute(4, 3, 864f, 486f - 44f, 32f), l.grid)
-        assertEquals(146f, l.grid.cardWidth, 0f)
-        assertEquals(1, l.grid.titleLines)
+        // 4 × 2 is set by the height: 131 dp cards (136 without the title), the viewport one title taller.
+        val l = layout(4, 2, grid(4, title = true), grid(4))
+        assertEquals(HomeGrid.compute(4, 2, 864f, 486f - 44f, 32f), l.grid)
+        assertEquals(131f, l.grid.cardWidth, 0f)
         assertEquals(l.grid.viewportHeight + 44f, l.viewportHeight, 0f)
-        assertTrue("a title and three rows fit: ${l.viewportHeight}", l.viewportHeight <= 486f)
-        // 4 × 2 is set by the width: the same cards, the viewport one title taller.
-        val wide = layout(4, 2, grid(2), row(6, title = true))
-        assertEquals(194f, wide.grid.cardWidth, 0f)
-        assertEquals(2, wide.grid.titleLines)
-        assertEquals(414.25f + 44f, wide.viewportHeight, 0.001f)
+        assertTrue("a title and two rows fit: ${l.viewportHeight}", l.viewportHeight <= 486f)
+        assertEquals(136f, layout(4, 2, grid(4), grid(4)).grid.cardWidth, 0f)
+        // 3 × 1 is set by the width: the same cards, the viewport one title taller.
+        val wide = layout(3, 1, grid(2), row(6, title = true))
+        assertEquals(170f, wide.grid.cardWidth, 0f)
+        assertEquals(255f + 28f + 44f, wide.viewportHeight, 0.001f)
     }
 
     @Test
@@ -97,10 +95,9 @@ class HomeLayoutTest {
 
     @Test
     fun aBoundaryTakesExactlyOneRowStep() {
-        // 4 × 2 (two title lines): an untitled row, then a titled grid, then an untitled grid.
+        // 4 × 2: an untitled row, then a titled grid, then an untitled grid.
         val l = layout(4, 2, grid(4), grid(5, title = true), grid(3))
         val pitch = l.grid.rowPitch
-        val cell = l.grid.cellHeight
         val (a, b, c) = l.sections
         // The titled section starts where a second row of the first would: its title there, its cards a title and
         // the padding below it.
@@ -111,61 +108,53 @@ class HomeLayoutTest {
         assertEquals(bLast.cardTop + pitch, l.lines[c.firstLine].cardTop, 0.001f)
         assertEquals(l.lines[c.firstLine].cardTop - 14f, c.top, 0.001f)
         assertEquals(0f, a.top)
-        // Content ends one padding under the last cell.
-        assertEquals(l.lines.last().cardTop + cell + 14f, l.contentHeight, 0.001f)
+        // Content ends one padding under the last cards.
+        assertEquals(l.lines.last().cardTop + l.grid.cardHeight + 14f, l.contentHeight, 0.001f)
         assertEquals(listOf(0, 1, 3), l.sections.map { it.firstLine })
         assertEquals(listOf(0, 2, 3), l.sections.map { it.lastLine })
     }
 
     @Test
-    fun theLineLiesInTheMiddleOfTheEmptySpace() {
-        // 4 × 2: cells end with two title lines (183.125 tall); the line's centre, rounded halves up.
-        val oneLine = layout(4, 2, grid(4), grid(4, title = true))
-        val cellBottom = 14f + 183.125f
-        // No title of the row uses its second line: the space is that line and the gap.
-        assertEquals(kotlin.math.floor((cellBottom - 32f + cellBottom + 20f) / 2 + 0.5f), oneLine.sections[1].divider!!, 0f)
-        assertEquals(191f, oneLine.sections[1].divider!!, 0f)
-        val twoLines = layout(4, 2, grid(4, twoLines = true), grid(4, title = true))
-        assertEquals(kotlin.math.floor(cellBottom + 10f + 0.5f), twoLines.sections[1].divider!!, 0f)
-        assertEquals(207f, twoLines.sections[1].divider!!, 0f)
-        // With one title line (4 × 3) there is no second line to give: the middle of the gap.
-        val small = layout(4, 3, grid(4), grid(4))
-        val bottom = 14f + small.grid.cellHeight
-        assertEquals(kotlin.math.floor(bottom + 10f + 0.5f), small.sections[1].divider!!, 0f)
-        assertEquals(small.sections[1].divider, layout(4, 3, grid(4, twoLines = true), grid(4)).sections[1].divider)
-        // An untitled section after a titled one gets its line too, and a row section's line counts all its cards.
+    fun theLineLiesInTheMiddleOfTheGap() {
+        // 4 × 2 with a title: 196.5 dp cards; the gap is 20 dp under them, the line's centre rounded halves up.
+        val titled = layout(4, 2, grid(4), grid(4, title = true))
+        assertEquals(kotlin.math.floor(14f + 196.5f + 10f + 0.5f), titled.sections[1].divider!!, 0f)
+        assertEquals(221f, titled.sections[1].divider!!, 0f)
+        // Without one: 204 dp cards.
+        assertEquals(228f, layout(4, 2, grid(4), grid(4)).sections[1].divider!!, 0f)
+        // An untitled section after a titled one gets its line too, and a row section's line is under all its cards.
         val row = layout(4, 2, row(9, title = true), grid(2))
-        val rowBottom = 58f + 183.125f
-        assertEquals(kotlin.math.floor((rowBottom - 32f + rowBottom + 20f) / 2 + 0.5f), row.sections[1].divider!!, 0f)
+        assertEquals(265f, row.sections[1].divider!!, 0f)
     }
 
     @Test
-    fun theGridItemsReproduceTheLayout() {
+    fun theItemsReproduceTheLayout() {
         val l = layout(4, 2, grid(6, title = true), grid(3), row(8, title = true), row(2), grid(5))
-        // Items on one line share its top; the next line starts one gap under the tallest item of the line.
-        val tops = l.slots.map { it.top }.distinct()
-        for (i in 1 until tops.size) {
-            val above = l.slots.filter { it.top == tops[i - 1] }
-            val height = above.maxOf { if (it is Title) it.height else l.grid.cellHeight }
-            assertEquals("line $i", tops[i - 1] + height + l.grid.gap, tops[i], 0.001f)
+        // One item a line or title; the next starts one gap under it.
+        for (i in 1 until l.slots.size) {
+            val above = l.slots[i - 1]
+            val height = if (above is Title) above.height else l.grid.cardHeight
+            assertEquals("item $i", above.top + height + l.grid.gap, l.slots[i].top, 0.001f)
         }
-        assertEquals(14f, tops.first())
-        assertEquals(l.contentHeight, l.slots.last().top + l.grid.cellHeight + l.grid.padding, 0.001f)
-        // The cards sit where the layout puts them.
-        l.slots.filterIsInstance<Card>().forEach { assertEquals(l.lines[l.lineOf(it.section, it.index)].cardTop, it.top, 0f) }
-        l.slots.filterIsInstance<Row>().forEach { assertEquals(l.lines[l.sections[it.section].firstLine].cardTop, it.top, 0f) }
-        // A section's last card ends its grid row only when an untitled grid follows (a title or a line starts its
-        // own row anyway).
-        assertEquals(listOf(1, 1, 1, 1, 1, 3), l.slots.filterIsInstance<Card>().filter { it.section == 0 }.map { it.span })
-        assertEquals(listOf(1, 1, 1), l.slots.filterIsInstance<Card>().filter { it.section == 1 }.map { it.span })
-        val titledNext = layout(4, 2, grid(6, title = true), grid(3, title = true))
-        assertEquals(listOf(1, 1, 1, 1, 1, 1), titledNext.slots.filterIsInstance<Card>().filter { it.section == 0 }.map { it.span })
-        assertEquals(listOf(0, 7, 10, 12, 13), l.sections.map { it.firstSlot })
-        val title = l.slots[10] as Title
+        assertEquals(14f, l.slots.first().top)
+        assertEquals(l.contentHeight, l.slots.last().top + l.grid.cardHeight + l.grid.padding, 0.001f)
+        // The cards sit where the layout puts them, each line in its own item.
+        val cards = l.slots.withIndex().filter { it.value is Cards }
+        assertEquals(l.lines.indices.toList(), cards.map { (it.value as Cards).line })
+        cards.forEach { (i, slot) ->
+            val line = l.lines[(slot as Cards).line]
+            assertEquals(i, line.slot)
+            assertEquals(line.cardTop, slot.top, 0f)
+            assertEquals(line.section, slot.section)
+        }
+        assertEquals(listOf(0, 3, 4, 6, 7), l.sections.map { it.firstSlot })
+        val title = l.slots[4] as Title
         assertEquals(2, title.section)
         assertEquals(l.sections[2].top, title.top, 0f)
         assertEquals(38f, title.height, 0.001f)
         assertEquals(0f, title.textOffset, 0.001f)
+        // The lines between sections run across a row with one card open.
+        assertEquals(l.grid.rowWidth, l.contentWidth, 0f)
     }
 
     @Test
@@ -189,7 +178,7 @@ class HomeLayoutTest {
         val titled = l.sections[1]
         // Down onto the titled section's row: the title comes in with it, at the bottom edge.
         val line = l.lines[titled.firstLine]
-        assertEquals(line.cardTop + l.grid.cellHeight + 14f - vp, l.scrollFor(titled.firstLine, current = 0f), 0.001f)
+        assertEquals(line.cardTop + l.grid.cardHeight + 14f - vp, l.scrollFor(titled.firstLine, current = 0f), 0.001f)
         // Up onto it from below: its title at the top edge.
         assertEquals(titled.top, l.scrollFor(titled.firstLine, current = titled.top + 50f), 0.001f)
         // The untitled section's first row after it: its padding at the top (no title).

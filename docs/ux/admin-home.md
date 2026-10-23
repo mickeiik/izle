@@ -6,7 +6,8 @@ How the owner arranges one TV's Home on the admin page (a TV's **Home screen** t
 ## The screen
 
 - The tab draws the TV's Home to scale (960 × 540 dp, scaled to the page's width) from the TV app's own numbers: the
-  same cards, chips, progress bars, titles, section titles, lines and scrolling lines, scrolling as on the TV.
+  same cards, chips, progress bars, section titles, lines and scrolling lines, scrolling as on the TV. The selected
+  card is drawn open, as the TV draws the focused one.
 - Columns and rows sit above the screen; a new size is previewed before **Save grid** (or **Undo**).
 - What the TV hides (missing from the catalog, not playable) is listed under the screen, each with its section and
   **Remove**. A section the TV does not show because nothing in it can play is drawn as its title over an empty dashed

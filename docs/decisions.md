@@ -62,7 +62,9 @@ entries, and how each feature was built, are in git history.
 
 - `homeColumns`/`homeRows` have no server or catalog default (the right grid depends on each screen) and no `CHECK`:
   the admin API is the only writer (`HOME_COLUMNS`/`HOME_ROWS` in home.ts, mirrored in lib.js, checked by a test).
-- The owner preferred the cropped poster to the whole poster on a blurred copy of itself.
+- Cards: portrait posters that open on focus (2026-10-23) replaced the 16:9 card with a cropped poster, chosen from
+  prototypes over the whole poster in a wide card and a poster wall with a caption line: the open card makes the
+  focus clearest. A grid row is sized to fit one open card, so only the cards after it move, never the row.
 
 ## Live channels
 
@@ -114,6 +116,8 @@ entries, and how each feature was built, are in git history.
   section by a composite foreign key (TV, section). A TV has no section row until its Home is first written.
 - Admin page: a section chosen in the list stays chosen across refreshes until a card is selected; moves and adds made
   while a change saves are dropped, since each was computed from what the owner saw.
-- TV app: one `LazyVerticalGrid` draws Home (a title spans the grid, a row section is one item holding a `LazyRow`).
-  Section lines are drawn over the grid from its layout info (a line can lie where no item is, and dimming would cover
-  it). ↑ ↓ ← → come from `HomeLayout`, since Compose's focus search stopped at a lazy line's first laid-out card.
+- TV app: one `LazyColumn` draws Home, an item a line: a grid row is a plain `Row` (a lazy grid's cell cannot widen
+  for the open card), a row section a `LazyRow` slid by `HomeLayout.rowFirst`, not by bringing the focused card into
+  view (it opens as it gets the focus). Section lines are drawn over the column from its layout info (a line can lie
+  where no item is). ↑ ↓ ← → come from `HomeLayout`, since Compose's focus search stopped at a lazy line's first
+  laid-out card.

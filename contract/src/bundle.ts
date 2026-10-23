@@ -52,7 +52,7 @@ interface ItemBase {
   genres?: string[];
   /** "assets/<sha256-of-content>.<jpg|png|webp>" or null. */
   poster: string | null;
-  /** Landscape image (16:9, around 1280×720), named like the poster. Absent or null, the TV crops the poster. */
+  /** Landscape image (16:9, around 1280×720), named like the poster. Absent or null, the TV blurs the poster instead. */
   backdrop?: string | null;
 }
 

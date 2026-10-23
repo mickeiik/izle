@@ -272,8 +272,8 @@ p.add-section { font-size: var(--text-sm); }
   position: relative; box-sizing: content-box; aspect-ratio: 16 / 9; overflow: hidden; background: var(--tv-bg);
   border: 10px solid var(--tv-bezel); border-radius: var(--radius-lg); box-shadow: var(--shadow);
 }
-/* Placed in dp by lib.js (`tvHomeLayout`); the content and each scrolling line move by transforms, without a
-   transition: every redraw shows at once where the selected card is. */
+/* Placed in dp by lib.js (`tvHomeLayout`); the content scrolls by a transform without a transition, so every redraw
+   shows at once where the selected card is; a scrolling line slides with its cards, as on the TV. */
 .tv-canvas { position: absolute; top: 0; left: 0; width: 960px; height: 540px; transform-origin: 0 0; color: var(--tv-text); }
 .tv-empty { position: absolute; inset: 27px 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; text-align: center; font-size: 28px; color: var(--tv-dim); }
 .tv-empty strong { font-size: 44px; color: var(--tv-text); }
@@ -285,7 +285,7 @@ p.add-section { font-size: var(--text-sm); }
   position: absolute; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   font-size: 30px; line-height: 38px; font-weight: 700; color: var(--tv-dim);
 }
-.tv-heading.on, .tv-tile[aria-selected="true"] .tv-title { color: var(--tv-text); }
+.tv-heading.on { color: var(--tv-text); }
 .tv-line { position: absolute; height: 2px; border-radius: 1px; background: rgb(255 255 255 / 18%); }
 .tv-band {
   position: absolute; display: grid; place-items: center; padding: 8px; text-align: center;
@@ -293,17 +293,40 @@ p.add-section { font-size: var(--text-sm); }
 }
 .tv-scroll { position: absolute; border-radius: 3px; background: rgb(255 255 255 / 14%); }
 .tv-scroll > span { position: absolute; left: 0; width: 100%; border-radius: 3px; background: rgb(255 255 255 / 60%); }
-.tv-tile { position: absolute; width: var(--card-w); display: flex; flex-direction: column; gap: 10px; cursor: pointer; outline: none; }
+/* A 2:3 card; the selected one is drawn open (16:9 at the same height): its poster at the left, its panel at the
+   right. The cards after it in its line slide right, as on the TV. */
+.tv-tile { position: absolute; height: var(--card-h); cursor: pointer; outline: none; transition: left 0.2s, width 0.2s; }
 .tv-tile[aria-selected="true"] { z-index: 1; }
-.tv-card { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 12px; background: var(--tv-surface); filter: brightness(0.8); transition: transform 0.12s; }
-.tv-tile[aria-selected="true"] .tv-card { transform: scale(1.1); filter: none; box-shadow: 0 0 0 4px var(--tv-focus); z-index: 1; }
+.tv-cells { transition: transform 0.2s; }
+.tv-card { position: relative; display: flex; width: 100%; height: 100%; overflow: hidden; border-radius: 12px; background: var(--tv-surface); filter: brightness(0.8); }
+.tv-tile[aria-selected="true"] .tv-card { filter: none; box-shadow: 0 0 0 4px var(--tv-focus); }
 .tv-tile:focus-visible .tv-card { box-shadow: 0 0 0 4px var(--tv-focus), 0 0 0 9px var(--focus); }
-@media (prefers-reduced-motion: reduce) { .tv-card { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .tv-tile, .tv-cells { transition: none; } }
+.tv-face { position: relative; flex: none; width: var(--card-w); height: 100%; }
+.tv-tile[aria-selected="true"] :is(.tv-shade, .tv-new) { display: none; }
 .tv-picture, .tv-picture img { display: block; width: 100%; height: 100%; }
-.tv-picture img { object-fit: cover; }
-/* A portrait poster fills the card cut around its upper part, where posters keep faces and titles (as on the TV). */
-.tv-picture img.poster-cut { object-position: 50% 28%; }
-.tv-picture > span { display: grid; place-items: center; height: 100%; padding: 8px; text-align: center; font-size: 24px; line-height: 32px; font-weight: 700; overflow: hidden; }
+/* A poster that is not 2:3 is cut around its upper part, where posters keep faces and titles (as on the TV). */
+.tv-picture img { object-fit: cover; object-position: 50% 28%; }
+/* A channel's logo, whole, in the card less 12 dp on each side. */
+.tv-picture.logo img { box-sizing: border-box; padding: 12px; object-fit: contain; object-position: 50% 50%; }
+.tv-picture > span { display: flex; align-items: center; justify-content: center; box-sizing: border-box; height: 100%; padding: 8px; text-align: center; }
+.tv-picture > span > span {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--face-lines); line-clamp: var(--face-lines); overflow: hidden;
+  overflow-wrap: anywhere; font-size: 24px; line-height: 32px; font-weight: 700;
+}
+.tv-panel { position: relative; flex: none; width: calc(var(--open-w) - var(--card-w)); height: 100%; background: var(--tv-surface); }
+.tv-backdrop, .tv-backdrop img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.tv-backdrop { overflow: hidden; }
+.tv-backdrop img { object-fit: cover; }
+.tv-backdrop img.blur { filter: blur(12px); transform: scale(1.2); }
+.tv-backdrop::after { content: ""; position: absolute; inset: 0; background: rgb(0 0 0 / 70%); }
+.tv-panel-text { position: absolute; inset: 12px; display: flex; flex-direction: column; justify-content: space-between; gap: 8px; overflow: hidden; }
+.tv-name {
+  flex: none; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--name-lines); line-clamp: var(--name-lines);
+  overflow: hidden; overflow-wrap: anywhere; font-size: 26px; line-height: 34px; font-weight: 700;
+}
+.tv-panel-end { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; min-width: 0; }
+.tv-text { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 24px; line-height: 32px; }
 .tv-shade {
   position: absolute; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
   padding: 16px 8px 8px; background: linear-gradient(transparent, var(--tv-shade));
@@ -314,13 +337,10 @@ p.add-section { font-size: var(--text-sm); }
 }
 .tv-chip.new { background: var(--tv-new); color: var(--on-tv-new); }
 .tv-chip.resume { background: var(--tv-accent); color: var(--on-tv-accent); }
+.tv-chip.big { font-size: 24px; line-height: 32px; }
 .tv-bar { align-self: stretch; height: 6px; border-radius: 3px; background: var(--tv-track); overflow: hidden; }
 .tv-bar > span { display: block; height: 100%; background: var(--tv-accent); }
 .tv-new { position: absolute; top: 8px; right: 8px; padding: 0 8px; border: 1px solid var(--tv-hairline); border-radius: 8px; background: rgb(11 11 15 / 85%); color: var(--tv-text); font-size: 16px; line-height: 22px; }
-.tv-title {
-  height: calc(var(--title-lines) * 32px); overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical;
-  -webkit-line-clamp: var(--title-lines); line-clamp: var(--title-lines); font-size: 24px; line-height: 32px; font-weight: 700; color: var(--tv-dim);
-}
 
 .hidden-on-tv .list > *, .episodes-history li { padding-block: var(--space-2); }
 .hidden-on-tv .grow > .chip { margin-left: var(--space-2); }

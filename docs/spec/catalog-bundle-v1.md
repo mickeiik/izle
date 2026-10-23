@@ -48,7 +48,7 @@ playable stream at play time (signed URLs, cookies, scraping) belongs in a [reso
 | `synopsis` | string \| null | no | |
 | `genres` | string[] | no | Free-form, unique. |
 | `poster` | string \| null | yes | `assets/<sha256>.<jpg\|png\|webp>`, or null. |
-| `backdrop` | string \| null | no | Landscape image for the TV's home cards: `assets/<sha256>.<jpg\|png\|webp>`, or null (the default when absent). |
+| `backdrop` | string \| null | no | Landscape image behind the TV's open home card: `assets/<sha256>.<jpg\|png\|webp>`, or null (the default when absent). |
 
 Movie and series fields (`kind` is `"movie"` or `"series"`):
 
@@ -125,7 +125,7 @@ for the adapter). The server passes `ref` to the adapter at play time and never 
 3. **Explicit play order and approval.** izle never infers either from season/number fields.
 4. **Content-addressed images.** A poster or backdrop file's name is the lowercase hex SHA-256 of its bytes and its
    extension matches its content type. Posters SHOULD be 2:3, around 400×600, backdrops 16:9, around 1280×720, both
-   well under 1 MiB; without a backdrop the TV crops the poster to a landscape band.
+   well under 1 MiB; without a backdrop the TV's open card lies over the poster, blurred.
 5. **Movies have exactly one episode.** A series with only its first episode released is a `series` with one
    episode, and stays one as episodes are added. Exporters MUST NOT derive `kind` from the episode count (izle shows
    a `movie` as a film, and rejects one that gains a second episode).
