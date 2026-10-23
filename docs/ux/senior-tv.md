@@ -22,21 +22,39 @@ remotely from the admin page or, on the TV itself, behind a hidden menu.
 
 ### Home
 
-- Wide 16:9 cards fill the safe area, with nothing above or below them (no clock, no hint), sized from the owner's
-  columns (3–6) and rows (1–4) per screen (default 4 × 2). Without [sections](#sections) Home is one grid showing
-  exactly that many rows: moving down from the last visible row scrolls by one row (up from the first scrolls back),
-  and a thin scroll bar in the right margin shows where the screen is. Left and right stop at a row's ends.
-- The focused card scales to 110 % with a 4 dp white border, its name clear of the grown card; the others are dimmed.
-- Under the card: the show's name (24 sp bold), on two lines when that leaves the card as large as one line would,
-  else on one, cut with "…" only when longer.
-- The picture is the catalog's `backdrop`, else the poster cropped around its upper part, else the show's name.
-- At the card's bottom, a solid chip says what OK will do: mint for "New", the warm accent when OK resumes
-  ("Continue", "Continue · Episode 2", with a progress bar under it), light grey otherwise ("Episode 5", "Watch
-  again"). It shows only when it fits on one line; smaller cards keep the progress bar and the short "New".
-- A channel's card has a solid red **Live** chip with white text, kept on smaller cards; no progress bar or "2 new".
-- When episodes were added since the viewer last watched the show (or since it was put on Home), a small dark chip at
-  the top right counts them ("2 new", read out as "2 new episodes"; the server's `newEpisodes`) when it fits beside
-  the bottom chip. It takes no focus, never changes what OK plays, and goes once an episode was played.
+- Portrait cards, shaped like posters (2:3), fill the safe area with nothing above or below them (no clock, no hint),
+  sized from the owner's columns (3–6) and rows (1–4) per screen (default 4 × 2). Without [sections](#sections) Home
+  is one grid showing exactly that many rows: moving down from the last visible row scrolls by one row (up from the
+  first scrolls back), and a thin scroll bar in the right margin shows where the screen is. Left and right stop at a
+  row's ends. Cards carry no name under them.
+- **The focused card opens:** it widens sideways to 16:9 (its height kept), the poster staying at its left and a panel
+  appearing at its right with the show's name and what OK will do in large type; a 4 dp white border goes round the
+  whole open card and the other cards are dimmed. The cards after it in its line slide right to make room (0.2 s), and
+  slide back when the focus leaves. A grid row is sized so that it still fits the safe area with one card open, so a
+  grid never slides sideways; a scrolling line slides as in [Sections](#sections).
+- **Size:** with `W` = 864 dp and `H` = 486 dp (the safe area; `H` less 44 dp when Home has a titled section), 14 dp
+  of padding `P` around the cards and a 20 dp gap `G`, `N` columns and `R` rows: the card's width is
+  `w = floor(min(3·(W − 2P − (N − 1)·G) / (3·N + 5), 2·(H − 2P − (R − 1)·G) / (3·R)))`, at least 1 (N − 1 cards
+  and one open card fit a row; R cards fit the height); its height `h = 1.5·w`; the open card's width `floor(8·w / 3)`
+  (16:9 at that height). At 4 × 2: 136 × 204 dp, 362 dp open (131 × 196.5 dp, 349 dp open, with a titled section).
+- **The picture** fills the card: the poster (cropped around its upper part when it is not 2:3), else the show's name
+  (24 sp bold, centred, as many lines as fit, cut with "…"). A channel's picture is its logo, whole (never cropped),
+  centred in the card less 12 dp on each side, on the card's colour; without a logo, the channel's name.
+- **On a card that is not open,** at the bottom, a solid chip (16 sp) says what OK will do: mint for "New", the warm
+  accent when OK resumes ("Continue", with a progress bar under it), light grey otherwise ("Episode 5", "Watch
+  again"); "Continue · Episode 2" shows as "Continue" when it does not fit, and a chip that does not fit at all is left
+  out (the progress bar stays). A channel's chip is a solid red **Live** with white text; no progress bar or "2 new".
+  When episodes were added since the viewer last watched the show (or since it was put on Home), a small dark chip at
+  the top right counts them ("2 new", read out as "2 new episodes"; the server's `newEpisodes`) when it fits. It takes
+  no focus, never changes what OK plays, and goes once an episode was played.
+- **The open card's panel** (12 dp inside its edges) lies over the catalog's `backdrop` when there is one, else over
+  the poster blurred (decoded at about 16 × 24 px and stretched, which looks the same on every Android version),
+  darkened enough for white text; a channel's or a picture-less show's panel is plain. From the top: the name (26 sp
+  bold, up to 3 lines, cut with "…"); then at the bottom "2 new episodes" (24 sp), the chip saying what OK will do in
+  24 sp ("Continue · Episode 2"; when that does not fit, "Continue" with "Episode 2" in 24 sp under it), and the
+  progress bar. A chip too wide for 24 sp is drawn at 16 sp. Whatever does not fit the panel's height is left out, in
+  this order: "2 new episodes", the episode line, then name lines down to one. A channel's panel: its name and the red
+  **Live** chip.
 - The tile played last gets the focus back; the focus stays on its card when the owner reorders or moves cards.
 - No shows: "Nothing here yet" in large type and a line saying that the owner adds shows from the admin page. A first
   start with no cached Home shows "Loading…", or "No connection" while the server is unreachable.
@@ -68,8 +86,7 @@ owner's order. They change how the cards are laid out, never what OK does.
   at its ends.
 - **Between two sections** a thin line (2 dp, white at 18 %) runs across the cards' width. The boundary takes exactly
   the step between two rows of one section: the next section (its title, else its cards) starts where a next row
-  would, and the line lies in the middle of the empty space above it (the gap between rows, plus the second title
-  line when no card of the last row uses it).
+  would, and the line lies in the middle of the gap above it.
 - **One card size** for all of Home, from the owner's columns × rows; with a titled section, one title's height is set
   aside first, so one screen holds a title and that many rows.
 - **Moving:** ↑ and ↓ go line by line (a grid row or a scrolling line), across sections, to the card nearest the one

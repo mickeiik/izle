@@ -129,11 +129,11 @@ Everything the home screen needs:
 - `device.autoplayOnStart` (owner setting, default false): when the app opens, the show or channel watched last (else
   the first tile; the TV decides what "last" is) starts after a 10-second countdown that any key stops.
 - `device.homeColumns` (3–6, default 4) and `device.homeRows` (1–4, default 2), owner settings: Home is a grid of
-  16:9 cards, `homeColumns` per row and `homeRows` rows per screen; the rest of the list scrolls.
+  portrait cards, `homeColumns` per row and `homeRows` rows per screen; the rest of the list scrolls.
 - `home`: the owner's list (≤ 200, a safety limit) in [Home order](#home-sections), without items that left the
   catalog or cannot be played (no `playbackAllowed` episode; a channel with `playbackAllowed: false`). `posterUrl` and
   `backdropUrl` (the catalog's optional landscape image) are relative to the server's base URL, each null without its
-  image; without a backdrop the TV crops the poster to a landscape band.
+  image; the TV's cards show the poster, and the focused card's panel lies over the backdrop (else the poster, blurred).
 - `continue`: what OK plays, the item's cursor episode ([Play order](#play-order-and-the-cursor)). `status`: `new`
   (never started), `watching` (`positionMs` is the saved position), `finished` (`positionMs` 0: it starts over).
   `index`/`count`: the position in the item's play order. Null for a channel: OK resolves it by `itemId`.

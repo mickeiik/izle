@@ -6,6 +6,13 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 
 ## [Unreleased]
 
+### Changed
+
+- **TV Home: portrait cards that open on focus.** Cards are shaped like posters and show the whole poster (and a
+  channel's whole logo) instead of a cropped band; the focused card widens to 16:9 with the show's name and what OK
+  plays in large type, over the backdrop or the blurred poster. Names no longer sit under the cards. The owner's
+  columns × rows keep their meaning; the admin page's Home screen draws the same cards.
+
 ### Added
 
 - **The validator is a stable interface for catalog producers:** `izle-validate` and `izle-server validate-catalog`,

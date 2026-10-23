@@ -117,3 +117,6 @@ entries, and how each feature was built, are in git history.
 - TV app: one `LazyVerticalGrid` draws Home (a title spans the grid, a row section is one item holding a `LazyRow`).
   Section lines are drawn over the grid from its layout info (a line can lie where no item is, and dimming would cover
   it). ↑ ↓ ← → come from `HomeLayout`, since Compose's focus search stopped at a lazy line's first laid-out card.
+- Home cards: posters that open on focus won over the whole poster in a wide card and a poster wall with a caption
+  line (prototypes, 2026-10-23): the focused card is the clearest. A grid row is sized to fit one open card, so only
+  the cards after it move; a grid never slides sideways.
