@@ -222,22 +222,26 @@ test("catalog: info, search, item detail without upstream URLs", async (t) => {
   assert.equal((await s.admin("GET", "/catalog/items/ghost")).status, 404);
 });
 
-test("diagnostics: the probe reaches upstreams through the server's fetch", async (t) => {
+test("diagnostics: the deep check reaches upstreams through the server's fetch", async (t) => {
   const asked: Array<[string, Json]> = [];
   const upstream: typeof fetch = async (input, init) => {
     asked.push([String(input), init?.headers]);
-    return new Response("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n", { status: 200, headers: { "Content-Type": "application/vnd.apple.mpegurl" } });
+    if (String(input).endsWith(".ts")) return new Response(new Uint8Array(188 * 4).fill(0x47), { status: 200 });
+    const text = String(input).endsWith("master.m3u8") ? "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n" : "#EXTM3U\n#EXTINF:6,\ns0.ts\n#EXT-X-ENDLIST\n";
+    return new Response(text, { status: 200, headers: { "Content-Type": "application/vnd.apple.mpegurl" } });
   };
   const s = await testServer(t, { fetch: upstream });
   const d = await s.admin("POST", "/diagnostics/resolve", { episodeId: "show.e1", sourceId: "tr-dub" });
   assert.equal(d.status, 200);
-  const { ms, ...probe } = d.json.sources[0].probe;
-  assert.equal(typeof ms, "number");
-  assert.deepEqual(probe, {
-    ok: true, status: 200, contentType: "application/vnd.apple.mpegurl",
-    playlist: { master: true, variants: 1, renditions: 0, segments: 0, endList: false },
-  });
-  assert.deepEqual(asked, [["https://media.example.test/tr-dub/master.m3u8", {}]], "no Range for a playlist, no upstream headers");
+  const source = d.json.sources[0];
+  assert.deepEqual(source.steps.map((x: Json) => [x.what, x.index ?? null, x.host, x.ok, x.status, x.container]), [
+    ["playlist", null, "media.example.test", true, 200, "m3u8"],
+    ["variant", 0, "media.example.test", true, 200, "m3u8"],
+    ["segment", 0, "media.example.test", true, 200, "ts"],
+  ]);
+  assert.deepEqual([d.json.verdict, source.verdict, source.codecs, source.warnings], ["ok", "ok", [{ codecs: null, resolution: null, bandwidth: 1 }], []]);
+  const base = "https://media.example.test/tr-dub/";
+  assert.deepEqual(asked, [[`${base}master.m3u8`, {}], [`${base}v.m3u8`, {}], [`${base}s0.ts`, {}]], "no Range for playlists or segments, no upstream headers");
 });
 
 test("catalog reload: new build applies, invalid build is refused and the old one stays", async (t) => {
@@ -400,8 +404,8 @@ test("channels on the admin side: search hits and item details, playable on the 
   assert.deepEqual([await playable("off"), await playable("sov"), await playable("locked")], [false, true, false]);
 
   const item = (await s.admin("GET", "/catalog/items/news")).json.item;
-  assert.deepEqual(Object.keys(item).sort(), ["backdropUrl", "genres", "id", "kind", "originalTitle", "playbackAllowed", "posterUrl", "sources", "synopsis", "title", "year"]);
-  assert.equal(item.playbackAllowed, true);
+  assert.deepEqual(Object.keys(item).sort(), ["backdropUrl", "check", "genres", "id", "kind", "originalTitle", "playbackAllowed", "posterUrl", "sources", "synopsis", "title", "year"]);
+  assert.deepEqual([item.playbackAllowed, item.check], [true, null], "never checked");
   assert.deepEqual(item.sources, [
     { id: "hls", type: "direct", label: null, languages: { audio: ["tr"], subtitles: [] }, kind: "hls", needsProxy: false },
     { id: "ts", type: "direct", label: null, languages: { audio: ["tr"], subtitles: [] }, kind: "ts", needsProxy: true },

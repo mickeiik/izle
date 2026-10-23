@@ -8,12 +8,14 @@ import { AppUpdateService, FIRST_CHECK_DELAY_MS } from "./app-updates.ts";
 import { loadAdminToken } from "./auth.ts";
 import { CatalogService } from "./catalog.ts";
 import { CatalogBrowser } from "./catalog-browse.ts";
+import { CheckService } from "./checks.ts";
 import { limiterKey } from "./clientip.ts";
 import { CommandService } from "./commands.ts";
 import { CompanionService } from "./companion.ts";
 import { databaseFile, DEFAULT_RESOLVE_BUDGET_MS, DEFAULT_RESOLVE_DEADLINE_MS, localServerUrl, type ServerConfig } from "./config.ts";
 import type { AppContext } from "./context.ts";
 import { DeviceService } from "./devices.ts";
+import { SourceChecker } from "./diagnostics.ts";
 import { EventLog } from "./eventlog.ts";
 import { EventHub, Notifier } from "./events.ts";
 import { CatalogHistory } from "./history.ts";
@@ -32,7 +34,7 @@ import { createLogger, type Logger } from "./log.ts";
 import { PairingService, type PairingOptions } from "./pairing.ts";
 import { PlayingService, VIEWING_SWEEP_MS } from "./playing.ts";
 import { ProblemService } from "./problems.ts";
-import { ProxyService } from "./proxy.ts";
+import { ProxyService, type ProxyProblem } from "./proxy.ts";
 import { PlaybackSessions, ResolveService } from "./resolve.ts";
 import { loadResolver, type LoadedResolver } from "./resolver.ts";
 import { Store } from "./store.ts";
@@ -85,16 +87,21 @@ export function createContext(opts: StartOptions, { log, now, store, catalog, re
   };
   const problems = new ProblemService({ store, catalog, log, now, sessions, eventLog });
   const { sessionTtlSec, alignTsSegments, always: proxyAlways, privateUpstreams } = config.proxy;
-  const proxy = new ProxyService({ log, now, ttlMs: sessionTtlSec * 1000, alignTsSegments, privateUpstreams, fetch: opts.fetch, onProblem: (p) => problems.recordProxy(p) });
+  const onProblem = (p: ProxyProblem) => {
+    checker.proxyProblem(p);
+    problems.recordProxy(p);
+  };
+  const proxy = new ProxyService({ log, now, ttlMs: sessionTtlSec * 1000, alignTsSegments, privateUpstreams, fetch: opts.fetch, onProblem });
   const resolver = new ResolveService({
     catalog, log, now, proxy, sessions, adapters: resolverModule?.adapters ?? null, proxyAlways,
     deadlineMs: config.resolver?.deadlineMs ?? DEFAULT_RESOLVE_DEADLINE_MS,
     budgetMs: config.resolver?.budgetMs ?? DEFAULT_RESOLVE_BUDGET_MS,
   });
+  const checker = new SourceChecker({ catalog, resolver, proxy, store, fetch: fetchUpstream, now });
   const browse = new CatalogBrowser({ catalog, store });
-  const modules = { config, store, catalog, browse, events, notifier, eventLog, resolver, sessions, problems, viewings, appUpdates, home, playing, proxy, log, now };
+  const modules = { config, store, catalog, browse, events, notifier, eventLog, resolver, sessions, problems, viewings, appUpdates, home, playing, proxy, checker, log, now };
   return {
-    ...modules, tv: new TvService(modules), companion: new CompanionService(modules), pairing: new PairingService(modules, opts.pairing),
+    ...modules, checks: new CheckService(modules), tv: new TvService(modules), companion: new CompanionService(modules), pairing: new PairingService(modules, opts.pairing),
     devices: new DeviceService(modules), commands: new CommandService(modules), tokens: new TokenService(store, log, now),
     resolverModule, adminToken, pingMs: opts.pingMs ?? 20_000, fetch: fetchUpstream, adminUiDir: fileURLToPath(new URL("../admin", import.meta.url)),
   };
@@ -157,6 +164,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     ctx.pairing.purge();
     ctx.commands.purge();
     ctx.problems.purge();
+    ctx.checker.purge();
     eventLog.purge();
   }, 10 * 60_000);
   housekeeping.unref();
@@ -175,6 +183,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
         clearInterval(housekeeping);
         clearInterval(sweep);
         await appUpdates.stop();
+        await ctx.checks.stop();
         events.closeAll();
         await new Promise<void>((resolve) => {
           server.close(() => resolve());

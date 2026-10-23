@@ -5,7 +5,7 @@ import { HttpError } from "./errors.ts";
 import type { Logger } from "./log.ts";
 import { requireAllowed, requirePlayableRef, requireSource, type PlayableId } from "./lookup.ts";
 import { orderSources } from "./playback.ts";
-import { entryPath, subtitlePath, type ProxyService } from "./proxy.ts";
+import { entryPath, subtitlePath, type ProxyService, type ProxySessionInit } from "./proxy.ts";
 import { runAdapter, type AdapterFailureCode } from "./resolver.ts";
 import type { ResolveTrigger } from "./viewings.ts";
 
@@ -23,6 +23,10 @@ export type ResolveInput = PlayableId & {
 /** Proxy-session owner key of a device's companion streams (separate from the TV's own two sessions). */
 export const companionScope = (deviceId: string): string => `companion:${deviceId}`;
 export const isCompanionScope = (owner: string): boolean => owner.startsWith("companion:");
+
+/** Proxy-session owner key of one source check of the admin's catalog checks (its own, so it never ends a TV's). */
+export const checkScope = (id: string): string => `check:${id}`;
+export const isCheckScope = (owner: string): boolean => owner.startsWith("check:");
 
 /** What a report says it played: `{episodeId}`, a channel's `{itemId, episodeId: null}`, either id, both or neither. */
 export type PartialPlayingKey = { itemId?: string | undefined; episodeId?: string | null | undefined };
@@ -98,9 +102,11 @@ export const hasHeaders = (h: Record<string, string> | undefined): h is Record<s
 /** DASH manifests are not rewritten by the proxy (v1), so DASH that needs upstream headers cannot be served. */
 const servable = (media: ResolvedMedia, headers: Record<string, string> | undefined): boolean => !(media.kind === "dash" && hasHeaders(headers));
 
-const proxyKind = (kind: MediaKind): "hls" | "mp4" | "ts" => (kind === "mp4" || kind === "ts" ? kind : "hls");
+export const proxyKind = (kind: MediaKind): "hls" | "mp4" | "ts" => (kind === "mp4" || kind === "ts" ? kind : "hls");
 
-/** How a stream reaches the client, shared by resolve and the admin diagnostics so both always agree. */
+export type DeliveryPlan = ReturnType<typeof deliveryPlan>;
+
+/** How a stream reaches the client, shared by resolve and the admin checks so both always agree. */
 export function deliveryPlan(
   s: {
     media: ResolvedMedia;
@@ -113,6 +119,29 @@ export function deliveryPlan(
     servable: servable(s.media, s.headers),
     proxyMain: "playlist" in s.media || (s.media.kind !== "dash" && (hasHeaders(s.headers) || proxyAlways)),
     proxySubtitles: (s.subtitleTracks ?? []).map((t) => hasHeaders(t.headers) || proxyAlways),
+  };
+}
+
+/** The proxy session that serves what `plan` proxies of `s` for `owner`; null when nothing is proxied. */
+export function proxySessionFor(
+  owner: string,
+  s: UpstreamStream,
+  plan: DeliveryPlan,
+  playing: Partial<PlayingKey> & { sourceId?: string },
+): ProxySessionInit | null {
+  const { proxyMain, proxySubtitles } = plan;
+  if (!proxyMain && !proxySubtitles.some(Boolean)) return null;
+  const m = s.media;
+  return {
+    deviceId: owner,
+    ...playing,
+    main: !proxyMain
+      ? null
+      : "playlist" in m
+        ? { kind: "hls", playlist: m.playlist, baseUrl: m.baseUrl }
+        : { kind: proxyKind(m.kind), url: m.url },
+    headers: s.headers,
+    subtitles: s.subtitleTracks.map((t, i) => (proxySubtitles[i] ? { url: t.url, headers: t.headers ?? {} } : null)),
   };
 }
 
@@ -220,22 +249,11 @@ export class ResolveService {
     proxyAlways: boolean,
     playing: PlayingKey & { sourceId: string },
   ): Pick<ResolvedStream, "media" | "subtitleTracks" | "delivery"> {
-    const { proxyMain, proxySubtitles } = deliveryPlan(s, proxyAlways);
+    const plan = deliveryPlan(s, proxyAlways);
+    const { proxyMain, proxySubtitles } = plan;
     const m = s.media;
-    let token: string | null = null;
-    if (proxyMain || proxySubtitles.some(Boolean)) {
-      token = this.o.proxy.create({
-        deviceId: owner,
-        ...playing,
-        main: !proxyMain
-          ? null
-          : "playlist" in m
-            ? { kind: "hls", playlist: m.playlist, baseUrl: m.baseUrl }
-            : { kind: proxyKind(m.kind), url: m.url },
-        headers: s.headers,
-        subtitles: s.subtitleTracks.map((t, i) => (proxySubtitles[i] ? { url: t.url, headers: t.headers ?? {} } : null)),
-      });
-    }
+    const init = proxySessionFor(owner, s, plan, playing);
+    const token = init && this.o.proxy.create(init);
     const url = proxyMain ? entryPath(token!, proxyKind(m.kind)) : (m as { url: string }).url;
     return {
       media: { kind: m.kind, url },

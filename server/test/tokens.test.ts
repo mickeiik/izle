@@ -87,6 +87,11 @@ test("scopes: each level against a representative route of every level; 403 insu
     ["DELETE", `/devices/${tv.deviceId}`, undefined, "owner"],
     ["POST", `/devices/${tv.deviceId}/history/adopt`, { fromDeviceId: "gone" }, "owner"],
     ["POST", "/diagnostics/resolve", { episodeId: "show.e1" }, "owner"],
+    ["GET", "/checks/current", undefined, "read"],
+    ["GET", "/checks/nope", undefined, "read"],
+    ["GET", "/checks/playables/show.e1", undefined, "read"],
+    ["POST", "/checks", { itemId: "show" }, "owner"],
+    ["DELETE", "/checks/nope", undefined, "owner"],
     ["POST", `/devices/${tv.deviceId}/companion/resolve`, { episodeId: "show.e1", sourceId: "en-orig" }, "owner"],
     ["PUT", "/companion/links/show.e1/en-orig", { offsetMs: 0, rate: 1 }, "owner"],
   ];

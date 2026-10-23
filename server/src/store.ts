@@ -328,6 +328,20 @@ export interface CompanionLink {
   updatedAt: number;
 }
 
+/** The stored deep check of one source of an episode or a channel (`playableId`: the episode id, or the item id). */
+export interface SourceCheck {
+  catalogId: string;
+  itemId: string;
+  playableId: string;
+  sourceId: string;
+  fingerprint: string;
+  checkedAt: number;
+  verdict: "ok" | "warn" | "fail";
+  report: Record<string, unknown>;
+}
+
+export type SourceCheckKey = Pick<SourceCheck, "catalogId" | "itemId" | "playableId" | "sourceId">;
+
 export type DevicePatch = Partial<Pick<Device, "name" | "uiLanguage" | "preferredAudioLanguage" | "subtitlesLanguage" | "autoplayOnStart" | "homeColumns" | "homeRows">>;
 
 type Row = Record<string, SQLOutputValue>;
@@ -1023,5 +1037,37 @@ export class Store {
 
   putCompanionLink(l: CompanionLink): void {
     this.insert("companion_links", l, "catalog_id, episode_id, source_id");
+  }
+
+  // --- source checks -------------------------------------------------------------------------------------------
+
+  putSourceChecks(rows: readonly SourceCheck[]): void {
+    this.transaction(() => {
+      for (const { report, ...r } of rows) this.insert("source_checks", { ...r, reportJson: JSON.stringify(report) }, "catalog_id, item_id, playable_id, source_id");
+    });
+  }
+
+  /** The stored checks of every playable of these items, without their reports. */
+  listSourceChecks(catalogId: string, itemIds: readonly string[]): Array<Omit<SourceCheck, "report">> {
+    if (itemIds.length === 0) return [];
+    const list = itemIds.map(() => "?").join(", ");
+    const sql = `SELECT catalog_id, item_id, playable_id, source_id, fingerprint, checked_at, verdict FROM source_checks WHERE catalog_id = ? AND item_id IN (${list})`;
+    return this.many(sql, [catalogId, ...itemIds]);
+  }
+
+  getSourceChecks(catalogId: string, itemId: string, playableId: string): SourceCheck[] {
+    return this.many("SELECT * FROM source_checks WHERE catalog_id = ? AND item_id = ? AND playable_id = ?", [catalogId, itemId, playableId]);
+  }
+
+  sourceCheckKeys(): SourceCheckKey[] {
+    return this.many("SELECT catalog_id, item_id, playable_id, source_id FROM source_checks", []);
+  }
+
+  deleteSourceChecks(keys: readonly SourceCheckKey[]): void {
+    this.transaction(() => {
+      for (const k of keys) {
+        this.run("DELETE FROM source_checks WHERE catalog_id = ? AND item_id = ? AND playable_id = ? AND source_id = ?", k.catalogId, k.itemId, k.playableId, k.sourceId);
+      }
+    });
   }
 }

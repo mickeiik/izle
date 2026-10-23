@@ -18,11 +18,25 @@ How the owner arranges one TV's Home on the admin page (a TV's **Home screen** t
 - Select a card by clicking it, or move with the arrow keys as on the TV (↑ ↓ line by line across sections, ← →
   along a line, Home and End to the first and last card). Enter does not play, so a stray key starts nothing.
 - The panel under the screen shows where the card is ("Films · card 3 of 6 · row 1, column 3" in a grid, "Channels ·
-  card 5 of 6" in a scrolling line; the untitled section reads "No title"), what OK plays, **Play**, **Episodes…** for
-  a series, and **Remove from Home**.
+  card 5 of 6" in a scrolling line; the untitled section reads "No title"), what OK plays, its last
+  [check](#checks) ("Works · checked 2 h ago", "Works, with warnings", "Fails", "Source changed", "Not checked"; for a
+  series also "Episodes: 38 of 40 checked · 1 failing"), **Play**, **Episodes…** for a series, and **Remove from Home**.
 - **Move**: ◀ and ▶ along its section; ▲ and ▼ a row within a grid section (off at its first and last row); **Move to
   first** of its section; **Section**: the sections by title ("No title" for the untitled one), moving the card to the
   end of the chosen one. The card stays selected wherever it goes.
+
+## Checks
+
+- **Check Home…** next to the show count offers **Quick: what OK plays** (per card, the episode OK plays; a channel
+  itself) and **Full: every episode** (every episode that may be played, and the channels), under a muted note: a pass
+  means the server reached real media along the TV's path just now; it does not prove the TV can decode the codecs.
+- While a check runs, its progress shows under the card's title: what it checks ("Home of Living room, quick"), "12 of
+  40 checked · 1 failing", a bar, what was skipped and why, and **Stop**. The page follows a check already running for
+  this TV when it opens. One check runs at a time on the server: starting another follows the one going and names it.
+- **Check results**, under the screen next to what the TV hides, lists each show whose last check failed or warned
+  (what OK plays, or any of its episodes), with its verdict in words, what was found, a link to the show's page (each
+  source's report) and **Check again** (the whole show). A source changed since its check does not count.
+- Once a check ends, the chips and the list show what it found. The scaled screen does not show checks.
 
 ## Sections
 

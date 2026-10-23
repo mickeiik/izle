@@ -252,4 +252,19 @@ export const MIGRATIONS: string[] = [
     stored_at INTEGER NOT NULL
   );
 `,
+  `
+  -- Catalog checks: the last deep check of each source of an episode or a channel (playable_id: the episode's id, or
+  -- the channel's item id, which may equal an episode id of another item: hence item_id in the key).
+  CREATE TABLE source_checks (
+    catalog_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    playable_id TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,              -- sha256 of the source's canonical JSON: another one reads "not checked"
+    checked_at INTEGER NOT NULL,
+    verdict TEXT NOT NULL,                  -- ok | warn | fail
+    report_json TEXT NOT NULL,              -- the source's report: hosts, statuses and codes, never URLs or refs
+    PRIMARY KEY (catalog_id, item_id, playable_id, source_id)
+  );
+`,
 ];

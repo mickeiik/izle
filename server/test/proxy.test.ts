@@ -322,7 +322,7 @@ test("the first servable result wins; header-bound subtitle tracks are proxied; 
   assert.match(a.json.subtitleTracks[1].url, /\/sub\/1\.vtt$/);
 });
 
-test("admin diagnostics: every source tried, hosts and header names only, optional upstream probe", async (t) => {
+test("admin diagnostics: every source tried and deep-checked through the proxy, hosts and header names only", async (t) => {
   const { s, up } = await setupProxy(t);
   const diagnose = async (body: Json) => (await s.admin("POST", "/diagnostics/resolve", body)).json;
   const d = await diagnose({ episodeId: "fallback.main" });
@@ -333,13 +333,23 @@ test("admin diagnostics: every source tried, hosts and header names only, option
     kind: "hls", inline: false, host: new URL(up.url).host, headerNames: ["Referer"], delivery: "proxy", subtitleTracks: 0,
     languages: { audio: ["en", "tr"], subtitles: ["en"] }, label: null, expiresAt: "2026-10-10T12:10:00.000Z",
   });
-  assert.deepEqual([works.probe.ok, works.probe.status], [true, 200]);
-  assert.deepEqual(works.probe.playlist, { master: true, variants: 2, renditions: 3, segments: 0, endList: false });
-  for (const leak of ["player.example.test", "/s/", "demo", "behavior"]) assert.ok(!JSON.stringify(d).includes(leak), `diagnostics leaked ${leak}`);
+  // Every playlist, then the first segment of the first variant and of each audio rendition, all of the example's.
+  const host = new URL(up.url).host;
+  const steps = [
+    ["playlist", null], ["variant", 0], ["variant", 1], ["rendition", 0], ["rendition", 1], ["rendition", 2], ["segment", 0], ["segment", 0], ["segment", 1],
+  ];
+  assert.deepEqual(works.steps.map((x: Json) => [x.what, x.index ?? null]), steps);
+  assert.ok(works.steps.every((x: Json) => x.ok && x.host === host && x.status === 200), JSON.stringify(works.steps));
+  assert.deepEqual(works.steps.filter((x: Json) => x.what === "segment").map((x: Json) => x.container), ["ts", "ts", "ts"]);
+  assert.deepEqual([works.verdict, d.verdict, works.warnings], ["ok", "warn", []], "one failing source of three: the episode still plays");
+  assert.deepEqual(works.codecs, [{ codecs: null, resolution: "640x360", bandwidth: 900000 }, { codecs: null, resolution: "320x180", bandwidth: 300000 }]);
+  for (const leak of ["player.example.test", "/s/", "demo", "behavior", "/p/"]) assert.ok(!JSON.stringify(d).includes(leak), `diagnostics leaked ${leak}`);
 
   const inline = (await diagnose({ episodeId: "inline.main" })).sources[0];
-  assert.deepEqual([inline.stream.inline, inline.probe.playlist.variants], [true, 2]);
-  assert.equal((await diagnose({ episodeId: "mp4.main", probe: true })).sources[0].probe.status, 206);
+  assert.deepEqual([inline.stream.inline, inline.verdict, inline.steps.length], [true, "ok", steps.length]);
+  const mp4 = (await diagnose({ episodeId: "mp4.main" })).sources[0];
+  assert.deepEqual(mp4.steps.map((x: Json) => [x.what, x.ok, x.status, x.bytes]), [["file", true, 206, 65536]]);
+  assert.equal(mp4.verdict, "ok");
   assert.deepEqual((await s.admin("GET", "/catalog")).json.resolver.adapters, ["example", "test"]);
 });
 

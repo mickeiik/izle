@@ -41,7 +41,7 @@ const MANAGE_ROUTES = [
 /**
  * The scope an admin route needs: `read` for every GET but the access tokens', `control` for commands, `manage` for
  * MANAGE_ROUTES, and the owner token for the rest (pairing approval, deleting a TV, history deletions and adoption,
- * diagnostics, Listen along resolves and links, the access tokens).
+ * diagnostics and check runs, Listen along resolves and links, the access tokens).
  */
 function requiredScope(method: string, route: string): Required {
   const r = `${method} ${route.replace("/api/v1/admin", "")}`;

@@ -129,8 +129,9 @@ export function tabs({ label, tabs: defs, selected, onSelect }) {
 export const poster = (url, alt = "") => (url ? h("img", { class: "poster", src: url, alt, loading: "lazy" }) : h("div", { class: "poster empty", "aria-hidden": "true" }));
 
 /**
- * A chip's colour: `server` a problem the server ran into, `live` a channel (red as on the TV).
- * @typedef {"ok" | "warn" | "info" | "server" | "live" | ""} Tone
+ * A chip's colour: `server` a problem the server ran into, `bad` a check that failed, `live` a channel (red as on the
+ * TV).
+ * @typedef {"ok" | "warn" | "bad" | "info" | "server" | "live" | ""} Tone
  */
 
 /** @param {string} text @param {Tone} [tone] */

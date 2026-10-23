@@ -4,6 +4,7 @@ import type { Context } from "hono";
 import { COMMAND_RESULTS, MAX_SEEK_DELTA_MS, MESSAGE_DURATION_SEC, MESSAGE_MAX_CHARS, PLAIN_COMMANDS, type CommandBody, type CommandResult } from "./commands.ts";
 import type { CompanionResolveInput, LinkInput } from "./companion.ts";
 import { LANGUAGE_TAG_PATTERN, objectSchema as object } from "./config.ts";
+import { CHECK_MODES, type CheckTarget } from "./checks.ts";
 import type { DiagnosticsInput } from "./diagnostics.ts";
 import { HttpError } from "./errors.ts";
 import { HOME_COLUMNS, HOME_ROWS, SECTION_LAYOUTS, SECTION_TITLE_MAX, type ExpectedSection, type ItemMove, type SectionInput, type SectionLayout, type SectionPatch } from "./home.ts";
@@ -122,9 +123,13 @@ export const marksBody = ajv.compile<{ episodeIds: string[]; seen: boolean | nul
   object({ episodeIds: { type: "array", items: ID, minItems: 1, maxItems: 500 }, seen: { anyOf: [BOOLEAN, NULL] } }, ["episodeIds", "seen"]),
 );
 
-const DIAGNOSTICS_FIELDS = { sourceId: ID, preferredAudioLanguage: LANGUAGE_TAG_OR_NULL, probe: BOOLEAN };
+const DIAGNOSTICS_FIELDS = { sourceId: ID, preferredAudioLanguage: LANGUAGE_TAG_OR_NULL };
 
 export const diagnosticsBody = ajv.compile<DiagnosticsInput>(episodeOrChannel(DIAGNOSTICS_FIELDS));
+
+export const checkBody = ajv.compile<CheckTarget>({
+  oneOf: [object({ itemId: ID }, ["itemId"]), object({ deviceId: ID, mode: { enum: CHECK_MODES } }, ["deviceId", "mode"])],
+});
 
 const REPORT_FIELDS = {
   sessionId: { anyOf: [{ type: "string", maxLength: 64 }, NULL] },

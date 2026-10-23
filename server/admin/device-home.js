@@ -1,15 +1,16 @@
 // @ts-check
-// The "Home screen" tab of a TV's page: the TV's Home drawn to scale, its grid, sections, hidden shows, the selected
-// show's controls and "Add shows". Every edit is one single change on the server (never the whole list), and the screen
+// The "Home screen" tab of a TV's page: the TV's Home drawn to scale, its grid, sections, hidden shows, its checks, the
+// selected show's controls and "Add shows". Every edit is one single change on the server (never the whole list), and the screen
 // redraws from the answer. Everything is built once and updated in place, so a refresh never takes the focus away.
 
 import { api, attempt } from "./api.js";
 import { catalogBrowser } from "./catalog-browser.js";
+import { CHECK_NOTE, checkChip, checkRun, setCheckChip, setVerdictChip } from "./checks.js";
 import { actionButton, card, chip, h, keepFocus, keyedRows, loadError, loading, onSubmit, options, progressBar, setOff, setProgress, showRow, toast, uid } from "./dom.js";
 import {
   HOME_COLUMNS, HOME_MAX, HOME_ROWS, TV_W, UNTITLED, cardPlace, continueText, deleteSectionText, episodeName, episodeStateLabel, episodeStates,
-  formatClock, gridSummary, onTv, percent, plural, resumes, sectionCount, sectionName, showMeta, tvCard, tvCardX, tvFace, tvHomeLayout, tvLineOf,
-  tvMove, tvPanel, tvScrollBar, tvView,
+  formatClock, gridSummary, homeCheckLines, onTv, percent, plural, resumes, sectionCount, sectionName, showMeta, tvCard, tvCardX, tvFace, tvHomeLayout,
+  tvLineOf, tvMove, tvPanel, tvScrollBar, tvView, verdictOf,
 } from "./lib.js";
 
 /** @typedef {{ id: string, title: string | null, layout: string, itemIds: string[] }} Section */
@@ -328,6 +329,59 @@ export function homeCard(ctx) {
     showInspector();
   };
 
+  // --- checks: "Check Home…" (quick: what OK plays; full: every episode), its progress, and what failed or warned ----
+  const checks = checkRun(ctx.scope, {
+    mine: (target) => target.deviceId === ctx.id,
+    changed: (running) => {
+      for (const b of [quickCheck, fullCheck, ...resultsList.querySelectorAll("[data-control='again']")]) setOff(/** @type {HTMLElement} */ (b), running);
+    },
+    ended: () => void ctx.reload().catch(() => {}),
+  });
+  const quickCheck = actionButton("Quick: what OK plays", null, () => checks.start({ deviceId: ctx.id, mode: "quick" }));
+  const fullCheck = actionButton("Full: every episode", null, () => checks.start({ deviceId: ctx.id, mode: "full" }));
+  const checkMenu = h("div", { class: "check-home", id: uid("check-home"), role: "group", "aria-label": "Check Home", hidden: true },
+    h("div", { class: "buttons" }, quickCheck, fullCheck), h("p", { class: "muted hint" }, CHECK_NOTE));
+  const checkHome = h("button", { type: "button", "aria-expanded": "false", "aria-controls": checkMenu.id }, "Check Home…");
+  /** Opens or closes the two kinds of check; Escape closes them, the focus back on "Check Home…". @param {boolean} on */
+  const openChecks = (on) => {
+    checkMenu.hidden = !on;
+    checkHome.setAttribute("aria-expanded", String(on));
+  };
+  checkHome.addEventListener("click", () => {
+    const on = checkHome.getAttribute("aria-expanded") !== "true";
+    openChecks(on);
+    if (on) quickCheck.focus();
+  });
+  checkMenu.addEventListener("keydown", (ev) => {
+    if (ev.key !== "Escape") return;
+    openChecks(false);
+    checkHome.focus();
+  });
+
+  // Each show whose last check failed or warned (what OK plays, or any of its episodes), with "Check again".
+  const resultsList = h("ul", { class: "list" });
+  const checkResultRow = (/** @type {any} */ first) => {
+    const itemId = first.itemId;
+    const link = h("a", { href: `#/catalog/items/${encodeURIComponent(itemId)}` });
+    const verdict = chip("");
+    const lines = h("div", { class: "muted" });
+    const again = actionButton("Check again", { "data-control": "again" }, () => checks.start({ itemId }));
+    return {
+      element: h("li", { class: "row" }, h("div", { class: "grow" }, h("strong", null, link), verdict, lines), again),
+      /** @param {any} e */
+      update(e) {
+        link.textContent = nameOf(e);
+        setVerdictChip(verdict, verdictOf(e) ?? "ok");
+        lines.replaceChildren(...homeCheckLines(e).map((l) => h("div", null, l)));
+        again.setAttribute("aria-label", `Check ${nameOf(e)} again`);
+        setOff(again, checks.running());
+      },
+    };
+  };
+  const resultRows = keyedRows(resultsList, (/** @type {any} */ e) => e.itemId, checkResultRow, () => checkHome);
+  const resultsBox = h("div", { class: "callout warn check-results", hidden: true },
+    h("p", null, h("strong", null, "Check results"), " — what failed or warned when last checked. The show's page has each source's report."), resultsList);
+
   // --- what the TV hides ------------------------------------------------------------------------------------------
   const hiddenList = h("ul", { class: "list" });
   const hiddenRow = (/** @type {any} */ first) => {
@@ -467,6 +521,8 @@ export function homeCard(ctx) {
   const name = h("h3", { tabindex: "-1" });
   const line = h("div", { class: "muted" });
   const progress = /** @type {HTMLElement} */ (progressBar(0, "How far"));
+  const checked = checkChip(null);
+  const checkedAll = h("span", { class: "muted" });
   const entryNow = () => (selected ? shownAll().find((e) => e.itemId === selected) : undefined);
   const play = actionButton("Play", { class: "primary" }, async () => {
     const e = entryNow();
@@ -515,7 +571,7 @@ export function homeCard(ctx) {
     if (e) await keepFocus(() => save("DELETE", itemPath(e.itemId), undefined, `${nameOf(e)} removed.`), browser.search);
   });
   const inspector = h("section", { class: "inspector", "aria-label": "Selected show", hidden: true },
-    where, h("div", { class: "row top-align" }, h("div", { class: "grow" }, name, line, progress), h("div", { class: "buttons" }, play, episodes)),
+    where, h("div", { class: "row top-align" }, h("div", { class: "grow" }, name, line, progress, h("div", { class: "checked" }, h("span", { class: "muted" }, "Check: "), checked, " ", checkedAll)), h("div", { class: "buttons" }, play, episodes)),
     h("div", { class: "buttons moves", role: "group", "aria-label": "Move the card" }, h("span", { class: "muted" }, "Move"), left, right, up, down, first,
       h("label", { for: sectionChoice.id }, "Section"), sectionChoice, h("span", { class: "grow" }), remove),
     pickerBox);
@@ -553,6 +609,8 @@ export function homeCard(ctx) {
     const pct = !live && resumes(c) ? percent(c.positionMs, c.durationMs) : null;
     progress.hidden = pct === null;
     if (pct !== null) setProgress(progress, pct, `${formatClock(c.positionMs)} of ${formatClock(c.durationMs)}`);
+    setCheckChip(checked, e.check ?? null);
+    checkedAll.textContent = homeCheckLines(e)[1] ?? "";
     play.setAttribute("aria-label", `Play ${title}`);
     setOff(play, live ? !e.playable : !c);
     const row = tvLineOf(L, at.s, at.i);
@@ -628,6 +686,9 @@ export function homeCard(ctx) {
     view.hidden = shown.length === 0;
     hiddenRows.set(entries.filter((e) => !onTv(e)));
     hiddenBox.hidden = shown.length === entries.length;
+    const flagged = entries.filter((e) => verdictOf(e) === "fail" || verdictOf(e) === "warn");
+    resultRows.set(flagged);
+    resultsBox.hidden = flagged.length === 0;
     sectionRows.set(sections);
     addForm.hidden = sections.filter((s) => s.id !== UNTITLED).length >= sectionsMax;
     full.hidden = !addForm.hidden;
@@ -647,10 +708,11 @@ export function homeCard(ctx) {
 
   const element = card(
     {
-      title: "Home screen", aside: counter,
+      title: "Home screen", aside: h("div", { class: "buttons" }, counter, checkHome),
       intro: "The TV's Home, to scale: its sections one under the other, the cards left to right and row by row; further lines scroll into view. Select a card to play it, move it, choose its episode or remove it.",
     },
-    gridControls, gridHint, h("div", { class: "home-bench" }, h("div", { class: "tv" }, screen), sectionsPanel), hiddenBox, inspector, browser.element,
+    checkMenu, checks.element, gridControls, gridHint, h("div", { class: "home-bench" }, h("div", { class: "tv" }, screen), sectionsPanel), hiddenBox, resultsBox,
+    inspector, browser.element,
   );
   return { element, update };
 }

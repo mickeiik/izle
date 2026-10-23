@@ -12,9 +12,27 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
   channel's whole logo) instead of a cropped band; the focused card widens to 16:9 with the show's name and what OK
   plays in large type, over the backdrop or the blurred poster. Names no longer sit under the cards. The owner's
   columns × rows keep their meaning; the admin page's Home screen draws the same cards.
+- **`POST /api/v1/admin/diagnostics/resolve` answers the deep check** (*breaking, pre-release*): `probe` is gone from
+  the request and from each source, replaced by `verdict`, `steps`, `codecs`, `warnings` and `checkMs`; the answer
+  gains the playable's `verdict` and `checkedAt`, and is kept as that source's last result. The admin page's "Test
+  sources" is now "Check sources".
 
 ### Added
 
+- **Catalog checks: a whole show or a TV's whole Home in one go, deeper than before.** A check follows each source the
+  way the TV would fetch it, through the server's proxy when the TV gets it proxied: the playlist, every variant and
+  rendition playlist, the first segment (a live playlist's last), the init segment and the AES key, a file's first
+  bytes, subtitle tracks. It fails a source on what would stop the TV (a dead link, an error page instead of media,
+  an address the egress policy refuses) and warns on what may (HEVC, AV1 or Dolby codecs, above 1080p, SAMPLE-AES, an
+  MP4 without range requests). A pass means the server reached real media now, not that the TV can decode it.
+  - Server: `POST /api/v1/admin/checks` (`{itemId}`, or `{deviceId, mode: "quick" | "full"}` for what OK plays or
+    every episode of a TV's Home), `GET …/checks/current`, `GET …/checks/:id?seq=&wait=`, `DELETE …/checks/:id`,
+    `GET …/checks/playables/:id?itemId=`; one run at a time, two playables at once; `check.started` and `check.finished`
+    events. The last result of every source is kept until the source changes, and summarized as `check` on an
+    item's episodes and a Home's entries (`checkAll` for a show's every episode).
+  - Admin page: "Check all episodes" on a show's page and "Check Home…" (quick or full) on a TV's Home screen tab,
+    with progress and Stop; a chip on every episode and on the selected Home card; a "Check results" list of what
+    failed or warned; "Last result" shows a source's stored report without checking again.
 - **The validator is a stable interface for catalog producers:** `izle-validate` and `izle-server validate-catalog`,
   their exit status and their `--json` report are documented in the
   [catalog bundle spec](docs/spec/catalog-bundle-v1.md#json-report); within v1 the report only gains fields.
