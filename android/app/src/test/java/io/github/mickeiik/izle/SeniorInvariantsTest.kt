@@ -368,14 +368,12 @@ class SeniorInvariantsTest {
             assertFocusedTile("Show D")
             assertTrue(second.all(::shown))
             assertFalse(first.any(::shown))
-            val grid = compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange)).fetchSemanticsNode().boundsInRoot
-            // The card and the name under it, in full.
-            val d = compose.onAllNodesWithText("Show D").fetchSemanticsNodes()
-            assertEquals(2, d.size)
-            d.forEach {
-                val b = laidOut(it)
-                assertTrue("Show D inside the grid: $b, $grid", b.top >= grid.top && b.bottom <= grid.bottom && b.left >= grid.left && b.right <= grid.right)
-            }
+            val area = compose.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.VerticalScrollAxisRange)).fetchSemanticsNode().boundsInRoot
+            // The open card in full, its name in the card and in its panel, nothing under it.
+            val d = cardAt("Show D")
+            assertTrue("Show D inside Home: $d, $area", d.top >= area.top && d.bottom <= area.bottom && d.left >= area.left && d.right <= area.right)
+            assertEquals(1, compose.onAllNodesWithText("Show D").fetchSemanticsNodes().size)
+            assertEquals(2, compose.onAllNodesWithText("Show D", useUnmergedTree = true).fetchSemanticsNodes().size)
 
             // Three to a row, exactly one row: D's card is where A's was.
             assertSameBounds(slot, cardAt("Show D"))
@@ -390,7 +388,9 @@ class SeniorInvariantsTest {
     }
 
     @Test
-    fun aBackdropAndAPosterBothFillTheirCards() {
+    // Native graphics decode the pictures (the default "legacy" ones fail, and a card then shows its name instead).
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    fun thePosterFillsTheCardAndTheOpenCardsPanelLiesOverTheBackdrop() {
         entries = mapOf(
             "b" to """{"item":{"id":"b","kind":"movie","title":"Show B","posterUrl":"/assets/b-poster.png",""" +
                 """"backdropUrl":"/assets/b-backdrop.png"},"continue":{"episodeId":"b.film","status":"new"}}""",
@@ -398,24 +398,32 @@ class SeniorInvariantsTest {
                 """"continue":{"episodeId":"c.film","status":"new"}}""",
         )
         onTv { tv ->
-            // The picture takes the title's place in the card and describes it; A, without one, keeps its title there.
+            // The poster takes the name's place in the card and describes it; A, without one, keeps its name there.
             waitUntil("the cards") {
                 exists(hasClickAction() and hasContentDescription("Show B")) && exists(hasClickAction() and hasContentDescription("Show C")) &&
                     exists(hasClickAction() and hasText("Show A"))
             }
             compose.onNode(hasClickAction() and hasContentDescription("Show B")).assertIsDisplayed().assert(hasText(string(R.string.badge_new)))
             compose.onNode(hasClickAction() and hasContentDescription("Show C")).assertIsDisplayed()
-            assertFalse(exists(hasClickAction() and hasText("Show B")))
-            // The names are under the cards.
-            compose.onNode(hasText("Show B") and !hasClickAction()).assertIsDisplayed()
-            compose.onNode(hasText("Show C") and !hasClickAction()).assertIsDisplayed()
-            // B's backdrop is loaded (not its poster), C's poster.
-            waitUntil("the pictures") { "/assets/b-backdrop.png" in assetRequests() && "/assets/c-poster.png" in assetRequests() }
-            assertFalse("B's poster: ${assetRequests()}", "/assets/b-poster.png" in assetRequests())
+            // No name under the cards, nor in a closed card with a poster.
+            assertFalse(exists(hasText("Show B")))
+            assertFalse(exists(hasText("Show C")))
+            // The posters are loaded; the backdrop only lies behind an open card's panel.
+            waitUntil("the posters") { "/assets/b-poster.png" in assetRequests() && "/assets/c-poster.png" in assetRequests() }
+            assertFalse("B's backdrop: ${assetRequests()}", "/assets/b-backdrop.png" in assetRequests())
 
             assertFocusedTile("Show A")
             tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
+            // B opens: its poster, and its name and what OK does in the panel, over the backdrop.
             compose.onNode(isFocused() and hasClickAction()).assert(hasContentDescription("Show B"))
+                .assert(hasText("Show B")).assert(hasText(string(R.string.badge_new)))
+            waitUntil("the backdrop") { "/assets/b-backdrop.png" in assetRequests() }
+            // 16:9 at a poster card's height; C, closed, is 2:3.
+            val b = cardAt("Show B")
+            val c = laidOut(compose.onNode(hasClickAction() and hasContentDescription("Show C")).fetchSemanticsNode())
+            assertEquals(c.height, b.height, 0.5f)
+            assertEquals(2f / 3f, c.width / c.height, 0.01f)
+            assertEquals(16f / 9f, b.width / b.height, 0.01f)
         }
     }
 
@@ -463,18 +471,24 @@ class SeniorInvariantsTest {
             assertTrue("the title between the rows: $title", title.top > cardAt("Show A").bottom && title.bottom < cardAt("Show C").top)
             compose.onAllNodes(isFocusable() and hasText("Films")).assertCountEquals(0)
 
-            // The focused card grows: places are compared by the name under each card.
-            fun x(title: String) = textAt(title).left
+            // The focused card opens; the cards after it in its line move along.
+            fun x(title: String) = cardAt(title).left
             val pitch = cardAt("Show D").width + 20f * density()
             assertFocusedTile("Show A")
+            val open = cardAt("Show A").width
+            assertEquals(16f / 9f, open / cardAt("Show A").height, 0.01f)
+            assertEquals(x("Show A") + open + 20f * density(), x("Show B"), 0.5f)
             tv.press(KeyEvent.KEYCODE_DPAD_DOWN)
             assertFocusedTile("Show C")
             val start = x("Show C")
             assertEquals(x("Show A"), start, 0.5f)
-            // Along the line, within what is in view: nothing moves.
+            assertEquals(open, cardAt("Show C").width, 0.5f)
+            assertEquals(pitch, cardAt("Show A").width + 20f * density(), 0.5f)
+            // Along the line, within what is in view: the line stays put.
             repeat(3) { tv.press(KeyEvent.KEYCODE_DPAD_RIGHT) }
             assertFocusedTile("Show F")
             assertEquals(start, x("Show C"), 0.5f)
+            assertEquals(start + 3 * pitch, x("Show F"), 0.5f)
             // Past the last card in view, the line slides by one card under the focus.
             tv.press(KeyEvent.KEYCODE_DPAD_RIGHT)
             assertFocusedTile("Show G")
@@ -513,14 +527,16 @@ class SeniorInvariantsTest {
             // E, the card after those in view, peeks into the margin; F comes once the line slides.
             waitUntil("the line") { exists(hasClickAction() and hasText("Show E")) }
             // One line: E follows D on it (not a second row), and nothing but the cards is drawn.
-            assertEquals(textAt("Show A").top, textAt("Show E").top, 0.5f)
+            assertEquals(cardAt("Show A").top, cardAt("Show E").top, 0.5f)
             assertEquals(emptySet<String>(), allTexts().toSet() - home.map { "Show ${it.uppercase()}" }.toSet() - string(R.string.badge_new))
-            val start = textAt("Show A").left
-            val pitch = textAt("Show B").left - start
+            val start = cardAt("Show A").left
+            // B and C are closed.
+            val pitch = cardAt("Show C").left - cardAt("Show B").left
             repeat(4) { tv.press(KeyEvent.KEYCODE_DPAD_RIGHT) }
             assertFocusedTile("Show E")
             // It slid by one card.
-            assertEquals(start + 3 * pitch, textAt("Show E").left, 0.5f)
+            assertEquals(start + 3 * pitch, cardAt("Show E").left, 0.5f)
+            assertEquals(start - pitch, cardAt("Show A").left, 0.5f)
             tv.press(KeyEvent.KEYCODE_DPAD_DOWN)
             assertFocusedTile("Show E")
         }
@@ -534,10 +550,11 @@ class SeniorInvariantsTest {
             """{"id":"untitled","title":null,"layout":"grid","itemIds":["d"]}]"""
         onTv { tv ->
             waitUntil("the sections") { exists("Kids") && exists(hasClickAction() and hasText("Show D")) }
-            // C ends the titled section's row (it takes the rest of it) but keeps one card's size; D starts a row under A.
+            // D starts a row of its own under A, at the size of the cards closed beside A.
             assertEquals(cardAt("Show B").size, cardAt("Show C").size)
-            assertEquals(textAt("Show A").left, textAt("Show D").left, 0.5f)
-            assertTrue(textAt("Show D").top > textAt("Show A").bottom)
+            assertEquals(cardAt("Show B").size, cardAt("Show D").size)
+            assertEquals(cardAt("Show A").left, cardAt("Show D").left, 0.5f)
+            assertTrue(cardAt("Show D").top > cardAt("Show A").bottom)
             tv.press(KeyEvent.KEYCODE_DPAD_DOWN)
             assertFocusedTile("Show D")
         }
@@ -682,7 +699,7 @@ class SeniorInvariantsTest {
 
     private fun cardAt(title: String) = laidOut(tile(title))
 
-    /** Where a text outside the cards (a name under one, a section's title) is laid out, unclipped. */
+    /** Where a text outside the cards (a section's title) is laid out, unclipped. */
     private fun textAt(text: String) = laidOut(compose.onNode(hasText(text) and !hasClickAction()).fetchSemanticsNode())
 
     /** The tile with this title (in the card: one without a picture) is on screen, not clipped away by the grid. */
