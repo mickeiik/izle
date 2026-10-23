@@ -12,7 +12,7 @@ import {
   languageLabel, liveViewingLine, mediaKindLabel, nowPlayingLine, parseCandidate, parseSse, percent, playbackState, plural,
   problemContext, resumes, sameLanguage, scopeLabel, serverAddress, shortId, showMeta, sourceReport, syncDecision,
   titleLine, titleStatusLabel, tokenFromHash, triggerLabel, tvPositionAt, viewingEnd, viewingSpan,
-  onTv, tvCard, tvGrid,
+  onTv, tvCard, tvFace, tvGrid, tvPanel, wrapLines,
   SECTION_HEADER, UNTITLED, cardPlace, deleteSectionText, sectionCount, sectionName, tvCardX, tvHomeLayout, tvLineOf, tvMove, tvRowFirst, tvScroll,
   tvScrollBar, tvView,
 } from "../admin/lib.js";
@@ -273,14 +273,19 @@ test("admin helpers: the home limit and grid choices are the server's", () => {
 });
 
 test("admin helpers: the TV's Home grid and what its cards show", () => {
-  const size = (g: ReturnType<typeof tvGrid>) => [g.columns, g.rows, g.cardWidth, g.titleLines, g.viewportWidth, g.viewportHeight];
+  const size = (g: ReturnType<typeof tvGrid>) => [g.columns, g.rows, g.cardWidth, g.cardHeight, g.openWidth];
   cases([
-    // 4 × 2 (the default): width-bound cards, two title lines; the viewport is exactly two rows.
-    [size(tvGrid(4, 2)), [4, 2, 194, 2, 864, 414.25]],
-    [size(tvGrid(3, 1)), [3, 1, 265, 2, 863, 251.0625]],
-    // 6 × 4: a second title line would shrink the cards (45 dp), so one line (102 dp).
-    [size(tvGrid(6, 4)), [6, 4, 102, 1, 740, 485.5]],
+    // 2:3 cards, as large as fit with one card of a row open (16:9 at the card's height), R cards in the height.
+    [size(tvGrid(4, 2)), [4, 2, 136, 204, 362], "the default: width-bound"],
+    [size(tvGrid(4, 2, 486 - SECTION_HEADER)), [4, 2, 131, 196.5, 349], "with a titled section: height-bound"],
+    [size(tvGrid(3, 1)), [3, 1, 170, 255, 453]],
+    [size(tvGrid(6, 2)), [6, 2, 96, 144, 256]],
+    [size(tvGrid(6, 4)), [6, 4, 66, 99, 176]],
+    [size(tvGrid(5, 3)), [5, 3, 92, 138, 245]],
     [[tvGrid(9, 0).columns, tvGrid(9, 0).rows], [6, 1], "clamped to 3–6 × 1–4"],
+    // A row with one card open fits the safe area (864 dp) with PADDING on each side; the viewport is exactly R rows.
+    [[tvGrid(4, 2).rowWidth, tvGrid(4, 2).viewportWidth, tvGrid(4, 2).viewportHeight], [3 * 156 + 362, 858, 2 * 204 + 20 + 28]],
+    [[tvGrid(4, 2).faceLines, tvGrid(6, 4).faceLines], [5, 2], "a name's lines in a card without a picture"],
   ]);
   const ep = (o: object) => ({ episodeId: "e", season: 1, number: 2, title: null, label: null, index: 1, status: "new", positionMs: 0, durationMs: 600_000, ...o });
   const card = (kind: string, c: object | null, newEpisodes = 0) => tvCard({ kind, continue: c ? (ep(c) as any) : null, newEpisodes });
@@ -299,43 +304,67 @@ test("admin helpers: the TV's Home grid and what its cards show", () => {
     [card("movie", { status: "new" }).tone, "new"],
     [[onTv({}), onTv({ playable: true }), onTv({ missing: true }), onTv({ playable: false })], [true, true, false, false]],
   ]);
+
+  // What fits, in a font whose characters are all half its size wide (the page measures the real one).
+  const measure = (text: string, px: number) => text.length * px * 0.5;
+  const g42 = tvGrid(4, 2);
+  const g64 = tvGrid(6, 4);
+  const resume = card("series", { status: "watching", positionMs: 60_000 }, 2);
+  cases([
+    [wrapLines("a bb ccc", 4, 1, (t) => t.length), 2], [wrapLines("", 4, 1, (t) => t.length), 0],
+    [wrapLines("averyveryverylongword x", 4, 1, (t) => t.length), 2, "a word wider than the line takes a line of its own"],
+    // A closed card: its 16 sp chip in the card less 8 dp each side, "Continue · Episode 2" as "Continue".
+    [tvFace(resume, g42, measure), { chip: "Continue", newEpisodes: true }],
+    [tvFace(card("series", {}), g42, measure).chip, "Episode 2"],
+    [tvFace(card("series", { season: 2, number: 3 }), g42, measure).chip, null, "too wide: left out (the bar would stay)"],
+    [tvFace(card("live", null), g64, measure).chip, "Live"],
+    [tvFace(card("series", {}, 2), g64, measure), { chip: null, newEpisodes: false }, "6 × 4: no room for either"],
+  ]);
+  cases([
+    // The panel: 362 − 136 − 24 = 202 dp wide, 180 dp high. The full chip is too wide at 24 sp: Continue, the episode under.
+    [tvPanel(resume, "Tears of Steel", g42, measure), { nameLines: 1, news: "2 new episodes", chip: "Continue", chipSize: 24, episode: "Episode 2", progress: 10 }],
+    [tvPanel(card("series", {}, 1), "Sintel", g42, measure), { nameLines: 1, news: "1 new episode", chip: "Episode 2", chipSize: 24, episode: null, progress: null }],
+    // A name on three lines: "2 new episodes" goes first, then the episode line.
+    [tvPanel(resume, "The Good, the Bad and the Ugly", g42, measure), { nameLines: 3, news: null, chip: "Continue", chipSize: 24, episode: null, progress: 10 }],
+    // 6 × 4: 86 dp wide; "Watch again" is too wide at 24 sp, drawn at 16 sp; then name lines down to one.
+    [tvPanel(card("movie", { status: "finished" }), "Sintel", g64, measure), { nameLines: 1, news: null, chip: "Watch again", chipSize: 16, episode: null, progress: null }],
+    [tvPanel(card("movie", null), "A rather long film title", g64, measure).nameLines, 1],
+    [tvPanel(card("live", null), "News", g42, measure), { nameLines: 1, news: null, chip: "Live", chipSize: 24, episode: null, progress: null }],
+  ]);
 });
 
 test("admin helpers: Home with sections, laid out as the TV app does", () => {
-  // A title wraps at the card's width when it is longer than 12 characters (the page measures the real font).
-  const wraps = (title: string) => title.length > 12;
-  const section = (id: string, title: string | null, titles: string[], layout = "grid") => ({ id, title, layout, titles });
-  const films = section("films", "Films", ["Tears of Steel", "Bunny", "Sintel", "Charade", "Elephants Dream", "The General"]);
-  const untitled = section(UNTITLED, null, ["Caminandes", "The Kid", "Sherlock Jr."]);
-  const channels = section("chan", "Channels", ["News", "Music", "Nature", "Kids", "Sport", "Classics"], "row");
+  const section = (id: string, title: string | null, count: number, layout = "grid") => ({ id, title, layout, count });
+  const films = section("films", "Films", 6);
+  const untitled = section(UNTITLED, null, 3);
+  const channels = section("chan", "Channels", 6, "row");
 
-  // Only the untitled section: exactly today's grid, pixel for pixel.
-  const plain = tvHomeLayout(4, 2, [section(UNTITLED, null, ["a", "b", "c", "d", "e", "f"])], wraps);
+  // Only the untitled section: exactly the grid, a row with one card open centred in the safe area.
+  const plain = tvHomeLayout(4, 2, [section(UNTITLED, null, 6)]);
   const today = tvGrid(4, 2);
   cases([
     [plain.grid, today, "no titled section: no title reserve"],
-    [plain.viewport, { x: 48, y: (540 - today.viewportHeight) / 2, width: today.viewportWidth, height: today.viewportHeight }],
-    [plain.sections.map((s) => [s.top, s.titleTop, s.rowTops, s.lineY]), [[0, null, [14, 14 + today.cellHeight + 20], null]]],
+    [plain.x0, 48 + (864 - today.rowWidth) / 2, "the first column's left edge"],
+    [plain.viewport, { x: plain.x0 - 14, y: (540 - today.viewportHeight) / 2, width: today.viewportWidth, height: today.viewportHeight }],
+    [plain.sections.map((s) => [s.top, s.titleTop, s.rowTops, s.lineY]), [[0, null, [14, 14 + 204 + 20], null]]],
     [plain.contentHeight, today.viewportHeight, "two rows fill the viewport"],
     [tvScrollBar(plain, 0), null, "nothing to scroll: no scroll bar"],
   ]);
 
   // Films (a titled grid), the untitled section, Channels (a scrolling line).
-  const L = tvHomeLayout(4, 2, [films, untitled, channels], wraps);
-  const pitch = L.grid.cellHeight + L.grid.gap;
+  const L = tvHomeLayout(4, 2, [films, untitled, channels]);
+  const step = L.grid.cardHeight + L.grid.gap;
   const [f, u, c] = L.sections;
   cases([
     [L.grid, tvGrid(4, 2, 486 - SECTION_HEADER), "a titled section: the cards from the safe area less one title"],
-    [[L.titled, L.viewport.height, L.x0, L.contentWidth, L.pitch, L.lines], [true, L.grid.viewportHeight + 44, 62, 836, 214, 4]],
-    [[f.titleTop, f.rowTops, f.cellBottom, f.lineY, f.top], [0, [58, 58 + pitch], 444.25, null, 0], "title at 0, cards at 44 + 14"],
+    [[L.titled, L.viewport.height, L.x0, L.contentWidth, L.pitch, L.lines], [true, L.grid.viewportHeight + 44, 79, 802, 151, 4]],
+    [[f.titleTop, f.rowTops, f.cellBottom, f.lineY, f.top], [0, [58, 58 + step], 471, null, 0], "title at 0, cards at 44 + 14"],
     // The boundary takes exactly one row step: the untitled cards are where a third Films row would be.
-    [u.rowTops[0] - f.rowTops[1], pitch, "a boundary is one row step"],
-    [[u.titleTop, u.top, u.cellBottom], [null, 464.25 - 14, 647.375]],
-    // Films' last row has a title on two lines: the line is in the middle of the gap.
-    [u.lineY, Math.round((444.25 + 464.25) / 2)],
-    // No title in the untitled row wraps: its second title line counts as empty space above the line.
-    [c.lineY, Math.round((647.375 - 32 + 667.375) / 2)],
-    [[c.titleTop, c.rowTops, c.row, c.count], [667.375, [667.375 + 58], true, 6], "a titled section starts where a next row would"],
+    [u.rowTops[0] - f.rowTops[1], step, "a boundary is one row step"],
+    [[u.titleTop, u.top, u.cellBottom], [null, 491 - 14, 687.5]],
+    // The line between two sections is in the middle of the gap above the next.
+    [[u.lineY, c.lineY], [Math.round((471 + 491) / 2), Math.round((687.5 + 707.5) / 2)]],
+    [[c.titleTop, c.rowTops, c.row, c.count], [707.5, [707.5 + 58], true, 6], "a titled section starts where a next row would"],
     [L.contentHeight, c.cellBottom + 14],
   ]);
 
@@ -344,14 +373,14 @@ test("admin helpers: Home with sections, laid out as the TV app does", () => {
     [tvScroll(L, 0, 0, 300), 0, "Home's first line: at the top"],
     [tvScroll(L, 0, 1, 0), 0, "the title and two rows fit the first screen"],
     [tvScroll(L, 2, 0, 0), L.contentHeight - L.viewport.height, "down to Channels, the end of Home"],
-    [tvScroll(L, 1, 0, 464.25), 450.25, "up to the untitled line: its top less PADDING"],
+    [tvScroll(L, 1, 0, 600), 477, "up to the untitled line: its top less PADDING"],
     [tvScroll(L, 1, 0, 300), 300, "already in view: nothing moves"],
   ]);
-  const bar = tvScrollBar(L, 464.25)!;
+  const bar = tvScrollBar(L, 477)!;
   cases([
     [[bar.x, bar.y, bar.width, bar.height], [932, L.viewport.y + 14, 6, L.viewport.height - 28]],
     [bar.thumbHeight, (L.viewport.height / L.contentHeight) * bar.height],
-    [bar.thumbTop, (464.25 / L.contentHeight) * bar.height],
+    [bar.thumbTop, (477 / L.contentHeight) * bar.height],
   ]);
 
   // A scrolling line moves only once the focus reaches the edge of what is in view, and never past its ends.
@@ -359,9 +388,17 @@ test("admin helpers: Home with sections, laid out as the TV app does", () => {
     [tvRowFirst(0, 3, 4, 6), 0], [tvRowFirst(0, 4, 4, 6), 1], [tvRowFirst(0, 5, 4, 6), 2], [tvRowFirst(2, 3, 4, 6), 2, "in view: stays"],
     [tvRowFirst(2, 1, 4, 6), 1, "back the same way"], [tvRowFirst(4, 2, 4, 3), 0, "fewer cards than columns"], [tvRowFirst(9, 5, 4, 6), 2],
   ]);
-  cases([[tvCardX(L, 2, 5, 2), 62 + 3 * 214], [tvCardX(L, 2, 6, 2), 62 + 4 * 214, "the next card, in the margin"], [tvCardX(L, 0, 5, 0), 62 + 214]]);
+  // The open card (131 dp, 349 dp open) pushes the cards after it in its line right by 218 dp.
+  cases([
+    [tvCardX(L, 2, 5, 2), 79 + 3 * 151], [tvCardX(L, 2, 6, 2), 79 + 4 * 151, "the next card, in the margin"], [tvCardX(L, 0, 5, 0), 79 + 151],
+    [tvCardX(L, 0, 2, 0, 1), 79 + 2 * 151 + 218, "after the open card"], [tvCardX(L, 0, 1, 0, 1), 79 + 151, "the open card itself"],
+    [tvCardX(L, 0, 5, 0, 1), 79 + 151, "another row does not move"],
+    [tvCardX(L, 0, 3, 0, 0) + L.grid.cardWidth, L.x0 + L.contentWidth, "a row with one card open ends at the content's edge"],
+    [L.x0 - 48, 48 + 864 - (L.x0 + L.contentWidth), "centred in the safe area"],
+    [tvCardX(L, 2, 6, 2, 5), 79 + 4 * 151 + 218, "a scrolling line: the margin card moves too"],
+  ]);
 
-  // Focus moves: ← → along a line, ↑ ↓ line by line across sections, onto the nearest card.
+  // Focus moves: ← → along a line, ↑ ↓ line by line across sections, onto the card in the nearest column.
   cases([
     [tvMove(L, {}, 0, 5, "ArrowDown"), { s: 1, i: 1 }, "Films row 2, column 2 → the untitled card 2"],
     [tvMove(L, {}, 0, 3, "ArrowDown"), { s: 0, i: 5 }, "no card under it in Films' last row: the nearest one"],
@@ -380,8 +417,8 @@ test("admin helpers: Home with sections, laid out as the TV app does", () => {
 
   // Every redraw brings the selected card into view by the focus rule, also when an edit moved it there: here the
   // owner's Section select put it at the end of Films, a scrolling line of 5 cards at 4 columns, seen from its start.
-  const rowFilms = section("films", "Films", ["Tears of Steel", "Bunny", "Sintel", "Charade", "Elephants Dream"], "row");
-  const R = tvHomeLayout(4, 2, [untitled, rowFilms], wraps);
+  const rowFilms = section("films", "Films", 5, "row");
+  const R = tvHomeLayout(4, 2, [untitled, rowFilms]);
   cases([
     [tvView(R, { films: 0 }, { s: 1, i: 4 }, -1, 0), { firsts: { films: 1 }, offset: tvScroll(R, 1, 0, 0) }, "the line slides, the screen scrolls"],
     [tvView(R, { films: 0 }, { s: 1, i: 4 }, -1, 0).offset > 0, true],
@@ -393,22 +430,19 @@ test("admin helpers: Home with sections, laid out as the TV app does", () => {
 
   // An empty titled section is drawn where it is (one row: its band), and has no card to move to. The cards keep the
   // TV's size: it shows no titled section here.
-  const empty = section("old", "Old films", []);
-  const E = tvHomeLayout(4, 2, [section(UNTITLED, null, ["a", "b"]), empty, section("x", null, ["c"])], wraps);
+  const empty = section("old", "Old films", 0);
+  const E = tvHomeLayout(4, 2, [section(UNTITLED, null, 2), empty, section("x", null, 1)]);
   const [, band, after] = E.sections;
   cases([
     [E.grid, tvGrid(4, 2), "an empty section sets nothing aside"],
     [[band.empty, band.count, band.titleTop, band.rowTops.length], [true, 0, E.sections[0].cellBottom + 20, 1]],
-    [band.lineY, Math.round((E.sections[0].cellBottom - 32 + band.titleTop!) / 2)],
-    [after.lineY, Math.round((band.cellBottom + after.rowTops[0]) / 2), "the band fills its cell"],
+    [band.lineY, Math.round((E.sections[0].cellBottom + band.titleTop!) / 2)],
+    [after.lineY, Math.round((band.cellBottom + after.rowTops[0]) / 2), "the band fills its cards' height"],
     [tvMove(E, {}, 0, 1, "ArrowDown"), { s: 2, i: 0 }, "↓ skips the empty section"],
     [tvMove(E, {}, 2, 0, "ArrowUp"), { s: 0, i: 0 }],
-    [tvHomeLayout(4, 2, [section(UNTITLED, null, []), section("f", "Films", ["a"])], wraps).sections.map((s) => [s.id, s.titleTop]), [["f", 0]], "an empty untitled section is not drawn"],
-    [tvHomeLayout(4, 2, [], wraps).contentHeight, 0],
+    [tvHomeLayout(4, 2, [section(UNTITLED, null, 0), section("f", "Films", 1)]).sections.map((s) => [s.id, s.titleTop]), [["f", 0]], "an empty untitled section is not drawn"],
+    [tvHomeLayout(4, 2, []).contentHeight, 0],
   ]);
-  // A title on two lines only where the grid has a second line: 6 × 4 has one.
-  const one = tvHomeLayout(6, 4, [section("a", "A", ["A very long title indeed"]), section("b", "B", ["b"])], wraps);
-  cases([[one.grid.titleLines, 1], [one.sections[1].lineY, Math.round((one.sections[0].cellBottom + one.sections[1].titleTop!) / 2)]]);
 
   cases([
     [cardPlace({ title: "Films", row: false }, 2, 6, 4), "Films · card 3 of 6 · row 1, column 3"],
