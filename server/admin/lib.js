@@ -704,9 +704,9 @@ export function tvFace(c, grid, measure) {
 
 /**
  * The open card's panel (`openWidth` less the card's width, 12 dp inside): the name's lines (1–3), "2 new episodes"
- * (null: left out), the chip saying what OK does and its size (24, else 16 when too wide), the episode line under a
- * "Continue" chip too wide with its episode (null: none), and the progress bar. What does not fit the height is left
- * out in this order: "2 new episodes", the episode line, then name lines down to one. A channel: its name and Live.
+ * (null: left out), the chip saying what OK does and its size (24, else 16 when too wide, or too tall under one line
+ * of name), the episode line under a "Continue" chip too wide with its episode (null: none), and the progress bar.
+ * Whatever else does not fit the height is left out in this order: "2 new episodes", the episode line, then name lines down to one. A channel: its name and Live.
  * @param {ReturnType<typeof tvCard>} c @param {string} name @param {ReturnType<typeof tvGrid>} grid
  * @param {MeasureText} measure
  */
@@ -719,7 +719,9 @@ export function tvPanel(c, name, grid, measure) {
   let episode = null;
   const parts = splitContinue(c.chip);
   if (parts && !chipFits(c.chip)) [chip, episode] = parts;
-  const chipSize = chipFits(chip) ? 24 : 16;
+  // At 24 sp when it fits the width, and the height under one line of name (with the bar, which always stays).
+  const bar = c.progress !== null ? CARD_INSET + BAR : 0;
+  const chipSize = chipFits(chip) && NAME_LINE + CARD_INSET + CHIP_24 + bar <= height ? 24 : 16;
   /** @type {string | null} */
   let news = c.newEpisodes > 0 ? plural(c.newEpisodes, "new episode") : null;
   let nameLines = Math.max(1, Math.min(3, wrapLines(name, width, 26, measure)));

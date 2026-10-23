@@ -326,9 +326,13 @@ test("admin helpers: the TV's Home grid and what its cards show", () => {
     [tvPanel(card("series", {}, 1), "Sintel", g42, measure), { nameLines: 1, news: "1 new episode", chip: "Episode 2", chipSize: 24, episode: null, progress: null }],
     // A name on three lines: "2 new episodes" goes first, then the episode line.
     [tvPanel(resume, "The Good, the Bad and the Ugly", g42, measure), { nameLines: 3, news: null, chip: "Continue", chipSize: 24, episode: null, progress: 10 }],
-    // 6 × 4: 86 dp wide; "Watch again" is too wide at 24 sp, drawn at 16 sp; then name lines down to one.
+    // 6 × 4: 86 dp wide, 75 dp high. "Watch again" is too wide at 24 sp: 16 sp; then name lines down to one.
     [tvPanel(card("movie", { status: "finished" }), "Sintel", g64, measure), { nameLines: 1, news: null, chip: "Watch again", chipSize: 16, episode: null, progress: null }],
-    [tvPanel(card("movie", null), "A rather long film title", g64, measure).nameLines, 1],
+    // "New" fits the width at 24 sp but not the height under one line of name (34 + 8 + 38 > 75): 16 sp, nothing clipped.
+    [tvPanel(card("movie", null), "A rather long film title", g64, measure), { nameLines: 1, news: null, chip: "New", chipSize: 16, episode: null, progress: null }],
+    [tvPanel(card("series", {}, 2), "Sintel", g64, measure), { nameLines: 1, news: null, chip: "Episode 2", chipSize: 16, episode: null, progress: null }],
+    // 4 × 2 with a titled section (131 × 196.5, 349 open): the 24 sp chip fits under the name.
+    [tvPanel(card("movie", null), "Sintel", tvGrid(4, 2, 486 - SECTION_HEADER), measure).chipSize, 24],
     [tvPanel(card("live", null), "News", g42, measure), { nameLines: 1, news: null, chip: "Live", chipSize: 24, episode: null, progress: null }],
   ]);
 });
