@@ -331,6 +331,10 @@ test("admin helpers: the TV's Home grid and what its cards show", () => {
     // "New" fits the width at 24 sp but not the height under one line of name (34 + 8 + 38 > 75): 16 sp, nothing clipped.
     [tvPanel(card("movie", null), "A rather long film title", g64, measure), { nameLines: 1, news: null, chip: "New", chipSize: 16, episode: null, progress: null }],
     [tvPanel(card("series", {}, 2), "Sintel", g64, measure), { nameLines: 1, news: null, chip: "Episode 2", chipSize: 16, episode: null, progress: null }],
+    // A resuming card at 6 × 4: one name line, the 16 sp chip, and the bar left out last (34 + 8 + 26 + 8 + 6 > 75).
+    [tvPanel(resume, "The Good, the Bad and the Ugly", g64, measure), { nameLines: 1, news: null, chip: "Continue", chipSize: 16, episode: null, progress: null }],
+    // The bar stays wherever it fits: 4 × 2, a resuming card keeps it.
+    [tvPanel(resume, "The Good, the Bad and the Ugly", g42, measure).progress, 10],
     // 4 × 2 with a titled section (131 × 196.5, 349 open): the 24 sp chip fits under the name.
     [tvPanel(card("movie", null), "Sintel", tvGrid(4, 2, 486 - SECTION_HEADER), measure).chipSize, 24],
     [tvPanel(card("live", null), "News", g42, measure), { nameLines: 1, news: null, chip: "Live", chipSize: 24, episode: null, progress: null }],
