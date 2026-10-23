@@ -17,9 +17,10 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 
 - **Logs show catalog, item, episode and source ids and TV problem codes again.** Redaction took any run of 20 or
   more letters, digits, `-` and `_` for a token, so a build id like `20261023-78ece5b2deea`, most item and episode
-  ids and codes like `ERROR_CODE_IO_BAD_HTTP_STATUS` were logged as `<token>`. In their own fields (`catalogId`,
-  `buildId`, `itemId`, `episodeId`, `sourceId`, `adapterId`, `code`) a value shaped like an id or a code is now
-  written as given; tokens, URLs and anything else there, and ids in any other field, are still scrubbed.
+  ids, adapter lists and codes like `ERROR_CODE_IO_BAD_HTTP_STATUS` or `SQLITE_CONSTRAINT_PRIMARYKEY` were logged as
+  `<token>`. In their own fields (`catalogId`, `buildId`, `itemId`, `episodeId`, `sourceId`, `adapterId`, `adapters`,
+  `code`, and an error's `code`) a value shaped like an id or a code is now written as given; tokens, UUIDs, URLs and
+  anything else there, and ids in any other field or in nested objects, are still scrubbed.
 
 ## [0.6.0] - 2026-10-23
 
