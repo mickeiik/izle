@@ -421,29 +421,31 @@ export function gridSummary(columns, rows, homeCount) {
 
 /**
  * The TV's Home grid in dp, as HomeGrid.compute of the TV app (keep the two in step) on its safe area: `columns` ×
- * `rows` 16:9 cards (clamped to 3–6 × 1–4) as large as fit, each with its title (32 dp lines) under it, on two lines
- * unless that makes the cards smaller. `height`: the area, less `SECTION_HEADER` when Home shows a titled section.
+ * `rows` portrait 2:3 cards (clamped to 3–6 × 1–4) as large as fit with one card of a row open (16:9 at the card's
+ * height, `openWidth`), and no names under them. `rowWidth`: a row with one card open, from its first card's left edge
+ * to its last card's right edge; the viewport is that and PADDING around it, exactly `rows` rows tall. `faceLines`: the
+ * lines of a name that fit in a card without a picture. `height`: the area, less `SECTION_HEADER` when Home shows a
+ * titled section.
  * @param {number} columns @param {number} rows @param {number} [height]
  */
 export function tvGrid(columns, rows, height = TV_H - 2 * TV_SAFE_Y) {
   const width = TV_W - 2 * TV_SAFE_X;
   const gap = 20;
   const padding = 14;
-  const titleGap = 10;
   const cols = Math.min(HOME_COLUMNS[HOME_COLUMNS.length - 1], Math.max(HOME_COLUMNS[0], columns));
   const rowsShown = Math.min(HOME_ROWS[HOME_ROWS.length - 1], Math.max(HOME_ROWS[0], rows));
-  const widthBound = (width - 2 * padding - (cols - 1) * gap) / cols;
-  const titleHeight = (/** @type {number} */ lines) => titleGap + TITLE_LINE * lines;
-  const heightBound = (/** @type {number} */ lines) => (((height - 2 * padding - (rowsShown - 1) * gap) / rowsShown - titleHeight(lines)) * 16) / 9;
-  const widthFor = (/** @type {number} */ lines) => Math.max(1, Math.floor(Math.min(widthBound, heightBound(lines))));
-  const titleLines = widthFor(2) < widthFor(1) ? 1 : 2;
-  const cardWidth = widthFor(titleLines);
-  const cardHeight = (cardWidth * 9) / 16;
-  const cellHeight = cardHeight + titleHeight(titleLines);
+  // N − 1 cards and one open card (8/3 of a card) fit a row; R cards (3/2 of a card tall) fit the height.
+  const widthBound = (3 * (width - 2 * padding - (cols - 1) * gap)) / (3 * cols + 5);
+  const heightBound = (2 * (height - 2 * padding - (rowsShown - 1) * gap)) / (3 * rowsShown);
+  const cardWidth = Math.max(1, Math.floor(Math.min(widthBound, heightBound)));
+  const cardHeight = cardWidth * 1.5;
+  const openWidth = Math.floor((8 * cardWidth) / 3);
+  const rowWidth = (cols - 1) * (cardWidth + gap) + openWidth;
   return {
-    columns: cols, rows: rowsShown, cardWidth, cardHeight, titleLines, cellHeight, gap, padding, titleGap,
-    viewportWidth: cols * cardWidth + (cols - 1) * gap + 2 * padding,
-    viewportHeight: rowsShown * cellHeight + (rowsShown - 1) * gap + 2 * padding,
+    columns: cols, rows: rowsShown, cardWidth, cardHeight, openWidth, gap, padding, rowWidth,
+    viewportWidth: rowWidth + 2 * padding,
+    viewportHeight: rowsShown * cardHeight + (rowsShown - 1) * gap + 2 * padding,
+    faceLines: Math.max(1, Math.floor((cardHeight - 2 * CARD_INSET) / FACE_LINE)),
   };
 }
 
@@ -457,8 +459,6 @@ const TV_SAFE_Y = 27;
 /** A section title's block: one 30 sp line (38 dp) and 6 dp under it, set aside once when Home has a titled section. */
 export const SECTION_HEADER = 44;
 export const UNTITLED = "untitled";
-/** A card title's line, in dp (24 sp bold). */
-const TITLE_LINE = 32;
 /** The scroll indicator in the right margin (HomeScreen.kt). */
 const SCROLL_BAR_W = 6;
 const SCROLL_BAR_END = 22;
@@ -476,19 +476,20 @@ export function deleteSectionText(title, n) {
 }
 
 /**
- * `titles`: the cards the TV shows in the section (none: it leaves the section out).
- * @typedef {{ id: string, title: string | null, layout: string, titles: string[] }} SectionInput
+ * `count`: the cards the TV shows in the section (none: it leaves the section out).
+ * @typedef {{ id: string, title: string | null, layout: string, count: number }} SectionInput
  */
 /**
  * A section as drawn, y = 0 at the viewport's top. `row`: one scrolling line; `empty`: a titled section the TV does
  * not show (one dashed band); `top`: where its view starts (its title, else its cards less PADDING); `rowTops`: each
- * line's card top; `cellBottom`: the bottom of its last line's cell; `lineY`: the centre of the line above it.
+ * line's card top; `cellBottom`: the bottom of its last line's cards; `lineY`: the centre of the line above it.
  * @typedef {{ id: string, title: string | null, row: boolean, empty: boolean, count: number, top: number,
  *   titleTop: number | null, rowTops: number[], cellBottom: number, lineY: number | null }} SectionBox
  */
 /**
- * `pitch`: from a card's left edge to the next; `viewport`: where the cards scroll, on the screen; `x0`: the first
- * column's left edge on the screen; `lines`: the rows and scrolling lines of all sections.
+ * `pitch`: from a closed card's left edge to the next; `viewport`: where the cards scroll, on the screen; `x0`: the
+ * first column's left edge on the screen; `contentWidth`: a row with one card open; `lines`: the rows and scrolling
+ * lines of all sections.
  * @typedef {{ grid: ReturnType<typeof tvGrid>, titled: boolean, pitch: number, viewport: { x: number, y: number,
  *   width: number, height: number }, x0: number, contentWidth: number, contentHeight: number, lines: number,
  *   sections: SectionBox[] }} HomeLayout
@@ -496,49 +497,43 @@ export function deleteSectionText(title, n) {
 
 /**
  * Home with sections as the TV app draws it: one card size for all of Home; each section starts where a next row of
- * the previous one would, a titled one with its title; a 2 dp line between two sections, centred in the empty space
- * above the next (the gap, and the second title line when no title of the last row uses it). Sections without a card
- * on the TV are left out, except a titled one: the admin page draws it as one row, its dashed band.
+ * the previous one would, a titled one with its title; a 2 dp line between two sections, in the middle of the gap
+ * above the next. A row with one card open is centred in the safe area. Sections without a card on the TV are left
+ * out, except a titled one: the admin page draws it as one row, its dashed band.
  * @param {number} columns @param {number} rows @param {SectionInput[]} sections in Home order
- * @param {(title: string, cardWidth: number) => boolean} needsTwoLines whether a card title wraps at that width
  * @returns {HomeLayout}
  */
-export function tvHomeLayout(columns, rows, sections, needsTwoLines) {
-  const titled = sections.some((s) => s.title !== null && s.titles.length > 0);
+export function tvHomeLayout(columns, rows, sections) {
+  const titled = sections.some((s) => s.title !== null && s.count > 0);
   const reserve = titled ? SECTION_HEADER : 0;
   const grid = tvGrid(columns, rows, TV_H - 2 * TV_SAFE_Y - reserve);
-  const { cardWidth, cellHeight, gap, padding, titleLines } = grid;
-  const width = grid.viewportWidth;
+  const { cardWidth, cardHeight, gap, padding, rowWidth } = grid;
+  const x0 = TV_SAFE_X + (TV_W - 2 * TV_SAFE_X - rowWidth) / 2;
   const height = grid.viewportHeight + reserve;
-  const viewport = { x: (TV_W - width) / 2, y: (TV_H - height) / 2, width, height };
+  const viewport = { x: x0 - padding, y: (TV_H - height) / 2, width: grid.viewportWidth, height };
   /** @type {SectionBox[]} */
   const out = [];
   let cellBottom = 0;
-  let unused = 0;
   let lines = 0;
   for (const s of sections) {
-    const count = s.titles.length;
+    const count = s.count;
     const empty = count === 0;
     if (empty && s.title === null) continue;
     const row = !empty && s.layout === "row";
     const nRows = row || empty ? 1 : Math.ceil(count / grid.columns);
     const first = out.length === 0;
     const nextTop = first ? 0 : cellBottom + gap;
-    const lineY = first ? null : Math.round((cellBottom - unused * TITLE_LINE + nextTop) / 2);
+    const lineY = first ? null : Math.round((cellBottom + nextTop) / 2);
     const titleTop = s.title !== null ? nextTop : null;
     // The cards: under the title block and PADDING; untitled, PADDING under Home's top, or right where a row would be.
     const cardsTop = titleTop !== null ? nextTop + SECTION_HEADER + padding : first ? padding : nextTop;
-    const rowTops = Array.from({ length: nRows }, (_, r) => cardsTop + r * (cellHeight + gap));
-    cellBottom = cardsTop + (nRows - 1) * (cellHeight + gap) + cellHeight;
-    // The last line's second title line is empty space when none of its titles wraps; an empty band fills its cell.
-    const lastTitles = empty ? null : row ? s.titles : s.titles.slice((nRows - 1) * grid.columns);
-    const needed = lastTitles === null ? titleLines : Math.min(titleLines, lastTitles.some((t) => needsTwoLines(t, cardWidth)) ? 2 : 1);
-    unused = titleLines - needed;
+    const rowTops = Array.from({ length: nRows }, (_, r) => cardsTop + r * (cardHeight + gap));
+    cellBottom = cardsTop + (nRows - 1) * (cardHeight + gap) + cardHeight;
     lines += nRows;
     out.push({ id: s.id, title: s.title, row, empty, count, top: titleTop ?? cardsTop - padding, titleTop, rowTops, cellBottom, lineY });
   }
   return {
-    grid, titled, pitch: cardWidth + gap, viewport, x0: viewport.x + padding, contentWidth: width - 2 * padding,
+    grid, titled, pitch: cardWidth + gap, viewport, x0, contentWidth: rowWidth,
     contentHeight: out.length ? cellBottom + padding : 0, lines, sections: out,
   };
 }
@@ -551,12 +546,15 @@ export function tvHomeLayout(columns, rows, sections, needsTwoLines) {
 export const tvRowFirst = (first, focus, columns, n) => Math.max(0, Math.min(Math.max(first, focus - columns + 1), focus, Math.max(0, n - columns)));
 
 /**
- * The left edge of card `i` of section `s`; `first`: a scrolling line's first card in view.
- * @param {HomeLayout} L @param {number} s @param {number} i @param {number} first
+ * The left edge of card `i` of section `s` on the screen; `first`: a scrolling line's first card in view; `open`: the
+ * section's open card (-1: none), which pushes the cards after it in its line right by what it grew.
+ * @param {HomeLayout} L @param {number} s @param {number} i @param {number} first @param {number} [open]
  */
-export function tvCardX(L, s, i, first) {
+export function tvCardX(L, s, i, first, open = -1) {
   const box = /** @type {SectionBox} */ (L.sections[s]);
-  return L.x0 + (box.row ? i - first : i % L.grid.columns) * L.pitch;
+  const cols = L.grid.columns;
+  const pushed = open >= 0 && open < i && (box.row || Math.floor(open / cols) === Math.floor(i / cols));
+  return L.x0 + (box.row ? i - first : i % cols) * L.pitch + (pushed ? L.grid.openWidth - L.grid.cardWidth : 0);
 }
 
 /** The line (0-based) of card `i` in section `s`. @param {HomeLayout} L @param {number} s @param {number} i */
@@ -573,7 +571,7 @@ export function tvScroll(L, s, r, offset) {
   if (!box || rowTop === undefined || (s === 0 && r === 0)) return 0;
   const p = L.grid.padding;
   const top = r === 0 ? box.top : rowTop - p;
-  const to = Math.min(Math.max(offset, rowTop + L.grid.cellHeight + p - L.viewport.height), top);
+  const to = Math.min(Math.max(offset, rowTop + L.grid.cardHeight + p - L.viewport.height), top);
   return Math.max(0, Math.min(to, L.contentHeight - L.viewport.height));
 }
 
@@ -598,8 +596,8 @@ export function tvView(L, firsts, at, chosen, offset) {
 
 /**
  * Where the focus goes from card `i` of section `s` with an arrow key, as on the TV: ← → along the line, stopping at
- * its ends; ↑ ↓ to the previous or next line, across sections (an empty one has no card), onto the card whose left
- * edge is nearest (in a scrolling line, among the cards in view). Null: it stays.
+ * its ends; ↑ ↓ to the previous or next line, across sections (an empty one has no card), onto the card in the
+ * nearest column (a grid's column, or the place among the cards in view of a scrolling line). Null: it stays.
  * @param {HomeLayout} L @param {Record<string, number>} firsts @param {number} s @param {number} i @param {string} key
  * @returns {{ s: number, i: number } | null}
  */
@@ -612,6 +610,7 @@ export function tvMove(L, firsts, s, i, key) {
   if (key !== "ArrowUp" && key !== "ArrowDown") return null;
   const dir = key === "ArrowDown" ? 1 : -1;
   const firstOf = (/** @type {number} */ k) => firsts[L.sections[k]?.id ?? ""] ?? 0;
+  const column = (/** @type {number} */ k, /** @type {number} */ j) => (L.sections[k]?.row ? j - firstOf(k) : j % cols);
   let ts = s;
   let tr = tvLineOf(L, s, i) + dir;
   if (tr < 0 || tr >= box.rowTops.length) {
@@ -622,9 +621,9 @@ export function tvMove(L, firsts, s, i, key) {
     tr = dir > 0 ? 0 : t.rowTops.length - 1;
   }
   const t = /** @type {SectionBox} */ (L.sections[ts]);
-  const from = t.row ? firstOf(ts) : tr * cols;
-  const x = tvCardX(L, s, i, firstOf(s));
-  const distance = (/** @type {number} */ j) => Math.abs(tvCardX(L, ts, j, firstOf(ts)) - x);
+  const from = t.row ? Math.min(firstOf(ts), Math.max(0, t.count - 1)) : tr * cols;
+  const col = column(s, i);
+  const distance = (/** @type {number} */ j) => Math.abs(column(ts, j) - col);
   let best = from;
   for (let j = from + 1; j < Math.min(t.count, from + cols); j++) if (distance(j) < distance(best)) best = j;
   return { s: ts, i: best };
@@ -639,6 +638,107 @@ export function tvScrollBar(L, offset) {
     x: TV_W - SCROLL_BAR_END - SCROLL_BAR_W, y: L.viewport.y + L.grid.padding, width: SCROLL_BAR_W, height: track,
     thumbTop: (offset / L.contentHeight) * track, thumbHeight: (vh / L.contentHeight) * track,
   };
+}
+
+// --- A card's face and its open panel (docs/ux/senior-tv.md#home): what fits, measured in the page's own font -------
+
+/** Around what is drawn on a card (IzleSpacing.Small), and the panel's inset (IzleSpacing.Medium), in dp. */
+const CARD_INSET = 8;
+const PANEL_INSET = 12;
+/** Line heights, in dp: a name in a card without a picture (24 sp bold), the panel's name (26 sp bold) and text (24 sp). */
+const FACE_LINE = 32;
+const NAME_LINE = 34;
+const TEXT_LINE = 32;
+/** A chip's horizontal padding and border, both sides; its height at 16 sp and at 24 sp; the "2 new" chip's height. */
+const CHIP_X = 18;
+const CHIP_16 = 26;
+const CHIP_24 = 38;
+const NEW_CHIP = 24;
+/** The progress bar's height. */
+const BAR = 6;
+
+/**
+ * The width of `text` on one line in bold at `size` px (16, 24 or 26).
+ * @typedef {(text: string, size: number) => number} MeasureText
+ */
+
+/** "Continue · Episode 2" → ["Continue", "Episode 2"]; else null. @param {string} chip */
+function splitContinue(chip) {
+  const m = /^(Continue) · (.+)$/.exec(chip);
+  return m ? [/** @type {string} */ (m[1]), /** @type {string} */ (m[2])] : null;
+}
+
+/**
+ * The lines `text` wraps to at `width` (word by word; a word wider than the line takes a line of its own).
+ * @param {string} text @param {number} width @param {number} size @param {MeasureText} measure
+ */
+export function wrapLines(text, width, size, measure) {
+  const words = text.split(/\s+/).filter(Boolean);
+  let lines = 0;
+  let line = "";
+  for (const w of words) {
+    const next = line ? `${line} ${w}` : w;
+    if (line && measure(next, size) > width) {
+      lines++;
+      line = w;
+    } else line = next;
+  }
+  return lines + (line ? 1 : 0);
+}
+
+/**
+ * What a card that is not open shows over its picture: the 16 sp chip ("Continue · Episode 2" as "Continue" when it
+ * does not fit; null when nothing fits), and whether the "2 new" chip fits at the top right.
+ * @param {ReturnType<typeof tvCard>} c @param {ReturnType<typeof tvGrid>} grid @param {MeasureText} measure
+ */
+export function tvFace(c, grid, measure) {
+  const room = grid.cardWidth - 2 * CARD_INSET;
+  const bar = c.progress !== null ? BAR + CARD_INSET : 0;
+  const fits = (/** @type {string} */ text) => measure(text, 16) + CHIP_X <= room && CARD_INSET + CHIP_16 + bar + CARD_INSET <= grid.cardHeight;
+  const short = splitContinue(c.chip)?.[0];
+  const chip = fits(c.chip) ? c.chip : short && fits(short) ? short : null;
+  const bottom = chip !== null ? CARD_INSET + CHIP_16 + bar + CARD_INSET : bar ? bar + 2 * CARD_INSET : 0;
+  const fresh = c.newEpisodes > 0 && measure(`${c.newEpisodes} new`, 16) + CHIP_X <= room && CARD_INSET + NEW_CHIP + bottom <= grid.cardHeight;
+  return { chip, newEpisodes: fresh };
+}
+
+/**
+ * The open card's panel (`openWidth` less the card's width, 12 dp inside): the name's lines (1–3), "2 new episodes"
+ * (null: left out), the chip saying what OK does and its size (24, else 16 when too wide, or too tall under one line
+ * of name), the episode line under a "Continue" chip too wide with its episode (null: none), and the progress bar.
+ * Whatever else does not fit the height is left out in this order: "2 new episodes", the episode line, name lines
+ * down to one, then the progress bar (null: none, or left out). A channel: its name and Live.
+ * @param {ReturnType<typeof tvCard>} c @param {string} name @param {ReturnType<typeof tvGrid>} grid
+ * @param {MeasureText} measure
+ */
+export function tvPanel(c, name, grid, measure) {
+  const width = grid.openWidth - grid.cardWidth - 2 * PANEL_INSET;
+  const height = grid.cardHeight - 2 * PANEL_INSET;
+  const chipFits = (/** @type {string} */ text) => measure(text, 24) + CHIP_X <= width;
+  let chip = c.chip;
+  /** @type {string | null} */
+  let episode = null;
+  const parts = splitContinue(c.chip);
+  if (parts && !chipFits(c.chip)) [chip, episode] = parts;
+  // At 24 sp when it fits the width, and the height under one line of name with the bar.
+  const bar = c.progress !== null ? CARD_INSET + BAR : 0;
+  const chipSize = chipFits(chip) && NAME_LINE + CARD_INSET + CHIP_24 + bar <= height ? 24 : 16;
+  /** @type {string | null} */
+  let news = c.newEpisodes > 0 ? plural(c.newEpisodes, "new episode") : null;
+  let nameLines = Math.max(1, Math.min(3, wrapLines(name, width, 26, measure)));
+  let progress = c.progress;
+  const used = () => {
+    const bottom = [news ? TEXT_LINE : 0, chipSize === 24 ? CHIP_24 : CHIP_16, episode ? TEXT_LINE : 0, progress !== null ? BAR : 0].filter((x) => x > 0);
+    return nameLines * NAME_LINE + CARD_INSET + bottom.reduce((a, b) => a + b, 0) + (bottom.length - 1) * CARD_INSET;
+  };
+  while (used() > height) {
+    if (news) news = null;
+    else if (episode) episode = null;
+    else if (nameLines > 1) nameLines--;
+    else if (progress !== null) progress = null;
+    else break;
+  }
+  return { nameLines, news, chip, chipSize, episode, progress };
 }
 
 /**

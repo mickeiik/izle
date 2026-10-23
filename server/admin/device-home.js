@@ -8,8 +8,8 @@ import { catalogBrowser } from "./catalog-browser.js";
 import { actionButton, card, chip, h, keepFocus, keyedRows, loadError, loading, onSubmit, options, progressBar, setOff, setProgress, showRow, toast, uid } from "./dom.js";
 import {
   HOME_COLUMNS, HOME_MAX, HOME_ROWS, TV_W, UNTITLED, cardPlace, continueText, deleteSectionText, episodeName, episodeStateLabel, episodeStates,
-  formatClock, gridSummary, onTv, percent, plural, resumes, sectionCount, sectionName, showMeta, tvCard, tvHomeLayout, tvLineOf, tvMove,
-  tvScrollBar, tvView,
+  formatClock, gridSummary, onTv, percent, plural, resumes, sectionCount, sectionName, showMeta, tvCard, tvCardX, tvFace, tvHomeLayout, tvLineOf,
+  tvMove, tvPanel, tvScrollBar, tvView,
 } from "./lib.js";
 
 /** @typedef {{ id: string, title: string | null, layout: string, itemIds: string[] }} Section */
@@ -116,55 +116,93 @@ export function homeCard(ctx) {
   const scale = new ResizeObserver(() => (canvas.style.transform = `scale(${screen.clientWidth / TV_W})`));
   scale.observe(screen);
   ctx.scope.onCleanup(() => scale.disconnect());
-  let L = tvHomeLayout(4, 2, [], () => false);
+  let L = tvHomeLayout(4, 2, []);
 
-  // Whether a card's title wraps at the card's width: measured in the mirror's own font, as the TV measures in its own.
+  // What fits on a card and in its panel is measured in the mirror's own font, as the TV measures in its own.
   const measure = document.createElement("canvas").getContext("2d");
   /** @type {Map<string, number>} */
   const widths = new Map();
-  const needsTwoLines = (/** @type {string} */ title, /** @type {number} */ width) => {
-    if (!measure) return false;
-    const font = `700 24px ${getComputedStyle(canvas).fontFamily || "sans-serif"}`;
-    const key = `${font}\n${title}`;
+  /** @type {import("./lib.js").MeasureText} */
+  const measureText = (text, size) => {
+    if (!measure) return 0;
+    const font = `700 ${size}px ${getComputedStyle(canvas).fontFamily || "sans-serif"}`;
+    const key = `${font}\n${text}`;
     if (!widths.has(key)) {
       measure.font = font;
-      widths.set(key, measure.measureText(title).width);
+      widths.set(key, measure.measureText(text).width);
     }
-    return /** @type {number} */ (widths.get(key)) > width;
+    return /** @type {number} */ (widths.get(key));
+  };
+  /** @param {HTMLElement} bar @param {number | null} pct */
+  const setBar = (bar, pct) => {
+    bar.hidden = pct === null;
+    /** @type {HTMLElement} */ (bar.firstElementChild).style.width = `${pct ?? 0}%`;
   };
 
   /** @param {string} itemId */
   const tile = (itemId) => {
+    // The card as it is closed: the poster (a channel's logo, whole), else the name; its chip, bar and "2 new".
     const picture = h("div", { class: "tv-picture" });
     let pictureKey = "";
     const badge = h("span", { class: "tv-chip" });
     const bar = h("div", { class: "tv-bar" }, h("span"));
+    const shade = h("div", { class: "tv-shade" }, badge, bar);
     const fresh = h("span", { class: "tv-new" });
-    const title = h("span", { class: "tv-title" });
+    // The open card's panel at its right, over the backdrop, else the poster blurred; plain for a channel or a show
+    // without a picture. It is filled while the card is open and stays as it was while the card closes.
+    const backdrop = h("div", { class: "tv-backdrop" });
+    let backdropKey = "";
+    const panelName = h("strong", { class: "tv-name" });
+    const news = h("span", { class: "tv-text" });
+    const action = h("span", { class: "tv-chip" });
+    const episode = h("span", { class: "tv-text" });
+    const panelBar = h("div", { class: "tv-bar" }, h("span"));
+    const panel = h("div", { class: "tv-panel" }, backdrop,
+      h("div", { class: "tv-panel-text" }, panelName, h("div", { class: "tv-panel-end" }, news, action, episode, panelBar)));
     const element = h("div", { class: "tv-tile", role: "option", id: uid("tile"), tabindex: "-1", "aria-selected": "false" },
-      h("div", { class: "tv-card" }, picture, h("div", { class: "tv-shade" }, badge, bar), fresh), title);
+      h("div", { class: "tv-card" }, h("div", { class: "tv-face" }, picture, shade, fresh), panel));
     element.addEventListener("click", () => select(itemId, true));
     return {
       element,
-      /** @param {any} e */
-      update(e) {
+      /** @param {any} e @param {boolean} open */
+      update(e, open) {
         const name = nameOf(e);
-        // The backdrop, else the poster cut around its upper part, else the title in the card.
-        const url = e.backdropUrl ?? e.posterUrl ?? null;
-        const key = JSON.stringify([url, e.backdropUrl ? "" : name]);
+        const live = e.kind === "live";
+        const poster = e.posterUrl ?? null;
+        const key = JSON.stringify([poster, live, poster ? "" : name]);
         if (key !== pictureKey) {
           pictureKey = key;
-          picture.replaceChildren(url ? h("img", { src: url, alt: "", loading: "lazy", class: e.backdropUrl ? "" : "poster-cut" }) : h("span", null, name));
+          picture.className = live && poster ? "tv-picture logo" : "tv-picture";
+          picture.replaceChildren(poster ? h("img", { src: poster, alt: "", loading: "lazy" }) : h("span", null, h("span", null, name)));
         }
         const c = tvCard(e);
-        badge.textContent = c.chip;
+        const f = tvFace(c, L.grid, measureText);
+        badge.hidden = f.chip === null;
+        badge.textContent = f.chip ?? "";
         badge.className = c.tone ? `tv-chip ${c.tone}` : "tv-chip";
-        bar.hidden = c.progress === null;
-        /** @type {HTMLElement} */ (bar.firstElementChild).style.width = `${c.progress ?? 0}%`;
-        fresh.hidden = c.newEpisodes === 0;
+        setBar(bar, c.progress);
+        shade.hidden = f.chip === null && c.progress === null;
+        fresh.hidden = !f.newEpisodes;
         fresh.textContent = `${c.newEpisodes} new`;
-        title.textContent = name;
         element.setAttribute("aria-label", `${name}: ${c.chip}${c.progress !== null ? `, ${c.progress}% watched` : ""}${c.newEpisodes > 0 ? `, ${c.newEpisodes} new` : ""}`);
+        if (!open) return;
+        const behind = live ? null : e.backdropUrl ? { src: e.backdropUrl, blur: false } : poster ? { src: poster, blur: true } : null;
+        const bKey = JSON.stringify(behind);
+        if (bKey !== backdropKey) {
+          backdropKey = bKey;
+          backdrop.hidden = behind === null;
+          backdrop.replaceChildren(...(behind ? [h("img", { src: behind.src, alt: "", class: behind.blur ? "blur" : null })] : []));
+        }
+        const p = tvPanel(c, name, L.grid, measureText);
+        panelName.textContent = name;
+        panelName.style.setProperty("--name-lines", String(p.nameLines));
+        news.hidden = p.news === null;
+        news.textContent = p.news ?? "";
+        action.textContent = p.chip;
+        action.className = `tv-chip${c.tone ? ` ${c.tone}` : ""}${p.chipSize === 24 ? " big" : ""}`;
+        episode.hidden = p.episode === null;
+        episode.textContent = p.episode ?? "";
+        setBar(panelBar, p.progress);
       },
     };
   };
@@ -219,16 +257,23 @@ export function homeCard(ctx) {
   const draw = () => {
     const hadFocus = view.contains(document.activeElement);
     const g = chosenGrid();
-    L = tvHomeLayout(g.columns, g.rows, sections.map((s) => ({ id: s.id, title: s.title, layout: s.layout, titles: (shownIn.get(s.id) ?? []).map(nameOf) })), needsTwoLines);
+    L = tvHomeLayout(g.columns, g.rows, sections.map((s) => ({ id: s.id, title: s.title, layout: s.layout, count: (shownIn.get(s.id) ?? []).length })));
     const { grid, viewport } = L;
     const cols = grid.columns;
     view.style.top = `${viewport.y}px`;
     view.style.height = `${viewport.height}px`;
     view.style.setProperty("--card-w", `${grid.cardWidth}px`);
-    view.style.setProperty("--title-lines", String(grid.titleLines));
+    view.style.setProperty("--card-h", `${grid.cardHeight}px`);
+    view.style.setProperty("--open-w", `${grid.openWidth}px`);
+    view.style.setProperty("--face-lines", String(grid.faceLines));
     content.style.height = `${L.contentHeight}px`;
+    // The selected card is drawn open: the cards after it in its line move right by what it grew.
+    const at = locate(selected);
+    ({ firsts, offset } = tvView(L, firsts, at, anchor === null ? -1 : L.sections.findIndex((b) => b.id === anchor), offset));
+    content.style.transform = `translateY(${-offset}px)`;
     const drawn = new Set(L.sections.map((b) => b.id));
     L.sections.forEach((box, k) => {
+      const open = at?.s === k ? at.i : -1;
       const v = sectionView(box.id);
       if (content.children[k] !== v.group) content.insertBefore(v.group, content.children[k] ?? null);
       v.group.setAttribute("aria-label", box.empty ? `${sectionName(box)}, empty: not shown on the TV` : sectionName(box));
@@ -240,13 +285,17 @@ export function homeCard(ctx) {
         setBox(v.heading, L.x0, box.titleTop, L.contentWidth);
       }
       v.band.hidden = !box.empty;
-      if (box.empty) setBox(v.band, L.x0, box.rowTops[0], L.contentWidth, grid.cellHeight);
+      if (box.empty) setBox(v.band, L.x0, box.rowTops[0], L.contentWidth, grid.cardHeight);
+      v.heading.classList.toggle("on", at?.s === k);
+      // A scrolling line's cards are placed from its start; the line itself slides to its first card in view.
+      v.cells.style.transform = box.row ? `translate(${L.x0 - (firsts[box.id] ?? 0) * L.pitch}px, ${box.rowTops[0]}px)` : "";
       (shownIn.get(box.id) ?? []).forEach((e, j) => {
         let t = tiles.get(e.itemId);
         if (!t) tiles.set(e.itemId, (t = tile(e.itemId)));
-        t.update(e);
-        if (box.row) setBox(t.element, j * L.pitch, 0);
-        else setBox(t.element, L.x0 + (j % cols) * L.pitch, box.rowTops[Math.floor(j / cols)]);
+        t.update(e, j === open);
+        const width = j === open ? grid.openWidth : grid.cardWidth;
+        if (box.row) setBox(t.element, tvCardX(L, k, j, 0, open) - L.x0, 0, width);
+        else setBox(t.element, tvCardX(L, k, j, 0, open), box.rowTops[Math.floor(j / cols)], width);
         if (v.cells.children[j] !== t.element) v.cells.insertBefore(t.element, v.cells.children[j] ?? null);
       });
     });
@@ -259,14 +308,6 @@ export function homeCard(ctx) {
       }
     }
 
-    const at = locate(selected);
-    ({ firsts, offset } = tvView(L, firsts, at, anchor === null ? -1 : L.sections.findIndex((b) => b.id === anchor), offset));
-    content.style.transform = `translateY(${-offset}px)`;
-    L.sections.forEach((box, k) => {
-      const v = sectionView(box.id);
-      v.heading.classList.toggle("on", at?.s === k);
-      v.cells.style.transform = box.row ? `translate(${L.x0 - (firsts[box.id] ?? 0) * L.pitch}px, ${box.rowTops[0]}px)` : "";
-    });
     const sb = tvScrollBar(L, offset);
     scrollBar.hidden = sb === null || shownIds.size === 0;
     if (sb) {
