@@ -116,6 +116,7 @@ import io.github.mickeiik.izle.ui.common.PanelButton
 import io.github.mickeiik.izle.ui.common.PanelCountdown
 import io.github.mickeiik.izle.ui.common.PosterPanel
 import io.github.mickeiik.izle.ui.common.ProgressBar
+import io.github.mickeiik.izle.ui.common.ProgressBarHeight
 import io.github.mickeiik.izle.ui.common.episodeNameText
 import io.github.mickeiik.izle.ui.common.requestFocusWithin
 import io.github.mickeiik.izle.ui.common.tileBadgeText
@@ -281,6 +282,9 @@ private suspend fun LazyListState.scrollTo(layout: HomeLayout, offset: Float, de
     scrollToItem(at, ((offset - (layout.slots[at].top - padding)) * density.density).roundToInt())
 }
 
+/** A row section's slide under way, to [first]; told apart from a later one to the same card by identity. */
+private class RowSlide(val first: Int)
+
 private const val TITLE_KEY = "\u0000title:"
 private const val LINE_KEY = "\u0000line:"
 
@@ -317,7 +321,7 @@ private fun HomeLines(
     // A row section keeps its place when it scrolls out of Home and back.
     val rowStates = remember { mutableMapOf<String, LazyListState>() }
     // A row section's first card in view while it slides there.
-    val slides = remember { mutableMapOf<String, Int>() }
+    val slides = remember { mutableMapOf<String, RowSlide>() }
     val requesters = remember { mutableMapOf<String, FocusRequester>() }
     val focus = remember { FocusTrack() }
     val scope = rememberCoroutineScope()
@@ -352,18 +356,20 @@ private fun HomeLines(
 
         fun rowFirst(section: Int): Int {
             val id = currentSections[section].id
-            return slides[id] ?: rowStates[id]?.firstInView() ?: 0
+            return slides[id]?.first ?: rowStates[id]?.firstInView() ?: 0
         }
 
         /** Slides a row section until [first] is its first card in view. */
         fun slide(section: HomeSection, first: Int) {
             val state = rowStates.getOrPut(section.id) { LazyListState() }
-            slides[section.id] = first
+            val slide = RowSlide(first)
+            slides[section.id] = slide
             scope.launch {
                 try {
                     state.animateScrollToItem(first)
                 } finally {
-                    if (slides[section.id] == first) slides.remove(section.id)
+                    // A slide cancelled by a later one leaves that one's place (even when both go to the same card).
+                    if (slides[section.id] === slide) slides.remove(section.id)
                 }
             }
         }
@@ -540,7 +546,13 @@ private fun HomeLines(
                 items(
                     count = layout.slots.size,
                     key = { i -> slotKey(layout, sections, i) },
-                    contentType = { i -> layout.slots[i]::class },
+                    // A row section's lazy row and a grid row's cards are not reused for one another.
+                    contentType = { i ->
+                        when (val slot = layout.slots[i]) {
+                            is HomeLayout.Title -> "title"
+                            is HomeLayout.Cards -> if (layout.sections[slot.section].row) "row" else "grid"
+                        }
+                    },
                 ) { i ->
                     when (val slot = layout.slots[i]) {
                         is HomeLayout.Title -> SectionTitle(sections[slot.section].title.orEmpty(), slot, x0) { focus.section.intValue == slot.section }
@@ -689,9 +701,6 @@ private fun chipText(badge: TileBadge): ChipText {
     return ChipText(tileBadgeText(badge), if (episode != null) stringResource(R.string.badge_continue) else null, episode)
 }
 
-/** The progress bar's height ([ProgressBar]'s). */
-private val BarHeight = 6.dp
-
 /**
  * On a closed card: at the bottom, the chip saying what OK does ("Continue · Episode 2", else "Continue", else none:
  * whatever fits the card on one line; "Live" on a channel) and the progress bar; at the top right, the new-episode
@@ -703,7 +712,7 @@ private fun BoxScope.CardChips(entry: HomeEntry, grid: HomeGrid, sizes: TextSize
     val progress = EpisodeNames.progressFraction(entry.playNext)
     val text = chipText(badge)
     val style = MaterialTheme.typography.labelMedium
-    val barHeight = if (progress != null) IzleSpacing.Small + BarHeight else 0.dp
+    val barHeight = if (progress != null) IzleSpacing.Small + ProgressBarHeight else 0.dp
     // On one line, with what goes under it ([below]), inside the card's margins.
     fun fits(chip: DpSize, below: Dp) =
         chip.width <= grid.cardWidth.dp - 2 * IzleSpacing.Small && IzleSpacing.Small + chip.height + below <= grid.cardHeight.dp
@@ -711,7 +720,7 @@ private fun BoxScope.CardChips(entry: HomeEntry, grid: HomeGrid, sizes: TextSize
     val label = listOfNotNull(text.full, text.short).firstOrNull { fits(sizes.chip(it, style, ChipVerticalPadding), barHeight + IzleSpacing.Small) }
     val bottomHeight = when {
         label != null -> IzleSpacing.Small + sizes.chip(label, style, ChipVerticalPadding).height + barHeight + IzleSpacing.Small
-        progress != null -> IzleSpacing.Small + BarHeight + IzleSpacing.Small
+        progress != null -> IzleSpacing.Small + ProgressBarHeight + IzleSpacing.Small
         else -> 0.dp
     }
 
@@ -771,7 +780,7 @@ private fun OpenPanel(entry: HomeEntry, backdropUrl: String?, posterUrl: String?
         largeChip = if (large.width <= width) large.height.value else 0f,
         smallChip = sizes.chip(label, typography.labelMedium, ChipVerticalPadding).height.value,
         episodeLine = if (split) sizes.lineHeight(typography.bodySmall).value else 0f,
-        bar = if (progress != null) BarHeight.value else 0f,
+        bar = if (progress != null) ProgressBarHeight.value else 0f,
         gap = IzleSpacing.Small.value,
     )
     Box(modifier.background(IzleColors.SurfaceHigh)) {
@@ -809,7 +818,9 @@ private fun BoxScope.PanelPicture(backdropUrl: String?, posterUrl: String?) {
         AsyncImage(backdropUrl, null, Modifier.matchParentSize(), contentScale = ContentScale.Crop, onError = { backdropFailed = true })
     } else if (posterUrl != null) {
         val blurred = remember(posterUrl, context) {
-            ImageRequest.Builder(context).data(posterUrl).size(BLUR_WIDTH_PX, BLUR_HEIGHT_PX).precision(Precision.EXACT).build()
+            // Its own memory-cache entry: under the poster's, it would replace the card's poster there.
+            ImageRequest.Builder(context).data(posterUrl).memoryCacheKey("$posterUrl#blur")
+                .size(BLUR_WIDTH_PX, BLUR_HEIGHT_PX).precision(Precision.EXACT).build()
         }
         AsyncImage(blurred, null, Modifier.matchParentSize(), contentScale = ContentScale.Crop)
     } else {

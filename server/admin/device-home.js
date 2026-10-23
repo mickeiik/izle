@@ -123,9 +123,9 @@ export function homeCard(ctx) {
   /** @type {Map<string, number>} */
   const widths = new Map();
   /** @type {import("./lib.js").MeasureText} */
-  const measureText = (text, size) => {
+  const measureText = (text, size, weight = 700) => {
     if (!measure) return 0;
-    const font = `700 ${size}px ${getComputedStyle(canvas).fontFamily || "sans-serif"}`;
+    const font = `${weight} ${size}px ${getComputedStyle(canvas).fontFamily || "sans-serif"}`;
     const key = `${font}\n${text}`;
     if (!widths.has(key)) {
       measure.font = font;

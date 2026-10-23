@@ -290,16 +290,16 @@ test("admin helpers: the TV's Home grid and what its cards show", () => {
   const ep = (o: object) => ({ episodeId: "e", season: 1, number: 2, title: null, label: null, index: 1, status: "new", positionMs: 0, durationMs: 600_000, ...o });
   const card = (kind: string, c: object | null, newEpisodes = 0) => tvCard({ kind, continue: c ? (ep(c) as any) : null, newEpisodes });
   cases([
-    [card("live", null, 3), { chip: "Live", tone: "live", progress: null, newEpisodes: 0 }, "a channel: Live, never a count"],
-    [card("movie", null), { chip: "New", tone: "new", progress: null, newEpisodes: 0 }],
-    [card("series", {}, 2), { chip: "Episode 2", tone: "", progress: null, newEpisodes: 2 }],
+    [card("live", null, 3), { chip: "Live", tone: "live", progress: null, newEpisodes: 0, episode: null }, "a channel: Live, never a count"],
+    [card("movie", null), { chip: "New", tone: "new", progress: null, newEpisodes: 0, episode: null }],
+    [card("series", {}, 2), { chip: "Episode 2", tone: "", progress: null, newEpisodes: 2, episode: null }],
     [card("series", { season: 2, number: 3 }).chip, "Season 2, Episode 3"],
     [card("series", { season: null, number: null, index: 4 }).chip, "Episode 5", "no number: the play order"],
     [card("series", { label: " Pilot " }).chip, "Pilot"],
-    [card("series", { status: "watching", positionMs: 60_000 }), { chip: "Continue · Episode 2", tone: "resume", progress: 10, newEpisodes: 0 }],
+    [card("series", { status: "watching", positionMs: 60_000 }), { chip: "Continue · Episode 2", tone: "resume", progress: 10, newEpisodes: 0, episode: "Episode 2" }],
     [card("series", { status: "watching", positionMs: 20_000 }).chip, "Episode 2", "under 30 s starts over"],
     [card("series", { status: "watching", positionMs: 590_000 }).progress, null, "within the credits: starts over"],
-    [card("movie", { status: "watching", positionMs: 45_000, durationMs: 3_600_000 }), { chip: "Continue", tone: "resume", progress: 1, newEpisodes: 0 }],
+    [card("movie", { status: "watching", positionMs: 45_000, durationMs: 3_600_000 }), { chip: "Continue", tone: "resume", progress: 1, newEpisodes: 0, episode: null }],
     [card("movie", { status: "finished" }).chip, "Watch again"],
     [card("movie", { status: "new" }).tone, "new"],
     [[onTv({}), onTv({ playable: true }), onTv({ missing: true }), onTv({ playable: false })], [true, true, false, false]],

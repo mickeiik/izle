@@ -319,7 +319,7 @@ p.add-section { font-size: var(--text-sm); }
 .tv-backdrop { overflow: hidden; }
 .tv-backdrop img { object-fit: cover; }
 .tv-backdrop img.blur { filter: blur(12px); transform: scale(1.2); }
-.tv-backdrop::after { content: ""; position: absolute; inset: 0; background: rgb(0 0 0 / 60%); }
+.tv-backdrop::after { content: ""; position: absolute; inset: 0; background: rgb(0 0 0 / 70%); }
 .tv-panel-text { position: absolute; inset: 12px; display: flex; flex-direction: column; justify-content: space-between; gap: 8px; overflow: hidden; }
 .tv-name {
   flex: none; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--name-lines); line-clamp: var(--name-lines);

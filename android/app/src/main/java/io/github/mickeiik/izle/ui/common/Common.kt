@@ -166,9 +166,12 @@ fun CheckIcon(modifier: Modifier, color: Color) {
     }
 }
 
+/** [ProgressBar]'s height on a tile. */
+val ProgressBarHeight = 6.dp
+
 /** A thin progress bar (tile progress, player position). */
 @Composable
-fun ProgressBar(fraction: Float, height: Dp = 6.dp) {
+fun ProgressBar(fraction: Float, height: Dp = ProgressBarHeight) {
     Box(Modifier.fillMaxWidth().height(height).background(IzleColors.ProgressTrack, IzleShapes.Pill)) {
         Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).height(height).background(IzleColors.Accent, IzleShapes.Pill))
     }

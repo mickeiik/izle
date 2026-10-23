@@ -657,16 +657,13 @@ const NEW_CHIP = 24;
 /** The progress bar's height. */
 const BAR = 6;
 
-/**
- * The width of `text` on one line in bold at `size` px (16, 24 or 26).
- * @typedef {(text: string, size: number) => number} MeasureText
- */
+/** A resuming chip's first part ("Continue · Episode 2"), alone when the whole chip does not fit. */
+const CONTINUE = "Continue";
 
-/** "Continue · Episode 2" → ["Continue", "Episode 2"]; else null. @param {string} chip */
-function splitContinue(chip) {
-  const m = /^(Continue) · (.+)$/.exec(chip);
-  return m ? [/** @type {string} */ (m[1]), /** @type {string} */ (m[2])] : null;
-}
+/**
+ * The width of `text` on one line at `size` px (16, 24 or 26), in bold unless `weight` says otherwise.
+ * @typedef {(text: string, size: number, weight?: number) => number} MeasureText
+ */
 
 /**
  * The lines `text` wraps to at `width` (word by word; a word wider than the line takes a line of its own).
@@ -695,10 +692,10 @@ export function tvFace(c, grid, measure) {
   const room = grid.cardWidth - 2 * CARD_INSET;
   const bar = c.progress !== null ? BAR + CARD_INSET : 0;
   const fits = (/** @type {string} */ text) => measure(text, 16) + CHIP_X <= room && CARD_INSET + CHIP_16 + bar + CARD_INSET <= grid.cardHeight;
-  const short = splitContinue(c.chip)?.[0];
-  const chip = fits(c.chip) ? c.chip : short && fits(short) ? short : null;
-  const bottom = chip !== null ? CARD_INSET + CHIP_16 + bar + CARD_INSET : bar ? bar + 2 * CARD_INSET : 0;
-  const fresh = c.newEpisodes > 0 && measure(`${c.newEpisodes} new`, 16) + CHIP_X <= room && CARD_INSET + NEW_CHIP + bottom <= grid.cardHeight;
+  const chip = fits(c.chip) ? c.chip : c.episode !== null && fits(CONTINUE) ? CONTINUE : null;
+  const bottom = chip !== null ? CARD_INSET + CHIP_16 + bar + CARD_INSET : bar ? bar + CARD_INSET : 0;
+  // The "2 new" chip is not bold (labelSmall).
+  const fresh = c.newEpisodes > 0 && measure(`${c.newEpisodes} new`, 16, 400) + CHIP_X <= room && CARD_INSET + NEW_CHIP + bottom <= grid.cardHeight;
   return { chip, newEpisodes: fresh };
 }
 
@@ -718,8 +715,7 @@ export function tvPanel(c, name, grid, measure) {
   let chip = c.chip;
   /** @type {string | null} */
   let episode = null;
-  const parts = splitContinue(c.chip);
-  if (parts && !chipFits(c.chip)) [chip, episode] = parts;
+  if (c.episode !== null && !chipFits(c.chip)) [chip, episode] = [CONTINUE, c.episode];
   // At 24 sp when it fits the width, and the height under one line of name with the bar.
   const bar = c.progress !== null ? CARD_INSET + BAR : 0;
   const chipSize = chipFits(chip) && NAME_LINE + CARD_INSET + CHIP_24 + bar <= height ? 24 : 16;
@@ -765,25 +761,26 @@ function tvResumes(c) {
 
 /**
  * What a card on the TV's Home shows over its picture (EpisodeNames.badge, tileBadgeText and ActionChip): the chip
- * (`tone` "live", "new", "resume" or ""), the progress bar's percent (null: none) and the "2 new" count (0: none).
+ * (`tone` "live", "new", "resume" or ""), the progress bar's percent (null: none), the "2 new" count (0: none) and,
+ * when the chip is "Continue · Episode 2", the episode it resumes (`episode`; null otherwise).
  * @param {{ kind: string, continue: (ContinueInfo & { index?: number }) | null, newEpisodes?: number }} e
  */
 export function tvCard(e) {
-  if (e.kind === "live") return { chip: "Live", tone: "live", progress: null, newEpisodes: 0 };
+  if (e.kind === "live") return { chip: "Live", tone: "live", progress: null, newEpisodes: 0, episode: null };
   const c = e.continue;
   const newEpisodes = Math.max(0, e.newEpisodes ?? 0);
-  if (!c) return { chip: "New", tone: "new", progress: null, newEpisodes };
+  if (!c) return { chip: "New", tone: "new", progress: null, newEpisodes, episode: null };
   const resume = tvResumes(c);
   const progress = resume && c.durationMs ? percent(c.positionMs, c.durationMs) : null;
   if (e.kind === "series") {
     const number = c.number ?? (c.index ?? 0) + 1;
     const label = c.label?.trim();
     const name = label || (c.season !== null && c.season !== undefined && c.season > 1 ? `Season ${c.season}, Episode ${number}` : `Episode ${number}`);
-    return { chip: resume ? `Continue · ${name}` : name, tone: resume ? "resume" : "", progress, newEpisodes };
+    return { chip: resume ? `${CONTINUE} · ${name}` : name, tone: resume ? "resume" : "", progress, newEpisodes, episode: resume ? name : null };
   }
-  if (resume) return { chip: "Continue", tone: "resume", progress, newEpisodes };
-  if (c.status === "finished") return { chip: "Watch again", tone: "", progress, newEpisodes };
-  return { chip: "New", tone: "new", progress, newEpisodes };
+  if (resume) return { chip: CONTINUE, tone: "resume", progress, newEpisodes, episode: null };
+  if (c.status === "finished") return { chip: "Watch again", tone: "", progress, newEpisodes, episode: null };
+  return { chip: "New", tone: "new", progress, newEpisodes, episode: null };
 }
 
 /** What a failed source attempt means. */
