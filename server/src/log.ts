@@ -1,7 +1,8 @@
 // The one place where anything reaches the log. Stream URLs, upstream headers, adapter refs, tokens and playlist
 // text must never be written (AGENTS.md, "Hard invariants"): keys that can hold them are dropped, strings are
-// scrubbed of URLs, playlist text and token-like runs. It is a heuristic: a value under an innocent key that looks
-// like none of these (a short API key) is written as given, so the code must not hand such values to the log.
+// scrubbed of URLs, playlist text and token-like runs, except catalog ids and problem codes in their own fields. It is a
+// heuristic: a value under an innocent key that looks like none of these (a short API key) is written as given, so the
+// code must not hand such values to the log.
 
 import { errorName } from "./errors.ts";
 
@@ -57,17 +58,45 @@ export function redactReportText(value: string): string {
   return scrub(value, (run) => (IDENTIFIER_RE.test(run) ? run : "<token>"));
 }
 
-export function redact(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
+/** One word of a catalog id: a lowercase or capitalized word, CamelCase, or a run of at most 16 letters and digits. */
+const ID_WORD = "[a-z]{1,24}|[A-Z]{1,24}|[a-z0-9]{1,16}|[A-Z0-9]{1,16}|[a-z]{0,24}(?:[A-Z][a-z]{2,23})+";
+/**
+ * A catalog id as catalogs write them: words joined by `-`, `.`, `_` or `~` (`the-simpsons-1989-1c18970a.s1e1`,
+ * `BigBuckBunny-2008`, `20261023-78ece5b2deea`).
+ */
+const SLUG_RE = new RegExp(`^(?:${ID_WORD})(?:[-._~](?:${ID_WORD}))*$`);
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+type Shape = (value: string) => boolean;
+
+const isSlug: Shape = (v) => v.length <= 120 && SLUG_RE.test(v) && !UUID_RE.test(v);
+const isCode: Shape = (v) => v.length <= 120 && IDENTIFIER_RE.test(v);
+
+/**
+ * Top-level fields whose value (or each string of a list) is written as given when it has their shape; anything else
+ * is scrubbed like free text, as are the same keys deeper down, in objects the code did not build for the log. They
+ * hold catalog ids, which the catalog serves to every TV and the admin page shows, and problem codes, already redacted
+ * for storage. The shapes leave out what secrets look like: base64url (access, device and proxy session tokens, signed
+ * links: case and digits mixed in a word), 17+ letters and digits in a row (hex digests), UUIDs, and `/`, `:`, `?` or
+ * `=` (URLs, paths, query strings). A passphrase of words would pass, so only values the code takes from the catalog or
+ * a problem go here.
+ */
+const ID_FIELDS = new Map<string, Shape>([
+  ["catalogId", isSlug], ["buildId", isSlug], ["itemId", isSlug], ["episodeId", isSlug], ["sourceId", isSlug],
+  ["adapterId", isSlug], ["adapters", isSlug], ["code", isCode],
+]);
+
+export function redact(value: unknown, depth = 0, seen = new WeakSet<object>(), shape?: Shape): unknown {
   if (value === null || value === undefined) return value;
-  if (typeof value === "string") return redactString(value);
+  if (typeof value === "string") return shape?.(value) ? value : redactString(value);
   if (typeof value === "number" || typeof value === "boolean") return value;
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "function" || typeof value === "symbol") return undefined;
   if (value instanceof Error) {
     // Messages and stacks routinely contain URLs; only the class name (an identifier of at most 60 characters,
-    // scrubbed like any string) and a short string code are kept.
+    // scrubbed like any string) and a short string code (written as given when it reads as one) are kept.
     const code = (value as { code?: unknown }).code;
-    return { name: redactString(errorName(value)), ...(typeof code === "string" && code.length <= 40 ? { code: redactString(code) } : {}) };
+    return { name: redactString(errorName(value)), ...(typeof code === "string" && code.length <= 40 ? { code: isCode(code) ? code : redactString(code) } : {}) };
   }
   if (value instanceof Date) return value.toISOString();
   if (typeof value !== "object") return undefined;
@@ -75,7 +104,7 @@ export function redact(value: unknown, depth = 0, seen = new WeakSet<object>()):
   if (depth >= MAX_DEPTH) return "<deep>";
   seen.add(value);
   if (Array.isArray(value)) {
-    const items = value.slice(0, MAX_ARRAY).map((v) => redact(v, depth + 1, seen));
+    const items = value.slice(0, MAX_ARRAY).map((v) => redact(v, depth + 1, seen, shape));
     return value.length > MAX_ARRAY ? [...items, `<+${value.length - MAX_ARRAY}>`] : items;
   }
   if (value instanceof Map || value instanceof Set || ArrayBuffer.isView(value) || value instanceof ArrayBuffer) {
@@ -84,7 +113,7 @@ export function redact(value: unknown, depth = 0, seen = new WeakSet<object>()):
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value)) {
     if (isSecretKey(k)) continue;
-    const r = redact(v, depth + 1, seen);
+    const r = redact(v, depth + 1, seen, depth === 0 ? ID_FIELDS.get(k) : undefined);
     if (r !== undefined) out[redactString(k)] = r;
   }
   return out;

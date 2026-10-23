@@ -967,14 +967,19 @@ One JSON object per line on stdout: `time`, `level`, `msg` and fields. Every lin
 fields whose name contains a word like `url`, `uri`, `href`, `header(s)`, `authorization`, `cookie`, `token`, `ref`,
 `config`, `playlist`, `password`, `secret` or `body` are dropped; a string starting with `#EXTM3U` becomes `<playlist>`;
 `scheme://…` and protocol-relative `//host…` in strings become `<url host>`; runs of 20 or more base64url characters
-become `<token>`; errors are reduced to their class name (an identifier of at most 60 characters, else `Error`) and a
-short `code`. The access log records the **route template** (e.g. `/api/v1/tv/items/:itemId`), status, duration and
-device id, never the raw path or query; health checks and successful proxy requests at `debug` level only, proxy
-errors at `info`. Commands are logged with their type and ids (never a message's text), problem reports with their
-kind and code (never their detail), a request made with an [access token](#access-tokens) with the token's id (field
-`actorId`, since a key containing `token` would be dropped), never the secret. The TV app APK is logged with its
-version, size, source and the first 12 hex digits of its sha256 (`sha256Prefix`), never the whole digest, a file path
-or a download URL; a failed GitHub check with its `reason` and `repo`.
+become `<token>`, except a whole value of at most 120 characters in a top-level `catalogId`, `buildId`, `itemId`,
+`episodeId`, `sourceId` or `adapterId` field (or each string of an `adapters` list) made of words joined by `-`, `.`,
+`_` or `~`, each a lowercase, capitalized or CamelCase word or a run of at most 16 letters and digits of one case
+(`20261023-78ece5b2deea`, `BigBuckBunny-2008.S01E01`), and not containing a UUID, or in `code` an identifier like
+`ERROR_CODE_IO_BAD_HTTP_STATUS`, which is written as given; errors are reduced to their class name (an identifier of at
+most 60 characters, else `Error`) and a short `code`, written as given when it is such an identifier. The access log
+records the **route template** (e.g. `/api/v1/tv/items/:itemId`), status, duration and device id, never the raw path or
+query; health checks and successful proxy requests at `debug` level only, proxy errors at `info`. Commands are logged
+with their type and ids (never a message's text), problem reports with their kind and code (never their detail), a
+request made with an [access token](#access-tokens) with the token's id (field `actorId`, since a key containing `token`
+would be dropped), never the secret. The TV app APK is logged with its version, size, source and the first 12 hex digits
+of its sha256 (`sha256Prefix`), never the whole digest, a file path or a download URL; a failed GitHub check with its
+`reason` and `repo`.
 
 ## Configuration
 
@@ -1038,3 +1043,6 @@ The example's values are the defaults, except the samples for `publicUrl`, `trus
   `checkAll`), the `check.*` events.
 - **v1 (izle 0.6.0, 2026-10-23)** — the first deployment; from here on v1 changes only additively (see the top of
   this text).
+- **v1 (2026-10-23)** — [logging](#logging): catalog ids in their own top-level fields (`catalogId`, `buildId`,
+  `itemId`, `episodeId`, `sourceId`, `adapterId`, `adapters`) and identifier-shaped codes (`code`, an error's `code`)
+  are written as given instead of `<token>`; nothing else changes.
