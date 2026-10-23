@@ -1,8 +1,12 @@
 # izle-server API v1
 
-Status: **draft, implemented**. Changes within v1 are additive only (new optional request fields, new response
-fields, new routes); clients MUST ignore unknown response fields. Until the first deployment the owner may change v1
-in place, marked **breaking (pre-release)** in the [changelog](#changelog).
+Status: **stable** (API version 1). Within v1 only additive changes are allowed, recorded in the
+[changelog](#changelog): new optional request fields, new response fields, new routes, new error codes, and new values
+where this text says clients ignore unknown ones (TV and admin event types, command types, actor types, a home
+section's `layout`). Clients MUST ignore unknown response fields and handle an unknown error code by its HTTP status.
+Anything else (a removed or renamed field, a changed meaning, a new required request field, a new value anywhere
+else) needs a new API version under `/api/v2`. Up to and including izle 0.6.0, the first deployment, v1 changed in
+place, marked **breaking (pre-release)** in the changelog; since then it does not.
 
 ## Conventions
 
@@ -1027,7 +1031,10 @@ The example's values are the defaults, except the samples for `publicUrl`, `trus
   (pre-release): Listen along, remote management (access tokens, status, events, viewing history, command results,
   single home changes, replacing a TV), TV app updates, proxy destinations, the pairing pool, the home grid and
   backdrops, live channels, catalog browsing and home sections ([CHANGELOG.md](../../CHANGELOG.md) has the releases).
-- **v1, before the first deployment (2026-10-23)** — [checks](#checks): `POST /admin/diagnostics/resolve` follows each
-  source down to media bytes and stores its report; its `probe` field (request and answer) is replaced by `steps`,
-  `codecs`, `warnings`, `verdict` and `checkMs`, breaking (pre-release). Added: check runs (`/admin/checks`), stored
-  reports, `check` in catalog items and TV Home entries (with `checkAll`), the `check.*` events.
+- **v1, in izle 0.6.0 before the first deployment (2026-10-23)** — [checks](#checks):
+  `POST /admin/diagnostics/resolve` follows each source down to media bytes and stores its report; its `probe` field
+  (request and answer) is replaced by `steps`, `codecs`, `warnings`, `verdict` and `checkMs`, breaking (pre-release).
+  Added: check runs (`/admin/checks`), stored reports, `check` in catalog items and TV Home entries (with
+  `checkAll`), the `check.*` events.
+- **v1 (izle 0.6.0, 2026-10-23)** — the first deployment; from here on v1 changes only additively (see the top of
+  this text).

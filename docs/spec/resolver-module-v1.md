@@ -125,7 +125,8 @@ Results are validated against `resolve-result.v1.schema.json`; an invalid result
 
 Additive, optional changes (new optional context members, new optional result fields) stay within API version 1
 and are listed below. Anything else bumps `RESOLVER_API_VERSION`; the server refuses modules declaring a version it
-does not implement. Until the first deployment v1 may change in place, marked **breaking (pre-release)** below.
+does not implement. Up to and including izle 0.6.0, the first deployment, v1 changed in place, marked **breaking
+(pre-release)** below; since then it does not.
 
 ## Changelog
 
@@ -134,3 +135,4 @@ does not implement. Until the first deployment v1 may change in place, marked **
   are used, the `empty` code, `BudgetExhausted`, Listen along's second call, `ctx.log` as a heuristic), then
   breaking (pre-release), changed in place: `ResolveRequest.episodeId` is null for a live channel, inline playlists
   are VOD only, media kind `ts`.
+- **v1 (izle 0.6.0, 2026-10-23)** — the first deployment; from here on v1 changes only additively.
