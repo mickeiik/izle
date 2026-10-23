@@ -210,7 +210,7 @@ async function readUpTo(res: Response, limit: number, signal: AbortSignal, settl
 /** The proxy's own error answers (see proxy.ts), as a step's error; any other is `http`. */
 const PROXY_ERRORS: Record<string, StepError> = {
   upstream_timeout: "timeout", upstream_unreachable: "network", egress_denied: "egress_denied", not_a_playlist: "not_a_playlist",
-  playlist_too_large: "too_large", aborted: "aborted",
+  not_media: "not_media", playlist_too_large: "too_large", aborted: "aborted",
 };
 
 function proxyTarget(rest: string): ProxyTarget {

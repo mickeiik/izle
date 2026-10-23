@@ -31,11 +31,16 @@ const PLAYLIST_TYPE = "application/vnd.apple.mpegurl";
 const SUBTITLE_TYPES: Record<string, string> = { vtt: "text/vtt; charset=utf-8", srt: "application/x-subrip; charset=utf-8", ttml: "application/ttml+xml" };
 /** Response headers passed to the TV; everything else (cookies, redirects, CORS) is dropped. */
 const PASSED_HEADERS = ["content-type", "content-length", "content-range", "accept-ranges", "last-modified", "etag"];
+/** Subtitle containers: a segment of an HLS subtitle rendition labelled as a playlist streams through like media. */
+const SUBTITLE_CONTAINERS = new Set<Container>(["webvtt", "srt", "ttml"]);
 const NOT_TS_EXTENSIONS = new Set(["m4s", "mp4", "m4a", "m4v", "cmfv", "cmfa", "aac", "mp3", "ac3", "ec3", "vtt", "webvtt", "key"]);
 /** What is read of a body labelled as a playlist where a segment was linked, to tell a playlist from media. */
 const SNIFF_BYTES = TS_ALIGN_LOOKAHEAD;
 /** The type a segment labelled as a playlist is passed on with (none when its container has no sure one). */
-const MEDIA_TYPES: Partial<Record<Container, string>> = { ts: "video/mp2t", mp4: "video/mp4", fmp4: "video/mp4", aac: "audio/aac" };
+const MEDIA_TYPES: Partial<Record<Container, string>> = {
+  ts: "video/mp2t", mp4: "video/mp4", fmp4: "video/mp4", aac: "audio/aac",
+  webvtt: SUBTITLE_TYPES.vtt, srt: SUBTITLE_TYPES.srt, ttml: SUBTITLE_TYPES.ttml,
+};
 
 export type ProxyMainKind = "hls" | "mp4" | "ts";
 
@@ -60,10 +65,12 @@ interface Session extends ProxySessionInit {
 export type ProxyTarget = { type: "index" } | { type: "video" } | { type: "stream" } | { type: "u"; ref: string } | { type: "sub"; file: string };
 
 /**
- * `upstream_<status>` (the session went stale), `upstream_error` (5xx, or a playlist that broke off),
- * `upstream_unreachable` (network error or no answer in time), `egress_denied` (a non-public address, see egress.ts).
+ * `upstream_<status>` (the session went stale), `upstream_error` (5xx, or a body read here that broke off),
+ * `upstream_unreachable` (network error or no answer in time), `egress_denied` (a non-public address, see egress.ts),
+ * `not_media` (a segment labelled as a playlist that is neither playlist nor media).
  */
-export type ProxyProblemCode = `upstream_${401 | 403 | 410}` | "upstream_error" | "upstream_unreachable" | "not_a_playlist" | "playlist_too_large" | "egress_denied";
+export type ProxyProblemCode =
+  `upstream_${401 | 403 | 410}` | "upstream_error" | "upstream_unreachable" | "not_a_playlist" | "not_media" | "playlist_too_large" | "egress_denied";
 
 export interface ProxyProblem {
   owner: string;
@@ -113,6 +120,8 @@ interface ReadAhead {
   reader: ReadableStreamDefaultReader<Uint8Array>;
   head: Buffer;
   end: "done" | "broken" | null;
+  /** Why it broke. */
+  error?: unknown;
 }
 
 const readAhead = (body: ReadableStream<Uint8Array>): ReadAhead => ({ reader: body.getReader(), head: Buffer.alloc(0), end: null });
@@ -130,8 +139,9 @@ async function fill(ahead: ReadAhead, size: number): Promise<void> {
         length += value.byteLength;
       }
     }
-  } catch {
+  } catch (err) {
     ahead.end = "broken";
+    ahead.error = err;
   }
   ahead.head = Buffer.concat(chunks);
 }
@@ -144,7 +154,10 @@ function rest(ahead: ReadAhead, log: Logger): ReadableStream<Uint8Array> {
       const chunk = head;
       head = null;
       if (chunk?.byteLength) return controller.enqueue(chunk);
-      if (ahead.end === "broken") return controller.error(prematureClose());
+      if (ahead.end === "broken") {
+        log.debug("upstream stream broke", { error: errorName(ahead.error) });
+        return controller.error(prematureClose());
+      }
       if (ahead.end === "done") return controller.close();
       try {
         const { done, value } = await ahead.reader.read();
@@ -161,9 +174,16 @@ function rest(ahead: ReadAhead, log: Logger): ReadableStream<Uint8Array> {
 
 const cancel = (res: Response): Promise<void> => res.body?.cancel().catch(() => {}) ?? Promise.resolve();
 
-/** The network error code (`ECONNREFUSED`) or the class name, never the message. */
+/** A body's media type as a problem report may name it (never anything else the upstream wrote there). */
+function mediaType(headers: Headers): string {
+  const type = (headers.get("content-type") ?? "").split(";")[0]!.trim();
+  return /^[\w.+-]{1,40}\/[\w.+-]{1,60}$/.test(type) ? type : "unknown content type";
+}
+
+/** The network error code (`ECONNREFUSED`, the error's own or its cause's) or the class name, never the message. */
 function networkReason(err: unknown): string {
-  const code = (err as { cause?: { code?: unknown } } | null)?.cause?.code;
+  const e = err as { code?: unknown; cause?: { code?: unknown } } | null;
+  const code = e?.code ?? e?.cause?.code;
   return typeof code === "string" && /^[A-Z][A-Z0-9_]{1,39}$/.test(code) ? code : errorName(err);
 }
 
@@ -320,7 +340,7 @@ export class ProxyService {
   /**
    * Fetches `url` with the upstream headers, following redirects here (each Location vetted by the egress policy).
    * Playlists (`kind` p, or a playlist content type) are rewritten; anything else streams through with `Range`. A
-   * segment link whose body is labelled as a playlist but starts as media (sniff.ts) streams through as media.
+   * segment link whose body is labelled as a playlist but starts as media or subtitles (sniff.ts) streams through.
    * `prefix`: how rewritten URIs are written relative to the requested path (null: never a playlist). `what` names
    * the request in problem reports. Credential-type headers go to `origin` only.
    */
@@ -392,21 +412,27 @@ export class ProxyService {
     }
 
     const labelled = /mpegurl/i.test(upstream.headers.get("content-type") ?? "");
-    if (opts.prefix !== null && status === 200 && (opts.kind === "p" || (labelled && !upstream.body))) {
-      return this.upstreamPlaylist(req, s, upstream, url, opts.prefix, opts.what);
-    }
     const ahead = upstream.body && readAhead(upstream.body);
     let mislabelled: { container: Container | null } | null = null;
-    if (ahead && opts.prefix !== null && status === 200 && labelled) {
-      // A playlist named under a segment-like URI is rewritten; some upstreams label a segment's media so too.
+    if (opts.prefix !== null && status === 200 && (opts.kind === "p" || labelled)) {
+      if (opts.kind === "p" || !ahead) return this.upstreamPlaylist(req, s, upstream, ahead, url, opts.prefix, opts.what);
+      // A playlist named under a segment-like URI is rewritten; some upstreams label a segment's media so too. The
+      // read ahead gets the upstream's headers deadline again: a body that stalls must not hold the TV's request.
+      const stall = setTimeout(() => timeout.abort(), UPSTREAM_HEADERS_TIMEOUT_MS);
       await fill(ahead, SNIFF_BYTES);
+      clearTimeout(stall);
+      if (ahead.end === "broken") return this.broke(req, s, status, opts.what, ahead.error, timeout.signal.aborted);
+      if (isPlaylistText(ahead.head.subarray(0, 1024).toString("utf8"))) {
+        return this.upstreamPlaylist(req, s, upstream, ahead, url, opts.prefix, opts.what);
+      }
       const container = sniffContainer(ahead.head);
-      if (isPlaylistText(ahead.head.toString("utf8")) || !isMedia(ahead.head, container)) {
-        const again = new Response(rest(ahead, this.log), { status, headers: upstream.headers });
-        return this.upstreamPlaylist(req, s, again, url, opts.prefix, opts.what);
+      if (!isMedia(ahead.head, container) && !(container && SUBTITLE_CONTAINERS.has(container))) {
+        await ahead.reader.cancel().catch(() => {});
+        this.problem(s, "not_media", status, `${opts.what}: ${mediaType(upstream.headers)}`);
+        return json(502, "not_media");
       }
       mislabelled = { container };
-      this.log.info("media labelled as a playlist passed as media", { deviceId: s.deviceId, container: container ?? "unknown" });
+      this.log.debug("media labelled as a playlist passed as media", { deviceId: s.deviceId, container: container ?? "unknown" });
     }
 
     const out = new Headers({ "Cache-Control": "no-store" });
@@ -427,29 +453,44 @@ export class ProxyService {
     return new Response(body, { status, headers: out });
   }
 
-  private async upstreamPlaylist(req: Request, s: Session, upstream: Response, url: string, prefix: string, what: string): Promise<Response> {
+  /** `ahead`: the upstream's body, maybe partly read already (null: none). */
+  private async upstreamPlaylist(
+    req: Request,
+    s: Session,
+    upstream: Response,
+    ahead: ReadAhead | null,
+    url: string,
+    prefix: string,
+    what: string,
+  ): Promise<Response> {
     const status = upstream.status;
-    let text: string | null;
-    try {
-      text = await readText(upstream, MAX_PLAYLIST_BYTES);
-    } catch (err) {
-      if (req.signal.aborted) return json(503, "aborted");
-      this.log.warn("upstream playlist read failed", { deviceId: s.deviceId, error: errorName(err) });
-      this.problem(s, "upstream_error", status, `${what}: broke off (${errorName(err)})`);
-      return json(502, "upstream_error");
-    }
-    if (text === null) {
+    if (ahead) await fill(ahead, MAX_PLAYLIST_BYTES + 1);
+    if (ahead?.end === "broken") return this.broke(req, s, status, what, ahead.error, false);
+    if (ahead && ahead.head.byteLength > MAX_PLAYLIST_BYTES) {
+      await ahead.reader.cancel().catch(() => {});
       this.problem(s, "playlist_too_large", status, `${what}: larger than ${MAX_PLAYLIST_BYTES / (1024 * 1024)} MiB`);
       return json(502, "playlist_too_large");
     }
+    const text = ahead?.head.toString("utf8") ?? "";
     if (!isPlaylistText(text)) {
       // The media type says what came instead (an HTML page is a block or captcha page); its text is never kept.
-      const type = (upstream.headers.get("content-type") ?? "").split(";")[0]!.trim();
-      this.problem(s, "not_a_playlist", status, `${what}: ${/^[\w.+-]{1,40}\/[\w.+-]{1,60}$/.test(type) ? type : "unknown content type"}`);
+      this.problem(s, "not_a_playlist", status, `${what}: ${mediaType(upstream.headers)}`);
       return json(502, "not_a_playlist");
     }
     // `url` is the playlist's own URL after redirects: relative URIs resolve against it.
     return this.playlistResponse(s, text, url, prefix, status, what);
+  }
+
+  /** An upstream body that broke off (or stalled, `timedOut`) while it was read here. */
+  private broke(req: Request, s: Session, status: number, what: string, err: unknown, timedOut: boolean): Response {
+    if (req.signal.aborted) return json(503, "aborted");
+    this.log.warn("upstream body read failed", { deviceId: s.deviceId, code: timedOut ? "timeout" : "broken", error: errorName(err) });
+    if (timedOut) {
+      this.problem(s, "upstream_unreachable", null, `${what}: no body within ${Math.round(UPSTREAM_HEADERS_TIMEOUT_MS / 1000)} s`);
+      return json(504, "upstream_timeout");
+    }
+    this.problem(s, "upstream_error", status, `${what}: broke off (${networkReason(err)})`);
+    return json(502, "upstream_error");
   }
 
   /**

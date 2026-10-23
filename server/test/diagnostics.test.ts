@@ -344,7 +344,7 @@ test("deep check through the proxy: a segment labelled as a playlist passes as m
   assert.deepEqual(stepsOf(media.source), [["playlist", null, true, 200, null, "m3u8"], ["segment", null, true, 200, null, "ts"]], "as the TV gets it");
   assert.equal(media.source.verdict, "ok");
   const html = await check("mislabel-html");
-  assert.deepEqual(stepsOf(html.source).at(-1), ["segment", null, false, 200, "not_a_playlist", null], "the proxy's 502, with the upstream's status");
+  assert.deepEqual(stepsOf(html.source).at(-1), ["segment", null, false, 200, "not_media", null], "the proxy's 502 as a direct path judges it, with the upstream's status");
   assert.equal(html.source.verdict, "fail");
   for (const r of [media, html]) assertNoLeaks(s, r.answer, leaks);
 });

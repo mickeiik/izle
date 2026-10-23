@@ -21,12 +21,12 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
   `<token>`. In their own fields (`catalogId`, `buildId`, `itemId`, `episodeId`, `sourceId`, `adapterId`, `adapters`,
   `code`, and an error's `code`) a value shaped like an id or a code is now written as given; tokens, UUIDs, URLs and
   anything else there, and ids in any other field or in nested objects, are still scrubbed.
-
 - **A proxied segment labelled as a playlist no longer stops playback.** Some sites now and then answer a segment
   with a playlist content type (`application/x-mpegURL`); the proxy answered `502 not_a_playlist` and the TV gave up.
-  It now looks at the first bytes: media (MPEG-TS, MP4/fMP4, ADTS, ID3 or other binary data) streams through as the
-  segment with a media content type, a real playlist is still rewritten, and an error page is still refused and
-  reported. Catalog checks judge such segments the same way.
+  It now looks at the first bytes: media (MPEG-TS, MP4/fMP4, ADTS, ID3 or other binary data) and subtitles stream
+  through as the segment with a media content type, a real playlist is still rewritten, and an error page is refused
+  and reported as `not_media` (a new problem code), as catalog checks call it. A body that breaks off while it is
+  looked at is reported with its network error code, and one that stalls gives up after 20 s.
 
 ## [0.6.0] - 2026-10-23
 
