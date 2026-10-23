@@ -34,7 +34,7 @@ const NOT_TS_EXTENSIONS = new Set(["m4s", "mp4", "m4a", "m4v", "cmfv", "cmfa", "
 
 export type ProxyMainKind = "hls" | "mp4" | "ts";
 
-interface ProxySessionInit {
+export interface ProxySessionInit {
   deviceId: string;
   itemId?: string | null;
   episodeId?: string | null;
@@ -86,6 +86,12 @@ const ENTRY_FILE: Record<ProxyMainKind, string> = { hls: "index.m3u8", mp4: "vid
 export const entryPath = (token: string, kind: ProxyMainKind): string => `/p/${token}/${ENTRY_FILE[kind]}`;
 
 export const subtitlePath = (token: string, index: number, format: string): string => `/p/${token}/sub/${index}.${format}`;
+
+/** The upstream host a rewritten link (`/p/<token>/u/<ref>`'s ref) points at, for the admin checks; null if none. */
+export function linkHost(ref: string): string | null {
+  const b64 = ref.split(".")[1];
+  return b64 && /^[A-Za-z0-9_-]+$/.test(b64) ? (URL.parse(Buffer.from(b64, "base64url").toString("utf8"))?.host ?? null) : null;
+}
 
 const extensionOf = (url: string): string | null =>
   /\.([A-Za-z0-9]{1,5})$/.exec(URL.parse(url)?.pathname ?? "")?.[1]?.toLowerCase() ?? null;
@@ -234,6 +240,25 @@ export class ProxyService {
       return json(502, "playlist_too_large");
     }
     return new Response(body, { status: 200, headers: { "Content-Type": PLAYLIST_TYPE, "Cache-Control": "no-store" } });
+  }
+
+  /**
+   * A GET of `url` without a session, as the proxy would make it: the egress policy vets the URL and each redirect
+   * (at most MAX_REDIRECTS; past that, the redirect is the answer). The admin checks follow URLs that an upstream
+   * playlist named with it. Rejects like fetch; `egressRefusal` tells a refused destination.
+   */
+  async fetchVetted(url: string, headers: Record<string, string>, signal: AbortSignal): Promise<{ response: Response; url: string }> {
+    for (let hops = 0; ; hops++) {
+      const target = new URL(url);
+      this.policy.check(target);
+      const response = await this.fetch(target.href, { headers, redirect: "manual", signal });
+      const location = REDIRECT_STATUS.has(response.status) ? response.headers.get("location") : null;
+      const next = location === null ? null : URL.parse(location, target.href);
+      if (next === null || hops >= MAX_REDIRECTS) return { response, url: target.href };
+      await cancel(response);
+      next.hash = "";
+      url = next.href;
+    }
   }
 
   /**

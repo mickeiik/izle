@@ -25,7 +25,8 @@ test("a new database gets every migration and opens again as it is; one written 
   raw.close();
   assert.deepEqual(tables, [
     "access_tokens", "app_apk", "catalog_builds", "catalog_seen", "catalog_seen_items", "commands", "companion_links", "devices", "episode_marks",
-    "events", "home_entries", "home_sections", "item_cursor", "now_playing", "pair_codes", "problems", "progress", "viewing_ranges", "viewings",
+    "events", "home_entries", "home_sections", "item_cursor", "now_playing", "pair_codes", "problems", "progress", "source_checks", "viewing_ranges",
+    "viewings",
   ]);
   const b = new Store(file);
   assert.deepEqual([b.schemaVersion, b.getDevice("d1")?.name], [MIGRATIONS.length, "TV"]);

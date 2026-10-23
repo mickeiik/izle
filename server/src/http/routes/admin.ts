@@ -1,12 +1,13 @@
 // The admin API: pairing approval; the TVs (settings, deletion, adopting a deleted TV's history, "continue from",
 // progress, what each is playing, remote commands, problem reports; the Home list is admin-home.ts's); the catalog
-// (builds, the browser, an item, diagnostics, reload); and "Listen along" (companion audio on the owner's phone).
+// (builds, the browser, an item, checks of one episode or channel and runs of them, reload); and "Listen along"
+// (companion audio on the owner's phone).
 
 import type { Context, Hono } from "hono";
 import { buildJson, catalogInfo, catalogItemJson, reloadCatalog, searchHitJson } from "../../catalog-admin.ts";
+import { MAX_CHECK_WAIT_MS } from "../../checks.ts";
 import { BROWSE_SORTS, ITEM_KINDS, type BrowseQuery, type BrowseSort, type ItemKind } from "../../catalog-browse.ts";
 import type { AppContext } from "../../context.ts";
-import { diagnosePlayable } from "../../diagnostics.ts";
 import { HttpError } from "../../errors.ts";
 import { HOME_MAX_ITEMS, HOME_MAX_SECTIONS } from "../../home.ts";
 import { requireItem } from "../../lookup.ts";
@@ -15,7 +16,7 @@ import { PROBLEM_LIST_DEFAULT, PROBLEM_LIST_MAX } from "../../problems.ts";
 import { iso } from "../../presenters.ts";
 import type { Device, Store } from "../../store.ts";
 import { MAX_NOW_WAIT_MS } from "../../playing.ts";
-import { adoptBody, approveBody, commandBody, companionLinkBody, companionResolveBody, cursorBody, devicePatchBody, diagnosticsBody, intParam, intQuery, isId, limitQuery, listQuery, parseBody, parseWait, timeQuery } from "../../validation.ts";
+import { adoptBody, approveBody, checkBody, commandBody, companionLinkBody, companionResolveBody, cursorBody, devicePatchBody, diagnosticsBody, intParam, intQuery, isId, limitQuery, listQuery, parseBody, parseWait, timeQuery } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
 
 /** The device a `/admin/devices/:id` route names; 404 `unknown_device` otherwise. */
@@ -51,8 +52,13 @@ function browseQuery(c: Context, ctx: AppContext): BrowseQuery {
 }
 
 export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
-  const { store, home, pairing, devices, catalog, companion, playing } = ctx;
+  const { store, home, pairing, devices, catalog, companion, playing, checker, checks } = ctx;
   const device = (c: Context) => requireDevice(store, c.req.param("id"));
+  const runId = (c: Context) => {
+    const id = c.req.param("runId") ?? "";
+    if (!isId(id)) throw new HttpError(404, "unknown_check");
+    return id;
+  };
 
   app.post("/api/v1/admin/pair/approve", async (c) => {
     const body = await parseBody(c, approveBody);
@@ -150,13 +156,40 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
   app.get("/api/v1/admin/catalog/items/:id", (c) => {
     const id = c.req.param("id");
     if (!isId(id)) throw new HttpError(404, "unknown_item");
-    return c.json({ item: catalogItemJson(catalog, requireItem(catalog, id, 404, "unknown_item")) });
+    const item = requireItem(catalog, id, 404, "unknown_item");
+    return c.json({ item: catalogItemJson(catalog, item, checker.summaries([item.id])) });
   });
 
+  // One episode or channel, checked now (and stored); runs check many in the background.
   app.post("/api/v1/admin/diagnostics/resolve", async (c) => {
     const body = await parseBody(c, diagnosticsBody);
-    return c.json(await diagnosePlayable(ctx, body, c.req.raw.signal));
+    return c.json(await checker.diagnose(body, c.req.raw.signal));
   });
+
+  app.post("/api/v1/admin/checks", async (c) => {
+    const body = await parseBody(c, checkBody);
+    const d = "deviceId" in body ? requireDevice(store, body.deviceId) : null;
+    return c.json({ run: checks.start(body, d, c.get("actor")) }, 202);
+  });
+
+  // Before `/checks/:runId`, which "current" would match too.
+  app.get("/api/v1/admin/checks/current", (c) => c.json({ run: checks.current() }));
+
+  app.get("/api/v1/admin/checks/playables/:playableId", (c) => {
+    const id = c.req.param("playableId");
+    if (!isId(id)) throw new HttpError(404, "unknown_item");
+    return c.json(checker.stored(id));
+  });
+
+  // `?seq=<n>&wait=<ms>` long-polls until the run changes.
+  app.get("/api/v1/admin/checks/:runId", async (c) => {
+    const id = runId(c);
+    const seq = intQuery(c.req.query("seq"), "seq", 0) ?? null;
+    const waitMs = Math.min(intQuery(c.req.query("wait"), "wait", 0) ?? 0, MAX_CHECK_WAIT_MS);
+    return c.json({ run: await checks.wait(id, seq, waitMs, c.req.raw.signal) });
+  });
+
+  app.delete("/api/v1/admin/checks/:runId", (c) => c.json({ run: checks.cancel(runId(c), c.get("actor")) }));
 
   app.post("/api/v1/admin/catalog/reload", async (c) => {
     const r = await reloadCatalog(ctx, c.get("actor"));

@@ -114,3 +114,115 @@ export function tsSyncOffset(head: Uint8Array): number {
   }
   return 0;
 }
+
+/** The attributes of a tag's attribute list (`KEY=value,KEY="quoted, value"`), names upper-cased, quotes removed. */
+export function tagAttributes(line: string): Map<string, string> {
+  const list = line.slice(line.indexOf(":") + 1);
+  const out = new Map<string, string>();
+  for (const m of list.matchAll(/\s*([A-Za-z0-9-]+)\s*=\s*("[^"]*"|[^,]*)\s*(?:,|$)/g)) {
+    const value = m[2]!.trim();
+    out.set(m[1]!.toUpperCase(), value.startsWith('"') ? value.slice(1, -1) : value);
+  }
+  return out;
+}
+
+/** A variant of a master playlist: its URI, and its CODECS, RESOLUTION and BANDWIDTH as written (null when absent). */
+export interface Variant {
+  uri: string;
+  codecs: string | null;
+  resolution: string | null;
+  bandwidth: number | null;
+}
+
+/** A rendition (`#EXT-X-MEDIA`) with a playlist of its own: AUDIO, SUBTITLES or VIDEO. */
+export interface Rendition {
+  type: string;
+  uri: string;
+}
+
+/** The variants (`#EXT-X-STREAM-INF`, I-frame ones left out) and renditions with a URI of a master playlist, in order. */
+export function masterPlaylist(text: string): { variants: Variant[]; renditions: Rendition[] } {
+  const variants: Variant[] = [];
+  const renditions: Rendition[] = [];
+  let pending: Map<string, string> | null = null;
+  for (const line of withoutBom(text).split(LINE_BREAK).map((l) => l.trim())) {
+    if (line === "") continue;
+    if (line.startsWith("#")) {
+      const tag = tagName(line);
+      if (tag === "#EXT-X-STREAM-INF") pending = tagAttributes(line);
+      else if (tag === "#EXT-X-MEDIA") {
+        const a = tagAttributes(line);
+        const uri = a.get("URI");
+        if (uri) renditions.push({ type: (a.get("TYPE") ?? "").toUpperCase(), uri });
+      }
+      continue;
+    }
+    if (pending) {
+      const bandwidth = Number(pending.get("BANDWIDTH"));
+      variants.push({
+        uri: line, codecs: pending.get("CODECS") || null, resolution: pending.get("RESOLUTION") || null,
+        bandwidth: Number.isSafeInteger(bandwidth) && bandwidth >= 0 ? bandwidth : null,
+      });
+    }
+    pending = null;
+  }
+  return { variants, renditions };
+}
+
+/** CODECS, RESOLUTION and BANDWIDTH of each variant of a master playlist. */
+export function parseMasterAttributes(text: string): Array<Omit<Variant, "uri">> {
+  return masterPlaylist(text).variants.map(({ codecs, resolution, bandwidth }) => ({ codecs, resolution, bandwidth }));
+}
+
+/** A byte range of a resource (`#EXT-X-BYTERANGE`, a map's `BYTERANGE`), as an HTTP `Range` value. */
+export type ByteRange = { offset: number; length: number };
+
+export const rangeHeader = (r: ByteRange): string => `bytes=${r.offset}-${r.offset + r.length - 1}`;
+
+/** A segment of a media playlist, with the key and the init section (`#EXT-X-MAP`) in effect for it. */
+export interface MediaSegment {
+  uri: string;
+  range: ByteRange | null;
+  /** Null when unencrypted (no key, or `METHOD=NONE`). */
+  key: { method: string; uri: string | null } | null;
+  map: { uri: string; range: ByteRange | null } | null;
+}
+
+function byteRange(value: string | undefined, next: number): ByteRange | null {
+  const m = value === undefined ? null : /^\s*(\d{1,15})(?:@(\d{1,15}))?\s*$/.exec(value);
+  return m ? { length: Number(m[1]), offset: m[2] === undefined ? next : Number(m[2]) } : null;
+}
+
+/** The segments of a media playlist in order, and whether it ends (`#EXT-X-ENDLIST`; a live playlist does not). */
+export function mediaPlaylist(text: string): { segments: MediaSegment[]; endList: boolean } {
+  const segments: MediaSegment[] = [];
+  let endList = false;
+  let key: MediaSegment["key"] = null;
+  let map: MediaSegment["map"] = null;
+  // Where a sub-range without an offset starts: right after the previous sub-range of the same resource.
+  const ends = new Map<string, number>();
+  let pendingRange: string | undefined;
+  for (const line of withoutBom(text).split(LINE_BREAK).map((l) => l.trim())) {
+    if (line === "") continue;
+    if (line.startsWith("#")) {
+      const tag = tagName(line);
+      if (tag === "#EXT-X-ENDLIST") endList = true;
+      else if (tag === "#EXT-X-BYTERANGE") pendingRange = line.slice(line.indexOf(":") + 1);
+      else if (tag === "#EXT-X-KEY") {
+        const a = tagAttributes(line);
+        const method = (a.get("METHOD") ?? "NONE").toUpperCase();
+        key = method === "NONE" ? null : { method, uri: a.get("URI") ?? null };
+      } else if (tag === "#EXT-X-MAP") {
+        const a = tagAttributes(line);
+        const uri = a.get("URI");
+        map = uri ? { uri, range: byteRange(a.get("BYTERANGE"), 0) } : null;
+      }
+      continue;
+    }
+    const range = pendingRange === undefined ? null : byteRange(pendingRange, ends.get(line) ?? 0);
+    if (range) ends.set(line, range.offset + range.length);
+    pendingRange = undefined;
+    segments.push({ uri: line, range, key, map });
+  }
+  return { segments, endList };
+}

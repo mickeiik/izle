@@ -2,8 +2,10 @@
 
 import { tvActor, type Actor } from "./actor.ts";
 import type { AppUpdateService } from "./app-updates.ts";
-import type { CatalogService, PlayingKey } from "./catalog.ts";
+import { isLiveItem, type CatalogItem } from "@izle/contract";
+import { liveRef, type CatalogService, type PlayableRef, type PlayingKey } from "./catalog.ts";
 import type { ServerConfig } from "./config.ts";
+import type { CheckSummary, SourceChecker } from "./diagnostics.ts";
 import { HttpError } from "./errors.ts";
 import type { EventLog } from "./eventlog.ts";
 import type { EventHub, Notifier } from "./events.ts";
@@ -27,8 +29,21 @@ interface DeviceDeps {
   appUpdates: AppUpdateService;
   home: HomeService;
   proxy: ProxyService;
+  checker: Pick<SourceChecker, "summaries">;
   log: Logger;
   now: () => number;
+}
+
+/** The stored checks of every allowed episode of a show: the worst verdict, counts and the oldest check; null for a channel. */
+function checkAllOf(item: CatalogItem, check: (ref: PlayableRef) => CheckSummary) {
+  if (isLiveItem(item)) return null;
+  const allowed = item.episodes.flatMap((episode, index) => (episode.playbackAllowed ? [check({ kind: "episode", item, episode, index })] : []));
+  const checked = allowed.filter((s) => s !== null);
+  const failed = checked.filter((s) => s.verdict === "fail").length;
+  const warned = checked.filter((s) => s.verdict === "warn").length;
+  const verdict = checked.length === 0 ? null : failed > 0 ? "fail" : warned > 0 ? "warn" : "ok";
+  const oldest = checked.map((s) => s.checkedAt).sort()[0] ?? null;
+  return { verdict, checked: checked.length, total: allowed.length, failed, warned, oldestCheckedAt: oldest };
 }
 
 /** The device's settings, falling back to the server's defaults, then to the catalog's hints (what the TV gets). */
@@ -103,14 +118,21 @@ export class DeviceService {
     return this.s.store.listDevices().map((d) => ({ ...this.view(d), homeCount: this.s.home.ids(d.id).length }));
   }
 
-  /** The device's home list with what OK would play; items gone from the catalog stay and are flagged `missing`. */
+  /**
+   * The device's home list with what OK would play and its stored check (`checkAll`: every allowed episode's); items
+   * gone from the catalog stay and are flagged `missing`.
+   */
   home(d: Device) {
     const { catalog } = this.s;
-    return this.s.home.list(d.id).map(({ itemId, item, missing, playable, continue: cont, newEpisodes }) => {
+    const entries = this.s.home.list(d.id);
+    const check = this.s.checker.summaries(entries.map((e) => e.itemId));
+    return entries.map(({ itemId, item, missing, playable, continue: cont, newEpisodes }) => {
       const card = item
         ? { title: item.title, kind: item.kind, posterUrl: catalog.posterUrl(item), backdropUrl: catalog.backdropUrl(item) }
         : { title: null, kind: null, posterUrl: null, backdropUrl: null };
-      return { itemId, ...card, missing, playable, continue: cont, newEpisodes };
+      // What OK plays: the continue episode, or the channel itself when it may play.
+      const plays = !item ? undefined : isLiveItem(item) ? (item.playbackAllowed ? liveRef(item) : undefined) : cont ? catalog.episode(cont.episodeId) : undefined;
+      return { itemId, ...card, missing, playable, continue: cont, newEpisodes, check: plays ? check(plays) : null, checkAll: item ? checkAllOf(item, check) : null };
     });
   }
 

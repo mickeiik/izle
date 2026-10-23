@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import type { Server } from "node:http";
@@ -201,6 +202,19 @@ export async function startTestServer(opts: TestServerOptions = {}) {
 
 /** The server's log lines with this message, parsed. */
 export const logged = (s: TestServer, msg: string): Json[] => s.logs.map((l) => JSON.parse(l)).filter((l) => l.msg === msg);
+
+/** The answer, every log line and every stored check are free of the upstream's URLs and header values. */
+export function assertNoLeaks(s: TestServer, answer: Json, leaks: string[]) {
+  const text = JSON.stringify(answer);
+  const logs = s.logs.join("\n");
+  const { store } = s.srv.ctx;
+  const stored = JSON.stringify(store.sourceCheckKeys().map((k) => store.getSourceChecks(k.catalogId, k.itemId, k.playableId)));
+  for (const leak of leaks) {
+    assert.ok(!text.includes(leak), `the answer leaked ${leak}`);
+    assert.ok(!logs.includes(leak), `the log leaked ${leak}`);
+    assert.ok(!stored.includes(leak), `a stored check leaked ${leak}`);
+  }
+}
 
 /** Creates an access token through the API and returns its secret and id. */
 export async function createToken(s: TestServer, name: string, scope: string) {

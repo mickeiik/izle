@@ -399,6 +399,8 @@ const ERRORS = /** @type {Record<string, string>} */ ({
   apk_too_large: "That APK is larger than 64 MiB, the server's limit.",
   github_disabled: "Checks are off: this server is set to uploaded APKs only.",
   check_running: "A check is already running; its result shows here in a moment.",
+  nothing_to_check: "Nothing to check: no episode or channel there may be played.",
+  unknown_check: "That check is not kept any more: the server restarted, or another check followed it.",
 });
 
 /** Owner-facing text for anything that went wrong: an error with a string `code` is looked up. @param {unknown} err */
@@ -783,6 +785,8 @@ export function tvCard(e) {
   return { chip: "New", tone: "new", progress, newEpisodes, episode: null };
 }
 
+// --- checks: one source's report, a playable's stored summary, a Home entry's results, a batch run ----------------
+
 /** What a failed source attempt means. */
 const TRIED = /** @type {Record<string, string>} */ ({
   empty: "the adapter found nothing to play",
@@ -793,15 +797,76 @@ const TRIED = /** @type {Record<string, string>} */ ({
   unsupported: "cannot be served (DASH that needs upstream headers)",
 });
 
+/** What each step of a source's check fetched, as the TV would. */
+const STEPS = /** @type {Record<string, string>} */ ({
+  playlist: "playlist", variant: "variant playlist", rendition: "rendition playlist", segment: "segment", init: "init segment",
+  key: "key", subtitle: "subtitles", file: "file", manifest: "DASH manifest",
+});
+
+/** Why a step failed (`http`: its status says it). */
+const STEP_ERRORS = /** @type {Record<string, string>} */ ({
+  timeout: "timed out",
+  network: "could not connect",
+  http: "HTTP error",
+  not_a_playlist: "not a playlist",
+  too_large: "too large",
+  not_media: "not media",
+  bad_key: "not a 16-byte key",
+  egress_denied: "refused by the server's egress policy",
+  not_subtitles: "not subtitles",
+  not_mpd: "not a DASH manifest",
+  aborted: "cancelled",
+  budget: "the source's time ran out",
+});
+
+/** What a step found. */
+const CONTAINERS = /** @type {Record<string, string>} */ ({
+  ts: "MPEG-TS", mp4: "MP4", fmp4: "fMP4", aac: "AAC", id3: "ID3 audio", webvtt: "WebVTT", srt: "SRT", ttml: "TTML", mpd: "MPD", m3u8: "M3U8",
+});
+
+/** What a warning means: the source works, but something may still go wrong on the TV. */
+const WARNINGS = /** @type {Record<string, string>} */ ({
+  risky_codec: "a codec that may not decode on every TV",
+  high_resolution: "above 1080p: may not decode on every TV",
+  sample_aes: "encrypted with SAMPLE-AES: may not play",
+  no_range: "no range support: resume and seeking break",
+  subtitle_failed: "a subtitle track could not be loaded",
+  manifest_only: "DASH: only the manifest was checked",
+  playlists_unchecked: "more than 16 playlists: the rest were not checked",
+});
+
+/** `2.5 Mbit/s`, `800 kbit/s`. @param {number} bps */
+const bitrate = (bps) => (bps >= 1_000_000 ? `${(bps / 1_000_000).toFixed(1)} Mbit/s` : `${Math.round(bps / 1000)} kbit/s`);
+
 /**
- * One source of `POST /admin/diagnostics/resolve`: whether it worked (resolved, and its probe passed), how it was
- * tried, and what came back, a line each.
+ * One step of a source's check: "variant playlist 2: ok (HTTP 200, M3U8, 12 ms)", "segment: failed, not media (HTTP
+ * 200, 3 ms) · cdn.example.org"; the host only when it is not the stream's.
+ * @param {any} step @param {string | null} [streamHost]
+ */
+export function stepText(step, streamHost = null) {
+  const n = typeof step.index === "number" ? ` ${step.index + 1}` : "";
+  // A segment, init segment or key names the playlist it came from: "segment of variant 1", "key of rendition 2".
+  const what = `${STEPS[step.what] ?? step.what}${step.of ? ` of ${step.of}` : ""}${n}`;
+  const httpError = !step.ok && step.error === "http" && step.status;
+  const result = step.ok ? "ok" : `failed, ${httpError ? `HTTP ${step.status}` : STEP_ERRORS[step.error] ?? step.error ?? "unknown error"}`;
+  const details = [
+    step.status && !httpError ? `HTTP ${step.status}` : null,
+    step.container ? CONTAINERS[step.container] ?? step.container : null,
+    typeof step.bytes === "number" ? formatBytes(step.bytes) : null,
+    `${step.ms} ms`,
+  ].filter(Boolean).join(", ");
+  return `${what}: ${result} (${details})${step.host && step.host !== streamHost ? ` · ${step.host}` : ""}`;
+}
+
+/**
+ * One source of a check (`POST /admin/diagnostics/resolve`, or stored): its verdict, how it was tried, what came back
+ * a line each (with the HLS variants' codecs), every step the check fetched, and its warnings.
  * @param {any} s an entry of the answer's `sources` @param {(iso: string) => string} [formatTime] for an expiry
- * @returns {{ ok: boolean, sourceId: string, how: string, lines: string[] }}
+ * @returns {{ verdict: "ok" | "warn" | "fail", sourceId: string, how: string, lines: string[],
+ *   steps: Array<{ ok: boolean, text: string }>, warnings: string[] }}
  */
 export function sourceReport(s, formatTime = (iso) => new Date(iso).toLocaleString()) {
   const st = s.stream;
-  const p = s.probe;
   /** @type {string[]} */
   const lines = [];
   if (!s.ok && s.name === "BudgetExhausted") lines.push("skipped: the time budget of the request ran out");
@@ -813,15 +878,99 @@ export function sourceReport(s, formatTime = (iso) => new Date(iso).toLocaleStri
     if (st.languages) lines.push(`audio ${st.languages.audio?.join(", ") || "unknown"} · subtitles ${st.languages.subtitles?.join(", ") || "unknown"}`);
     if (st.expiresAt) lines.push(`expires ${formatTime(st.expiresAt)}`);
   }
-  if (p) {
-    const pl = p.playlist;
-    const found = pl ? (pl.master ? `${plural(pl.variants, "variant")}, ${plural(pl.renditions, "rendition")}` : plural(pl.segments, "segment")) : null;
-    lines.push(p.ok
-      ? `probe ok (${[p.status ? `HTTP ${p.status}` : null, found, `${p.ms} ms`].filter(Boolean).join(", ")})`
-      : `probe failed: ${p.error ?? `HTTP ${p.status}`}${p.name ? ` (${p.name})` : ""}`);
+  for (const [i, v] of (s.codecs ?? []).entries()) {
+    const facts = [v.codecs ?? "codecs not listed", v.resolution, v.bandwidth ? bitrate(v.bandwidth) : null].filter(Boolean).join(" · ");
+    lines.push(`variant ${i + 1}: ${facts}`);
   }
-  const how = `${s.type === "adapter" ? `adapter ${s.adapterId}` : "direct"} · ${s.ms} ms`;
-  return { ok: Boolean(s.ok && (!p || p.ok)), sourceId: s.sourceId, how, lines };
+  const steps = (s.steps ?? []).map((/** @type {any} */ step) => ({ ok: Boolean(step.ok), text: stepText(step, st?.host ?? null) }));
+  const warnings = (s.warnings ?? []).map((/** @type {string} */ w) => WARNINGS[w] ?? w);
+  const how = `${s.type === "adapter" ? `adapter ${s.adapterId}` : "direct"} · ${s.ms} ms${s.checkMs ? ` · checked in ${s.checkMs} ms` : ""}`;
+  return { verdict: s.verdict ?? (s.ok ? "ok" : "fail"), sourceId: s.sourceId, how, lines, steps, warnings };
+}
+
+/** Each verdict's mark (shown next to its words, never alone) and words. */
+const VERDICTS = /** @type {const} */ ({ ok: ["✔", "Works"], warn: ["⚠", "Works, with warnings"], fail: ["✖", "Fails"] });
+const RANK = { ok: 0, warn: 1, fail: 2 };
+
+/** The worse of two verdicts (null: unknown). @param {"ok" | "warn" | "fail" | null} a @param {"ok" | "warn" | "fail" | null} b */
+const worse = (a, b) => (a === null ? b : b === null ? a : RANK[a] >= RANK[b] ? a : b);
+
+/**
+ * A verdict's chip: `mark` (✔ ⚠ ✖, beside the text, which says it all) and `tone`.
+ * @param {"ok" | "warn" | "fail"} verdict
+ * @returns {{ mark: string, text: string, tone: "ok" | "warn" | "bad" }}
+ */
+export const verdictChip = (verdict) => ({ mark: VERDICTS[verdict][0], text: VERDICTS[verdict][1], tone: verdict === "ok" ? "ok" : verdict === "warn" ? "warn" : "bad" });
+
+/**
+ * The chip of a playable's stored check (`check` of an episode, a channel or a Home entry): "Works · checked 2 h ago",
+ * "Works, with warnings · …", "Fails · …"; "Source changed · …" when a source is new or changed since (its verdict is
+ * then not known); "Not checked".
+ * @param {{ verdict: "ok" | "warn" | "fail", checkedAt: string, working: number, total: number, stale: boolean } | null | undefined} check
+ * @param {number} [now]
+ * @returns {{ mark: string, text: string, tone: "ok" | "warn" | "bad" | "info" | "" }}
+ */
+export function checkSummaryText(check, now = Date.now()) {
+  if (!check) return { mark: "", text: "Not checked", tone: "" };
+  const when = `checked ${formatRelative(check.checkedAt, now)}`;
+  if (check.stale) return { mark: "", text: `Source changed · ${when}`, tone: "info" };
+  const c = verdictChip(check.verdict);
+  // It plays, but on fewer sources than it has: that is the warning, said as such.
+  const text = check.verdict === "warn" && check.working < check.total ? `Works, ${check.total - check.working} of ${plural(check.total, "source")} failing` : c.text;
+  return { ...c, text: `${text} · ${when}` };
+}
+
+/**
+ * A Home entry's verdict, for the Check results list: the worse of what OK plays (unless a source changed since) and
+ * of its episodes; null when nothing was checked.
+ * @param {{ check?: { verdict: "ok" | "warn" | "fail", stale: boolean } | null, checkAll?: { verdict: "ok" | "warn" | "fail" | null } | null }} e
+ */
+export const verdictOf = (e) => worse(e.check && !e.check.stale ? e.check.verdict : null, e.checkAll?.verdict ?? null);
+
+/**
+ * What a Home entry's checks found, a line each: what OK plays ("What OK plays: Fails · checked 2 h ago") and a
+ * series' episodes ("Episodes: 38 of 40 checked · 1 failing · 2 with warnings"; "not checked" when none was); a film
+ * of one episode has no episode line (it is what OK plays).
+ * @param {{ kind?: string, check?: any, checkAll?: { checked: number, total: number, failed: number, warned: number } | null }} e
+ * @param {number} [now]
+ */
+export function homeCheckLines(e, now = Date.now()) {
+  const lines = [`What OK plays: ${checkSummaryText(e.check, now).text}`];
+  const a = e.checkAll;
+  if (a && (e.kind === "series" || a.total > 1)) {
+    const found = [a.failed ? `${a.failed} failing` : null, a.warned ? `${a.warned} with warnings` : null].filter(Boolean);
+    lines.push(a.checked === 0 ? "Episodes: not checked" : [`Episodes: ${a.checked} of ${a.total} checked`, ...found].join(" · "));
+  }
+  return lines;
+}
+
+/**
+ * What a batch check is about: the show's title, or "Home of Living room, quick" (what OK plays) or ", full" (every
+ * episode). @param {{ title: string, target: { itemId?: string, deviceId?: string, mode?: string } }} run
+ */
+export const runTitle = (run) => (run.target.deviceId ? `Home of ${run.title}, ${run.target.mode === "quick" ? "quick" : "full"}` : run.title);
+
+/**
+ * A batch check's progress: "12 of 40 checked · 1 failing · 2 with warnings"; "Stopped: 12 of 40 checked …" once
+ * stopped; "Done: 40 checked · all work" (or what failed) once done. Skipped shows are counted last.
+ * @param {{ state: string, total: number, done: number, failed: number, warned: number, skipped?: any[] }} run
+ */
+export function runProgressText(run) {
+  const found = [run.failed ? `${run.failed} failing` : null, run.warned ? `${run.warned} with warnings` : null].filter(Boolean);
+  const skipped = run.skipped?.length ? [`${run.skipped.length} skipped`] : [];
+  if (run.state === "done") return [`Done: ${run.done} checked`, ...(found.length ? found : ["all work"]), ...skipped].join(" · ");
+  return [`${run.state === "cancelled" ? "Stopped: " : ""}${run.done} of ${run.total} checked`, ...found, ...skipped].join(" · ");
+}
+
+/**
+ * The shows a batch check left out, and why: "Skipped: Sintel (missing from the catalog), Tears (not playable)."; ""
+ * when none. @param {{ skipped?: Array<{ itemId: string, title: string | null, reason: string }> }} run
+ */
+export function skippedText(run) {
+  const list = run.skipped ?? [];
+  if (list.length === 0) return "";
+  const why = (/** @type {string} */ r) => (r === "missing" ? "missing from the catalog" : "not playable");
+  return `Skipped: ${list.map((s) => `${s.title ?? s.itemId} (${why(s.reason)})`).join(", ")}.`;
 }
 
 /** Languages offered in the settings selects; any other BCP 47 tag the API accepts is shown as it is. */

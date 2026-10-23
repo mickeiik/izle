@@ -10,7 +10,7 @@ import { redactReportText, type Logger } from "./log.ts";
 import { iso } from "./presenters.ts";
 import type { ProxyProblem, ProxyProblemCode } from "./proxy.ts";
 import { RateLimiter } from "./ratelimit.ts";
-import { isCompanionScope, type PlaybackSessions, type Tried } from "./resolve.ts";
+import { isCheckScope, isCompanionScope, type PlaybackSessions, type Tried } from "./resolve.ts";
 import type { Device, Problem, ProblemOrigin, Store } from "./store.ts";
 
 /** Problem kinds a TV may report (`proxy` problems are only recorded by the server). */
@@ -144,7 +144,7 @@ export class ProblemService {
 
   /** A failed upstream request of a proxy session: the TV's sessions only, at most one per device and code a minute. */
   recordProxy(p: ProxyProblem): void {
-    if (isCompanionScope(p.owner)) return;
+    if (isCompanionScope(p.owner) || isCheckScope(p.owner)) return;
     if (!this.proxyProblems.hit(`${p.owner}\u0000${p.code}`).ok) return;
     this.record(p.owner, { kind: "proxy", code: p.code, itemId: p.itemId, episodeId: p.episodeId, sourceId: p.sourceId, httpStatus: p.httpStatus, detail: p.detail });
   }

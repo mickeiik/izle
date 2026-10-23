@@ -3,9 +3,10 @@
 
 import { isLiveItem, type CatalogItem, type Source } from "@izle/contract";
 import { SERVER, type Actor } from "./actor.ts";
-import type { CatalogService, ReloadResult } from "./catalog.ts";
+import { liveRef, type CatalogService, type PlayableRef, type ReloadResult } from "./catalog.ts";
 import type { BrowseHit } from "./catalog-browse.ts";
 import type { AppContext } from "./context.ts";
+import type { CheckSummary } from "./diagnostics.ts";
 import { errorName } from "./errors.ts";
 import { episodeDetails, iso, itemCard, itemDetails } from "./presenters.ts";
 import { hasHeaders } from "./resolve.ts";
@@ -81,11 +82,17 @@ function adminSource(s: Source) {
   };
 }
 
-export function catalogItemJson(catalog: CatalogService, item: CatalogItem) {
-  if (isLiveItem(item)) return { ...itemDetails(catalog, item), playbackAllowed: item.playbackAllowed, sources: item.sources.map(adminSource) };
+/** The item with its sources, and each episode's (or the channel's) stored check summary from `check`. */
+export function catalogItemJson(catalog: CatalogService, item: CatalogItem, check: (ref: PlayableRef) => CheckSummary) {
+  if (isLiveItem(item)) {
+    return { ...itemDetails(catalog, item), playbackAllowed: item.playbackAllowed, sources: item.sources.map(adminSource), check: check(liveRef(item)) };
+  }
   return {
     ...itemDetails(catalog, item),
     autoAdvance: item.autoAdvance ?? true,
-    episodes: item.episodes.map((e, index) => ({ ...episodeDetails(e, index), autoAdvance: e.autoAdvance ?? null, sources: e.sources.map(adminSource) })),
+    episodes: item.episodes.map((episode, index) => ({
+      ...episodeDetails(episode, index), autoAdvance: episode.autoAdvance ?? null, sources: episode.sources.map(adminSource),
+      check: check({ kind: "episode", item, episode, index }),
+    })),
   };
 }

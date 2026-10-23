@@ -1,6 +1,7 @@
 const JS = "text/javascript; charset=utf-8";
 const MODULES = ["app.js", "router.js", "api.js", "dom.js", "lib.js", "view-devices.js", "view-device.js",
-  "device-home.js", "catalog-browser.js", "view-catalog.js", "view-item.js", "view-history.js", "view-tokens.js", "view-app.js", "events.js", "companion.js", "companion-player.js"];
+  "device-home.js", "catalog-browser.js", "view-catalog.js", "view-item.js", "view-history.js", "view-tokens.js", "view-app.js", "events.js", "companion.js",
+  "companion-player.js", "checks.js"];
 
 /** The allow-list of `server/admin/`'s files (the package has every top-level .html/.js/.css/.svg file of it). */
 export const ADMIN_FILES: Record<string, string> = {

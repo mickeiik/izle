@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isPlaylistText, PlaylistTooLarge, rewritePlaylist, summarizePlaylist, tsSyncOffset } from "../src/hls.ts";
+import { isPlaylistText, masterPlaylist, mediaPlaylist, parseMasterAttributes, PlaylistTooLarge, rangeHeader, rewritePlaylist, summarizePlaylist, tagAttributes, tsSyncOffset } from "../src/hls.ts";
 import { junkBytes, syntheticTsSegment } from "../examples/resolver-example/upstream.js";
 
 const BASE = "https://cdn.example.test/vod/show/master.m3u8?sig=abc";
@@ -92,4 +92,70 @@ test("rewrite limits: lines, rewritten length and URL length are capped; a URL t
   tooLarge([`${"y".repeat(200)}.ts`], /a URI longer than 200 characters/);
   tooLarge([`#EXT-X-KEY:METHOD=AES-128,URI="${"k".repeat(200)}"`], /a URI longer than 200 characters/);
   assert.ok(rewrite([`#EXT-X-KEY:METHOD=SAMPLE-AES,URI="data:${"k".repeat(300)}"`]).length > 300, "a data: URI is kept as it is");
+});
+
+test("tag attributes: quoted values keep their commas, names are upper-cased, unquoted values are trimmed", () => {
+  const a = tagAttributes('#EXT-X-STREAM-INF:BANDWIDTH=1280000, codecs="avc1.4d401f,mp4a.40.2",RESOLUTION=1280x720,AUDIO="aud"');
+  assert.deepEqual([...a], [["BANDWIDTH", "1280000"], ["CODECS", "avc1.4d401f,mp4a.40.2"], ["RESOLUTION", "1280x720"], ["AUDIO", "aud"]]);
+  assert.deepEqual([...tagAttributes("#EXT-X-ENDLIST")], []);
+});
+
+test("master playlists: variants with CODECS, RESOLUTION and BANDWIDTH; renditions with a URI; I-frame playlists left out", () => {
+  const text = [
+    "\uFEFF#EXTM3U",
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="English",URI="audio/en.m3u8"',
+    '#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="aud",NAME="Muxed"',
+    '#EXT-X-MEDIA:TYPE=subtitles,GROUP-ID="subs",NAME="Türkçe",URI="subs/tr.m3u8"',
+    '#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS,GROUP-ID="cc",NAME="CC",INSTREAM-ID="CC1"',
+    '#EXT-X-I-FRAME-STREAM-INF:BANDWIDTH=86000,URI="iframe.m3u8"',
+    '#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=3840x2160,CODECS="hvc1.2.4.L153.B0,ec-3"',
+    "",
+    "uhd/index.m3u8",
+    "#EXT-X-STREAM-INF:BANDWIDTH=oops",
+    "low/index.m3u8",
+    "",
+  ].join("\r\n");
+  assert.deepEqual(masterPlaylist(text), {
+    variants: [
+      { uri: "uhd/index.m3u8", codecs: "hvc1.2.4.L153.B0,ec-3", resolution: "3840x2160", bandwidth: 6000000 },
+      { uri: "low/index.m3u8", codecs: null, resolution: null, bandwidth: null },
+    ],
+    renditions: [{ type: "AUDIO", uri: "audio/en.m3u8" }, { type: "SUBTITLES", uri: "subs/tr.m3u8" }],
+  });
+  assert.deepEqual(parseMasterAttributes(text), [
+    { codecs: "hvc1.2.4.L153.B0,ec-3", resolution: "3840x2160", bandwidth: 6000000 }, { codecs: null, resolution: null, bandwidth: null },
+  ]);
+  assert.deepEqual(masterPlaylist("#EXTM3U\n#EXTINF:6,\ns0.ts\n"), { variants: [], renditions: [] }, "a media playlist has neither");
+});
+
+test("media playlists: segments with the key and init section in effect, byte ranges, and whether the playlist ends", () => {
+  const text = [
+    "#EXTM3U",
+    '#EXT-X-MAP:URI="init.mp4",BYTERANGE="720@0"',
+    "#EXTINF:6,",
+    "#EXT-X-BYTERANGE:1000@720",
+    "all.mp4",
+    '#EXT-X-KEY:METHOD=AES-128,URI="k1.bin",IV=0x1',
+    "#EXTINF:6,",
+    "#EXT-X-BYTERANGE:500",
+    "all.mp4",
+    '#EXT-X-KEY:METHOD=sample-aes,URI="skd://x"',
+    "#EXTINF:6,",
+    "s2.m4s",
+    "#EXT-X-KEY:METHOD=NONE",
+    "#EXTINF:6,",
+    "s3.m4s",
+    "#EXT-X-ENDLIST",
+  ].join("\n");
+  const { segments, endList } = mediaPlaylist(text);
+  const map = { uri: "init.mp4", range: { length: 720, offset: 0 } };
+  assert.deepEqual(segments, [
+    { uri: "all.mp4", range: { length: 1000, offset: 720 }, key: null, map },
+    { uri: "all.mp4", range: { length: 500, offset: 1720 }, key: { method: "AES-128", uri: "k1.bin" }, map },
+    { uri: "s2.m4s", range: null, key: { method: "SAMPLE-AES", uri: "skd://x" }, map },
+    { uri: "s3.m4s", range: null, key: null, map },
+  ]);
+  assert.equal(endList, true);
+  assert.equal(rangeHeader(segments[1]!.range!), "bytes=1720-2219");
+  assert.equal(mediaPlaylist("#EXTM3U\n#EXTINF:6,\nlive1.ts\n").endList, false, "a live playlist does not end");
 });

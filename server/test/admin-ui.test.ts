@@ -11,6 +11,7 @@ import {
   formatCountdown, formatDrift, formatDuration, formatPosition, formatRelative, gridSummary, groupEpisodeChanges, isActive, issueLine,
   languageLabel, liveViewingLine, mediaKindLabel, nowPlayingLine, parseCandidate, parseSse, percent, playbackState, plural,
   problemContext, resumes, sameLanguage, scopeLabel, serverAddress, shortId, showMeta, sourceReport, syncDecision,
+  checkSummaryText, homeCheckLines, runProgressText, runTitle, skippedText, stepText, verdictChip, verdictOf,
   titleLine, titleStatusLabel, tokenFromHash, triggerLabel, tvPositionAt, viewingEnd, viewingSpan,
   onTv, tvCard, tvFace, tvGrid, tvPanel, wrapLines,
   SECTION_HEADER, UNTITLED, cardPlace, deleteSectionText, sectionCount, sectionName, tvCardX, tvHomeLayout, tvLineOf, tvMove, tvRowFirst, tvScroll,
@@ -464,31 +465,92 @@ test("admin helpers: Home with sections, laid out as the TV app does", () => {
   ]);
 });
 
-test("admin helpers: a diagnostics source, line by line", () => {
+test("admin helpers: a checked source, line by line and step by step", () => {
   const at = (iso: string) => `at ${iso}`;
-  const failed = (code: string, name: string | null) => sourceReport({ sourceId: "s", type: "direct", ok: false, code, name, ms: 0 }, at).lines;
+  const failed = (code: string, name: string | null) => sourceReport({ sourceId: "s", type: "direct", ok: false, code, name, ms: 0, verdict: "fail", steps: [], codecs: [], warnings: [], checkMs: 0 }, at).lines;
   cases([
     [failed("error", "UpstreamError"), ["the adapter failed (UpstreamError)"]],
     [failed("timeout", "TimeoutError"), ["timed out"]],
     [failed("timeout", "BudgetExhausted"), ["skipped: the time budget of the request ran out"]],
   ]);
-  assert.deepEqual(sourceReport({ sourceId: "missing", type: "adapter", adapterId: "example", ok: false, code: "empty", ms: 1 }, at),
-    { ok: false, sourceId: "missing", how: "adapter example · 1 ms", lines: ["the adapter found nothing to play"] });
+  assert.deepEqual(sourceReport({ sourceId: "missing", type: "adapter", adapterId: "example", ok: false, code: "empty", ms: 1, verdict: "fail", steps: [], codecs: [], warnings: [], checkMs: 0 }, at),
+    { verdict: "fail", sourceId: "missing", how: "adapter example · 1 ms", lines: ["the adapter found nothing to play"], steps: [], warnings: [] });
   const stream = { kind: "hls", inline: false, host: "127.0.0.1:8788", headerNames: ["Referer"], delivery: "proxy", languages: { audio: ["en", "tr"], subtitles: ["en"] }, expiresAt: "2026-10-14T12:00:00Z" };
-  const probe = { ok: true, status: 200, ms: 3, playlist: { master: true, variants: 1, renditions: 3, segments: 0 } };
-  assert.deepEqual(sourceReport({ sourceId: "signed-hls", type: "adapter", adapterId: "example", ok: true, ms: 2, stream, probe }, at), {
-    ok: true, sourceId: "signed-hls", how: "adapter example · 2 ms",
+  const steps = [
+    { what: "playlist", host: "127.0.0.1:8788", ok: true, status: 200, ms: 3, container: "m3u8" },
+    { what: "variant", index: 1, host: "127.0.0.1:8788", ok: true, status: 200, ms: 2 },
+    { what: "segment", host: "cdn.example.org", ok: true, status: 200, ms: 40, bytes: 188_000, container: "ts" },
+    { what: "subtitle", index: 0, host: "127.0.0.1:8788", ok: false, status: 404, ms: 1, error: "http" },
+  ];
+  const codecs = [{ codecs: "avc1.64001f,mp4a.40.2", resolution: "1280x720", bandwidth: 2_500_000 }, { codecs: null, resolution: null, bandwidth: 800_000 }];
+  assert.deepEqual(sourceReport({ sourceId: "signed-hls", type: "adapter", adapterId: "example", ok: true, ms: 2, stream, verdict: "warn", steps, codecs, warnings: ["subtitle_failed", "odd_one"], checkMs: 46 }, at), {
+    verdict: "warn", sourceId: "signed-hls", how: "adapter example · 2 ms · checked in 46 ms",
     lines: ["HLS from 127.0.0.1:8788 · through the proxy", "upstream headers: Referer", "audio en, tr · subtitles en",
-      "expires at 2026-10-14T12:00:00Z", "probe ok (HTTP 200, 1 variant, 3 renditions, 3 ms)"],
+      "expires at 2026-10-14T12:00:00Z", "variant 1: avc1.64001f,mp4a.40.2 · 1280x720 · 2.5 Mbit/s", "variant 2: codecs not listed · 800 kbit/s"],
+    steps: [
+      { ok: true, text: "playlist: ok (HTTP 200, M3U8, 3 ms)" },
+      { ok: true, text: "variant playlist 2: ok (HTTP 200, 2 ms)" },
+      { ok: true, text: "segment: ok (HTTP 200, MPEG-TS, 188 kB, 40 ms) · cdn.example.org" },
+      { ok: false, text: "subtitles 1: failed, HTTP 404 (1 ms)" },
+    ],
+    warnings: ["a subtitle track could not be loaded", "odd_one"],
   });
   const direct = { kind: "mp4", inline: true, host: null, headerNames: [], delivery: "direct", languages: { audio: null, subtitles: [] }, expiresAt: null };
-  const r = sourceReport({ sourceId: "d", type: "direct", ok: true, ms: 0, stream: direct, probe: { ok: false, status: 403, ms: 5, error: null, name: null } }, at);
-  assert.equal(r.ok, false, "a failed probe fails the source");
-  assert.equal(r.how, "direct · 0 ms");
-  assert.deepEqual(r.lines, ["MP4 (inline playlist) from ? · direct to the TV", "audio unknown · subtitles unknown", "probe failed: HTTP 403"]);
-  const media = sourceReport({ sourceId: "m", type: "direct", ok: true, ms: 0, stream: { ...direct, delivery: "unsupported" }, probe: { ok: true, ms: 4, playlist: { master: false, segments: 1 } } }, at);
-  assert.deepEqual(media.lines.slice(-1), ["probe ok (1 segment, 4 ms)"]);
-  assert.match(media.lines[0]!, /cannot be served$/);
+  const r = sourceReport({ sourceId: "d", type: "direct", ok: true, ms: 0, stream: direct, verdict: "fail", codecs: [], warnings: [], checkMs: 5,
+    steps: [{ what: "file", host: "files.example.org", ok: false, status: 200, ms: 5, error: "not_media", bytes: 512 }] }, at);
+  assert.equal(r.verdict, "fail", "a failed step fails a source that resolved");
+  assert.equal(r.how, "direct · 0 ms · checked in 5 ms");
+  assert.deepEqual(r.lines, ["MP4 (inline playlist) from ? · direct to the TV", "audio unknown · subtitles unknown"]);
+  assert.deepEqual(r.steps, [{ ok: false, text: "file: failed, not media (HTTP 200, 512 B, 5 ms) · files.example.org" }], "an error page answered 200");
+  cases([
+    [stepText({ what: "key", host: "h", ok: false, ms: 10_000, error: "timeout" }, "h"), "key: failed, timed out (10000 ms)"],
+    [stepText({ what: "segment", host: null, ok: false, ms: 0, error: "egress_denied" }), "segment: failed, refused by the server's egress policy (0 ms)"],
+    [stepText({ what: "rendition", index: 2, host: "h", ok: false, ms: 1, error: "http" }, "h"), "rendition playlist 3: failed, HTTP error (1 ms)", "no status: the error's words"],
+    [stepText({ what: "segment", index: 0, of: "variant", host: "h", ok: true, status: 200, ms: 2, bytes: 7520, container: "ts" }, "h"), "segment of variant 1: ok (HTTP 200, MPEG-TS, 7.5 kB, 2 ms)"],
+    [stepText({ what: "init", index: 1, of: "rendition", host: "h", ok: true, status: 206, ms: 2, container: "mp4" }, "h"), "init segment of rendition 2: ok (HTTP 206, MP4, 2 ms)"],
+    [stepText({ what: "manifest", host: "h", ok: true, status: 200, ms: 4, container: "mpd" }, "h"), "DASH manifest: ok (HTTP 200, MPD, 4 ms)"],
+  ]);
+});
+
+test("admin helpers: stored checks, a Home entry's results and a batch check's progress", () => {
+  type Verdict = "ok" | "warn" | "fail";
+  const check = (verdict: Verdict, more = {}) => ({ verdict, checkedAt: ago(2 * 3600_000), working: 1, total: 1, stale: false, ...more });
+  cases([
+    [checkSummaryText(check("ok"), NOW), { mark: "✔", text: "Works · checked 2 h ago", tone: "ok" }],
+    [checkSummaryText(check("warn"), NOW), { mark: "⚠", text: "Works, with warnings · checked 2 h ago", tone: "warn" }],
+    [checkSummaryText(check("fail"), NOW), { mark: "✖", text: "Fails · checked 2 h ago", tone: "bad" }],
+    [checkSummaryText(check("warn", { working: 1, total: 2 }), NOW), { mark: "⚠", text: "Works, 1 of 2 sources failing · checked 2 h ago", tone: "warn" }, "a failing source is the warning"],
+    [checkSummaryText(check("fail", { stale: true }), NOW), { mark: "", text: "Source changed · checked 2 h ago", tone: "info" }, "a changed source: its verdict is not known"],
+    [checkSummaryText(null, NOW), { mark: "", text: "Not checked", tone: "" }],
+    [verdictChip("fail"), { mark: "✖", text: "Fails", tone: "bad" }],
+  ]);
+  const all = (verdict: Verdict | null, checked: number, failed = 0, warned = 0) => ({ verdict, checked, total: 40, failed, warned, oldestCheckedAt: null });
+  cases([
+    [verdictOf({ check: check("ok"), checkAll: all("fail", 40, 1) }), "fail", "the worse of what OK plays and the episodes"],
+    [verdictOf({ check: check("warn"), checkAll: all("ok", 40) }), "warn"],
+    [verdictOf({ check: check("fail", { stale: true }), checkAll: all(null, 0) }), null, "a changed source is not counted"],
+    [verdictOf({ check: check("ok"), checkAll: null }), "ok", "a channel"],
+    [verdictOf({ check: null, checkAll: null }), null],
+    [homeCheckLines({ kind: "series", check: check("fail"), checkAll: all("fail", 38, 1, 2) }, NOW), ["What OK plays: Fails · checked 2 h ago", "Episodes: 38 of 40 checked · 1 failing · 2 with warnings"]],
+    [homeCheckLines({ kind: "series", check: null, checkAll: all(null, 0) }, NOW), ["What OK plays: Not checked", "Episodes: not checked"]],
+    [homeCheckLines({ kind: "live", check: check("ok"), checkAll: null }, NOW), ["What OK plays: Works · checked 2 h ago"], "a channel has no episodes"],
+    [homeCheckLines({ kind: "movie", check: check("warn"), checkAll: { ...all("warn", 1, 0, 1), total: 1 } }, NOW), ["What OK plays: Works, with warnings · checked 2 h ago"], "a film is what OK plays"],
+  ]);
+  const run = (state: string, done: number, failed = 0, warned = 0, skipped: any[] = []) => ({ state, total: 40, done, failed, warned, skipped });
+  const skip = [{ itemId: "gone", title: null, reason: "missing" }, { itemId: "tears", title: "Tears of Steel", reason: "not_playable" }];
+  cases([
+    [runProgressText(run("running", 12, 1)), "12 of 40 checked · 1 failing"],
+    [runProgressText(run("running", 0)), "0 of 40 checked"],
+    [runProgressText(run("running", 12, 0, 2, skip)), "12 of 40 checked · 2 with warnings · 2 skipped"],
+    [runProgressText(run("cancelled", 12, 1)), "Stopped: 12 of 40 checked · 1 failing"],
+    [runProgressText(run("done", 40)), "Done: 40 checked · all work"],
+    [runProgressText(run("done", 40, 1, 2, skip)), "Done: 40 checked · 1 failing · 2 with warnings · 2 skipped"],
+    [runTitle({ title: "Sintel", target: { itemId: "sintel" } }), "Sintel"],
+    [runTitle({ title: "Living room", target: { deviceId: "d", mode: "quick" } }), "Home of Living room, quick"],
+    [runTitle({ title: "Living room", target: { deviceId: "d", mode: "full" } }), "Home of Living room, full"],
+    [skippedText({ skipped: skip }), "Skipped: gone (missing from the catalog), Tears of Steel (not playable)."],
+    [skippedText({ skipped: [] }), ""],
+  ]);
 });
 
 test("admin helpers: the event stream, durations, viewings, titles, episodes, command results and scopes", () => {
@@ -586,8 +648,10 @@ test("admin helpers: a channel (a live item) never reads as a film or a series",
   const ts = { sourceId: "raw-ts", label: null, languages: { audio: ["tr"], subtitles: null }, current: false, supported: false, reason: "ts" };
   assert.deepEqual(candidateOptions([ts]).map((o) => [o.disabled, o.label]), [[true, "raw-ts · Türkçe (tr) · MPEG-TS, cannot play on a phone"]]);
   const stream = { kind: "ts", inline: false, host: "127.0.0.1:8788", headerNames: ["Referer"], delivery: "proxy", languages: null, expiresAt: null };
-  assert.deepEqual(sourceReport({ sourceId: "raw-ts", type: "adapter", adapterId: "example", ok: true, ms: 3, stream, probe: { ok: true, status: 200, ms: 2 } }, time).lines,
-    ["MPEG-TS from 127.0.0.1:8788 · through the proxy", "upstream headers: Referer", "probe ok (HTTP 200, 2 ms)"]);
+  const live = sourceReport({ sourceId: "raw-ts", type: "adapter", adapterId: "example", ok: true, ms: 3, stream, verdict: "ok", codecs: [], warnings: [], checkMs: 2,
+    steps: [{ what: "file", host: "127.0.0.1:8788", ok: true, status: 200, ms: 2, bytes: 65_536, container: "ts" }] }, time);
+  assert.deepEqual([live.lines, live.steps], [["MPEG-TS from 127.0.0.1:8788 · through the proxy", "upstream headers: Referer"],
+    [{ ok: true, text: "file: ok (HTTP 200, MPEG-TS, 65.5 kB, 2 ms)" }]]);
 });
 
 test("admin helpers: TV app sizes, APK names, update chips, Android versions and how a TV updates", () => {

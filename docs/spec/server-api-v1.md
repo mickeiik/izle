@@ -400,7 +400,7 @@ owner's `PUT …/cursor`, makes the cursor an ordinary one again.
 | Route | Body | Response |
 |---|---|---|
 | `GET /api/v1/admin/devices` | | `{"devices": [Device & {"homeCount"}]}` |
-| `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "backdropUrl", "missing", "playable", "continue", "newEpisodes"}], "homeMax": 200, "sections": [Section], "sectionsMax": 20}` (`home` in [Home order](#home-sections)); `playable`: the item has a `playbackAllowed` episode, or is a channel with `playbackAllowed: true` (false for a missing item); `continue` and `newEpisodes` as in [`GET /tv/state`](#get-apiv1tvstate) (`null` and 0 for a missing item) |
+| `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "backdropUrl", "missing", "playable", "continue", "newEpisodes", "check", "checkAll"}], "homeMax": 200, "sections": [Section], "sectionsMax": 20}` (`home` in [Home order](#home-sections)); `playable`: the item has a `playbackAllowed` episode, or is a channel with `playbackAllowed: true` (false for a missing item); `continue` and `newEpisodes` as in [`GET /tv/state`](#get-apiv1tvstate) (`null` and 0 for a missing item); `check`: the [`CheckSummary`](#checks) of what OK plays (the channel itself), null when nothing plays; `checkAll`: `{"verdict", "checked", "total", "failed", "warned", "oldestCheckedAt"}` over every episode that may play (`total`; `checked`: those with a summary; `verdict` the worst of theirs, null when none), null for a channel or a missing item |
 | `PATCH /api/v1/admin/devices/:id` | any of `name`, `uiLanguage` (`"tr"`/`"en"`/null), `preferredAudioLanguage` (tag/null), `subtitlesLanguage` (tag/null = off), `autoplayOnStart` (boolean), `homeColumns` (integer 3–6), `homeRows` (integer 1–4) | `{"device": Device}` |
 | `DELETE /api/v1/admin/devices/:id` | | `204`; the TV must pair again |
 | `PUT /api/v1/admin/devices/:id/home` | `{"itemIds": [...]}` (≤ 200, in display order) or `{"sections": [...]}`, see [Home sections](#home-sections) | `{"version", "home", "sections"}` |
@@ -449,7 +449,7 @@ What went wrong on a TV, kept for the owner: the TV's own reports (`origin: "tv"
 | `proxy` · `egress_denied` | a URL or redirect of the session named a destination the [proxy refuses](#media-proxy) | `detail`: what was requested and why (`segment: private address`, `credentials in url`, `scheme`); never the URL |
 
 Server-origin proxy problems are recorded at most once per TV and code a minute; [Listen along](#listen-along)'s
-resolves and proxy sessions never. `kind` values overall: `playback`, `resolve`, `proxy`, `network`, `other`.
+resolves and proxy sessions never, nor those of [checks](#checks). `kind` values overall: `playback`, `resolve`, `proxy`, `network`, `other`.
 
 `Problem` = `{"id", "at", "origin": "tv"|"server", "kind", "code", "itemId", "itemTitle", "itemKind", "episodeId",
 "episodeTitle", "season", "number", "sourceId", "positionMs", "httpStatus", "detail", "appVersion", "missing"}`:
@@ -463,7 +463,7 @@ resolves and proxy sessions never. `kind` values overall: `playback`, `resolve`,
 | `GET /api/v1/admin/catalog` | `{"id", "buildId", "builtAt", "name", "loadedAt", "stats", "adapters", "warnings", "resolver", "server", "builds", "changes", "facets"}`: `resolver` is `{"sha256", "adapters"}` of the loaded module, or null; `server` is `{"version"}` of the running server; `builds` is the loaded catalog's [history](#catalog-history), `[Build]` newest first, at most 50; `changes` is the `Changes` of the newest build that is not the baseline, or null; `facets` is `{"kinds": {"movie", "series", "live"}, "genres": [{"name", "count"}], "years": {"min", "max"} \| null}` over the whole catalog: genres matched case- and accent-insensitively under the first spelling the catalog uses, most common first; `years` null when no film or series has one |
 | `GET /api/v1/admin/catalog/builds/:buildId` | `{"build": Build, "changes": Changes}` for any build in the loaded catalog's history (also one beyond the 50 listed); `404 unknown_build` |
 | `GET /api/v1/admin/catalog/search?q=&kind=&genre=&yearFrom=&yearTo=&playable=&since=&notOnDevice=&sort=&offset=&limit=` | `{"items": [{"id", "kind", "title", "year", "posterUrl", "backdropUrl", "episodeCount", "playableCount", "playable", "firstSeenAt", "newEpisodes"}], "total", "offset"}`: `total` counts every match, `items` is the page from `offset` (default 0), at most `limit` (1–200, default 50; other values fall back to it). `q` (cut to 200 characters) matches title, original title and id, case-, accent- and dotless-ı-insensitively (empty: everything); `kind` a comma list of `movie`, `series`, `live`; `genre` a comma list (any of them, matched like `q`); `yearFrom`/`yearTo` leave out items without a year (channels); `playable=true` only what OK can play; `since` (ISO 8601, UTC without an offset, or epoch ms) items first seen at or after it, or with an episode first seen at or after it; `notOnDevice` leaves out that TV's home list (`404 unknown_device`). `sort` is `title` (default), `year` (newest first, none last) or `newest` (newest in the catalog first); ties by title, then id. `playable` as on the [device's home list](#devices); `episodeCount` and `playableCount` null for a channel; `firstSeenAt` when the item first appeared ([catalog history](#catalog-history); null for what the baseline carried); `newEpisodes` the episodes first seen at or after `since` (0 without it, null for a channel). Anything else in a parameter is `400 invalid_request` |
-| `GET /api/v1/admin/catalog/items/:id` | `{"item"}`: the item with all episodes; a channel instead `{…, "kind": "live", "playbackAllowed", "sources": [...]}`; sources as `{id, type, label, languages, kind, needsProxy}` or `{…, adapter}`; upstream URLs, headers and refs are not exposed |
+| `GET /api/v1/admin/catalog/items/:id` | `{"item"}`: the item with all episodes, each with its stored [`check`](#checks) (a `CheckSummary`); a channel instead `{…, "kind": "live", "playbackAllowed", "sources": [...], "check"}`; sources as `{id, type, label, languages, kind, needsProxy}` or `{…, adapter}`; upstream URLs, headers and refs are not exposed |
 | `POST /api/v1/admin/catalog/reload` | re-reads the bundle from `catalog.dir` (a symlink there is followed anew on each reload): `200 {"catalog"}` (the object `GET /admin/catalog` returns), or `422 {"error": "invalid_catalog", "issues"}` and the previous catalog stays active (also when the bundle needs an adapter the resolver module does not provide). The whole bundle is validated, including a hash of every poster, so a large catalog takes a while. `SIGHUP` does the same. After a successful reload all devices get a new state version. The resolver module is not re-read: a new module needs a restart. |
 
 #### Catalog history
@@ -485,28 +485,106 @@ when it comes back); an episode that comes back is not listed as added. Channels
 items (added when the id was not in the catalog before), never among the episodes. A removed entry's
 `title`/`itemTitle` is null when the catalog loaded before was not in memory (a restart onto a changed bundle).
 
-### Diagnostics
+### Checks
 
-`POST /api/v1/admin/diagnostics/resolve` `{"episodeId", "sourceId"?, "preferredAudioLanguage"?, "probe"?: true}`, or
-`{"itemId", …}` for a channel (exactly one of `episodeId` and `itemId`), runs every source of the episode or channel
-(or only `sourceId`), in bundle order, through the same path as a TV resolve (adapters, deadlines, validation)
-without creating sessions, and by default probes the upstream (an HLS playlist is fetched and summarized;
-MP4/DASH/MPEG-TS get `Range: bytes=0-1023`). Nothing secret is returned: hosts and header *names* only, never URLs,
-header values, refs or playlist text.
+A **check** follows a source the way the TV would fetch it, down to real media bytes, so that the owner learns what
+fails before the viewer does. A pass means the server reached real media along the TV's path just now; it does not
+prove that the TV decodes the codecs (they are listed, and the risky ones only warn). Nothing on the TV changes.
+
+`POST /api/v1/admin/diagnostics/resolve` `{"episodeId", "sourceId"?, "preferredAudioLanguage"?}`, or `{"itemId", …}`
+for a channel (exactly one of `episodeId` and `itemId`), checks every source of the episode or channel (or only
+`sourceId`), one after the other in bundle order, whether it may play or not, and stores each source's report. Each
+source goes through the same path as a TV resolve (adapters, deadlines, validation) without creating sessions, then
+the stream is followed:
+
+- **Proxied** (headers, an inline playlist, or `proxy.always`): through a proxy session of the check's own, served
+  in-process, so the [egress policy](#media-proxy), redirects, the upstream headers and the playlist rewriting are the
+  TV's. **Direct**: straight to the upstream; the URLs an upstream playlist names (not the catalog or the adapter)
+  go through the egress policy.
+- **HLS**: the playlist; for a master playlist every variant and rendition playlist (at most 16, the rest is
+  `playlists_unchecked`), then the first segment (of a live playlist, without `#EXT-X-ENDLIST`: the last, where a TV
+  starts) of the first variant that answered and of each audio rendition, with its `#EXT-X-MAP` init section and its
+  `METHOD=AES-128` key (exactly 16 bytes); any other method warns `sample_aes`. A subtitle rendition that fails
+  warns, the others fail.
+- **MP4**: `Range: bytes=0-65535`; `206` passes, `200` passes with `no_range` (resume and seeking break).
+  **MPEG-TS** (`ts`): up to 64 KiB of the stream. **DASH**: the MPD only (`manifest_only`).
+- **Subtitle tracks**: each fetched (proxied as the TV gets it) and expected to be WebVTT, SRT or TTML; one that
+  fails warns `subtitle_failed`.
+- **Media** is recognized by its first bytes (at most 256 KiB are read): MPEG-TS sync bytes, MP4 boxes (`ftyp`,
+  `moov`, … as `mp4`; `styp`, `moof`, `sidx` as `fmp4`), ADTS (`aac`), ID3. A body that reads as text where media was
+  expected (an HTML error page that answered 200, JSON) fails `not_media`; unknown binary data passes.
+
+Each source has 20 s for all of this, each request 10 s.
+
+`SourceReport` = `{"sourceId", "type", "adapterId"?, "ok", "ms", "code"?, "name"?, "results"?, "stream"?, "verdict",
+"steps", "codecs", "warnings", "checkMs"}`: `ok` says whether the source resolved, `ms` how long that took, `code` and
+`name` why it did not (as in `tried` of a [resolve](#post-apiv1tvresolve)); `results` are the adapter's results and
+`stream` the one used, summarized (`delivery` is `direct`, `proxy` or `unsupported`); `checkMs` is the time after
+resolving (0 without a stream).
+
+- `steps`: `[{"what", "index"?, "of"?, "host", "ok", "status"?, "ms", "error"?, "bytes"?, "container"?}]` in the order they
+  were made (empty when the source did not resolve). `what`: `playlist`, `variant`, `rendition`, `segment`, `init`,
+  `key`, `subtitle`, `file` (MP4, MPEG-TS) or `manifest` (DASH). `index`: the variant, rendition or subtitle track
+  (0-based); for a segment, init section or key of a multivariant playlist, its variant's or rendition's, which `of`
+  (`variant` or `rendition`) names. `host`: the upstream reached (for a
+  proxied stream, not the server). `status`: the upstream's HTTP status when one came. `error`: `timeout`, `network`,
+  `http`, `not_a_playlist`, `too_large`, `not_media`, `bad_key`, `egress_denied`, `not_subtitles`, `not_mpd`,
+  `aborted` or `budget` (the source's 20 s ran out). `bytes`: bytes read. `container`: `ts`, `mp4`, `fmp4`, `aac`,
+  `id3`, `webvtt`, `srt`, `ttml`, `mpd` or `m3u8`.
+- `codecs`: the master playlist's variants, `[{"codecs", "resolution", "bandwidth"}]` (each null when absent).
+- `warnings`: `risky_codec` (`hvc1`/`hev1`, `av01`, `ec-3`/`ac-3`, `dvh1`/`dvhe`: may not decode on every TV),
+  `high_resolution` (above 1920×1080), `sample_aes`, `no_range`, `subtitle_failed`, `manifest_only`,
+  `playlists_unchecked`. A short `expiresAt` is no warning: the TV renews a link before it expires.
+- `verdict`: `fail` when the source did not resolve or a step it needs failed, `warn` when it works with warnings,
+  `ok` otherwise.
+
+The answer: `{"itemId", "episodeId" (null for a channel), "playbackAllowed", "verdict", "checkedAt", "sources":
+[SourceReport]}`. The verdict of an episode or channel: `fail` when no source passes (or it has none), `warn` when one
+passes but another fails or warns, `ok` when every source is `ok` (the TV falls back through the sources, so one that
+works plays). Nothing secret is returned or stored: hosts, statuses and header *names* only, never URLs, header
+values, refs or playlist text.
 
 ```json
-{ "itemId": "proxy-demo", "episodeId": "proxy-demo.film", "playbackAllowed": true, "sources": [
-  { "sourceId": "missing", "type": "adapter", "adapterId": "example", "ok": false, "code": "empty", "ms": 1 },
-  { "sourceId": "signed-hls", "type": "adapter", "adapterId": "example", "ok": true, "ms": 2,
-    "results": [ … ],
+{ "itemId": "proxy-demo", "episodeId": "proxy-demo.film", "playbackAllowed": true, "verdict": "warn", "checkedAt": "…", "sources": [
+  { "sourceId": "missing", "type": "adapter", "adapterId": "example", "ok": false, "ms": 1, "code": "empty",
+    "verdict": "fail", "steps": [], "codecs": [], "warnings": [], "checkMs": 0 },
+  { "sourceId": "signed-hls", "type": "adapter", "adapterId": "example", "ok": true, "ms": 2, "results": [ … ],
     "stream": { "kind": "hls", "inline": false, "host": "127.0.0.1:8788", "headerNames": ["Referer"], "delivery": "proxy",
                 "languages": { "audio": ["en", "tr"], "subtitles": ["en"] }, "subtitleTracks": 0, "label": null, "expiresAt": "…" },
-    "probe": { "ok": true, "status": 200, "contentType": "application/vnd.apple.mpegurl", "ms": 3,
-               "playlist": { "master": true, "variants": 1, "renditions": 3, "segments": 0, "endList": false } } } ] }
+    "verdict": "ok", "checkMs": 9, "warnings": [],
+    "codecs": [{ "codecs": null, "resolution": "640x360", "bandwidth": 900000 }, … ],
+    "steps": [{ "what": "playlist", "host": "127.0.0.1:8788", "ok": true, "status": 200, "ms": 2, "container": "m3u8" },
+              { "what": "variant", "index": 0, "host": "127.0.0.1:8788", "ok": true, "status": 200, "ms": 1, "container": "m3u8" }, …,
+              { "what": "segment", "index": 0, "host": "127.0.0.1:8788", "ok": true, "status": 200, "ms": 1, "bytes": 7520, "container": "ts" }] } ] }
 ```
 
-`delivery` is `direct`, `proxy` or `unsupported`. Errors: `404 unknown_episode`, `404 unknown_item`,
-`400 has_episodes`, `404 unknown_source`.
+Errors: `404 unknown_episode`, `404 unknown_item`, `400 has_episodes`, `404 unknown_source`.
+
+**Stored results.** The last report of each source is kept, with a fingerprint of the source as the catalog has it;
+a source that changed reads as not checked, and the reports of sources the catalog no longer has are forgotten.
+`CheckSummary` = `{"verdict", "checkedAt", "working", "total", "stale"}` or null (no current source has a report of its
+current fingerprint): `verdict` as above over the sources with a current report, `checkedAt` the oldest of those,
+`working` how many of them pass, `total` the sources the episode or channel has now, `stale` whether one of them has
+no current report. It is in [`GET …/catalog/items/:id`](#catalog) (`check` of each episode, of a channel at the top)
+and in [`GET …/devices/:id`](#devices).
+
+| Route | Response |
+|---|---|
+| `GET /api/v1/admin/checks/playables/:playableId` | an episode by its id, else a channel by its item id: `{"itemId", "episodeId", "check": CheckSummary, "sources": [SourceReport & {"checkedAt", "stale"}]}`, the sources still in the catalog that have a report, in bundle order (`stale`: the source changed since); `404 unknown_item`, `400 has_episodes` |
+| `POST /api/v1/admin/checks` | `{"itemId"}` (every episode of a show that may play, or the channel) or `{"deviceId", "mode": "quick"\|"full"}` (a TV's Home: `quick` what OK plays on each entry, a channel itself; `full` every episode that may play, and the channels) → `202 {"run": Run}`; `409 check_running` (`runId`) while a run is going, `404 unknown_item`, `404 unknown_device`, `400 nothing_to_check` |
+| `GET /api/v1/admin/checks/current` | `{"run": Run \| null}`: the running run, else the last one that ended, else null |
+| `GET /api/v1/admin/checks/:runId?seq=&wait=` | `{"run": Run}`; with `seq` it waits until the run's `seq` is past it, at most `wait` ms (0–25000, default 0); `404 unknown_check` (only the last run is kept) |
+| `DELETE /api/v1/admin/checks/:runId` | `{"run": Run}`: stops a running run (`cancelled`; what it checked so far stays stored); a run that ended is answered as it is |
+
+A **run** checks many episodes or channels in the background, two at a time, each like
+`POST …/diagnostics/resolve` (a Home run with the TV's audio language) and each stored. One runs at a time on the
+server; runs live in memory and a restart forgets them. Home entries that left the catalog or cannot play are listed
+in `skipped`; an episode is checked once however often it comes up. `Run` = `{"id", "target", "title" (the show's or
+channel's title, or the TV's name), "state": "running"|"done"|"cancelled", "seq" (grows with every change), "total",
+"done", "failed", "warned", "startedAt", "finishedAt", "skipped": [{"itemId", "title", "reason":
+"missing"|"not_playable"}], "results": [{"playableId", "itemId", "episodeId", "title", "label", "verdict"}]}`, results
+in the order they finished (`label` names a series' episode, `S1 E2 · Pilot`; null otherwise). The
+[event log](#events) gets `check.started` and `check.finished`, never an event per episode.
 
 ### Listen along
 
@@ -598,7 +676,7 @@ scope, and revokes them at any time:
 | `manage` | `control`, plus the home list (`PUT …/home`, the [single changes](#home-list-changes) and the [sections](#home-sections)), `PUT …/cursor`, `PATCH /admin/devices/:id`, [history marks](#viewing-history), `DELETE …/problems`, `POST /admin/catalog/reload` and the [TV app](#tv-app) (`PUT`/`DELETE /admin/app/apk`, `POST /admin/app/check`) |
 
 Every other route needs the owner token: pairing approval and clearing a code, deleting a TV, deleting and adopting
-history, [diagnostics](#diagnostics), [Listen along](#listen-along) resolves and links, and the access tokens themselves
+history, [checks](#checks) (`POST`/`DELETE`; reading them is `read`), [Listen along](#listen-along) resolves and links, and the access tokens themselves
 (every method). A token that does not cover the route gets `403 insufficient_scope` with `required` (the scope it
 needs, or `owner`); it does not count as a failed sign-in.
 
@@ -684,6 +762,7 @@ Events carry no URLs, headers, refs, tokens, message texts or problem details.
 | `problem.recorded` | `{"problemId", "origin", "kind", "code", "itemId", "episodeId"}` |
 | `catalog.reloaded` / `catalog.reload_failed` | `{"buildId", "added", "removed"}` (`{"items", "episodes"}` counts as in [`Build`](#catalog-history), 0 when the build was the one already loaded) on every successful reload, not at start / `{"issues"}` (their number) |
 | `history.changed` | `{"episodeIds", "seen"}` (marks), `{"deleted"}` (viewings deleted) or `{"moved"}` (viewings adopted, `deviceId`: the TV that got them) |
+| `check.started` / `check.finished` | `{"runId", "total"}` / `{"runId", "total", "failed", "warned", "state"}` (`done` or `cancelled`): a [check run](#checks) started / ended; `deviceId`: the TV of a Home run |
 
 Ordering within one change: when a resolve replaces a running viewing, `playback.ended` comes before
 `playback.started`; `episode.seen` follows its `playback.ended`. New types and fields are added within v1; consumers
@@ -947,3 +1026,7 @@ The example's values are the defaults, except the samples for `publicUrl`, `trus
   (pre-release): Listen along, remote management (access tokens, status, events, viewing history, command results,
   single home changes, replacing a TV), TV app updates, proxy destinations, the pairing pool, the home grid and
   backdrops, live channels, catalog browsing and home sections ([CHANGELOG.md](../../CHANGELOG.md) has the releases).
+- **v1, before the first deployment (2026-10-23)** — [checks](#checks): `POST /admin/diagnostics/resolve` follows each
+  source down to media bytes and stores its report; its `probe` field (request and answer) is replaced by `steps`,
+  `codecs`, `warnings`, `verdict` and `checkMs`, breaking (pre-release). Added: check runs (`/admin/checks`), stored
+  reports, `check` in catalog items and TV Home entries (with `checkAll`), the `check.*` events.
