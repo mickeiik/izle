@@ -6,6 +6,23 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 
 ## [Unreleased]
 
+### Added
+
+- **A `companion` access token scope, for Listen along from the coming companion app.** It allows everything `read`
+  does, plus Listen along's resolve and link routes, which needed the admin token until now; it allows no command,
+  home screen or other change. Create one under **Access** on the admin page or with
+  `izle-server token create <name> --scope companion`. `control` and `manage` tokens are unchanged: they still cannot
+  use Listen along's resolve and link routes.
+- **Listen along keeps the timing of a link found on the phone.** For a release the owner finds in a browser, which
+  is short-lived and bound to the address that fetched it, the companion app will play the link on the phone itself;
+  the link never reaches the server. The server stores only its offset, rate and language, for any episode, under
+  the reserved source id `pasted` (copied to a whole series like any link), lists it among the Listen along
+  candidates, and now also gives the episode's duration as the TV last reported it. The admin page's Listen along
+  card has no field for such a link: its hint says that a link found in a browser is for the companion app.
+- **The catalog validator warns about a source id `pasted`.** The id is reserved for that link; `izle-validate`
+  reports such a source as a warning, in an episode or a channel (a bundle that uses it stays valid: that source is
+  served as itself, and its episode gets no `pasted` candidate).
+
 ## [0.6.1] - 2026-10-23
 
 ### Changed

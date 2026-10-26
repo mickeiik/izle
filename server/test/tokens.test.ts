@@ -54,11 +54,16 @@ test("access tokens: create (the secret shown once), list oldest first, lastUsed
 test("scopes: each level against a representative route of every level; 403 insufficient_scope names what is needed and is not throttled", async (t) => {
   const s = await testServer(t);
   const tv = await s.pair("Salon");
-  const tokens = { read: await createToken(s, "r", "read"), control: await createToken(s, "c", "control"), manage: await createToken(s, "m", "manage") };
+  const tokens = {
+    read: await createToken(s, "r", "read"), control: await createToken(s, "c", "control"), manage: await createToken(s, "m", "manage"),
+    companion: await createToken(s, "p", "companion"),
+  };
+  const listed = (await s.admin("GET", "/tokens")).json.tokens.find((x: Json) => x.id === tokens.companion.id);
+  assert.equal(listed.scope, "companion", "POST /tokens takes the companion scope");
 
   // [method, route, body, required]: every route an access token may reach and some it may not. Statuses other
   // than 403 are what the route answers once the scope is enough (its own validation may still refuse the body).
-  const routes: Array<[string, string, unknown, "read" | "control" | "manage" | "owner"]> = [
+  const routes: Array<[string, string, unknown, "read" | "control" | "manage" | "companion" | "owner"]> = [
     ["GET", "/devices", undefined, "read"],
     ["GET", `/devices/${tv.deviceId}`, undefined, "read"],
     ["GET", `/devices/${tv.deviceId}/problems`, undefined, "read"],
@@ -92,16 +97,19 @@ test("scopes: each level against a representative route of every level; 403 insu
     ["GET", "/checks/playables/show.e1", undefined, "read"],
     ["POST", "/checks", { itemId: "show" }, "owner"],
     ["DELETE", "/checks/nope", undefined, "owner"],
-    ["POST", `/devices/${tv.deviceId}/companion/resolve`, { episodeId: "show.e1", sourceId: "en-orig" }, "owner"],
-    ["PUT", "/companion/links/show.e1/en-orig", { offsetMs: 0, rate: 1 }, "owner"],
+    ["GET", `/devices/${tv.deviceId}/now`, undefined, "read"],
+    ["POST", `/devices/${tv.deviceId}/companion/resolve`, { episodeId: "show.e1", sourceId: "en-orig" }, "companion"],
+    ["PUT", "/companion/links/show.e1/en-orig", { offsetMs: 0, rate: 1 }, "companion"],
+    ["POST", "/companion/links/show.e1/en-orig/copy-to-item", undefined, "companion"],
   ];
-  const level = { read: 0, control: 1, manage: 2, owner: 3 };
+  // What each scope satisfies: read, control and manage nest; companion is read plus the Listen along routes.
+  const satisfies = { read: ["read"], control: ["read", "control"], manage: ["read", "control", "manage"], companion: ["read", "companion"] };
   let refused = 0;
   for (const [method, route, body, required] of routes) {
-    for (const scope of ["read", "control", "manage"] as const) {
+    for (const scope of ["read", "control", "manage", "companion"] as const) {
       const r = await s.call(method, `/api/v1/admin${route}`, { token: tokens[scope].secret, body });
       const label = `${scope} token on ${method} ${route}`;
-      if (level[scope] < level[required]) {
+      if (!satisfies[scope].includes(required)) {
         refused++;
         assert.equal(r.status, 403, label);
         assert.deepEqual(r.json, { error: "insufficient_scope", required, message: r.json.message }, label);

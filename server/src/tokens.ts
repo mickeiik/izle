@@ -7,8 +7,11 @@ import type { Logger } from "./log.ts";
 import { iso } from "./presenters.ts";
 import type { AccessToken, Store } from "./store.ts";
 
-/** What an access token may do, each scope including the ones before it; the owner token may do everything. */
-export const SCOPES = ["read", "control", "manage"] as const;
+/**
+ * What an access token may do: `read`, `control` and `manage` each include the ones before them; `companion` is `read`
+ * plus the Listen along routes (resolves and links). The owner token may do everything.
+ */
+export const SCOPES = ["read", "control", "manage", "companion"] as const;
 
 export type Scope = (typeof SCOPES)[number];
 

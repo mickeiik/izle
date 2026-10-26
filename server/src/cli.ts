@@ -27,10 +27,11 @@ const USAGE = `usage:
   izle-server pair cancel <code> [--config <file>] clear a waiting code that none of your TVs shows
                                                    pair talks to the running server; --server <url> if it does not
                                                    listen where the config says
-  izle-server token create <name…> --scope <read|control|manage> [--config <file>]
+  izle-server token create <name…> --scope <${SCOPES.join("|")}> [--config <file>]
                                                    create an access token for an agent or an app and print its
                                                    secret, once (read: see everything; control: also send commands;
-                                                   manage: also change home lists, cursors, settings, marks)
+                                                   manage: also change home lists, cursors, settings, marks;
+                                                   companion: read, and Listen along's resolves and links)
   izle-server token list [--config <file>]         list the access tokens
   izle-server token revoke <id> [--config <file>]  revoke one; requests with it answer 401 from now on
                                                    token talks to the running server, like pair (--server <url>)
@@ -141,6 +142,8 @@ async function pair(config: ServerConfig, args: string[], serverUrl: string | un
   return 0;
 }
 
+const SCOPE_WIDTH = Math.max(...SCOPES.map((s) => s.length));
+
 /** `token create <name…> --scope <scope>` / `token list` / `token revoke <id>`. */
 async function token(config: ServerConfig, args: string[], serverUrl: string | undefined, scope: string | undefined): Promise<number> {
   const [sub, ...rest] = args;
@@ -152,7 +155,7 @@ async function token(config: ServerConfig, args: string[], serverUrl: string | u
     if (rest.length > 0) return fail("token list takes no arguments");
     const { tokens } = await api<{ tokens: Token[] }>("GET", "/tokens", 200);
     if (tokens.length === 0) out("no access tokens; create one with `izle-server token create <name> --scope <scope>`");
-    for (const t of tokens) out(`${t.id}  ${t.scope.padEnd(7)}  ${t.lastUsedAt ? `last used ${t.lastUsedAt}` : "never used"}  ${t.name}`);
+    for (const t of tokens) out(`${t.id}  ${t.scope.padEnd(SCOPE_WIDTH)}  ${t.lastUsedAt ? `last used ${t.lastUsedAt}` : "never used"}  ${t.name}`);
     return 0;
   }
   if (sub === "revoke") {

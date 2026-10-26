@@ -89,7 +89,7 @@ sources SHOULD be live streams: HLS playlists without `#EXT-X-ENDLIST`, dynamic 
 
 | Field | Type | Req. | Meaning |
 |---|---|---|---|
-| `id` | Id | yes | Unique within the episode, or within the channel; durable. |
+| `id` | Id | yes | Unique within the episode, or within the channel; durable. SHOULD NOT be `pasted`, which [Listen along](server-api-v1.md#listen-along) uses for a link found on the phone (the validator warns; a source with that id is served as itself). |
 | `type` | `"direct"` \| `"adapter"` | yes | Discriminator. |
 | `label` | string | no | Shown in the owner's diagnostics and the TV's hidden menu. |
 | `languages` | LanguageFacts | yes | What the stream is known to contain. |
@@ -138,10 +138,10 @@ for the adapter). The server passes `ref` to the adapter at play time and never 
 The validator checks the JSON Schema and the semantic rules: unique item and episode ids (bundle-wide) and source
 ids (per episode or channel), one episode per movie, `playbackAllowed: false` when `sources` is empty, adapter ids
 declared in the manifest, poster and backdrop files present with matching SHA-256 and image type, a valid calendar
-date in `builtAt`, parseable http(s) URLs. Warnings (non-fatal): unused declared adapters, movies and series without
-any playable episode, channels with `playbackAllowed: false`, unreferenced or oversized assets. Programmatic use:
-`validateBundle(dir)` returns `{ok, issues, bundle?, stats?}`; `loadBundle(dir)` returns `{bundle, warnings, stats}`
-or throws `BundleValidationError`.
+date in `builtAt`, parseable http(s) URLs. Warnings (non-fatal): a source id `pasted` (reserved), unused declared
+adapters, movies and series without any playable episode, channels with `playbackAllowed: false`, unreferenced or
+oversized assets. Programmatic use: `validateBundle(dir)` returns `{ok, issues, bundle?, stats?}`; `loadBundle(dir)`
+returns `{bundle, warnings, stats}` or throws `BundleValidationError`.
 
 ### Running the validator
 
@@ -196,3 +196,6 @@ since then it does not.
 - **v1 (2026-10-23)** — the validator's two commands and its `--json` report are documented as a stable interface
   ([Running the validator](#running-the-validator), [JSON report](#json-report)) (additive).
 - **v1 (izle 0.6.0, 2026-10-23)** — the first deployment; from here on v1 changes only additively.
+- **v1 (2026-10-26)** — the source id `pasted` is reserved for the server API's
+  [Listen along](server-api-v1.md#listen-along): a bundle SHOULD NOT use it, and the validator warns about a source
+  with that id (additive: a recommendation and a new warning; a bundle that uses the id stays valid).

@@ -190,10 +190,11 @@ Guessing is throttled: 10 wrong tokens from one address within 10 minutes lock t
 those 10 minutes, even with the right token; each is logged as "admin auth failed" with the address.
 
 **Access tokens** keep the admin token out of scripts: an app, a home-automation hook or an AI agent gets its own,
-scoped `read`, `control` (plus commands) or `manage` (plus home screens, settings and history marks), under
-**Access** on the admin page or with `izle-server token create "Home assistant" --scope control --config
-/etc/izle/izle.json` (the secret, `izat_…`, is printed once); `token list` and `token revoke <id>`. A revoked token
-counts as a wrong one for the throttle, so stop the app before revoking it. What each scope can call:
+scoped `read`, `control` (plus commands), `manage` (plus home screens, settings and history marks) or `companion`
+(`read` plus Listen along, for the companion app), under **Access** on the admin page or with `izle-server token
+create "Home assistant" --scope control --config /etc/izle/izle.json` (the secret, `izat_…`, is printed once);
+`token list` and `token revoke <id>`. A revoked token counts as a wrong one for the throttle, so stop the app before
+revoking it. What each scope can call:
 [server API § Remote management](../spec/server-api-v1.md#remote-management).
 
 ## 6. HTTPS with Caddy

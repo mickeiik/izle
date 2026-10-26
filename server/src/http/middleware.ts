@@ -26,8 +26,17 @@ export type Env = { Variables: { device: Device; actor: Actor } };
 
 type Required = Scope | "owner";
 
-/** Each scope includes the ones before it, and the owner has them all. */
-const LEVEL: Record<Required, number> = { read: 0, control: 1, manage: 2, owner: 3 };
+/**
+ * Who satisfies each requirement: `read`, `control` and `manage` nest; `companion` is `read` plus the Listen along
+ * routes; the owner token satisfies everything.
+ */
+const SATISFIED_BY: Record<Required, readonly Required[]> = {
+  read: ["read", "control", "manage", "companion", "owner"],
+  control: ["control", "manage", "owner"],
+  manage: ["manage", "owner"],
+  companion: ["companion", "owner"],
+  owner: ["owner"],
+};
 
 /** The admin routes `manage` opens (under /api/v1/admin). */
 const MANAGE_ROUTES = [
@@ -38,16 +47,23 @@ const MANAGE_ROUTES = [
   "POST /catalog/reload", "PUT /app/apk", "DELETE /app/apk", "POST /app/check",
 ];
 
+/** The admin routes `companion` opens beyond `read`: Listen along resolves and links (its GETs are `read` routes). */
+const COMPANION_ROUTES = [
+  "POST /devices/:id/companion/resolve", "PUT /companion/links/:episodeId/:sourceId",
+  "POST /companion/links/:episodeId/:sourceId/copy-to-item",
+];
+
 /**
  * The scope an admin route needs: `read` for every GET but the access tokens', `control` for commands, `manage` for
- * MANAGE_ROUTES, and the owner token for the rest (pairing approval, deleting a TV, history deletions and adoption,
- * diagnostics and check runs, Listen along resolves and links, the access tokens).
+ * MANAGE_ROUTES, `companion` for COMPANION_ROUTES, and the owner token for the rest (pairing approval, deleting a TV,
+ * history deletions and adoption, diagnostics and check runs, the access tokens).
  */
 function requiredScope(method: string, route: string): Required {
   const r = `${method} ${route.replace("/api/v1/admin", "")}`;
   if (r === "GET /tokens") return "owner";
   if (r === "POST /devices/:id/commands") return "control";
   if (MANAGE_ROUTES.includes(r)) return "manage";
+  if (COMPANION_ROUTES.includes(r)) return "companion";
   return method === "GET" ? "read" : "owner";
 }
 
@@ -156,7 +172,7 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
     // An unmatched path answers 404 to everyone.
     const route = routePath(c, -1);
     const required = route === "*" ? "read" : requiredScope(c.req.method, route);
-    if (LEVEL[who.level] < LEVEL[required]) {
+    if (!SATISFIED_BY[required].includes(who.level)) {
       throw new HttpError(403, "insufficient_scope", `this route needs the ${required === "owner" ? "owner token" : `${required} scope`}`, { required });
     }
     await next();

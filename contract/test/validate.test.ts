@@ -177,6 +177,16 @@ test("warnings: unused adapters and unreferenced assets; x- extensions are accep
   assert.deepEqual(errors((await validateBundle(extended)).issues), []);
 });
 
+test("the reserved source id \"pasted\": a warning in an episode and in a channel, never an error", async () => {
+  for (const [where, pointer] of [[edit((i) => (source0(i).id = "pasted")), `${SRC}/id`], [edit((i) => (live(i).sources[0].id = "pasted")), `${LIVE}/sources/0/id`]] as const) {
+    const r = await validateBundle(await makeBundle(where));
+    assert.equal(r.ok, true, pointer);
+    assert.deepEqual(errors(r.issues), [], pointer);
+    assert.deepEqual(warnings(r.issues).map((w) => [w.file, w.path]), [["items.json", pointer]]);
+    assert.match(warnings(r.issues)[0]?.message ?? "", /source id "pasted" is reserved/);
+  }
+});
+
 test("live channels: counted, warned when not playable", async () => {
   const media = { kind: "ts", url: "http://iptv.example.test/c.ts" };
   const ts = await validateBundle(await makeBundle(edit((i) => (live(i).sources[0].media = media))));

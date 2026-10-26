@@ -584,7 +584,7 @@ test("admin helpers: the event stream, durations, viewings, titles, episodes, co
     [commandResultText({ type: "play", result: "done", reason: null }), "Play: done"],
     [commandResultText({ type: "pause", result: "ignored", reason: "not_in_player" }), "Pause: ignored (nothing is playing)"],
     [commandResultText({ type: "play", result: "failed", reason: "odd_reason" }), "Play: failed (odd reason)", "a reason the page does not know"],
-    [scopeLabel("manage"), "Manage"], [scopeLabel("x"), "x"],
+    [scopeLabel("manage"), "Manage"], [scopeLabel("companion"), "Listen along"], [scopeLabel("x"), "x"],
   ]);
 });
 
@@ -645,7 +645,7 @@ test("admin helpers: a channel (a live item) never reads as a film or a series",
     [result("previous", "no_channel"), "Previous: ignored (no channel before this one on Home)"],
     [result("play", "no_channel"), "Play: ignored (no channel that way on Home)", "by reason alone"],
   ]);
-  const ts = { sourceId: "raw-ts", label: null, languages: { audio: ["tr"], subtitles: null }, current: false, supported: false, reason: "ts" };
+  const ts = { sourceId: "raw-ts", type: "adapter", label: null, languages: { audio: ["tr"], subtitles: null }, current: false, supported: false, reason: "ts" };
   assert.deepEqual(candidateOptions([ts]).map((o) => [o.disabled, o.label]), [[true, "raw-ts · Türkçe (tr) · MPEG-TS, cannot play on a phone"]]);
   const stream = { kind: "ts", inline: false, host: "127.0.0.1:8788", headerNames: ["Referer"], delivery: "proxy", languages: null, expiresAt: null };
   const live = sourceReport({ sourceId: "raw-ts", type: "adapter", adapterId: "example", ok: true, ms: 3, stream, verdict: "ok", codecs: [], warnings: [], checkMs: 2,
@@ -826,9 +826,11 @@ test("listen along helpers: TV position, companion target, sync decisions, clock
     [formatPosition(3_725_450), "1:02:05.4"], [formatPosition(65_000), "1:05.0"], [formatPosition(-1), "–"],
   ]);
   const source = (sourceId: string, audio: string[] | null, more = {}) =>
-    ({ sourceId, label: null, languages: { audio, subtitles: null }, current: false, supported: true, reason: null, ...more });
+    ({ sourceId, type: "direct", label: null, languages: { audio, subtitles: null }, current: false, supported: true, reason: null, ...more });
+  // A link found in a browser (and any type this page does not know) is the companion app's to play: not offered.
   const options = candidateOptions([source("hls-multi-audio", ["en", "it"], { label: "Unified", current: true }), source("fr-dub", ["fr"]),
-    source("silent", []), source("mystery", null), source("dash", ["de"], { supported: false, reason: "dash" })]);
+    source("silent", []), source("mystery", null, { type: "adapter" }), source("dash", ["de"], { supported: false, reason: "dash" }),
+    source("pasted", null, { type: "pasted" }), source("future", ["en"], { type: "other" })]);
   assert.deepEqual(options.map((o) => [o.sourceId, o.language, o.disabled, o.label]), [
     ["hls-multi-audio", "en", false, "hls-multi-audio — Unified · English (en) · the TV's source"],
     ["hls-multi-audio", "it", false, "hls-multi-audio — Unified · Italiano (it) · the TV's source"],
