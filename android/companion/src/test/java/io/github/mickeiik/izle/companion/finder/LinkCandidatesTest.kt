@@ -30,6 +30,21 @@ class LinkCandidatesTest {
     }
 
     @Test
+    fun aPathEndingInAnExtensionThatIsNeverAPlaylistIsNotACandidate() {
+        assertFalse(isCandidate("https://cdn.test/m3u8/abc/thumb.jpg"))
+        assertFalse(isCandidate("https://cdn.test/m3u8/abc/thumb.JPEG?payload=x"))
+        assertFalse(isCandidate("https://cdn.test/seg.ts?x=m3u8"))
+        assertFalse(isCandidate("https://cdn.test/m3u8/abc/seg-12.m4s#t=1"))
+        for (ext in listOf("png", "gif", "webp", "svg", "ico", "mp4", "m4a", "m4v", "aac", "mp3", "key", "vtt", "srt", "js", "css", "woff", "woff2", "json", "xml", "html")) {
+            assertFalse(ext, isCandidate("https://cdn.test/m3u8/abc/file.$ext"))
+        }
+        assertTrue(isCandidate("https://cdn.test/cdn-m3u8?payload=x"))
+        assertTrue(isCandidate("https://cdn.test/a.M3U8"))
+        assertTrue(isCandidate("https://cdn.test/m3u8/abc.ts.m3u8?seg=1.ts"))
+        assertTrue(isCandidate("https://cdn.test/m3u8.ts/abc"))
+    }
+
+    @Test
     fun aPlaylistStartsWithExtm3u() {
         assertTrue(looksLikePlaylist("#EXTM3U\n#EXT-X-VERSION:3\n".toByteArray()))
         assertTrue(looksLikePlaylist("#EXTM3U".toByteArray()))
@@ -71,6 +86,51 @@ class LinkCandidatesTest {
         assertEquals(mapOf("Referer" to "https://page.test/"), headersFor(mapOf("Referer" to "https://page.test/"), null))
         assertEquals(emptyMap<String, String>(), headersFor(mapOf("Origin" to " "), "  "))
         assertEquals(mapOf("Cookie" to "a=b"), headersFor(emptyMap(), "a=b"))
+    }
+
+    @Test
+    fun theRequestsOwnRefererAndOriginWinOverThePage() {
+        val request = mapOf("referer" to "https://player.test/embed/1", "Origin" to "https://player.test")
+        assertEquals(
+            mapOf("Referer" to "https://player.test/embed/1", "Origin" to "https://player.test", "Cookie" to "a=b"),
+            headersFor(request, "a=b", "https://page.test/watch/1"),
+        )
+    }
+
+    @Test
+    fun missingRefererAndOriginComeFromThePageUrl() {
+        assertEquals(
+            mapOf("Referer" to "https://page.test/watch/1?ep=2", "Origin" to "https://page.test"),
+            headersFor(mapOf("User-Agent" to "Mozilla/5.0"), null, "https://page.test/watch/1?ep=2"),
+        )
+        // Only the missing one is filled; a blank value counts as missing.
+        assertEquals(
+            mapOf("Referer" to "https://player.test/embed/1", "Origin" to "https://page.test"),
+            headersFor(mapOf("Referer" to "https://player.test/embed/1", "Origin" to " "), null, "https://page.test/watch/1"),
+        )
+        assertEquals(
+            mapOf("Referer" to "https://page.test/watch/1", "Origin" to "https://player.test"),
+            headersFor(mapOf("Origin" to "https://player.test"), null, "https://page.test/watch/1"),
+        )
+    }
+
+    @Test
+    fun withoutAPageUrlNothingIsAdded() {
+        assertEquals(emptyMap<String, String>(), headersFor(emptyMap(), null, null))
+        assertEquals(emptyMap<String, String>(), headersFor(emptyMap(), null, "about:blank"))
+        assertEquals(emptyMap<String, String>(), headersFor(emptyMap(), null, "  "))
+        assertEquals(mapOf("Cookie" to "a=b"), headersFor(emptyMap(), "a=b"))
+    }
+
+    @Test
+    fun anOriginIsTheSchemeHostAndPort() {
+        assertEquals("https://host:8443", originOf("https://host:8443/path?q"))
+        assertEquals("https://host:8443", headersFor(emptyMap(), null, "https://host:8443/path?q")["Origin"])
+        assertEquals("http://page.test", originOf("http://page.test"))
+        assertEquals("https://page.test", originOf("HTTPS://page.test#top"))
+        assertEquals("https://page.test", originOf("https://user:pw@page.test/a"))
+        assertNull(originOf("about:blank"))
+        assertNull(originOf("https:///a"))
     }
 
     @Test

@@ -50,7 +50,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import java.util.concurrent.atomic.AtomicReference
 import io.github.mickeiik.izle.companion.R
+import io.github.mickeiik.izle.companion.finder.FinderLog
 import io.github.mickeiik.izle.companion.finder.FoundLink
 import io.github.mickeiik.izle.companion.finder.LinkFinder
 import io.github.mickeiik.izle.companion.finder.addressUrl
@@ -134,8 +136,11 @@ fun LinkFinderScreen(
                 newBrowser(
                     context,
                     background = background,
-                    onRequest = { url, headers -> currentFinder.offer(url, headers, CookieManager.getInstance().getCookie(url)) },
-                    onPage = { url -> if (isHttpUrl(url)) address = url },
+                    onRequest = { url, headers, pageUrl ->
+                        currentFinder.offer(url, headers, CookieManager.getInstance().getCookie(url), pageUrl)
+                    },
+                    onPage = { url -> address = url },
+                    onNavigated = { currentFinder.pageNavigated() },
                 ).also { web ->
                     browser.view = web
                     // A blank page when there is nothing to open yet: the view has content and a layout from the start.
@@ -239,14 +244,29 @@ private class BrowserHolder {
  * The finder's browser: JavaScript and DOM storage on (players need them), no autoplay, no new windows, other schemes
  * than http(s) not followed, third-party cookies accepted (players are often embedded from another site). Remote
  * debugging is never turned on: the page's requests carry the owner's cookies.
+ *
+ * [onPage] gets the page's `http(s)` URL on every load and on in-page navigation (a single-page app's `pushState`),
+ * on the main thread; [onNavigated] is called there whenever that URL changes (another page: the finder forgets what
+ * it checked); [onRequest] gets each request with that URL (null before the first `http(s)` page), off it.
  */
 @SuppressLint("SetJavaScriptEnabled")
 private fun newBrowser(
     context: Context,
     background: Int,
-    onRequest: (url: String, headers: Map<String, String>) -> Unit,
+    onRequest: (url: String, headers: Map<String, String>, pageUrl: String?) -> Unit,
     onPage: (url: String) -> Unit,
+    onNavigated: () -> Unit,
 ): WebView = WebView(context).apply {
+    // The page's current URL, read off the main thread (WebView.getUrl() must not be called there).
+    val pageUrl = AtomicReference<String?>(null)
+    val page: (String?) -> Unit = { url ->
+        val current = url?.takeIf(::isHttpUrl)
+        if (pageUrl.getAndSet(current) != current) {
+            FinderLog.d("page: navigated")
+            onNavigated()
+        }
+        if (current != null) onPage(current)
+    }
     setBackgroundColor(background)
     settings.javaScriptEnabled = true
     settings.domStorageEnabled = true
@@ -256,19 +276,18 @@ private fun newBrowser(
     webViewClient = object : WebViewClient() {
         // Off the main thread: the finder's offer is thread-safe. The request goes on as the page made it.
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-            onRequest(request.url.toString(), request.requestHeaders.orEmpty())
+            onRequest(request.url.toString(), request.requestHeaders.orEmpty(), pageUrl.get())
             return null
         }
 
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
             !isHttpUrl(request.url.toString())
 
-        override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
-            url?.let(onPage)
-        }
+        override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) = page(url)
 
-        override fun onPageFinished(view: WebView, url: String?) {
-            url?.let(onPage)
-        }
+        // In-page navigation too: a single-page app's history.pushState() starts no page load.
+        override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) = page(url)
+
+        override fun onPageFinished(view: WebView, url: String?) = page(url)
     }
 }

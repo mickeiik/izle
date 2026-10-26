@@ -16,14 +16,21 @@ import kotlin.coroutines.resume
  * Confirms a candidate link from this phone (same device, same address as the page): one `GET` with exactly the given
  * headers (to the link's host only, never to a redirect's other host), the start of the body read (at most
  * [MAX_BYTES]), a playlist when the answer is 2xx and starts with `#EXTM3U`. A WebView never sees response headers, so
- * this fetch is what tells a playlist from anything else. Never logs: the URL and the header values are the owner's.
+ * this fetch is what tells a playlist from anything else. Redirects are followed (the client's policy); each one is
+ * reported in the debug diagnostics ([FinderLog]) as `http <status>`, with the hosts. The URL and the header values
+ * are the owner's: never logged.
  */
 class LinkConfirmer(private val http: OkHttpClient) {
     suspend fun confirm(url: String, headers: Map<String, String>): FoundLink? {
-        val httpUrl = url.toHttpUrlOrNull() ?: return null
+        val httpUrl = url.toHttpUrlOrNull() ?: run {
+            FinderLog.d("confirm: failed (not an http(s) URL)")
+            return null
+        }
+        val host = httpUrl.host
         val client = try {
-            http.withHostBoundHeaders(httpUrl.host, headers)
-        } catch (_: IllegalArgumentException) {
+            http.withHostBoundHeaders(host, headers)
+        } catch (e: IllegalArgumentException) {
+            FinderLog.d("confirm: failed (${e.javaClass.simpleName}), host $host")
             return null // a header OkHttp refuses to send
         }
         val request = Request.Builder().url(httpUrl).get().build()
@@ -31,17 +38,46 @@ class LinkConfirmer(private val http: OkHttpClient) {
             val call = client.newCall(request)
             continuation.invokeOnCancellation { call.cancel() }
             call.enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) = continuation.resume(null)
+                override fun onFailure(call: Call, e: IOException) {
+                    if (!call.isCanceled()) FinderLog.d("confirm: failed (${e.javaClass.simpleName}), host $host")
+                    continuation.resume(null)
+                }
 
                 override fun onResponse(call: Call, response: Response) {
                     val playlist = try {
-                        response.use { it.isSuccessful && looksLikePlaylist(readStart(it)) }
-                    } catch (_: IOException) {
+                        response.use { checkResponse(it) }
+                    } catch (e: IOException) {
+                        FinderLog.d("confirm: failed (${e.javaClass.simpleName}), host ${response.request.url.host}")
                         false
                     }
                     continuation.resume(if (playlist) FoundLink(url, headers) else null)
                 }
             })
+        }
+    }
+
+    /** The answer is a playlist; each step is logged: the redirects followed, then the outcome. */
+    private fun checkResponse(response: Response): Boolean {
+        logRedirects(response)
+        val host = response.request.url.host
+        if (!response.isSuccessful) {
+            FinderLog.d("confirm: http ${response.code}, host $host")
+            return false
+        }
+        if (!looksLikePlaylist(readStart(response))) {
+            val type = response.body.contentType()?.let { "${it.type}/${it.subtype}" } ?: "none"
+            FinderLog.d("confirm: not a playlist (content-type $type), host $host")
+            return false
+        }
+        FinderLog.d("confirm: ok, host $host")
+        return true
+    }
+
+    /** The redirects that led to [response], oldest first: their status and hosts, never their URLs. */
+    private fun logRedirects(response: Response) {
+        val chain = generateSequence(response) { it.priorResponse }.toList().asReversed()
+        for ((prior, next) in chain.zipWithNext()) {
+            FinderLog.d("confirm: http ${prior.code} (redirect), host ${prior.request.url.host} to ${next.request.url.host}")
         }
     }
 

@@ -43,9 +43,13 @@ class LinkFinderScreenTest {
     @get:Rule
     val compose = createEmptyComposeRule()
 
+    private val checked = mutableListOf<String>()
     private val confirmed = mutableListOf<String>()
     private val finder = LinkFinder(
-        { url, headers -> if (url.contains("expired")) null else FoundLink(url, headers).also { confirmed += url } },
+        { url, headers ->
+            checked += url
+            if (url.contains("expired")) null else FoundLink(url, headers).also { confirmed += url }
+        },
         CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
     )
     private var listened: FoundLink? = null
@@ -90,6 +94,65 @@ class LinkFinderScreenTest {
             assertEquals("https://page.test", link.headers["Origin"])
             assertEquals(setOf("Referer", "Origin", "Cookie"), link.headers.keys)
             assertTrue(link.headers.getValue("Cookie").contains("session=s1"))
+        }
+    }
+
+    @Test
+    fun inPageNavigationMovesTheAddressAndGivesTheRefererARequestLacks() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            lateinit var web: WebView
+            scenario.onActivity { activity -> show(activity) }
+            compose.waitForIdle()
+            scenario.onActivity { activity -> web = findWebView(activity) }
+
+            // A single-page app's pushState(): no page load, only the visited history.
+            scenario.onActivity { web.webViewClient.doUpdateVisitedHistory(web, "https://page.test/watch/2?ep=3", false) }
+            compose.onNodeWithText("https://page.test/watch/2?ep=3").assertIsDisplayed()
+            scenario.onActivity { web.webViewClient.doUpdateVisitedHistory(web, "about:blank", false) }
+            compose.onNodeWithText("https://page.test/watch/2?ep=3").assertIsDisplayed()
+            scenario.onActivity { web.webViewClient.doUpdateVisitedHistory(web, "https://page.test/watch/2?ep=4", false) }
+            compose.onNodeWithText("https://page.test/watch/2?ep=4").assertIsDisplayed()
+
+            val stream = "https://cdn.test/m3u8/nav?payload=y"
+            scenario.onActivity {
+                assertNull(web.webViewClient.shouldInterceptRequest(web, request(stream, mapOf("User-Agent" to "Mozilla/5.0"))))
+            }
+            compose.onNodeWithText("Listen to this").performClick()
+            val link = listened!!
+            assertEquals(stream, link.url)
+            assertEquals("https://page.test/watch/2?ep=4", link.headers["Referer"])
+            assertEquals("https://page.test", link.headers["Origin"])
+        }
+    }
+
+    @Test
+    fun anotherPageMakesTheFinderCheckAUrlSeenBeforeAgain() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            lateinit var web: WebView
+            scenario.onActivity { activity -> show(activity) }
+            compose.waitForIdle()
+            scenario.onActivity { activity -> web = findWebView(activity) }
+
+            val stale = "https://cdn.test/m3u8/expired?payload=z"
+            scenario.onActivity {
+                web.webViewClient.doUpdateVisitedHistory(web, "https://page.test/watch/1", false)
+                assertNull(web.webViewClient.shouldInterceptRequest(web, request(stale)))
+                assertNull(web.webViewClient.shouldInterceptRequest(web, request(stale)))
+            }
+            assertEquals(listOf(stale), checked)
+
+            // The same page again (a reload's history entry): nothing is forgotten.
+            scenario.onActivity {
+                web.webViewClient.doUpdateVisitedHistory(web, "https://page.test/watch/1", true)
+                assertNull(web.webViewClient.shouldInterceptRequest(web, request(stale)))
+            }
+            assertEquals(listOf(stale), checked)
+
+            scenario.onActivity {
+                web.webViewClient.doUpdateVisitedHistory(web, "https://page.test/watch/2", false)
+                assertNull(web.webViewClient.shouldInterceptRequest(web, request(stale)))
+            }
+            assertEquals(listOf(stale, stale), checked)
         }
     }
 
@@ -171,14 +234,16 @@ class LinkFinderScreenTest {
         }
     }
 
-    private fun request(url: String): WebResourceRequest = object : WebResourceRequest {
+    private fun request(
+        url: String,
+        headers: Map<String, String> = mapOf("Referer" to "https://page.test/watch/1", "Origin" to "https://page.test", "User-Agent" to "Mozilla/5.0"),
+    ): WebResourceRequest = object : WebResourceRequest {
         override fun getUrl(): Uri = Uri.parse(url)
         override fun isForMainFrame(): Boolean = false
         override fun isRedirect(): Boolean = false
         override fun hasGesture(): Boolean = false
         override fun getMethod(): String = "GET"
-        override fun getRequestHeaders(): Map<String, String> =
-            mapOf("Referer" to "https://page.test/watch/1", "Origin" to "https://page.test", "User-Agent" to "Mozilla/5.0")
+        override fun getRequestHeaders(): Map<String, String> = headers
     }
 
     private fun findWebView(activity: Activity): WebView = checkNotNull(find(activity.window.decorView)) { "no WebView on screen" }

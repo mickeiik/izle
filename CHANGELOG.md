@@ -51,7 +51,11 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
   starts on a blank page, in the theme's colour, clipped to its own area. While the finder is open the app bar
   (the TV's name, **Change TV**, the menu) is gone: Close and the address row are its only chrome. The bottom bar is
   one short row: a one-line hint and **Paste a link**, which opens the paste field (its error shows only with it), or,
-  once a stream is found, **Listen to this**.
+  once a stream is found, **Listen to this**. The address row now follows a site's in-page navigation too, and a
+  playlist request that the browser sends without `Referer` or `Origin` is checked and played with the page's
+  address and origin in their place, so a host that redirects such requests no longer hides the stream. The finder
+  checks a page's requests only until it has found a playlist, ignores images and media segments, and forgets what it
+  checked when the page changes, so coming back to a page finds its stream again.
 
 ## [0.6.1] - 2026-10-23
 
