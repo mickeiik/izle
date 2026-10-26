@@ -1,21 +1,12 @@
-import java.util.Properties
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     id("izle.robolectric-tests")
 }
 
-// Release signing is optional: CI passes IZLE_SIGNING_* environment variables, a local build reads
-// android/keystore.properties (storeFile, storePassword, keyAlias, keyPassword; never committed). Without either,
-// assembleRelease produces an unsigned APK. See docs/releasing.md.
-val keystoreProperties = Properties().apply {
-    providers.fileContents(rootProject.layout.projectDirectory.file("keystore.properties")).asText.orNull
-        ?.let { load(it.reader()) }
-}
-fun signingValue(env: String, key: String): String? =
-    providers.environmentVariable(env).orNull?.takeIf { it.isNotEmpty() } ?: keystoreProperties.getProperty(key)
-val releaseStoreFile = signingValue("IZLE_SIGNING_STORE_FILE", "storeFile")
+// Release signing is optional (IZLE_SIGNING_* or android/keystore.properties, see buildSrc's IzleSigning); without
+// it, assembleRelease produces an unsigned APK. :companion is signed with the same key.
+val releaseSigning = IzleSigning.read(providers, rootProject.layout.projectDirectory.file("keystore.properties"))
 
 android {
     namespace = "io.github.mickeiik.izle"
@@ -26,19 +17,18 @@ android {
         applicationId = "io.github.mickeiik.izle"
         minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = 36
-        versionName = "0.6.1" // set with `node scripts/version.mjs set X.Y.Z`
-        // 1.2.3 → 10203, so every release installs over the previous one (minor and patch stay below 100).
-        versionCode = versionName!!.substringBefore('-').split('.').map(String::toInt)
-            .let { (major, minor, patch) -> major * 10_000 + minor * 100 + patch }
+        // The one version in gradle/libs.versions.toml; 1.2.3 → versionCode 10203 (buildSrc's IzleVersion).
+        versionName = libs.versions.izle.get()
+        versionCode = IzleVersion.code(libs.versions.izle.get())
     }
 
     signingConfigs {
-        if (releaseStoreFile != null) {
+        if (releaseSigning != null) {
             create("release") {
-                storeFile = rootProject.file(releaseStoreFile)
-                storePassword = signingValue("IZLE_SIGNING_STORE_PASSWORD", "storePassword")
-                keyAlias = signingValue("IZLE_SIGNING_KEY_ALIAS", "keyAlias")
-                keyPassword = signingValue("IZLE_SIGNING_KEY_PASSWORD", "keyPassword")
+                storeFile = rootProject.file(releaseSigning.storeFile)
+                storePassword = releaseSigning.storePassword
+                keyAlias = releaseSigning.keyAlias
+                keyPassword = releaseSigning.keyPassword
             }
         }
     }

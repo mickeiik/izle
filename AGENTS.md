@@ -60,9 +60,11 @@ the same commit.
   (`make-media.sh` needs ffmpeg; `upstream.js` is the local stand-in site; `izle.example.json` the server config,
   state in `server/data/example/`)
 - `android/` (needs `JAVA_HOME` = JDK 21+ and `ANDROID_HOME`): `./gradlew :app:assembleDebug :core:testDebugUnitTest
-  :app:testDebugUnitTest`; `:app:assembleRelease` is signed only with `android/keystore.properties` or the
+  :app:testDebugUnitTest :companion:assembleDebug :companion:testDebugUnitTest`; `:app:assembleRelease` and
+  `:companion:assembleRelease` are signed (with the same key) only with `android/keystore.properties` or the
   `IZLE_SIGNING_*` variables. A device with a release-signed build needs `adb uninstall io.github.mickeiik.izle`
-  before a debug install.
+  before a debug install. `:companion` is the phone app for Listen along: it shares `:core` and never copies from
+  `:app`.
 
 The admin UI (`server/admin/`, served at `/admin/`) is plain ES modules without a build step or dependencies,
 typechecked by `server/admin/tsconfig.json` (DOM types) as part of `npm run typecheck`; its pure helpers in
