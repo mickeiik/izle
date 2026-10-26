@@ -31,7 +31,8 @@ async function setup(t: { after(fn: () => unknown): void }) {
   t.after(() => up.close());
   const items = fixtureItems();
   // A series whose first episode has a TV source (Referer-bound HLS), a plain MP4 in another language and a DASH
-  // source; its third has the same TV source and a Referer-bound MPEG-TS one; its fourth has no source yet.
+  // source; its third has the same TV source and a Referer-bound MPEG-TS one; its fourth has no source yet; its fifth
+  // has a source with the reserved id "pasted" (the validator warns; the server serves it as a source).
   const tvHls = direct("tv-hls", ["tr"], { kind: "hls", url: `${up.url}/ref/master.m3u8`, headers: { Referer: REFERER } });
   const frMp4 = direct("fr-mp4", ["fr"], { kind: "mp4", url: `${up.url}/plain/video.mp4` });
   items.items.push({
@@ -41,6 +42,7 @@ async function setup(t: { after(fn: () => unknown): void }) {
       { id: "dual.e2", number: 2, playbackAllowed: false, sources: [frMp4] },
       { id: "dual.e3", number: 3, playbackAllowed: true, sources: [tvHls, direct("tr-ts", ["tr"], { kind: "ts", url: `${up.url}/ref/live.ts`, headers: { Referer: REFERER } })] },
       { id: "dual.e4", number: 4, playbackAllowed: false, sources: [] },
+      { id: "dual.e5", number: 5, playbackAllowed: true, sources: [direct("pasted", ["en"], { kind: "mp4", url: `${up.url}/plain/video.mp4` })] },
     ],
   });
   const bundleDir = await writeBundle(path.join(await tempDir(), "bundle"), fixtureManifest(), items);
@@ -307,7 +309,7 @@ test("a link found in a browser: kept under the reserved id for any episode, lis
   assert.deepEqual([noLink.status, noLink.json.error], [404, "no_link"]);
   s.clock.advance(1_000);
   const copied = await s.admin("POST", "/companion/links/dual.e1/pasted/copy-to-item");
-  assert.deepEqual(copied.json, { updated: 3, episodeIds: ["dual.e2", "dual.e3", "dual.e4"] });
+  assert.deepEqual(copied.json, { updated: 4, episodeIds: ["dual.e2", "dual.e3", "dual.e4", "dual.e5"] });
   assert.equal((await as("POST", "/resolve", { episodeId: "dual.e3", sourceId: "tv-hls" })).status, 200);
   const e3 = await view();
   answers.push(e3);
@@ -317,6 +319,26 @@ test("a link found in a browser: kept under the reserved id for any episode, lis
   // The server never sees the link: nothing to resolve.
   const resolved = await companion({ episodeId: "dual.e1", sourceId: "pasted" });
   assert.deepEqual([resolved.status, resolved.json.error], [404, "unknown_source"]);
+
+  // A movie: the link is stored like any other; "apply to all episodes" has no other episode to write.
+  const film = await put("film.main", link);
+  assert.equal(film.status, 200, JSON.stringify(film.json));
+  const filmCopy = await s.admin("POST", "/companion/links/film.main/pasted/copy-to-item");
+  assert.deepEqual([filmCopy.status, filmCopy.json], [200, { updated: 0, episodeIds: [] }]);
+  assert.deepEqual((await put("film.main", { offsetMs: 0, rate: 1 })).json.link.offsetMs, 0, "not copied onto itself");
+
+  // A bundle source that has the reserved id anyway is that episode's "pasted": listed once, as itself, with the link
+  // stored under the id; its resolve works like any source's.
+  assert.equal((await as("POST", "/resolve", { episodeId: "dual.e5", sourceId: "pasted" })).status, 200);
+  const e5 = await view();
+  answers.push(e5);
+  assert.deepEqual(
+    e5.candidates.map((x: Json) => [x.sourceId, x.type, x.kind, x.current, x.link.offsetMs]),
+    [["pasted", "direct", "mp4", true, link.offsetMs]],
+  );
+  const own = await companion({ episodeId: "dual.e5", sourceId: "pasted" });
+  assert.equal(own.status, 200, JSON.stringify(own.json));
+  assert.deepEqual([own.json.sourceId, own.json.link.offsetMs, own.json.media.url.startsWith("/p/")], ["pasted", link.offsetMs, true]);
 
   assert.ok(!JSON.stringify(answers).includes(up.url), "no upstream URL in the answers");
   const logs = s.logs.join("\n");

@@ -162,9 +162,9 @@ function checkItems(manifest: BundleManifest, items: CatalogItem[], issues: Vali
     p.sources.forEach((src, s) => {
       const sp = `${pointer}/sources/${s}`;
       stats.sources++;
-      if (src.id === PASTED_SOURCE_ID) {
-        error(`${sp}/id`, `source id "${PASTED_SOURCE_ID}" is reserved (the server API's Listen along uses it for a link found on the phone)`);
-      } else if (sourceIds.has(src.id)) error(`${sp}/id`, `duplicate source id "${src.id}" within the ${scope}`);
+      if (sourceIds.has(src.id)) error(`${sp}/id`, `duplicate source id "${src.id}" within the ${scope}`);
+      // A warning, not an error: a bundle valid before the id was reserved must keep loading (v1 is additive-only).
+      if (src.id === PASTED_SOURCE_ID) warn(`${sp}/id`, `source id "${PASTED_SOURCE_ID}" is reserved (the server API's Listen along uses it for a link found on the phone)`);
       sourceIds.add(src.id);
       if (src.type === "direct") checkUrl(src.media.url, `${sp}/media/url`);
       else {

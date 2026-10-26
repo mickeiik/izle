@@ -622,11 +622,13 @@ Nothing changes on the TV.
   companion resolve never writes now playing, creates no TV playback session and never penalizes a source for the TV.
 - **Channels are not covered** (no timeline to sync to): while a channel plays, `GET …/companion` answers `nowPlaying`
   with `itemKind: "live"` and `candidates: []`; the other routes take episodes only.
-- **A link found on the phone** (the reserved source id `pasted`, which no bundle source may use, see the
-  [catalog bundle spec](catalog-bundle-v1.md#source)). For some titles the owner finds a release in another audio
-  language in a browser; such a link is short-lived, bound to the public address that fetched the page and needs a
-  `Referer` or `Origin`, so the phone that found it plays it, in the companion app. The link, its `Referer` and
-  cookies never reach the server: nothing to proxy, validate, redact or store, and the egress policy is not involved.
+- **A link found on the phone** (the reserved source id `pasted`, which a bundle source SHOULD NOT use, see the
+  [catalog bundle spec](catalog-bundle-v1.md#source); an episode whose bundle has a source with that id anyway gets no
+  `pasted` candidate: that source is listed as itself, and the link under `pasted` is its link). For some titles the
+  owner finds a release in another audio language in a browser; such a link is short-lived, bound to the public
+  address that fetched the page and needs a `Referer` or `Origin`, so the phone that found it plays it, in the
+  companion app. The link, its `Referer` and cookies never reach the server: nothing to proxy, validate, redact or
+  store, and the egress policy is not involved.
   The server keeps only its timing, under `pasted`: `PUT …/links/:episodeId/pasted` and `copy-to-item` take it for
   any episode (movie or series, with `playbackAllowed` or not) without a bundle source of that id,
   device-independent like every link, and `GET …/companion` lists it as the last candidate whenever an episode plays:

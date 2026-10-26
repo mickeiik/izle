@@ -1,7 +1,8 @@
 // "Listen along" (docs/spec/server-api-v1.md): the owner's phone plays a second source of the episode the TV is
 // playing, in sync with the picture. The companion stream resolves under its own proxy scope, so the TV's sessions
 // are never disturbed. A link the owner found in a browser plays on the phone only; its timing is kept here under the
-// reserved source id PASTED_SOURCE_ID, which no bundle source has.
+// reserved source id PASTED_SOURCE_ID, which a bundle source should not have (one that has it anyway is served as that
+// source, and no pasted candidate is added for its episode).
 
 import { PASTED_SOURCE_ID, type Episode } from "@izle/contract";
 import type { CatalogService, EpisodeRef } from "./catalog.ts";
@@ -11,6 +12,9 @@ import type { PlayingService } from "./playing.ts";
 import { iso } from "./presenters.ts";
 import type { ResolveService } from "./resolve.ts";
 import type { CompanionLink, Device, Store } from "./store.ts";
+
+/** The candidate `type` of the pasted link in GET …/companion: the spec's literal, apart from the id it is stored under. */
+const PASTED_CANDIDATE_TYPE = "pasted";
 
 export type LinkInput = Pick<CompanionLink, "offsetMs" | "rate"> & { language?: string | null };
 
@@ -42,7 +46,10 @@ export class CompanionService {
     return linkJson(this.s.store.getCompanionLink(this.s.catalog.catalogId, episodeId, sourceId));
   }
 
-  /** The episode a link is stored for: any episode for the pasted link, else one with that source (404 otherwise). */
+  /**
+   * The episode a link is stored for: any episode for the pasted link (a bundle source with that id is a source like
+   * any other, so the link is its link), else one with that source (404 otherwise).
+   */
   private linkEpisode(episodeId: string, sourceId: string): EpisodeRef {
     if (sourceId === PASTED_SOURCE_ID) return requireEpisode(this.s.catalog, episodeId, 404, "unknown_episode");
     return requireEpisodeSource(this.s.catalog, episodeId, sourceId).ref;
@@ -99,13 +106,14 @@ export class CompanionService {
       const current = s.id === n.sourceId;
       return { sourceId: s.id, type: s.type, kind, label: s.label ?? null, languages: s.languages, current, supported: reason === null, reason, link };
     });
-    // The pasted link's type has the reserved id's name; the server never sees the link, so nothing to resolve.
-    const pasted = {
-      sourceId: PASTED_SOURCE_ID, type: PASTED_SOURCE_ID, kind: null, label: null, languages: { audio: null, subtitles: null },
+    // The server never sees the pasted link, so nothing to resolve. A bundle source that has the reserved id anyway
+    // (the validator warns) is listed above as itself, once.
+    const pasted = episode.sources.some((s) => s.id === PASTED_SOURCE_ID) ? [] : [{
+      sourceId: PASTED_SOURCE_ID, type: PASTED_CANDIDATE_TYPE, kind: null, label: null, languages: { audio: null, subtitles: null },
       current: false, supported: true, reason: null, link: linkJson(links.get(PASTED_SOURCE_ID) ?? null),
-    };
+    }];
     // Upstream URLs, headers and refs are deliberately not exposed (the admin item view has the same rule).
-    return { nowPlaying, candidates: [...sources, pasted] };
+    return { nowPlaying, candidates: [...sources, ...pasted] };
   }
 
   /** The forced source, always proxied, without touching the TV's now-playing row or playback session. */

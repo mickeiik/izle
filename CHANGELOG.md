@@ -19,8 +19,9 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
   the reserved source id `pasted` (copied to a whole series like any link), lists it among the Listen along
   candidates, and now also gives the episode's duration as the TV last reported it. The admin page's Listen along
   card has no field for such a link: its hint says that a link found in a browser is for the companion app.
-- **The catalog validator refuses a source id `pasted`.** The id is reserved for that link; `izle-validate` reports
-  such a source as an error, in an episode or a channel.
+- **The catalog validator warns about a source id `pasted`.** The id is reserved for that link; `izle-validate`
+  reports such a source as a warning, in an episode or a channel (a bundle that uses it stays valid: that source is
+  served as itself, and its episode gets no `pasted` candidate).
 
 ## [0.6.1] - 2026-10-23
 
