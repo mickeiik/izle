@@ -29,7 +29,7 @@ class CompanionGraph(val context: Context) {
     fun apiClient(baseUrl: HttpUrl, token: String): ApiClient = ApiClient(baseUrl, token, http, longPollHttp)
 
     /** The tests replace it with a fake. */
-    var mediaEngine: () -> MediaEngine = { ExoMediaEngine(context, http, userAgent, capVideoTo720p = false) }
+    var mediaEngine: () -> MediaEngine = { ExoMediaEngine(context, http, userAgent, capVideoTo720p = false, audioOnly = true) }
 
     /** Media requests. */
     val userAgent: String = "izle-companion/${BuildConfig.VERSION_NAME}"
