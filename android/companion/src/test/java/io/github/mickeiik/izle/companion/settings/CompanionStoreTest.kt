@@ -1,6 +1,8 @@
 package io.github.mickeiik.izle.companion.settings
 
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -67,6 +69,41 @@ class CompanionStoreTest {
         store.forgetPairing()
         assertEquals(CompanionSettings(nudgeMs = -150), store.current())
         assertFalse(store.current().isPaired)
+    }
+
+    @Test
+    fun aClaimStoresThePhoneIdAndChoosesTheInvitingTv() = runBlocking {
+        store.savePairing("http://10.0.2.2:8787/", "izat_one")
+        store.setTv("abcdefabcdef")
+        store.savePairing("http://192.168.1.10:8787/", "izph_secret", phoneId = "ph0123456789", tvId = "tv0123456789")
+        assertEquals(
+            CompanionSettings("http://192.168.1.10:8787/", "izph_secret", "ph0123456789", "tv0123456789"),
+            store.current(),
+        )
+        store.savePairing("http://192.168.1.10:8787/", "izat_typed")
+        assertNull("a typed token is no phone", store.current().phoneId)
+        assertEquals("the same server keeps its TV", "tv0123456789", store.current().tvId)
+
+        store.savePairing("http://192.168.1.10:8787/", "izph_two", phoneId = "ph9876543210")
+        store.forgetPairing()
+        assertNull(store.current().phoneId)
+        assertFalse(store.current().isPaired)
+    }
+
+    @Test
+    fun anOlderInstallReadsAsPairedWithoutAPhoneId() = runBlocking {
+        // What the companion-scope version stored: the same keys, no phone id.
+        val old = PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "older.preferences_pb") }
+        old.edit { p ->
+            p[stringPreferencesKey("server_url")] = "http://10.0.2.2:8787/"
+            p[stringPreferencesKey("token")] = "izat_companion"
+            p[stringPreferencesKey("tv_id")] = "abcdefabcdef"
+        }
+        val read = CompanionStore(old).current()
+        assertTrue(read.isPaired)
+        assertEquals("izat_companion", read.token)
+        assertEquals("abcdefabcdef", read.tvId)
+        assertNull(read.phoneId)
     }
 
     @Test

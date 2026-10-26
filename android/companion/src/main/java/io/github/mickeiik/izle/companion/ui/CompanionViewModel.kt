@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import io.github.mickeiik.izle.companion.BuildConfig
 import io.github.mickeiik.izle.companion.CompanionApp
 import io.github.mickeiik.izle.companion.CompanionGraph
+import io.github.mickeiik.izle.companion.connect.ConnectLink
 import io.github.mickeiik.izle.companion.finder.FoundLink
 import io.github.mickeiik.izle.companion.finder.LinkConfirmer
 import io.github.mickeiik.izle.companion.finder.LinkFinder
@@ -23,10 +24,13 @@ import io.github.mickeiik.izle.data.api.CompanionResponse
 import io.github.mickeiik.izle.data.api.LinkTiming
 import io.github.mickeiik.izle.data.api.LinkUpdate
 import io.github.mickeiik.izle.data.api.NowPlaying
+import io.github.mickeiik.izle.data.api.Phone
+import io.github.mickeiik.izle.data.api.PhoneClaimRequest
 import io.github.mickeiik.izle.data.api.ServerUrls
 import io.github.mickeiik.izle.data.api.orNullOnFailure
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,14 +40,18 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.IOException
 
-/** Why connecting (or listing the TVs) failed; the screens say it in words. */
+/** Why connecting (or listing the TVs or the phones) failed; the screens say it in words. */
 sealed interface ConnectError {
     data object InvalidAddress : ConnectError
     data object Unreachable : ConnectError
-    /** `401`: a wrong or revoked token. */
+    /** `404` on a claim: an unknown, used or expired code or invite (the server does not say which). */
+    data object CodeNotAccepted : ConnectError
+    /** `429` on a claim: too many failed claims from this address. */
+    data object TooManyTries : ConnectError
+    /** `401` on a typed token (debug builds only). */
     data object TokenNotAccepted : ConnectError
-    /** `403 insufficient_scope`: a token without the `companion` scope. */
-    data object NeedsCompanionScope : ConnectError
+    /** The stored credential was refused: this phone was disconnected (on the admin page or from another phone). */
+    data object Disconnected : ConnectError
     /** Any other API error, by its code. */
     data class Server(val code: String) : ConnectError
 }
@@ -53,8 +61,20 @@ sealed interface CompanionUi {
     /** Reading the stored settings. */
     data object Starting : CompanionUi
 
-    /** [initialUrl]: what the address field starts with (the last server, or the debug build's default). */
-    data class Pairing(val initialUrl: String, val busy: Boolean = false, val error: ConnectError? = null) : CompanionUi
+    /**
+     * Connecting this phone to a TV's server: the server address and the 6-digit code the TV shows (or, from the QR
+     * code's link, the invite, with [busy] at once). [initialUrl]: what the address field starts with (the link's or the
+     * last server, or the debug build's default).
+     */
+    data class Connect(val initialUrl: String, val busy: Boolean = false, val error: ConnectError? = null) : CompanionUi
+
+    /** The phones connected to the server ([thisPhoneId]: this one, null with a typed token), oldest first. */
+    data class Phones(
+        val phones: List<Phone> = emptyList(),
+        val thisPhoneId: String? = null,
+        val loading: Boolean = true,
+        val error: ConnectError? = null,
+    ) : CompanionUi
 
     /** The paired server's TVs (active ones only: a pending TV plays nothing). */
     data class PickTv(
@@ -99,7 +119,8 @@ sealed interface CompanionUi {
 }
 
 /**
- * The companion's state and actions: pairing with a server and an access token, choosing the TV, and Listen along with
+ * The companion's state and actions: connecting this phone (claiming the invite a TV shows, by its code or its QR
+ * code's link), choosing the TV, the server's phones, and Listen along with
  * the graph's single [ListenSession] (the foreground [ListenService] keeps it playing when the screen is off).
  * Snackbar texts go to [snackbar], so one raised while the screen changes (a revoked token) is still shown. The
  * session belongs to the graph, not to this view model: it keeps playing after the activity is gone.
@@ -133,23 +154,96 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     /** The option chosen per item, for this view model's life. */
     private val remembered = mutableMapOf<String, String>()
 
-    init {
+    /** This phone's id on the paired server; null with a typed token. */
+    private var phoneId: String? = null
+
+    /** The screen the Phones screen opened over, to go back to. */
+    private var behindPhones: CompanionUi? = null
+
+    /** Reading the stored pairing: a connect link waits for it. */
+    private val started: Job = viewModelScope.launch {
+        if (!openStored()) _ui.value = CompanionUi.Connect(initialUrl = BuildConfig.DEFAULT_SERVER_URL)
+    }
+
+    /** Opens the stored pairing (its TV, or the TV list); false without one. */
+    private suspend fun openStored(): Boolean {
+        val s = store.current()
+        val url = s.serverUrl?.toHttpUrlOrNull()
+        if (url == null || s.token == null) return false
+        phoneId = s.phoneId
+        usePairing(url, s.token)
+        if (s.tvId != null) enterListen(s.tvId, name = null) else showPicker()
+        return true
+    }
+
+    // --- connecting and the TV -------------------------------------------------------------------------------------
+
+    /** Connect with the server address and the 6-digit code the TV shows (spaces ignored). */
+    fun connect(url: String, code: String) {
+        val current = _ui.value as? CompanionUi.Connect ?: return
+        if (current.busy) return
+        val digits = normalizeCode(code) ?: return // Connect is disabled until there are 6 digits
+        val parsed = ServerUrls.parse(url)
+        if (parsed == null) {
+            _ui.value = current.copy(error = ConnectError.InvalidAddress)
+            return
+        }
+        _ui.value = current.copy(busy = true, error = null)
         viewModelScope.launch {
-            val s = store.current()
-            val url = s.serverUrl?.toHttpUrlOrNull()
-            if (url == null || s.token == null) {
-                _ui.value = CompanionUi.Pairing(initialUrl = BuildConfig.DEFAULT_SERVER_URL)
-                return@launch
-            }
-            usePairing(url, s.token)
-            if (s.tvId != null) enterListen(s.tvId, name = null) else showPicker()
+            val error = claim(parsed, PhoneClaimRequest(code = digits, name = graph.phoneName())) ?: return@launch
+            _ui.value = current.copy(busy = false, error = error)
         }
     }
 
-    // --- pairing and the TV ----------------------------------------------------------------------------------------
+    /**
+     * The QR code's link: claims its invite at once, with the connect screen busy. On failure the connect screen says why,
+     * or, when this phone is still connected (a link opened again), the screen it showed comes back with a snackbar.
+     */
+    fun connectWithLink(link: ConnectLink) {
+        viewModelScope.launch {
+            started.join()
+            val before = _ui.value
+            if (before is CompanionUi.Connect && before.busy) return@launch
+            val parsed = ServerUrls.parse(link.server)
+            val shown = CompanionUi.Connect(initialUrl = parsed?.let(ServerUrls::display) ?: link.server, busy = parsed != null)
+            val error = if (parsed == null) {
+                ConnectError.InvalidAddress
+            } else {
+                leaveListen()
+                _ui.value = shown
+                claim(parsed, PhoneClaimRequest(invite = link.invite, name = graph.phoneName())) ?: return@launch
+            }
+            if (api != null) {
+                _snackbar.value = connectErrorText(getApplication<Application>().resources, error)
+                restore(before)
+            } else {
+                _ui.value = shown.copy(busy = false, error = error)
+            }
+        }
+    }
 
-    fun connect(url: String, token: String) {
-        val current = _ui.value as? CompanionUi.Pairing ?: return
+    /** Claims an invite; on success stores the secret, this phone's id and the inviting TV, and opens that TV. */
+    private suspend fun claim(url: HttpUrl, request: PhoneClaimRequest): ConnectError? {
+        val claim = try {
+            graph.apiClient(url, null).claimPhone(request)
+        } catch (e: Exception) {
+            return claimError(e) ?: throw e
+        }
+        leaveListen()
+        linkFinder.clear()
+        behindPhones = null
+        store.savePairing(url.toString(), claim.secret, claim.phone.id, claim.deviceId)
+        phoneId = claim.phone.id
+        usePairing(url, claim.secret)
+        val tv = claim.deviceId
+        if (tv != null) enterListen(tv, name = null) else showPicker()
+        return null
+    }
+
+    /** Debug builds only: an access token (the admin token) instead of a code, for development. */
+    fun connectWithToken(url: String, token: String) {
+        if (!BuildConfig.DEBUG) return
+        val current = _ui.value as? CompanionUi.Connect ?: return
         if (current.busy) return
         val parsed = ServerUrls.parse(url)
         if (parsed == null) {
@@ -167,6 +261,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             store.savePairing(parsed.toString(), secret)
+            phoneId = null
             usePairing(parsed, secret)
             val only = devices.singleOrNull()
             if (only != null) {
@@ -204,12 +299,21 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         if (!picker.loading) viewModelScope.launch { showPicker() }
     }
 
-    /** "Change server": forgets the server, the token and the TV, and stops listening. */
+    /**
+     * "Disconnect this phone": deletes this phone on the server (best effort: an unreachable server does not keep it
+     * connected here), then forgets the server, the secret and the TV, and stops listening.
+     */
     fun forgetPairing() {
-        viewModelScope.launch { forget() }
+        viewModelScope.launch {
+            val client = api
+            val id = phoneId
+            if (client != null && id != null) withTimeoutOrNull(SELF_DELETE_MS) { orNullOnFailure { client.deletePhone(id) } }
+            forget()
+        }
     }
 
-    private suspend fun forget() {
+    /** Back to the connect screen, saying [reason] there. */
+    private suspend fun forget(reason: ConnectError? = null) {
         leaveListen()
         linkFinder.clear()
         sessionJob?.cancel()
@@ -219,7 +323,88 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         val last = baseUrl?.let(ServerUrls::display) ?: BuildConfig.DEFAULT_SERVER_URL
         baseUrl = null
         api = null
-        _ui.value = CompanionUi.Pairing(initialUrl = last)
+        phoneId = null
+        behindPhones = null
+        _ui.value = CompanionUi.Connect(initialUrl = last, error = reason)
+    }
+
+    /** A screen shown again (after the Phones screen, or a connect link that failed): read anew. */
+    private fun restore(screen: CompanionUi) {
+        when (screen) {
+            is CompanionUi.Listen -> {
+                // The session's changes were not followed meanwhile.
+                _ui.value = screen.copy(session = session?.state?.value ?: screen.session, refreshing = false)
+                refresh()
+            }
+            is CompanionUi.PickTv -> {
+                _ui.value = screen.copy(loading = false)
+                reloadTvs()
+            }
+            is CompanionUi.Phones -> {
+                _ui.value = screen.copy(loading = false)
+                reloadPhones()
+            }
+            else -> _ui.value = screen
+        }
+    }
+
+    // --- the server's phones ---------------------------------------------------------------------------------------
+
+    /** From the TV list or Listen along; [closePhones] goes back there. */
+    fun openPhones() {
+        val current = _ui.value
+        if (current !is CompanionUi.Listen && current !is CompanionUi.PickTv) return
+        behindPhones = current
+        leaveListen()
+        _ui.value = CompanionUi.Phones(thisPhoneId = phoneId)
+        viewModelScope.launch { loadPhones() }
+    }
+
+    fun closePhones() {
+        val back = behindPhones ?: return
+        behindPhones = null
+        if (_ui.value is CompanionUi.Phones) restore(back)
+    }
+
+    fun reloadPhones() {
+        val phones = _ui.value as? CompanionUi.Phones ?: return
+        if (!phones.loading) viewModelScope.launch { loadPhones() }
+    }
+
+    /** Disconnects a phone; this one ([CompanionUi.Phones.thisPhoneId]) as "Disconnect this phone" does. */
+    fun disconnectPhone(id: String) {
+        if (_ui.value !is CompanionUi.Phones) return
+        if (id == phoneId) return forgetPairing()
+        val client = api ?: return
+        viewModelScope.launch {
+            updatePhones { it.copy(loading = true) }
+            try {
+                client.deletePhone(id)
+            } catch (e: Exception) {
+                if (e !is IOException && e !is ApiException) throw e
+                if (isRevoked(e)) return@launch unauthorized()
+                // Already gone: the list says so.
+                if (!(e is ApiException && e.status == 404)) _snackbar.value = errorText(e)
+            }
+            loadPhones()
+        }
+    }
+
+    private suspend fun loadPhones() {
+        val client = api ?: return
+        updatePhones { it.copy(loading = true, error = null) }
+        try {
+            val phones = client.phones().phones
+            updatePhones { it.copy(phones = phones, loading = false) }
+        } catch (e: Exception) {
+            if (e !is IOException && e !is ApiException) throw e
+            if (isRevoked(e)) return unauthorized()
+            updatePhones { it.copy(loading = false, error = connectError(e)) }
+        }
+    }
+
+    private inline fun updatePhones(change: (CompanionUi.Phones) -> CompanionUi.Phones) {
+        _ui.update { if (it is CompanionUi.Phones) change(it) else it }
     }
 
     private fun usePairing(url: HttpUrl, token: String) {
@@ -242,9 +427,9 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                     // Or reopening the finder would offer the expired link again.
                     linkFinder.clear()
                 }
-                endedText(state.ended, state.error)?.let { _snackbar.value = it }
-                // Not in this collector, which forget() cancels.
-                if (state.ended == EndReason.Unauthorized) viewModelScope.launch { forget() }
+                // Not in this collector, which forget() cancels; the connect screen says it.
+                if (state.ended == EndReason.Unauthorized) viewModelScope.launch { unauthorized() }
+                else endedText(state.ended, state.error)?.let { _snackbar.value = it }
             }
         }
     }
@@ -258,7 +443,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             _ui.value = CompanionUi.PickTv(server, activeDevices(client), loading = false)
         } catch (e: Exception) {
             val error = connectError(e) ?: throw e
-            if (error == ConnectError.TokenNotAccepted) return unauthorized()
+            if (isRevoked(e)) return unauthorized()
             _ui.value = CompanionUi.PickTv(server, shown?.devices.orEmpty(), loading = false, error = error)
         }
     }
@@ -322,7 +507,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             client.companion(listen.tvId)
         } catch (e: Exception) {
             if (e !is IOException && e !is ApiException) throw e
-            if (e is ApiException && e.status == 401) return unauthorized()
+            if (isRevoked(e)) return unauthorized()
             // A newer read is on its way (a forced one started meanwhile): it shows its answer and clears refreshing.
             if (my != companionReadSeq) return
             updateListen { it.copy(refreshing = false, loaded = true, error = errorText(e)) }
@@ -534,25 +719,51 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun failed(e: Exception) {
         if (e !is IOException && e !is ApiException) throw e
-        if (e is ApiException && e.status == 401) return unauthorized()
+        if (isRevoked(e)) return unauthorized()
         _snackbar.value = errorText(e)
     }
 
-    /** A revoked token: forget the pairing at once (every request with it counts as a failed sign-in on the server). */
+    /**
+     * The stored credential no longer works: `401` (this phone was disconnected), or an older install's `companion`
+     * access token, a scope the server no longer has.
+     */
+    private fun isRevoked(e: Exception): Boolean =
+        e is ApiException && (e.status == 401 || (e.code == "insufficient_scope" && phoneId == null))
+
+    /**
+     * A disconnected phone: forget the pairing at once (every request with it counts as a failed sign-in on the server)
+     * and say so on the connect screen.
+     */
     private suspend fun unauthorized() {
-        _snackbar.value = endedText(EndReason.Unauthorized, null)
-        forget()
+        forget(ConnectError.Disconnected)
     }
 
+    /** Listing the TVs or the phones, or a typed token. */
     private fun connectError(e: Exception): ConnectError? = when {
         e is IOException -> ConnectError.Unreachable
         e is ApiException && e.status == 401 -> ConnectError.TokenNotAccepted
-        e is ApiException && e.code == "insufficient_scope" -> ConnectError.NeedsCompanionScope
         e is ApiException -> ConnectError.Server(e.code)
         else -> null
     }
 
-    private companion object {
-        const val REFRESH_MS = 10_000L
+    /** A claim: `404` is an unknown, used or expired code or invite. */
+    private fun claimError(e: Exception): ConnectError? = when {
+        e is IOException -> ConnectError.Unreachable
+        e is ApiException && e.status == 404 -> ConnectError.CodeNotAccepted
+        e is ApiException && e.status == 429 -> ConnectError.TooManyTries
+        e is ApiException -> ConnectError.Server(e.code)
+        else -> null
+    }
+
+    companion object {
+        private const val REFRESH_MS = 10_000L
+
+        /** Disconnecting this phone waits this long for the server at most. */
+        private const val SELF_DELETE_MS = 5_000L
+
+        private val CODE = Regex("^[0-9]{6}$")
+
+        /** The code's 6 digits, spaces ignored; null when it is not 6 digits. */
+        fun normalizeCode(text: String): String? = text.filterNot(Char::isWhitespace).takeIf(CODE::matches)
     }
 }

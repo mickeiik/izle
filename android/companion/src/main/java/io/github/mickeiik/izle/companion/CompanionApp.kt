@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.preferencesDataStoreFile
+import io.github.mickeiik.izle.companion.connect.phoneName
 import io.github.mickeiik.izle.companion.settings.CompanionStore
 import io.github.mickeiik.izle.companion.sync.ApiClientCompanionApi
 import io.github.mickeiik.izle.companion.sync.ListenSession
@@ -30,8 +31,11 @@ class CompanionGraph(val context: Context) {
 
     val store = CompanionStore(PreferenceDataStoreFactory.create { context.preferencesDataStoreFile("companion") })
 
-    /** API calls with the `companion` access token. */
-    fun apiClient(baseUrl: HttpUrl, token: String): ApiClient = ApiClient(baseUrl, token, http, longPollHttp)
+    /** API calls with this phone's secret (or a debug build's typed token); without one, only the claim. */
+    fun apiClient(baseUrl: HttpUrl, token: String?): ApiClient = ApiClient(baseUrl, token, http, longPollHttp)
+
+    /** The name a claim gives this phone; the tests replace it. */
+    var phoneName: () -> String = { phoneName(context.contentResolver) }
 
     /** The tests replace it with a fake. */
     var mediaEngine: () -> MediaEngine = { ExoMediaEngine(context, http, userAgent, capVideoTo720p = false, audioOnly = true) }
