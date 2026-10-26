@@ -1,5 +1,62 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name" translatable="false">izle companion</string>
-    <string name="placeholder_detail">Phase 2 replaces this screen.</string>
+
+    <!-- The app bar -->
+    <string name="change_tv">Change TV</string>
+    <string name="change_server">Change server</string>
+    <string name="more_options">More options</string>
+
+    <!-- Pairing -->
+    <string name="pairing_title">Connect to your izle server</string>
+    <string name="pairing_intro">Use an access token with the companion scope: create one on the admin page (Access tokens), or with izle-server token create &lt;name&gt; --scope companion.</string>
+    <string name="server_address">Server address</string>
+    <string name="access_token">Access token</string>
+    <string name="show_token">Show</string>
+    <string name="hide_token">Hide</string>
+    <string name="connect">Connect</string>
+    <string name="error_invalid_address">That is not a valid server address.</string>
+    <string name="error_unreachable">The server cannot be reached. Check the address, and that this phone can reach it.</string>
+    <string name="error_token_not_accepted">The server did not accept that token.</string>
+    <string name="error_needs_companion_scope">That token cannot be used for Listen along: it needs the companion scope.</string>
+    <string name="error_server">The server answered: %1$s.</string>
+
+    <!-- The TV picker -->
+    <string name="pick_tv_title">Choose the TV</string>
+    <string name="pick_tv_server">On %1$s</string>
+    <string name="pick_tv_empty">No TV is paired with this server yet.</string>
+    <string name="tv_online">Online</string>
+    <string name="tv_last_seen">Last seen %1$s</string>
+    <string name="tv_never_seen">Not seen yet</string>
+    <string name="try_again">Try again</string>
+
+    <!-- Listen along -->
+    <string name="listen_intro">Hear another source of what the TV is playing, on this phone, in sync with the picture. Plug in earphones first.</string>
+    <string name="what_the_tv_plays">What the TV plays</string>
+    <string name="nothing_playing">The TV is not playing anything right now.</string>
+    <string name="channel_playing">“%1$s” is a channel. Listen along is not available for a channel: it has no timeline to follow.</string>
+    <string name="tv_state_playing">Playing</string>
+    <string name="tv_state_paused">Paused</string>
+    <string name="tv_state_starting">Starting</string>
+    <string name="tv_state_stopped">Stopped</string>
+    <string name="audio_on_this_phone">Audio on this phone</string>
+    <string name="no_candidates">This episode has no source this phone can play along.</string>
+    <string name="offset_label">Offset (seconds)</string>
+    <string name="speed_label">Speed</string>
+    <string name="flip_sign">Change the sign</string>
+    <string name="flip_sign_symbol" translatable="false">±</string>
+    <string name="timing_hint">Offset: where the companion is when the TV is at 0:00 (negative when it starts earlier). Speed: companion seconds per TV second, e.g. 1.0427 for a PAL transfer against a film-rate source. Changes apply while you listen; Save keeps them.</string>
+    <string name="timing_invalid">Offset or speed is not a valid number (speed 0.5–2).</string>
+    <string name="save_timing">Save timing</string>
+    <string name="apply_to_all">Apply to all episodes</string>
+    <string name="listen">Listen</string>
+    <string name="stop">Stop</string>
+    <string name="nudge_minus">−50 ms</string>
+    <string name="nudge_plus">+50 ms</string>
+    <string name="nudge_hint">for your earphones\' delay; remembered on this phone</string>
+
+    <!-- The notification -->
+    <string name="notification_channel">Listen along</string>
+    <string name="notification_stop">Stop</string>
+    <string name="notification_starting">starting</string>
 </resources>
