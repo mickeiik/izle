@@ -1,11 +1,14 @@
 // Robolectric runs the unit tests that need Android on this Android framework jar (one SDK: see the tests' @Config).
 // Gradle resolves it like any other dependency and the tests read it from there (offline mode), so a test run never
-// downloads anything. Each module that applies this plugin adds the jar itself (the version catalog is not visible
-// here): `robolectricSdk(libs.robolectric.android.all)`.
+// downloads anything. The jar's version is the catalog's robolectric-android-all.
 val robolectricSdk: Configuration = configurations.create("robolectricSdk") {
     isCanBeConsumed = false
     isTransitive = false
 }
+dependencies.addProvider(
+    robolectricSdk.name,
+    extensions.getByType<VersionCatalogsExtension>().named("libs").findLibrary("robolectric-android-all").get(),
+)
 
 class RobolectricOffline(
     @get:InputFiles @get:PathSensitive(PathSensitivity.NAME_ONLY) val sdkJar: FileCollection,

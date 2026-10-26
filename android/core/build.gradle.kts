@@ -8,10 +8,10 @@ plugins {
 // domain helpers they need. Kotlin packages stay io.github.mickeiik.izle.*, so moving code here changes no import.
 android {
     namespace = "io.github.mickeiik.izle.core"
-    compileSdk = 37
+    compileSdk = libs.versions.compileSdk.get().toInt()
 
     defaultConfig {
-        minSdk = 24
+        minSdk = libs.versions.minSdk.get().toInt()
     }
 
     compileOptions {
@@ -43,8 +43,6 @@ dependencies {
     testFixturesApi(libs.okhttp.mockwebserver)
 
     testImplementation(libs.junit)
-    testImplementation(libs.okhttp.mockwebserver)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.robolectric)
-    robolectricSdk(libs.robolectric.android.all)
 }

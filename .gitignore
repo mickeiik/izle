@@ -17,6 +17,7 @@ android/.gradle/
 android/build/
 android/*/build/
 android/buildSrc/.gradle/
+android/buildSrc/.kotlin/
 android/local.properties
 android/.kotlin/
 *.jks

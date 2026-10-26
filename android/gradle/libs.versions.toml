@@ -1,4 +1,7 @@
 [versions]
+# Both modules compile against compileSdk and run from minSdk (targetSdk is the TV app's own).
+compileSdk = "37"
+minSdk = "24"
 agp = "9.4.1"
 kotlin = "2.4.21"
 composeBom = "2026.09.00"

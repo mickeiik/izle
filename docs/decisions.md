@@ -121,7 +121,6 @@ entries, and how each feature was built, are in git history.
   view (it opens as it gets the focus). Section lines are drawn over the column from its layout info (a line can lie
   where no item is). ↑ ↓ ← → come from `HomeLayout`, since Compose's focus search stopped at a lazy line's first
   laid-out card.
-- TV app: the code a second app would share is the library module `:core` (namespace `io.github.mickeiik.izle.core`),
-  while its Kotlin packages stay `io.github.mickeiik.izle.*`, so the TV app's imports did not change. Shared test
-  doubles (`FakeMediaEngine`, `json`, `sha256`) are `:core`'s test fixtures rather than a copy, and the Robolectric
-  test setup is a `buildSrc` precompiled plugin (`izle.robolectric-tests`), so both modules share one definition.
+- TV app: `:core` took only what moves without a logic edit. `EpisodeNames` stays in `:app` because it calls
+  `PlaybackPlan.resumePositionMs`, and `PlaybackPlan` is TV logic (autoplay, countdown, source rotation); it moves
+  when a second app needs it.

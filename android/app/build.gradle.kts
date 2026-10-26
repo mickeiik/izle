@@ -20,11 +20,11 @@ val releaseStoreFile = signingValue("IZLE_SIGNING_STORE_FILE", "storeFile")
 android {
     namespace = "io.github.mickeiik.izle"
     // compose-bom 2026.09.00 and core-ktx 1.19 require compiling against API 37; targetSdk stays 36.
-    compileSdk = 37
+    compileSdk = libs.versions.compileSdk.get().toInt()
 
     defaultConfig {
         applicationId = "io.github.mickeiik.izle"
-        minSdk = 24
+        minSdk = libs.versions.minSdk.get().toInt()
         targetSdk = 36
         versionName = "0.6.1" // set with `node scripts/version.mjs set X.Y.Z`
         // 1.2.3 → 10203, so every release installs over the previous one (minor and patch stay below 100).
@@ -98,5 +98,4 @@ dependencies {
     testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.robolectric)
-    robolectricSdk(libs.robolectric.android.all)
 }
