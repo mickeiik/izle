@@ -5,6 +5,7 @@ import android.content.pm.PackageInstaller
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import io.github.mickeiik.izle.data.ProblemReporter
 import io.github.mickeiik.izle.data.api.ApiClient
+import io.github.mickeiik.izle.data.api.AvailableUpdate
 import io.github.mickeiik.izle.data.api.CommandResult
 import io.github.mickeiik.izle.installStatus
 import io.github.mickeiik.izle.json

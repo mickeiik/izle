@@ -1,12 +1,8 @@
 package io.github.mickeiik.izle.update
 
+import io.github.mickeiik.izle.data.api.AvailableUpdate
 import io.github.mickeiik.izle.data.api.CommandResult
 import io.github.mickeiik.izle.ui.Screen
-import kotlinx.serialization.Serializable
-
-/** The TV app version the server offers (`GET /tv/app`). [auto]: the owner lets TVs install it by themselves. */
-@Serializable
-data class AvailableUpdate(val versionName: String, val versionCode: Long, val sha256: String, val size: Long, val auto: Boolean = true)
 
 /**
  * When the TV installs a new version of itself (docs/ux/senior-tv.md, "Update"), never during playback. A

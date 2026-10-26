@@ -1,5 +1,6 @@
 package io.github.mickeiik.izle.update
 
+import io.github.mickeiik.izle.data.api.AvailableUpdate
 import io.github.mickeiik.izle.data.api.CommandResult
 import io.github.mickeiik.izle.ui.Screen
 import io.github.mickeiik.izle.ui.UpdatePhase

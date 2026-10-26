@@ -69,8 +69,10 @@ object PairingLoop {
                     break // unknown code (server restarted): new code
                 }
                 ui.update { it.copy(problem = null) }
-                if (wait.status == "approved" && wait.deviceId != null && wait.deviceToken != null) {
-                    withContext(NonCancellable) { onApproved(wait.deviceId, wait.deviceToken) }
+                val deviceId = wait.deviceId // locals: PairWait is in :core, no smart cast across modules
+                val deviceToken = wait.deviceToken
+                if (wait.status == "approved" && deviceId != null && deviceToken != null) {
+                    withContext(NonCancellable) { onApproved(deviceId, deviceToken) }
                     return
                 }
                 if (wait.status != "pending") break
