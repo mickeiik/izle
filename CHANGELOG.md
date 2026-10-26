@@ -11,9 +11,24 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 - **izle companion, an Android phone app for Listen along (first step).** It pairs with the server through a
   `companion` access token, lets the owner pick the TV, shows what it plays with the Listen along candidates and
   their timing, and plays a candidate from the catalog bundle through the server proxy, in sync with the TV, as a
-  foreground service (it keeps playing with the screen off). Finding a link in a browser and playing found links
-  come later. Releases now carry `izle-companion-X.Y.Z.apk` (signed with the TV app's release key) and
-  `izle-companion-X.Y.Z-debug.apk`, sideloaded on the owner's phone; a server's TV app updates never offer them.
+  foreground service (it keeps playing with the screen off). Releases now carry `izle-companion-X.Y.Z.apk` (signed
+  with the TV app's release key) and `izle-companion-X.Y.Z-debug.apk`, sideloaded on the owner's phone; a server's TV
+  app updates never offer them.
+- **izle companion plays a link found in its own browser (second step).** For a release that a catalog bundle does
+  not list, the app has a link finder: an in-app browser for the owner's own browsing, which watches the requests
+  the page makes and, when one looks like a playlist (its URL contains `m3u8`), fetches it once from the phone to
+  confirm it starts like one, then offers **Listen to this** for the episode the TV is playing; a link found
+  elsewhere can be pasted. Such a link plays on the phone itself, with the `Referer`, `Origin` and cookies the page
+  used, never through the server: the server keeps only its timing, under the reserved source id `pasted`. A playlist
+  far shorter than the episode (under half its duration) is reported as expired or obtained from another address and
+  not played, with the prompt to find a new link; finding a new link mid-episode keeps the offset and the speed.
+  Found links, their headers and cookies live in the app's memory for the session only: never on disk, never sent to
+  the server, never logged; **Clear browser cookies** in the app's menu empties the in-app browser's cookie jar.
+  The companion app now also plays an episode's DASH and MPEG-TS sources from the catalog, which the admin page's
+  Listen along card still cannot.
+- **Listen along's resolve takes the media kinds the client plays.** `POST …/companion/resolve` accepts an optional
+  `kinds` (among `hls`, `dash`, `mp4`, `ts`); without it the server answers HLS and MP4 only, as before. A client that
+  lists them gets MPEG-TS through the proxy and DASH direct instead of `400 unsupported_media`.
 - **A `companion` access token scope, for Listen along from the coming companion app.** It allows everything `read`
   does, plus Listen along's resolve and link routes, which needed the admin token until now; it allows no command,
   home screen or other change. Create one under **Access** on the admin page or with
