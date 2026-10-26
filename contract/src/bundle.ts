@@ -8,6 +8,11 @@ export const BUNDLE_ASSETS_DIR = "assets";
 /** URL-path safe, durable across builds, never positional. */
 export type Id = string;
 export const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,119}$/;
+/**
+ * The source id a bundle may not use: the server API's "Listen along" stores the timing of a link the owner found on
+ * the phone under it (docs/spec/server-api-v1.md, Listen along), for any episode, without a bundle source.
+ */
+export const PASTED_SOURCE_ID = "pasted";
 
 /** Simplified BCP 47 language tag, e.g. "en", "tr", "pt-BR", "und". */
 export type LanguageTag = string;
