@@ -3,10 +3,11 @@
 Status: **stable** (API version 1). Within v1 only additive changes are allowed, recorded in the
 [changelog](#changelog): new optional request fields, new response fields, new routes, new error codes, and new values
 where this text says clients ignore unknown ones (TV and admin event types, command types, actor types, a home
-section's `layout`). Clients MUST ignore unknown response fields and handle an unknown error code by its HTTP status.
-Anything else (a removed or renamed field, a changed meaning, a new required request field, a new value anywhere
-else) needs a new API version under `/api/v2`. Up to and including izle 0.6.0, the first deployment, v1 changed in
-place, marked **breaking (pre-release)** in the changelog; since then it does not.
+section's `layout`, a [Listen along](#listen-along) candidate's `type`, an [access token](#access-tokens)'s `scope`).
+Clients MUST ignore unknown response fields and handle an unknown error code by its HTTP status. Anything else (a
+removed or renamed field, a changed meaning, a new required request field, a new value anywhere else) needs a new API
+version under `/api/v2`. Up to and including izle 0.6.0, the first deployment, v1 changed in place, marked
+**breaking (pre-release)** in the changelog; since then it does not.
 
 ## Conventions
 
@@ -603,7 +604,8 @@ in the order they finished (`label` names a series' episode, `S1 E2 · Pilot`; n
 ### Listen along
 
 The owner's phone plays **another source of the episode the TV is playing** (a dubbed release, or another audio
-language inside the same multi-audio stream) in sync with the picture, from the admin page. Nothing changes on the TV.
+language inside the same multi-audio stream) in sync with the picture, from the admin page or the companion app.
+Nothing changes on the TV.
 
 - **Anchor.** `GET …/now` carries `serverNowMs` (the server clock), `seq` (bumped on every now-playing write) and
   `anchor`: the TV's `positionMs` as of `atMs` (server clock, = receipt of the report − its `ageMs`), advancing at
@@ -614,23 +616,38 @@ language inside the same multi-audio stream) in sync with the picture, from the 
   `offsetMs` (companion position when the TV is at 0, ±6 h), `rate` (companion seconds per TV second, 0.5–2; a PAL
   transfer against a film-rate source is 1.0427) and `language` (audio language to pick inside the stream, or null).
   The companion target is `rate · tv + offsetMs`. Earphone latency is a per-phone nudge kept in the browser.
-- **Companion media is always proxied** (`/p/<token>/…`, under the owner key `companion:<deviceId>` with its own
-  two-session limit), so the page only loads same-origin media (plus `blob:` object URLs when hls.js feeds the element
-  through Media Source Extensions). DASH and MPEG-TS are refused. A companion resolve never writes now playing,
-  creates no TV playback session and never penalizes a source for the TV.
+- **Companion media from the catalog is always proxied** (`/p/<token>/…`, under the owner key
+  `companion:<deviceId>` with its own two-session limit), so the page only loads same-origin media (plus `blob:`
+  object URLs when hls.js feeds the element through Media Source Extensions). DASH and MPEG-TS are refused. A
+  companion resolve never writes now playing, creates no TV playback session and never penalizes a source for the TV.
 - **Channels are not covered** (no timeline to sync to): while a channel plays, `GET …/companion` answers `nowPlaying`
   with `itemKind: "live"` and `candidates: []`; the other routes take episodes only.
+- **A link found on the phone** (the reserved source id `pasted`, which no bundle source may use, see the
+  [catalog bundle spec](catalog-bundle-v1.md#source)). For some titles the owner finds a release in another audio
+  language in a browser; such a link is short-lived, bound to the public address that fetched the page and needs a
+  `Referer` or `Origin`, so the phone that found it plays it, in the companion app. The link, its `Referer` and
+  cookies never reach the server: nothing to proxy, validate, redact or store, and the egress policy is not involved.
+  The server keeps only its timing, under `pasted`: `PUT …/links/:episodeId/pasted` and `copy-to-item` take it for
+  any episode (movie or series, with `playbackAllowed` or not) without a bundle source of that id,
+  device-independent like every link, and `GET …/companion` lists it as the last candidate whenever an episode plays:
+  `{sourceId: "pasted", type: "pasted", kind: null, label: null, languages: {audio: null, subtitles: null},
+  current: false, supported: true, reason: null, link}`. `POST …/companion/resolve` answers `404 unknown_source` for
+  it. Clients MUST skip candidates whose `type` they do not know (the admin page shows `direct` and `adapter` only).
+- **Episode duration.** `nowPlaying.durationMs` in `GET …/companion` is the episode's duration as the server knows
+  it: the TV's last progress report, before one the saved progress or the catalog's `durationMs`; null until known.
+  The companion app judges a found link's playlist against it.
 
 | Route | Body | Response |
 |---|---|---|
-| `GET /api/v1/admin/devices/:id/companion` | | `{"nowPlaying": {itemId, itemKind, episodeId, sourceId, itemTitle, episodeTitle, state} \| null, "candidates": [{sourceId, type, kind, label, languages, current, supported, reason, link}]}`: the sources of the episode now playing (`kind` for direct sources; `supported: false` with `reason` `dash` or `ts`, which the browser cannot play), each with its stored link or the defaults; no URLs, headers or refs |
+| `GET /api/v1/admin/devices/:id/companion` | | `{"nowPlaying": {itemId, itemKind, episodeId, sourceId, itemTitle, episodeTitle, durationMs, state} \| null, "candidates": [{sourceId, type, kind, label, languages, current, supported, reason, link}]}`: the sources of the episode now playing (`kind` for direct sources; `supported: false` with `reason` `dash` or `ts`, which the browser cannot play), then the `pasted` entry (`type: "pasted"`), each with its stored link or the defaults; clients skip a candidate whose `type` they do not know; no URLs, headers or refs |
 | `POST /api/v1/admin/devices/:id/companion/resolve` | `{"episodeId", "sourceId", "language"?}` | `{"episodeId", "sourceId", "media": {"kind", "url": "/p/…"}, "languages", "expiresAt", "link"}` |
-| `PUT /api/v1/admin/companion/links/:episodeId/:sourceId` | `{"offsetMs", "rate", "language"?}` | `{"link": {episodeId, sourceId, offsetMs, rate, language, updatedAt}}` |
-| `POST /api/v1/admin/companion/links/:episodeId/:sourceId/copy-to-item` | | `{"updated", "episodeIds"}`: the same values written for every other episode of the item that has a source with that id |
+| `PUT /api/v1/admin/companion/links/:episodeId/:sourceId` | `{"offsetMs", "rate", "language"?}` | `{"link": {episodeId, sourceId, offsetMs, rate, language, updatedAt}}`; `:sourceId` a source of the episode, or `pasted` for any episode |
+| `POST /api/v1/admin/companion/links/:episodeId/:sourceId/copy-to-item` | | `{"updated", "episodeIds"}`: the same values written for every other episode of the item that has a source with that id (for `pasted`, every other episode) |
 
 `link` = `{"offsetMs", "rate", "language", "updatedAt"}` (`updatedAt` null = defaults, nothing stored). Errors:
-`404 unknown_episode`, `404 unknown_source`, `403 not_allowed`, `400 unsupported_media` (DASH, MPEG-TS), `404 no_link`
-(copy without a stored link), `502 no_playable_source`.
+`404 unknown_episode`, `404 unknown_source` (also a resolve of `pasted`), `403 not_allowed`, `400 unsupported_media`
+(DASH, MPEG-TS), `404 no_link` (copy without a stored link), `502 no_playable_source`. The resolve and link routes
+need the `companion` [scope](#access-tokens) or the owner token.
 
 ### TV app
 
@@ -687,12 +704,14 @@ scope, and revokes them at any time:
 |---|---|
 | `read` | every `GET` admin route except `GET /admin/tokens`: devices, catalog, problems, Listen along candidates, the pending pairing codes, [status](#status), [events](#events) and [history](#viewing-history) |
 | `control` | `read`, plus [`POST …/commands`](#commands) (`update` included) |
+| `companion` | `read`, plus [Listen along](#listen-along)'s `POST …/companion/resolve`, `PUT /admin/companion/links/…` and `POST …/copy-to-item`: the companion app's token, with no `control` or `manage` route |
 | `manage` | `control`, plus the home list (`PUT …/home`, the [single changes](#home-list-changes) and the [sections](#home-sections)), `PUT …/cursor`, `PATCH /admin/devices/:id`, [history marks](#viewing-history), `DELETE …/problems`, `POST /admin/catalog/reload` and the [TV app](#tv-app) (`PUT`/`DELETE /admin/app/apk`, `POST /admin/app/check`) |
 
-Every other route needs the owner token: pairing approval and clearing a code, deleting a TV, deleting and adopting
-history, [checks](#checks) (`POST`/`DELETE`; reading them is `read`), [Listen along](#listen-along) resolves and links, and the access tokens themselves
-(every method). A token that does not cover the route gets `403 insufficient_scope` with `required` (the scope it
-needs, or `owner`); it does not count as a failed sign-in.
+`control` and `manage` do not include the Listen along resolve and link routes (they need `companion` or the owner
+token). Every other route needs the owner token: pairing approval and clearing a code, deleting a TV, deleting and
+adopting history, [checks](#checks) (`POST`/`DELETE`; reading them is `read`) and the access tokens themselves (every
+method). A token that does not cover the route gets `403 insufficient_scope` with `required` (the scope it needs, or
+`owner`); it does not count as a failed sign-in.
 
 | Route | Body | Response |
 |---|---|---|
@@ -701,7 +720,7 @@ needs, or `owner`); it does not count as a failed sign-in.
 | `DELETE /api/v1/admin/tokens/:id` | | `204`; requests with that token answer `401` from now on, and an [event stream](#events) it has open ends at once (a long-poll answers `401`) |
 
 `AccessToken` = `{"id", "name", "scope", "createdAt", "lastUsedAt"}` (`id`: 12 alphanumeric characters;
-`lastUsedAt` is written at most once a minute). The secret is `izat_` and 32 random bytes base64url (the prefix lets
+`lastUsedAt` is written at most once a minute; clients show an unknown `scope` as it is). The secret is `izat_` and 32 random bytes base64url (the prefix lets
 secret scanners recognize it, and the server tell it from the owner token); the server keeps its sha256. The admin
 sign-in throttle ([Authentication model](#authentication-model)) counts a wrong or revoked one like a wrong owner
 token, so an app that keeps sending a revoked token locks its address out for 10 minutes: stop the app before
@@ -1059,3 +1078,9 @@ The example's values are the defaults, except the samples for `publicUrl`, `trus
   are media (or subtitles) through as media, instead of answering `502 not_a_playlist`; one that is neither answers
   `502 not_media`, a new [problem](#problem-reports) code, and its read ahead has 20 s (additive: a tolerance, an
   error code and a problem code).
+- **v1 (2026-10-26)** — [Listen along](#listen-along) for the companion app: the [access token](#access-tokens) scope
+  `companion` (`read` plus the resolve and link routes, which needed the owner token until now); the reserved link
+  source id `pasted` (`PUT …/links/:episodeId/pasted` and `copy-to-item` for any episode, and its candidate in
+  `GET …/companion` with the new candidate `type` `"pasted"`, which clients skip when they do not know it); and
+  `nowPlaying.durationMs` in `GET …/companion` (additive: a scope value, which clients show as it is, a link key, a
+  candidate type and a response field).

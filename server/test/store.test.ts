@@ -143,6 +143,30 @@ test("commands carry who sent them; access tokens: one per secret, by id, hash o
   s.close();
 });
 
+test("the companion scope: a database from before it keeps its tokens, and takes companion tokens once migrated", async () => {
+  const file = path.join(await tempDir(), "izle.db");
+  const rebuild = MIGRATIONS.findIndex((m) => m.includes("access_tokens_new"));
+  assert.ok(rebuild > 0);
+  const old = new DatabaseSync(file);
+  old.exec(`${MIGRATIONS.slice(0, rebuild).join(";")}; PRAGMA user_version = ${rebuild}`);
+  const insert = "INSERT INTO access_tokens (id, name, scope, secret_hash, created_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?)";
+  old.prepare(insert).run("tok000000001", "agent", "manage", "hash1", 7, 9);
+  assert.throws(() => old.prepare(insert).run("tok000000002", "phone", "companion", "hash2", 8, null), /CHECK/, "the old table refuses it");
+  old.close();
+
+  const s = new Store(file);
+  assert.equal(s.schemaVersion, MIGRATIONS.length);
+  const kept = { id: "tok000000001", name: "agent", scope: "manage" as const, createdAt: 7, lastUsedAt: 9 };
+  assert.deepEqual(s.getAccessTokenBy("secret_hash", "hash1"), kept);
+  const phone = { id: "tok000000002", name: "phone", scope: "companion" as const, createdAt: 8, lastUsedAt: null };
+  assert.deepEqual(s.insertAccessToken({ ...phone, secretHash: "hash2" }), phone);
+  assert.deepEqual(s.listAccessTokens(), [kept, phone]);
+  assert.throws(() => s.insertAccessToken({ ...phone, id: "tok000000003", name: "again", secretHash: "hash1" }), /UNIQUE/, "one secret, one token");
+  assert.throws(() => s.insertAccessToken({ ...phone, id: "tok000000003", secretHash: "hash3" }), /UNIQUE/, "one name, one token");
+  assert.throws(() => s.insertAccessToken({ ...phone, id: "tok000000003", name: "x", scope: "owner" as never, secretHash: "hash3" }), /CHECK/);
+  s.close();
+});
+
 test("a new device reads no app version until its TV reports one, which bumps nothing; one APK row at most", async () => {
   const { s, file } = await storeWithDevice("Salon");
   const app = () => {

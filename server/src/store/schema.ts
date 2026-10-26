@@ -267,4 +267,20 @@ export const MIGRATIONS: string[] = [
     PRIMARY KEY (catalog_id, item_id, playable_id, source_id)
   );
 `,
+  `
+  -- The companion scope (read plus Listen along's resolves and links). SQLite cannot alter a CHECK, so the table is
+  -- rebuilt with its rows; no other table refers to it.
+  CREATE TABLE access_tokens_new (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    scope TEXT NOT NULL CHECK (scope IN ('read', 'control', 'manage', 'companion')),
+    secret_hash TEXT NOT NULL UNIQUE,       -- sha256 of the secret; the secret itself is shown once and never kept
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER                    -- written at most once a minute
+  );
+  INSERT INTO access_tokens_new (id, name, scope, secret_hash, created_at, last_used_at)
+    SELECT id, name, scope, secret_hash, created_at, last_used_at FROM access_tokens;
+  DROP TABLE access_tokens;
+  ALTER TABLE access_tokens_new RENAME TO access_tokens;
+`,
 ];

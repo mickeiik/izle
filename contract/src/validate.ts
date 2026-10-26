@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type { ValidateFunction } from "ajv/dist/2020.js";
-import { BUNDLE_ASSETS_DIR, BUNDLE_ITEMS_FILE, BUNDLE_MANIFEST_FILE, isLiveItem } from "./bundle.ts";
+import { BUNDLE_ASSETS_DIR, BUNDLE_ITEMS_FILE, BUNDLE_MANIFEST_FILE, PASTED_SOURCE_ID, isLiveItem } from "./bundle.ts";
 import type { Bundle, BundleManifest, CatalogItem, Playable } from "./bundle.ts";
 import { simplifySchemaErrors, validateItemsSchema, validateManifestSchema } from "./schemas.ts";
 
@@ -162,7 +162,9 @@ function checkItems(manifest: BundleManifest, items: CatalogItem[], issues: Vali
     p.sources.forEach((src, s) => {
       const sp = `${pointer}/sources/${s}`;
       stats.sources++;
-      if (sourceIds.has(src.id)) error(`${sp}/id`, `duplicate source id "${src.id}" within the ${scope}`);
+      if (src.id === PASTED_SOURCE_ID) {
+        error(`${sp}/id`, `source id "${PASTED_SOURCE_ID}" is reserved (the server API's Listen along uses it for a link found on the phone)`);
+      } else if (sourceIds.has(src.id)) error(`${sp}/id`, `duplicate source id "${src.id}" within the ${scope}`);
       sourceIds.add(src.id);
       if (src.type === "direct") checkUrl(src.media.url, `${sp}/media/url`);
       else {

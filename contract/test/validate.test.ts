@@ -55,6 +55,7 @@ test("semantic, schema and file errors are reported where they are", async () =>
       edit((i) => i.items[0].episodes[0].sources.push({ ...source0(i) })),
       at("/items/0/episodes/0/sources/1/id", /duplicate source id/),
     ],
+    [edit((i) => (source0(i).id = "pasted")), at(`${SRC}/id`, /source id "pasted" is reserved/)],
     [{ files: corrupt(TINY_PNG_NAME, TINY_PNG) }, inFile(`assets/${TINY_PNG_NAME}`, /sha256 of the content/)],
     [edit((i) => (i.items[0].poster = `assets/${"0".repeat(64)}.png`)), at("/items/0/poster", /is missing/)],
     [
@@ -102,6 +103,7 @@ test("semantic, schema and file errors are reported where they are", async () =>
       edit((i) => live(i).sources.push({ ...live(i).sources[0] })),
       at(`${LIVE}/sources/1/id`, /duplicate source id "hls" within the item/),
     ],
+    [edit((i) => (live(i).sources[0].id = "pasted")), at(`${LIVE}/sources/0/id`, /source id "pasted" is reserved/)],
     [edit((i) => (live(i).sources[0].media.url = "file:///etc/passwd")), at(`${LIVE}/sources/0/media/url`, /pattern/)],
     [
       edit((i) => (live(i).sources[0].media.url = "https://[bad")),

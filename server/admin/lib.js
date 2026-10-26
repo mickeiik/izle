@@ -1204,9 +1204,10 @@ export const SCOPES = /** @type {const} */ ([
   ["read", "Read", "sees the TVs, the catalog, the history and the events"],
   ["control", "Control", "read, and sends commands to the TVs (play, pause, a message)"],
   ["manage", "Manage", "control, and changes home screens, settings and the history's marks"],
+  ["companion", "Listen along", "read, and Listen along from the companion app: what the TV plays, resolves and links"],
 ]);
 
-/** `Read`, `Control`, `Manage`; the scope itself when unknown. @param {string} scope */
+/** `Read`, `Control`, `Manage`, `Listen along`; the scope itself when unknown. @param {string} scope */
 export const scopeLabel = (scope) => SCOPES.find(([s]) => s === scope)?.[1] ?? scope;
 
 // --- TV app updates ----------------------------------------------------------------------------------------------
@@ -1412,14 +1413,16 @@ export function clockOffset(samples) {
 }
 
 /**
- * Options for the companion candidates: one per source, or one per audio language when a source has several.
+ * Options for the companion candidates: one per source, or one per audio language when a source has several. Only
+ * catalog sources (`direct`, `adapter`): this page cannot play a link found in a browser (the companion app does).
  * `value` is `<sourceId>\u0000<language>` (see `parseCandidate`).
- * @param {Array<{ sourceId: string, label: string | null, current: boolean, supported: boolean, reason: string | null,
- *   languages: { audio: string[] | null, subtitles: string[] | null } }>} candidates
+ * @param {Array<{ sourceId: string, type: string, label: string | null, current: boolean, supported: boolean,
+ *   reason: string | null, languages: { audio: string[] | null, subtitles: string[] | null } }>} candidates
  */
 export function candidateOptions(candidates) {
   const out = [];
   for (const c of candidates) {
+    if (c.type !== "direct" && c.type !== "adapter") continue;
     const langs = c.languages?.audio ?? null;
     for (const lang of langs && langs.length >= 2 ? langs : [null]) {
       const parts = [c.label ? `${c.sourceId} — ${c.label}` : c.sourceId];

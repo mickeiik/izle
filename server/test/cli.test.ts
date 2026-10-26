@@ -123,7 +123,7 @@ test("cli: token create / list / revoke drive the running server's admin API; th
 
   r = await run(["token", "list", ...cfg]);
   assert.equal(r.code, 0);
-  const [, id] = /^([A-Za-z0-9]{12})  control  last used \S+  Kitchen agent$/m.exec(r.out) ?? [];
+  const [, id] = /^([A-Za-z0-9]{12})  control +last used \S+  Kitchen agent$/m.exec(r.out) ?? [];
   assert.ok(id, r.out);
   assert.ok(!r.out.includes("izat_"), "the list never has secrets");
 
