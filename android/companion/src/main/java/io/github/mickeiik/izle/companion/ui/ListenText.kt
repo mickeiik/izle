@@ -4,6 +4,7 @@ import io.github.mickeiik.izle.companion.sync.EndReason
 import io.github.mickeiik.izle.companion.sync.ListenPhase
 import io.github.mickeiik.izle.companion.sync.ListenState
 import io.github.mickeiik.izle.companion.sync.ListenSync
+import io.github.mickeiik.izle.companion.sync.PASTED_SOURCE_ID
 import io.github.mickeiik.izle.data.api.ApiException
 import io.github.mickeiik.izle.data.api.CompanionCandidate
 import io.github.mickeiik.izle.data.api.LinkTiming
@@ -29,12 +30,17 @@ data class CandidateOption(val sourceId: String, val language: String?, val labe
 data class LinkTimingInput(val offsetMs: Long, val rate: Double)
 
 /**
- * lib.js's `candidateOptions`: one option per catalog source (`direct` and `adapter`; any other type, `pasted` among
- * them, is skipped), or one per audio language when a source has two or more. Unlike the admin page, nothing is
- * disabled: this phone's player plays DASH and MPEG-TS too, so their kind shows as a chip instead.
+ * lib.js's `candidateOptions`: one option per catalog source (`direct` and `adapter`), or one per audio language when a
+ * source has two or more, and the `pasted` candidate (the server lists it last) as "a link found on this phone"; any
+ * other type is skipped. Unlike the admin page, nothing is disabled: this phone's player plays DASH and MPEG-TS too, so
+ * their kind shows as a chip instead.
  */
 fun candidateOptions(candidates: List<CompanionCandidate>): List<CandidateOption> = buildList {
     for (c in candidates) {
+        if (c.type == PASTED_SOURCE_ID) {
+            add(CandidateOption(PASTED_SOURCE_ID, null, FOUND_LINK_LABEL, null))
+            continue
+        }
         if (c.type != "direct" && c.type != "adapter") continue
         val langs = c.languages.audio
         val perLanguage: List<String?> = if (langs != null && langs.size >= 2) langs else listOf(null)
@@ -50,6 +56,9 @@ fun candidateOptions(candidates: List<CompanionCandidate>): List<CandidateOption
         }
     }
 }
+
+/** The `pasted` option's label. */
+private const val FOUND_LINK_LABEL = "a link found on this phone"
 
 /**
  * `Italiano (it)`: the language's name in that language (as the admin page's list has them), then the tag; the tag
@@ -120,6 +129,8 @@ fun endedText(reason: EndReason?, error: String?): String? = when (reason) {
     EndReason.Unauthorized -> "The token was not accepted; pair again."
     EndReason.Interrupted -> "The phone's audio was interrupted (earphones unplugged, or another app took over); listening ended."
     EndReason.Failed -> "Could not start: ${error?.let { ERRORS[it] ?: it } ?: "something went wrong."}"
+    EndReason.LinkExpired ->
+        "The link looks expired or obtained from another address: its playlist is far shorter than the episode. Find a new link."
 }
 
 /** After "Apply to all episodes". */

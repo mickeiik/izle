@@ -1,5 +1,6 @@
 package io.github.mickeiik.izle.companion.sync
 
+import io.github.mickeiik.izle.companion.finder.FoundLink
 import io.github.mickeiik.izle.data.api.Anchor
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.ApiException
@@ -41,7 +42,20 @@ class ApiClientCompanionApi(private val api: ApiClient) : CompanionApi {
     override suspend fun companion(deviceId: String): CompanionResponse = api.companion(deviceId)
 }
 
-/** What to listen to: a source (and audio language) of the episode a TV plays. */
+/**
+ * The reserved source id (and candidate type) of a link found on this phone: its timing is stored under it, its stream
+ * is never resolved by the server.
+ */
+const val PASTED_SOURCE_ID = "pasted"
+
+/** The media kinds this phone's player plays, sent with every companion resolve. */
+val COMPANION_KINDS: List<String> = listOf("hls", "dash", "mp4", "ts")
+
+/**
+ * What to listen to: a source (and audio language) of the episode a TV plays, or, with [foundLink] (and [sourceId]
+ * [PASTED_SOURCE_ID]), a playlist link found on this phone. [episodeDurationMs]: the TV's `nowPlaying.durationMs` when
+ * the session starts, against which a found link's playlist is checked.
+ */
 data class ListenTarget(
     val deviceId: String,
     val episodeId: String,
@@ -49,6 +63,8 @@ data class ListenTarget(
     val language: String?,
     val itemTitle: String?,
     val episodeTitle: String?,
+    val foundLink: FoundLink? = null,
+    val episodeDurationMs: Long? = null,
 )
 
 enum class ListenPhase { Idle, Starting, Listening }
@@ -59,6 +75,12 @@ enum class EndReason {
 
     /** The engine paused itself: earphones unplugged or another app took the audio. */
     Interrupted,
+
+    /**
+     * A found link's playlist, once its duration is known, is under half the episode's: the link expired or was obtained
+     * from another address (the host answered a decoy).
+     */
+    LinkExpired,
 }
 
 data class ListenState(
@@ -114,8 +136,17 @@ class ListenSession(
         val recoverDelayMs: Long = 2000,
     )
 
-    /** The stream now loaded; null between sessions and while following the TV to its next episode. */
-    private data class Playing(val episodeId: String, val sourceId: String, val language: String?, val expiresAtMs: Long?)
+    /**
+     * The stream now loaded; null between sessions and while following the TV to its next episode. [link]: a found
+     * link, never resolved (so never re-resolved either).
+     */
+    private data class Playing(
+        val episodeId: String,
+        val sourceId: String,
+        val language: String?,
+        val expiresAtMs: Long?,
+        val link: FoundLink? = null,
+    )
 
     private val _state = MutableStateFlow(ListenState())
     val state: StateFlow<ListenState> = _state.asStateFlow()
@@ -141,9 +172,15 @@ class ListenSession(
     private var loadSeq = 0
     /** Whether the engine's pause is the tick's own; any other pause while listening ends the session. */
     private var pausedBySync = false
+    /** A found link was loaded and its first ready has not come yet: then its playlist's duration is checked. */
+    private var expiryCheckPending = false
 
     private val listener = object : MediaEngine.Listener {
         override fun onReady() {
+            if (expiryCheckPending) {
+                expiryCheckPending = false
+                if (phase != ListenPhase.Idle && looksExpired()) return end(EndReason.LinkExpired)
+            }
             // The stream plays again: a later failure starts a fresh count.
             if (phase == ListenPhase.Listening && recoveries > 0) {
                 recoveries = 0
@@ -184,6 +221,7 @@ class ListenSession(
         recoveries = 0
         lastReResolveAt = null
         pausedBySync = false
+        expiryCheckPending = false
         _state.value = ListenState(phase = ListenPhase.Starting, target = target, timing = timing, nudgeMs = nudgeMs)
         engine.setListener(listener)
         val job = SupervisorJob(scope.coroutineContext[Job]).also { work = it }
@@ -194,7 +232,9 @@ class ListenSession(
                     readNow(wait = false)
                     if (gen != generation) return@launch
                 }
-                if (!load(target.episodeId, target.sourceId, target.language, startAt = { null }) || gen != generation) return@launch
+                val loaded = target.foundLink?.let { loadFound(target.episodeId, it, startAt = null) }
+                    ?: load(target.episodeId, target.sourceId, target.language, startAt = { null })
+                if (!loaded || gen != generation) return@launch
                 _state.update { it.copy(phase = ListenPhase.Listening) }
                 launch { followLoop() }
                 launch {
@@ -245,9 +285,12 @@ class ListenSession(
         _state.update { it.copy(nudgeMs = ms) }
     }
 
-    /** While listening: resolves and loads another candidate at the current position, keeping the timing. */
+    /**
+     * While listening: resolves and loads another catalog candidate at the current position, keeping the timing. A
+     * found link is never resolved: it comes with [useFoundLink].
+     */
     fun switchSource(sourceId: String, language: String?) {
-        if (phase != ListenPhase.Listening) return
+        if (phase != ListenPhase.Listening || sourceId == PASTED_SOURCE_ID) return
         val p = playing ?: return
         if (p.sourceId == sourceId && p.language == language) return
         val job = work ?: return
@@ -262,6 +305,17 @@ class ListenSession(
                 if (gen == generation && !endIfUnauthorized(e)) _state.update { it.copy(error = errorText(e)) }
             }
         }
+    }
+
+    /**
+     * While listening (a new link for the same episode, typically after the previous one expired): loads [link] at the
+     * current position, keeping the timing, the nudge and the rate; its playlist is checked against the episode again
+     * on its first ready. A no-op while idle, starting or following the TV to its next episode.
+     */
+    fun useFoundLink(link: FoundLink) {
+        if (phase != ListenPhase.Listening) return
+        val p = playing ?: return
+        loadFound(p.episodeId, link, currentTarget())
     }
 
     /** [stop] and frees the engine. */
@@ -303,6 +357,8 @@ class ListenSession(
                 val p = playing
                 if (p != null && n?.isLive == true) return end(EndReason.TvSwitchedToChannel)
                 val next = n?.episodeId
+                // A found link belongs to one episode.
+                if (p?.link != null && next != null && next != p.episodeId) return end(EndReason.NoSuchSourceOnNextEpisode)
                 if (p != null && next != null && next != p.episodeId) follow(next)
                 else if (wallClock() - lastActiveAt > timing.idleStopMs) return end(EndReason.TvIdle)
             } catch (e: CancellationException) {
@@ -322,20 +378,57 @@ class ListenSession(
         if (phase == ListenPhase.Idle) return false
         val my = ++loadSeq
         val gen = generation
-        val r = api.resolve(deviceId, CompanionResolveRequest(episodeId, sourceId, language))
+        val r = api.resolve(deviceId, CompanionResolveRequest(episodeId, sourceId, language, kinds = COMPANION_KINDS))
         if (my != loadSeq || gen != generation || phase == ListenPhase.Idle) return false
         val url = absoluteUrl(r.media.url) ?: throw UnusableMediaUrl()
         // Only now: after a failed resolve the previous stream keeps playing in its own language.
         engine.applyPreferences(language, null)
+        expiryCheckPending = false
         engine.load(MediaSpec(url = url, kind = r.media.kind, subtitles = emptyList(), mediaId = episodeId, live = false), startAt())
         playing = Playing(episodeId, sourceId, language, r.expiresAt?.let(IsoTime::parseEpochMs))
         seekHoldUntil = 0
         pausedBySync = false
         engine.play()
         _state.update {
-            it.copy(target = it.target?.copy(episodeId = episodeId, sourceId = sourceId, language = language), mediaKind = r.media.kind)
+            it.copy(
+                target = it.target?.copy(episodeId = episodeId, sourceId = sourceId, language = language, foundLink = null),
+                mediaKind = r.media.kind,
+            )
         }
         return true
+    }
+
+    /**
+     * Loads a found [link] of [episodeId] at [startAt], straight from this phone with the page's headers: no resolve,
+     * so it never reaches the server and is never re-resolved. Its playlist is checked on the first ready.
+     */
+    private fun loadFound(episodeId: String, link: FoundLink, startAt: Long?): Boolean {
+        if (phase == ListenPhase.Idle) return false
+        ++loadSeq // a resolve still on its way is overtaken
+        engine.applyPreferences(null, null)
+        expiryCheckPending = true
+        engine.load(
+            MediaSpec(url = link.url, kind = FOUND_LINK_KIND, subtitles = emptyList(), mediaId = episodeId, live = false, headers = link.headers),
+            startAt,
+        )
+        playing = Playing(episodeId, PASTED_SOURCE_ID, null, expiresAtMs = null, link = link)
+        seekHoldUntil = 0
+        pausedBySync = false
+        engine.play()
+        _state.update {
+            it.copy(
+                target = it.target?.copy(episodeId = episodeId, sourceId = PASTED_SOURCE_ID, language = null, foundLink = link),
+                mediaKind = FOUND_LINK_KIND,
+            )
+        }
+        return true
+    }
+
+    /** The guard on a found link: its playlist is under half the episode; either duration unknown, it plays. */
+    private fun looksExpired(): Boolean {
+        val duration = engine.durationMs ?: return false
+        val episode = _state.value.target?.episodeDurationMs ?: return false
+        return duration * 2 < episode
     }
 
     /** After a stream error: wait, resolve and load again, up to [Timing.maxRecoveries] times in a row. */
@@ -354,7 +447,9 @@ class ListenSession(
             val p = playing ?: return
             if (phase != ListenPhase.Listening) return
             try {
-                load(p.episodeId, p.sourceId, p.language) { currentTarget() }
+                // A found link is loaded again as it is: there is nothing to resolve.
+                if (p.link != null) loadFound(p.episodeId, p.link, currentTarget())
+                else load(p.episodeId, p.sourceId, p.language) { currentTarget() }
                 return
             } catch (e: CancellationException) {
                 throw e
@@ -381,7 +476,8 @@ class ListenSession(
                 it.copy(
                     timing = candidate.link.copy(language = candidate.link.language ?: language),
                     target = it.target?.let { t ->
-                        t.copy(itemTitle = n?.itemTitle ?: t.itemTitle, episodeTitle = n?.takeIf { n.episodeId == episodeId }?.episodeTitle)
+                        val here = n?.takeIf { n.episodeId == episodeId }
+                        t.copy(itemTitle = n?.itemTitle ?: t.itemTitle, episodeTitle = here?.episodeTitle, episodeDurationMs = here?.durationMs)
                     },
                 )
             }
@@ -505,6 +601,7 @@ class ListenSession(
         recoverJob = null
         playing = null
         anchor = null
+        expiryCheckPending = false
         engine.stop()
     }
 
@@ -515,6 +612,8 @@ class ListenSession(
         const val TYPE_DIRECT = "direct"
         const val TYPE_ADAPTER = "adapter"
         const val PAST_THE_END = "past the end"
+        /** What a found link is: the finder only finds HLS playlists. */
+        const val FOUND_LINK_KIND = "hls"
         /** The playback rate is set only when it changes by more than this (as the admin page does). */
         const val RATE_EPSILON = 0.0005
 

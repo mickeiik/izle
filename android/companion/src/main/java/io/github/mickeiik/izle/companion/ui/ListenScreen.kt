@@ -42,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleStartEffect
 import io.github.mickeiik.izle.companion.R
+import io.github.mickeiik.izle.companion.sync.PASTED_SOURCE_ID
 import io.github.mickeiik.izle.data.api.NowPlaying
 
 /**
@@ -133,6 +134,7 @@ private fun ListenForm(state: CompanionUi.Listen, vm: CompanionViewModel, onList
             }
         }
     }
+    if (state.chosen?.sourceId == PASTED_SOURCE_ID) FoundLinkRow(state, vm)
 
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedTextField(
@@ -203,6 +205,21 @@ private fun ListenForm(state: CompanionUi.Listen, vm: CompanionViewModel, onList
             style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
             color = if (synced) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/** The `pasted` option's link: whether one is ready (never its URL), and the way to the link finder. */
+@Composable
+private fun FoundLinkRow(state: CompanionUi.Listen, vm: CompanionViewModel) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            stringResource(if (state.foundLink != null) R.string.found_link_ready else R.string.found_link_none),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        OutlinedButton(onClick = vm::openFinder) {
+            Text(stringResource(if (state.listening && state.foundLink != null) R.string.find_new_link else R.string.find_link))
+        }
     }
 }
 
