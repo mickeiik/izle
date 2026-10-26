@@ -400,9 +400,18 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- the link finder -------------------------------------------------------------------------------------------
 
-    /** Shows the link finder (for the `pasted` option). */
+    /** Shows the link finder (for the `pasted` option), starting a fresh search: a link found earlier is not offered again. */
     fun openFinder() {
+        linkFinder.clear()
         updateListen { it.copy(finderOpen = true) }
+    }
+
+    /** Drops the link found on this phone (and ends listening with it); the next search starts fresh. */
+    fun forgetFoundLink() {
+        val listen = _ui.value as? CompanionUi.Listen ?: return
+        if (listen.listening && listen.session.target?.sourceId == PASTED_SOURCE_ID) session?.stop()
+        linkFinder.clear()
+        _ui.value = listen.copy(foundLink = null)
     }
 
     fun closeFinder() {
@@ -417,6 +426,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         val listen = _ui.value as? CompanionUi.Listen ?: return
         val next = listen.copy(foundLink = link, finderOpen = false)
         _ui.value = next
+        linkFinder.clear() // the link now lives here; the finder's next search starts fresh
         val s = session ?: return
         val option = next.chosen
         if (!next.listening || option?.sourceId != PASTED_SOURCE_ID) return

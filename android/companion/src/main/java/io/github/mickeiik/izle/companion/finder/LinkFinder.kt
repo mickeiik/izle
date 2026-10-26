@@ -94,7 +94,8 @@ class LinkFinder(
     fun pageNavigated() = synchronized(lock) {
         pageChecks.drop()
         seen.clear()
-        _state.value = _state.value.copy(checking = pasteChecks.inFlight > 0)
+        // Another page is another search: a link found on the previous one is no longer offered.
+        _state.value = LinkFinderState(checking = pasteChecks.inFlight > 0)
     }
 
     /** Forgets everything: the found link, the URLs seen, the checks in flight (their results are dropped). */

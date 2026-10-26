@@ -200,16 +200,19 @@ class LinkFinderTest {
     }
 
     @Test
-    fun aNavigationForgetsTheUrlsSeenAndKeepsTheFoundLink() = runTest {
-        val fake = FakeConfirmer("https://cdn.test/a.m3u8")
+    fun aNavigationForgetsTheUrlsSeenAndTheFoundLink() = runTest {
+        val fake = FakeConfirmer("https://cdn.test/a.m3u8", "https://cdn.test/b.m3u8")
         val finder = finder(fake)
         finder.offer("https://cdn.test/a.m3u8", page, null)
         advanceUntilIdle()
-        val found = finder.state.value.found
-        assertEquals("https://cdn.test/a.m3u8", found?.url)
+        assertEquals("https://cdn.test/a.m3u8", finder.state.value.found?.url)
 
+        // Another page is another search: the link found on the previous one is gone, and the new page's is found.
         finder.pageNavigated()
-        assertEquals(LinkFinderState(found = found), finder.state.value)
+        assertEquals(LinkFinderState(), finder.state.value)
+        finder.offer("https://cdn.test/b.m3u8", page, null)
+        advanceUntilIdle()
+        assertEquals("https://cdn.test/b.m3u8", finder.state.value.found?.url)
     }
 
     @Test

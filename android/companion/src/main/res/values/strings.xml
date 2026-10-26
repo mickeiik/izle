@@ -62,6 +62,7 @@
     <string name="found_link_ready">A link is ready</string>
     <string name="find_link">Find a link</string>
     <string name="find_new_link">Find a new link</string>
+    <string name="forget_link">Forget</string>
 
     <!-- The notification -->
     <string name="notification_channel">Listen along</string>
