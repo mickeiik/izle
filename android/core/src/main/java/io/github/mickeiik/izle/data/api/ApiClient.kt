@@ -33,9 +33,9 @@ inline fun <T> orNullOnFailure(block: () -> T): T? = try {
 
 /**
  * The server API: the TV routes, and the admin routes the companion app uses. Network failures surface as
- * [IOException], error answers as [ApiException]. [token] is a device token on a TV and an access token (`izat_…`)
- * in the companion app, sent as the same bearer header. It and [userAgent] (read anew: it changes with the update
- * capability) are attached per request, never through an interceptor, so they cannot leak to media hosts that share
+ * [IOException], error answers as [ApiException]. [token] is a device token on a TV and a phone secret (`izph_…`)
+ * in the companion app (or the admin token in a debug build), sent as the same bearer header. It and [userAgent]
+ * (read anew: it changes with the update capability) are attached per request, never through an interceptor, so they cannot leak to media hosts that share
  * the OkHttp connection pool.
  */
 class ApiClient(

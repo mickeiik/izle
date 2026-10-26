@@ -152,12 +152,13 @@ test("cli: phone list / disconnect drive the running server's admin API, without
     return (await s.call("POST", "/api/v1/phones/claim", { body: { invite, name } })).json;
   };
   const kept = await connect("Tablet");
+  s.clock.advance(1_000); // oldest first: same-instant phones would sort by their random ids
   const lost = await connect("Pixel 8");
   assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: lost.secret })).status, 200);
   await s.admin("DELETE", `/devices/${tv.deviceId}`);
   r = await run(["phone", "list", ...cfg]);
   assert.equal(r.code, 0, r.err);
-  assert.equal(r.out, `${kept.phone.id}  never used  through a deleted TV  Tablet\n${lost.phone.id}  last used 2026-10-10T12:00:00.000Z  through a deleted TV  Pixel 8\n`);
+  assert.equal(r.out, `${kept.phone.id}  never used  through a deleted TV  Tablet\n${lost.phone.id}  last used 2026-10-10T12:00:01.000Z  through a deleted TV  Pixel 8\n`);
   assert.ok(!r.out.includes("izph_"), "the list never has secrets");
 
   await refused(["phone", "disconnect", "nope", ...cfg], 1, /no phone with the id nope/);

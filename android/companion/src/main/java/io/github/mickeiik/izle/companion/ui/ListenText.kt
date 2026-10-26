@@ -148,7 +148,7 @@ fun errorText(e: Throwable): String = when (e) {
 
 private val ERRORS = mapOf(
     "unauthorized" to "This phone was disconnected.",
-    "insufficient_scope" to "This token may not do that; it needs the owner scope.",
+    "insufficient_scope" to "This connection may not do that.",
     "not_allowed" to "Playback of that episode is not allowed by the catalog.",
     "unknown_episode" to "That episode is not in the catalog (any more).",
     "unknown_device" to "That TV does not exist any more.",
