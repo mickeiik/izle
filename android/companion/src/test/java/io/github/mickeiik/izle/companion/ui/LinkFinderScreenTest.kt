@@ -98,21 +98,73 @@ class LinkFinderScreenTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity -> show(activity) }
 
-            compose.onNodeWithText("Or paste a link").performTextInput("https://cdn.test/expired/abc")
+            compose.onNodeWithText("Paste a link").performClick()
+            compose.onNodeWithText("Link to a playlist").performTextInput("https://cdn.test/expired/abc")
             compose.onNodeWithText("Use").performClick()
             compose.onNodeWithText("That link did not open as a playlist on this phone.").assertIsDisplayed()
             compose.onNodeWithText("Listen to this").assertDoesNotExist()
 
-            compose.onNodeWithText("Or paste a link").performTextInput("https://cdn.test/signed/abc?sig=1")
+            compose.onNodeWithText("Link to a playlist").performTextInput("https://cdn.test/signed/abc?sig=1")
             compose.onNodeWithText("Use").performClick()
             compose.onNodeWithText("A stream was found on this page").assertIsDisplayed()
             compose.onNodeWithText("That link did not open as a playlist on this phone.").assertDoesNotExist()
+            // Found: the bar offers the stream alone, the paste field and its toggle are gone.
+            compose.onNodeWithText("Link to a playlist").assertDoesNotExist()
+            compose.onNodeWithText("Paste a link").assertDoesNotExist()
             // The pasted link left the field: its URL is not on screen.
             compose.onNodeWithText("cdn.test", substring = true).assertDoesNotExist()
             compose.onNodeWithText("Listen to this").performClick()
             assertEquals(FoundLink("https://cdn.test/signed/abc?sig=1", emptyMap()), listened)
 
             assertFalse(closed)
+            scenario.onActivity { activity -> activity.onBackPressedDispatcher.onBackPressed() }
+            compose.waitForIdle()
+            assertTrue(closed)
+        }
+    }
+
+    @Test
+    fun thePasteFieldOpensOnlyFromItsToggleAndHidingItClearsTheError() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> show(activity) }
+
+            compose.onNodeWithText("Start the video on the page; its stream shows up here.").assertIsDisplayed()
+            compose.onNodeWithText("Link to a playlist").assertDoesNotExist()
+            compose.onNodeWithText("Use").assertDoesNotExist()
+
+            compose.onNodeWithText("Paste a link").performClick()
+            compose.onNodeWithText("Link to a playlist").assertIsDisplayed()
+            compose.onNodeWithText("Link to a playlist").performTextInput("not a link")
+            compose.onNodeWithText("Use").performClick()
+            compose.onNodeWithText("That link did not open as a playlist on this phone.").assertIsDisplayed()
+
+            compose.onNodeWithText("Hide").performClick()
+            compose.onNodeWithText("Link to a playlist").assertDoesNotExist()
+            compose.onNodeWithText("That link did not open as a playlist on this phone.").assertDoesNotExist()
+            assertFalse(finder.state.value.pasteError)
+
+            compose.onNodeWithText("Paste a link").performClick()
+            compose.onNodeWithText("Link to a playlist").assertIsDisplayed()
+            compose.onNodeWithText("That link did not open as a playlist on this phone.").assertDoesNotExist()
+        }
+    }
+
+    @Test
+    fun withoutAnAddressTheBrowserStartsOnABlankPageAndBackCloses() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            lateinit var web: WebView
+            scenario.onActivity { activity ->
+                activity.setContent {
+                    CompanionTheme {
+                        LinkFinderScreen(finder, initialUrl = null, onListenToThis = { listened = it }, onClose = { closed = true })
+                    }
+                }
+            }
+            compose.waitForIdle()
+            scenario.onActivity { activity -> web = findWebView(activity) }
+            assertEquals("about:blank", shadowOf(web).lastLoadedUrl)
+            compose.onNodeWithText("Web address").assertIsDisplayed()
+
             scenario.onActivity { activity -> activity.onBackPressedDispatcher.onBackPressed() }
             compose.waitForIdle()
             assertTrue(closed)

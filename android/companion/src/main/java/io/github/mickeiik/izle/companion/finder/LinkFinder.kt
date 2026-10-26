@@ -52,6 +52,9 @@ class LinkFinder(
         }
     }
 
+    /** The paste error is no longer shown (the paste field was hidden). */
+    fun dismissPasteError() = update { it.copy(pasteError = false) }
+
     /** Forgets everything: the found link, the URLs seen, the checks in flight (their results are dropped). */
     fun clear() = synchronized(lock) {
         checks.cancel()
