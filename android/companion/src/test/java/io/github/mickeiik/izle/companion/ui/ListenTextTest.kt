@@ -115,13 +115,6 @@ class ListenTextTest {
         assertEquals("The server answered: teapot.", errorText(ApiException(418, "teapot")))
     }
 
-    @Test
-    fun serverTimes() {
-        assertEquals(1_761_470_100_000L, parseIsoMs("2025-10-26T09:15:00.000Z"))
-        assertEquals(1_761_470_100_000L, parseIsoMs("2025-10-26T09:15:00Z"))
-        assertNull(parseIsoMs("yesterday"))
-        assertNull(parseIsoMs(null))
-    }
 
     @Test
     fun theSignFlips() {

@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.mickeiik.izle.companion.R
+import io.github.mickeiik.izle.domain.IsoTime
 import io.github.mickeiik.izle.data.api.AdminDevice
 
 /** The server's TVs: tap one to listen along with it. */
@@ -53,7 +54,7 @@ fun TvPickerScreen(state: CompanionUi.PickTv, onPick: (String) -> Unit, onRetry:
 @Composable
 private fun seenText(device: AdminDevice): String {
     if (device.online) return stringResource(R.string.tv_online)
-    val at = parseIsoMs(device.lastSeenAt) ?: return stringResource(R.string.tv_never_seen)
+    val at = device.lastSeenAt?.let(IsoTime::parseEpochMs) ?: return stringResource(R.string.tv_never_seen)
     val ago = DateUtils.getRelativeTimeSpanString(at, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
     return stringResource(R.string.tv_last_seen, ago)
 }

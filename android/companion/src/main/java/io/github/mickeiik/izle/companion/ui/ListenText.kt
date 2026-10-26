@@ -9,10 +9,7 @@ import io.github.mickeiik.izle.data.api.CompanionCandidate
 import io.github.mickeiik.izle.data.api.LinkTiming
 import java.io.IOException
 import java.math.BigDecimal
-import java.text.ParseException
-import java.text.SimpleDateFormat
 import java.util.Locale
-import java.util.TimeZone
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
@@ -150,16 +147,3 @@ private val ERRORS = mapOf(
     "invalid_request" to "The server did not accept the request.",
 )
 
-/** An ISO 8601 time as the server writes it (`2026-10-26T09:15:00.000Z`), in ms; null when unreadable. */
-fun parseIsoMs(text: String?): Long? {
-    if (text == null) return null
-    for (pattern in listOf("yyyy-MM-dd'T'HH:mm:ss.SSSX", "yyyy-MM-dd'T'HH:mm:ssX")) {
-        val format = SimpleDateFormat(pattern, Locale.ROOT).apply { timeZone = TimeZone.getTimeZone("UTC") }
-        try {
-            return format.parse(text)?.time
-        } catch (_: ParseException) {
-            // the next pattern
-        }
-    }
-    return null
-}
