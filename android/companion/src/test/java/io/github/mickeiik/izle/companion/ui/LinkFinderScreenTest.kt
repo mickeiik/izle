@@ -234,12 +234,31 @@ class LinkFinderScreenTest {
         }
     }
 
+    @Test
+    fun theBrowserLoadsAChallengesFramesAndKeepsOtherSchemesOut() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            lateinit var web: WebView
+            scenario.onActivity { activity -> show(activity) }
+            compose.waitForIdle()
+            scenario.onActivity { activity -> web = findWebView(activity) }
+            scenario.onActivity {
+                val client = web.webViewClient
+                assertFalse(client.shouldOverrideUrlLoading(web, request("about:srcdoc")))
+                assertFalse(client.shouldOverrideUrlLoading(web, request("about:blank")))
+                assertFalse(client.shouldOverrideUrlLoading(web, request("https://page.test/watch/2", mainFrame = true)))
+                assertTrue(client.shouldOverrideUrlLoading(web, request("intent://open#Intent;scheme=app;end", mainFrame = true)))
+                assertTrue(client.shouldOverrideUrlLoading(web, request("mailto:someone@page.test", mainFrame = true)))
+            }
+        }
+    }
+
     private fun request(
         url: String,
         headers: Map<String, String> = mapOf("Referer" to "https://page.test/watch/1", "Origin" to "https://page.test", "User-Agent" to "Mozilla/5.0"),
+        mainFrame: Boolean = false,
     ): WebResourceRequest = object : WebResourceRequest {
         override fun getUrl(): Uri = Uri.parse(url)
-        override fun isForMainFrame(): Boolean = false
+        override fun isForMainFrame(): Boolean = mainFrame
         override fun isRedirect(): Boolean = false
         override fun hasGesture(): Boolean = false
         override fun getMethod(): String = "GET"

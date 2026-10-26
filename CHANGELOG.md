@@ -55,7 +55,9 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
   playlist request that the browser sends without `Referer` or `Origin` is checked and played with the page's
   address and origin in their place, so a host that redirects such requests no longer hides the stream. The finder
   checks a page's requests only until it has found a playlist, ignores images and media segments, and forgets what it
-  checked when the page changes, so coming back to a page finds its stream again.
+  checked when the page changes, so coming back to a page finds its stream again. The in-app browser lets a page's
+  challenge frames load (`about:blank`, `about:srcdoc`) and no longer sends the app's package name with every
+  request, so sites protected by a bot check work in it as in any browser.
 
 ## [0.6.1] - 2026-10-23
 

@@ -8,6 +8,8 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.webkit.WebSettingsCompat
+import androidx.webkit.WebViewFeature
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -57,6 +59,7 @@ import io.github.mickeiik.izle.companion.finder.FoundLink
 import io.github.mickeiik.izle.companion.finder.LinkFinder
 import io.github.mickeiik.izle.companion.finder.addressUrl
 import io.github.mickeiik.izle.companion.finder.isHttpUrl
+import io.github.mickeiik.izle.companion.finder.opensInBrowser
 
 /**
  * The link finder: a browser for the page that plays the episode. Every request the page makes is offered to
@@ -242,7 +245,8 @@ private class BrowserHolder {
 
 /**
  * The finder's browser: JavaScript and DOM storage on (players need them), no autoplay, no new windows, other schemes
- * than http(s) not followed, third-party cookies accepted (players are often embedded from another site). Remote
+ * that would leave the app not followed (a page's own `about:` frames load, a site's bot check runs in them), cookies
+ * accepted, third-party ones too (players are often embedded from another site), no `X-Requested-With` header. Remote
  * debugging is never turned on: the page's requests carry the owner's cookies.
  *
  * [onPage] gets the page's `http(s)` URL on every load and on in-page navigation (a single-page app's `pushState`),
@@ -272,7 +276,13 @@ private fun newBrowser(
     settings.domStorageEnabled = true
     settings.mediaPlaybackRequiresUserGesture = true
     settings.setSupportMultipleWindows(false)
+    CookieManager.getInstance().setAcceptCookie(true)
     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+    // A WebView sends `X-Requested-With: <package name>` with every request, which no browser does: it tells every
+    // site the app's name and trips some sites' checks. An empty allow list sends it to no origin at all.
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
+        WebSettingsCompat.setRequestedWithHeaderOriginAllowList(settings, emptySet())
+    }
     webViewClient = object : WebViewClient() {
         // Off the main thread: the finder's offer is thread-safe. The request goes on as the page made it.
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
@@ -280,8 +290,10 @@ private fun newBrowser(
             return null
         }
 
+        // Web pages and a page's own frames (`about:blank`, `about:srcdoc`, where a site's bot check runs) load; a
+        // scheme that would leave the app (`intent:`, `tel:`, an app's own) does not.
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-            !isHttpUrl(request.url.toString())
+            !opensInBrowser(request.url.toString(), request.isForMainFrame)
 
         override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) = page(url)
 

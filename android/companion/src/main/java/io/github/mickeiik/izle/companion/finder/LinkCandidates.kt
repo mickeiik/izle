@@ -31,6 +31,23 @@ private val NOT_PLAYLISTS = setOf(
 /** An `http` or `https` URL with a host: what a pasted link must be. */
 fun isHttpUrl(url: String): Boolean = afterAuthority(url) != null
 
+/**
+ * The in-app browser loads a navigation to [url] itself: `http`/`https`, `about:blank` and `about:srcdoc` (a bot
+ * check's challenge runs in such frames), and in a subframe any other in-page scheme (`about:`, `data:`, `blob:`,
+ * `javascript:`). Anything else, a scheme meant to leave the app (`intent:`, `market:`, `tel:`, `mailto:`, `sms:`, an
+ * app's own), is not followed: the WebView does nothing, in a subframe as in the main frame.
+ */
+fun opensInBrowser(url: String, isMainFrame: Boolean): Boolean {
+    val u = url.trim()
+    if (isHttpUrl(u) || u.equals("about:blank", ignoreCase = true) || u.equals("about:srcdoc", ignoreCase = true)) return true
+    if (isMainFrame) return false
+    val scheme = u.substringBefore(':', missingDelimiterValue = "").lowercase()
+    return scheme in IN_PAGE_SCHEMES
+}
+
+/** The schemes a subframe may load besides `http(s)`: they stay inside the page. */
+private val IN_PAGE_SCHEMES = setOf("about", "data", "blob", "javascript")
+
 /** The path, query and fragment of an `http(s)` URL with a non-empty authority (`""` for none); null for anything else. */
 private fun afterAuthority(url: String): String? {
     val scheme = when {

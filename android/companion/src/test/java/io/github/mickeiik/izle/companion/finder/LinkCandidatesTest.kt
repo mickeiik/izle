@@ -151,4 +151,23 @@ class LinkCandidatesTest {
         assertEquals("FoundLink(headers=[Referer, Cookie])", text)
         assertFalse(text.contains("cdn.test") || text.contains("t0k3n") || text.contains("s3cr3t") || text.contains("page.test"))
     }
+
+    @Test
+    fun theBrowserLoadsWebPagesAndChallengeFramesButNotSchemesThatLeaveTheApp() {
+        assertTrue(opensInBrowser("http://page.test/watch/1", isMainFrame = true))
+        assertTrue(opensInBrowser("https://page.test/watch/1", isMainFrame = true))
+        assertTrue(opensInBrowser("https://player.test/embed/1", isMainFrame = false))
+        for (frame in listOf(true, false)) {
+            assertTrue(opensInBrowser("about:blank", frame))
+            assertTrue(opensInBrowser("about:srcdoc", frame))
+            assertTrue(opensInBrowser("ABOUT:SRCDOC", frame))
+        }
+        assertFalse(opensInBrowser("about:config", isMainFrame = true))
+        assertFalse(opensInBrowser("intent://scan/#Intent;scheme=zxing;package=app.test;end", isMainFrame = true))
+        assertFalse(opensInBrowser("intent://scan/#Intent;scheme=zxing;package=app.test;end", isMainFrame = false))
+        assertFalse(opensInBrowser("mailto:someone@page.test", isMainFrame = true))
+        assertFalse(opensInBrowser("market://details?id=app.test", isMainFrame = true))
+        assertFalse(opensInBrowser("tel:+100", isMainFrame = false))
+        assertFalse(opensInBrowser("someapp://open", isMainFrame = false))
+    }
 }
