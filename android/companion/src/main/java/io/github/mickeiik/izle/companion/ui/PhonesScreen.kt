@@ -89,6 +89,9 @@ fun PhonesScreen(
 @Composable
 private fun usedText(phone: Phone): String {
     val at = phone.lastUsedAt?.let(IsoTime::parseEpochMs) ?: return stringResource(R.string.phone_never_used)
-    val ago = DateUtils.getRelativeTimeSpanString(at, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
+    val now = System.currentTimeMillis()
+    // lastUsedAt is written at most once a minute, and DateUtils would say "0 minutes ago".
+    if (now - at < DateUtils.MINUTE_IN_MILLIS) return stringResource(R.string.phone_used_just_now)
+    val ago = DateUtils.getRelativeTimeSpanString(at, now, DateUtils.MINUTE_IN_MILLIS).toString()
     return stringResource(R.string.phone_last_used, ago)
 }

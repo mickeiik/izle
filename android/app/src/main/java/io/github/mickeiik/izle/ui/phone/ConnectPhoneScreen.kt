@@ -116,11 +116,16 @@ fun QrCodeImage(text: String, modifier: Modifier = Modifier) {
         drawRect(Color.White)
         val modules = qr.size + 2 * QUIET_ZONE
         val module = floor(size.minDimension / modules).coerceAtLeast(1f)
-        val origin = Offset((size.width - module * qr.size) / 2, (size.height - module * qr.size) / 2)
-        val cell = Size(module, module)
+        // A whole-pixel origin, and one rectangle per run of dark modules in a row: anti-aliased seams between
+        // neighbouring modules are grey lines that some phone decoders cannot read through.
+        val origin = Offset(floor((size.width - module * qr.size) / 2), floor((size.height - module * qr.size) / 2))
         for (y in 0 until qr.size) {
-            for (x in 0 until qr.size) {
-                if (qr.getModule(x, y)) drawRect(Color.Black, Offset(origin.x + x * module, origin.y + y * module), cell)
+            var x = 0
+            while (x < qr.size) {
+                if (!qr.getModule(x, y)) { x++; continue }
+                val start = x
+                while (x < qr.size && qr.getModule(x, y)) x++
+                drawRect(Color.Black, Offset(origin.x + start * module, origin.y + y * module), Size((x - start) * module, module))
             }
         }
     }
