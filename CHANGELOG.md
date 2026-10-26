@@ -44,6 +44,21 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
   reports such a source as a warning, in an episode or a channel (a bundle that uses it stays valid: that source is
   served as itself, and its episode gets no `pasted` candidate).
 
+### Fixed
+
+- **The companion's link finder shows its address row and leaves the page more room.** On a phone, a freshly opened
+  finder could paint its empty browser over the address row, so the address had to be typed blind; the browser now
+  starts on a blank page, in the theme's colour, clipped to its own area. While the finder is open the app bar
+  (the TV's name, **Change TV**, the menu) is gone: Close and the address row are its only chrome. The bottom bar is
+  one short row: a one-line hint and **Paste a link**, which opens the paste field (its error shows only with it), or,
+  once a stream is found, **Listen to this**. The address row now follows a site's in-page navigation too, and a
+  playlist request that the browser sends without `Referer` or `Origin` is checked and played with the page's
+  address and origin in their place, so a host that redirects such requests no longer hides the stream. The finder
+  checks a page's requests only until it has found a playlist, ignores images and media segments, and forgets what it
+  checked when the page changes, so coming back to a page finds its stream again. The in-app browser lets a page's
+  challenge frames load (`about:blank`, `about:srcdoc`) and no longer sends the app's package name with every
+  request, so sites protected by a bot check work in it as in any browser.
+
 ## [0.6.1] - 2026-10-23
 
 ### Changed

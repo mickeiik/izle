@@ -43,9 +43,13 @@ class LinkFinderScreenTest {
     @get:Rule
     val compose = createEmptyComposeRule()
 
+    private val checked = mutableListOf<String>()
     private val confirmed = mutableListOf<String>()
     private val finder = LinkFinder(
-        { url, headers -> if (url.contains("expired")) null else FoundLink(url, headers).also { confirmed += url } },
+        { url, headers ->
+            checked += url
+            if (url.contains("expired")) null else FoundLink(url, headers).also { confirmed += url }
+        },
         CoroutineScope(SupervisorJob() + Dispatchers.Unconfined),
     )
     private var listened: FoundLink? = null
@@ -94,19 +98,82 @@ class LinkFinderScreenTest {
     }
 
     @Test
+    fun inPageNavigationMovesTheAddressAndGivesTheRefererARequestLacks() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            lateinit var web: WebView
+            scenario.onActivity { activity -> show(activity) }
+            compose.waitForIdle()
+            scenario.onActivity { activity -> web = findWebView(activity) }
+
+            // A single-page app's pushState(): no page load, only the visited history.
+            scenario.onActivity { web.webViewClient.doUpdateVisitedHistory(web, "https://page.test/watch/2?ep=3", false) }
+            compose.onNodeWithText("https://page.test/watch/2?ep=3").assertIsDisplayed()
+            scenario.onActivity { web.webViewClient.doUpdateVisitedHistory(web, "about:blank", false) }
+            compose.onNodeWithText("https://page.test/watch/2?ep=3").assertIsDisplayed()
+            scenario.onActivity { web.webViewClient.doUpdateVisitedHistory(web, "https://page.test/watch/2?ep=4", false) }
+            compose.onNodeWithText("https://page.test/watch/2?ep=4").assertIsDisplayed()
+
+            val stream = "https://cdn.test/m3u8/nav?payload=y"
+            scenario.onActivity {
+                assertNull(web.webViewClient.shouldInterceptRequest(web, request(stream, mapOf("User-Agent" to "Mozilla/5.0"))))
+            }
+            compose.onNodeWithText("Listen to this").performClick()
+            val link = listened!!
+            assertEquals(stream, link.url)
+            assertEquals("https://page.test/watch/2?ep=4", link.headers["Referer"])
+            assertEquals("https://page.test", link.headers["Origin"])
+        }
+    }
+
+    @Test
+    fun anotherPageMakesTheFinderCheckAUrlSeenBeforeAgain() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            lateinit var web: WebView
+            scenario.onActivity { activity -> show(activity) }
+            compose.waitForIdle()
+            scenario.onActivity { activity -> web = findWebView(activity) }
+
+            val stale = "https://cdn.test/m3u8/expired?payload=z"
+            scenario.onActivity {
+                web.webViewClient.doUpdateVisitedHistory(web, "https://page.test/watch/1", false)
+                assertNull(web.webViewClient.shouldInterceptRequest(web, request(stale)))
+                assertNull(web.webViewClient.shouldInterceptRequest(web, request(stale)))
+            }
+            assertEquals(listOf(stale), checked)
+
+            // The same page again (a reload's history entry): nothing is forgotten.
+            scenario.onActivity {
+                web.webViewClient.doUpdateVisitedHistory(web, "https://page.test/watch/1", true)
+                assertNull(web.webViewClient.shouldInterceptRequest(web, request(stale)))
+            }
+            assertEquals(listOf(stale), checked)
+
+            scenario.onActivity {
+                web.webViewClient.doUpdateVisitedHistory(web, "https://page.test/watch/2", false)
+                assertNull(web.webViewClient.shouldInterceptRequest(web, request(stale)))
+            }
+            assertEquals(listOf(stale, stale), checked)
+        }
+    }
+
+    @Test
     fun aPastedLinkAndBackClosing() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity -> show(activity) }
 
-            compose.onNodeWithText("Or paste a link").performTextInput("https://cdn.test/expired/abc")
+            compose.onNodeWithText("Paste a link").performClick()
+            compose.onNodeWithText("Link to a playlist").performTextInput("https://cdn.test/expired/abc")
             compose.onNodeWithText("Use").performClick()
             compose.onNodeWithText("That link did not open as a playlist on this phone.").assertIsDisplayed()
             compose.onNodeWithText("Listen to this").assertDoesNotExist()
 
-            compose.onNodeWithText("Or paste a link").performTextInput("https://cdn.test/signed/abc?sig=1")
+            compose.onNodeWithText("Link to a playlist").performTextInput("https://cdn.test/signed/abc?sig=1")
             compose.onNodeWithText("Use").performClick()
             compose.onNodeWithText("A stream was found on this page").assertIsDisplayed()
             compose.onNodeWithText("That link did not open as a playlist on this phone.").assertDoesNotExist()
+            // Found: the bar offers the stream alone, the paste field and its toggle are gone.
+            compose.onNodeWithText("Link to a playlist").assertDoesNotExist()
+            compose.onNodeWithText("Paste a link").assertDoesNotExist()
             // The pasted link left the field: its URL is not on screen.
             compose.onNodeWithText("cdn.test", substring = true).assertDoesNotExist()
             compose.onNodeWithText("Listen to this").performClick()
@@ -119,14 +186,83 @@ class LinkFinderScreenTest {
         }
     }
 
-    private fun request(url: String): WebResourceRequest = object : WebResourceRequest {
+    @Test
+    fun thePasteFieldOpensOnlyFromItsToggleAndHidingItClearsTheError() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> show(activity) }
+
+            compose.onNodeWithText("Start the video on the page; its stream shows up here.").assertIsDisplayed()
+            compose.onNodeWithText("Link to a playlist").assertDoesNotExist()
+            compose.onNodeWithText("Use").assertDoesNotExist()
+
+            compose.onNodeWithText("Paste a link").performClick()
+            compose.onNodeWithText("Link to a playlist").assertIsDisplayed()
+            compose.onNodeWithText("Link to a playlist").performTextInput("not a link")
+            compose.onNodeWithText("Use").performClick()
+            compose.onNodeWithText("That link did not open as a playlist on this phone.").assertIsDisplayed()
+
+            compose.onNodeWithText("Hide").performClick()
+            compose.onNodeWithText("Link to a playlist").assertDoesNotExist()
+            compose.onNodeWithText("That link did not open as a playlist on this phone.").assertDoesNotExist()
+            assertFalse(finder.state.value.pasteError)
+
+            compose.onNodeWithText("Paste a link").performClick()
+            compose.onNodeWithText("Link to a playlist").assertIsDisplayed()
+            compose.onNodeWithText("That link did not open as a playlist on this phone.").assertDoesNotExist()
+        }
+    }
+
+    @Test
+    fun withoutAnAddressTheBrowserStartsOnABlankPageAndBackCloses() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            lateinit var web: WebView
+            scenario.onActivity { activity ->
+                activity.setContent {
+                    CompanionTheme {
+                        LinkFinderScreen(finder, initialUrl = null, onListenToThis = { listened = it }, onClose = { closed = true })
+                    }
+                }
+            }
+            compose.waitForIdle()
+            scenario.onActivity { activity -> web = findWebView(activity) }
+            assertEquals("about:blank", shadowOf(web).lastLoadedUrl)
+            compose.onNodeWithText("Web address").assertIsDisplayed()
+
+            scenario.onActivity { activity -> activity.onBackPressedDispatcher.onBackPressed() }
+            compose.waitForIdle()
+            assertTrue(closed)
+        }
+    }
+
+    @Test
+    fun theBrowserLoadsAChallengesFramesAndKeepsOtherSchemesOut() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            lateinit var web: WebView
+            scenario.onActivity { activity -> show(activity) }
+            compose.waitForIdle()
+            scenario.onActivity { activity -> web = findWebView(activity) }
+            scenario.onActivity {
+                val client = web.webViewClient
+                assertFalse(client.shouldOverrideUrlLoading(web, request("about:srcdoc")))
+                assertFalse(client.shouldOverrideUrlLoading(web, request("about:blank")))
+                assertFalse(client.shouldOverrideUrlLoading(web, request("https://page.test/watch/2", mainFrame = true)))
+                assertTrue(client.shouldOverrideUrlLoading(web, request("intent://open#Intent;scheme=app;end", mainFrame = true)))
+                assertTrue(client.shouldOverrideUrlLoading(web, request("mailto:someone@page.test", mainFrame = true)))
+            }
+        }
+    }
+
+    private fun request(
+        url: String,
+        headers: Map<String, String> = mapOf("Referer" to "https://page.test/watch/1", "Origin" to "https://page.test", "User-Agent" to "Mozilla/5.0"),
+        mainFrame: Boolean = false,
+    ): WebResourceRequest = object : WebResourceRequest {
         override fun getUrl(): Uri = Uri.parse(url)
-        override fun isForMainFrame(): Boolean = false
+        override fun isForMainFrame(): Boolean = mainFrame
         override fun isRedirect(): Boolean = false
         override fun hasGesture(): Boolean = false
         override fun getMethod(): String = "GET"
-        override fun getRequestHeaders(): Map<String, String> =
-            mapOf("Referer" to "https://page.test/watch/1", "Origin" to "https://page.test", "User-Agent" to "Mozilla/5.0")
+        override fun getRequestHeaders(): Map<String, String> = headers
     }
 
     private fun findWebView(activity: Activity): WebView = checkNotNull(find(activity.window.decorView)) { "no WebView on screen" }

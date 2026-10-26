@@ -217,8 +217,11 @@ private fun FoundLinkRow(state: CompanionUi.Listen, vm: CompanionViewModel) {
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.weight(1f),
         )
+        if (state.foundLink != null) {
+            TextButton(onClick = vm::forgetFoundLink) { Text(stringResource(R.string.forget_link)) }
+        }
         OutlinedButton(onClick = vm::openFinder) {
-            Text(stringResource(if (state.listening && state.foundLink != null) R.string.find_new_link else R.string.find_link))
+            Text(stringResource(if (state.foundLink != null) R.string.find_new_link else R.string.find_link))
         }
     }
 }

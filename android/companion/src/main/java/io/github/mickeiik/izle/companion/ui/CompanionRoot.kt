@@ -35,7 +35,7 @@ import io.github.mickeiik.izle.companion.R
 import io.github.mickeiik.izle.companion.finder.BrowserData
 import kotlinx.coroutines.launch
 
-/** The app: one screen at a time, as the view model says, under an app bar with the TV's name. */
+/** The app: one screen at a time, as the view model says, under an app bar with the TV's name (none over the link finder). */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
@@ -48,9 +48,12 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
         vm.dismissSnackbar()
     }
 
+    // The link finder has its own chrome (Close and the address row): no app bar while it is open, so the page gets
+    // the room. Without a top bar the Scaffold's insets still start the content below the status bar.
+    val finderOpen = (ui as? CompanionUi.Listen)?.finderOpen == true
     Scaffold(
         topBar = {
-            TopAppBar(
+            if (!finderOpen) TopAppBar(
                 title = { Text((ui as? CompanionUi.Listen)?.tvName ?: stringResource(R.string.app_name)) },
                 actions = {
                     if (ui is CompanionUi.Listen) {

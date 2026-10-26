@@ -62,6 +62,7 @@
     <string name="found_link_ready">A link is ready</string>
     <string name="find_link">Find a link</string>
     <string name="find_new_link">Find a new link</string>
+    <string name="forget_link">Forget</string>
 
     <!-- The notification -->
     <string name="notification_channel">Listen along</string>
@@ -72,8 +73,10 @@
     <string name="finder_close">Close</string>
     <string name="finder_address">Web address</string>
     <string name="finder_go">Go</string>
-    <string name="finder_hint">Open the page that plays the episode and start its video: a stream it loads shows up here.</string>
-    <string name="finder_paste">Or paste a link</string>
+    <string name="finder_hint">Start the video on the page; its stream shows up here.</string>
+    <string name="finder_paste_toggle">Paste a link</string>
+    <string name="finder_paste_hide">Hide</string>
+    <string name="finder_paste">Link to a playlist</string>
     <string name="finder_use">Use</string>
     <string name="finder_paste_error">That link did not open as a playlist on this phone.</string>
     <string name="finder_found">A stream was found on this page</string>
