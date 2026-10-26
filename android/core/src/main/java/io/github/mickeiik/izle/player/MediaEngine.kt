@@ -42,7 +42,23 @@ interface MediaEngine {
     }
 }
 
-data class MediaSpec(val url: String, val kind: String, val subtitles: List<SubtitleSpec>, val mediaId: String, val live: Boolean)
+data class MediaSpec(
+    val url: String,
+    val kind: String,
+    val subtitles: List<SubtitleSpec>,
+    val mediaId: String,
+    val live: Boolean,
+    /**
+     * Sent with every request of the stream (playlist, keys, segments): a found link's `Referer`, `Origin` and
+     * `Cookie` in the companion app. Only to the URL's host, never to another host a redirect leads to. Empty for
+     * everything the TV plays.
+     */
+    val headers: Map<String, String> = emptyMap(),
+) {
+    /** The URL and the header values are the owner's; they never reach a log or a message. */
+    override fun toString(): String =
+        "MediaSpec(kind=$kind, mediaId=$mediaId, live=$live, subtitles=${subtitles.size}, headers=${headers.keys})"
+}
 
 data class SubtitleSpec(val url: String, val language: String, val format: String, val label: String?)
 

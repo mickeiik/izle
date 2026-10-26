@@ -1,5 +1,6 @@
 package io.github.mickeiik.izle.companion.sync
 
+import io.github.mickeiik.izle.companion.finder.FoundLink
 import io.github.mickeiik.izle.data.api.Anchor
 import io.github.mickeiik.izle.data.api.ApiException
 import io.github.mickeiik.izle.data.api.CandidateLanguages
@@ -57,7 +58,7 @@ class ListenSessionTest {
         settle()
         assertEquals(listOf<Pair<Long?, Int>>(null to 0, null to 0, null to 0), api.nowCalls.take(3))
         assertEquals(1L to 25, api.nowCalls[3]) // the long-poll on the current seq
-        assertEquals(listOf(CompanionResolveRequest("s1e1", "dub", "fr")), api.resolves)
+        assertEquals(listOf(CompanionResolveRequest("s1e1", "dub", "fr", kinds = listOf("hls", "dash", "mp4", "ts"))), api.resolves)
         assertEquals(listOf<Pair<String?, String?>>("fr" to null), engine.preferences)
         val spec = MediaSpec("http://server.test/p/tok/dub/master.m3u8", "hls", emptyList(), mediaId = "s1e1", live = false)
         assertEquals(listOf(FakeMediaEngine.Load(spec, null)), engine.loads)
@@ -209,7 +210,7 @@ class ListenSessionTest {
         api.tv(5_000, episodeId = "s1e2")
         settle()
         assertEquals(1, api.companionCalls)
-        assertEquals(CompanionResolveRequest("s1e2", "dub", "fr"), api.resolves.last())
+        assertEquals(CompanionResolveRequest("s1e2", "dub", "fr", kinds = listOf("hls", "dash", "mp4", "ts")), api.resolves.last())
         assertEquals(stored.copy(language = "fr"), state.timing)
         assertEquals(TARGET.copy(episodeId = "s1e2", episodeTitle = "Two"), state.target)
         assertEquals("s1e2", engine.loads.last().media.mediaId)
@@ -255,6 +256,174 @@ class ListenSessionTest {
         run(2_000)
         assertEquals(3, api.resolves.size)
         assertEquals(ListenPhase.Listening, state.phase)
+        assertTrue("every resolve says what the phone plays", api.resolves.all { it.kinds == listOf("hls", "dash", "mp4", "ts") })
+    }
+
+    // --- a link found on this phone --------------------------------------------------------------------------------
+
+    @Test
+    fun aFoundLinkPlaysInSyncWithItsHeadersWithoutAnyResolve() = listen {
+        api.tv(600_000)
+        session.start(FOUND, LinkTiming(), 0)
+        settle()
+        assertTrue(api.resolves.isEmpty())
+        assertEquals(listOf<Pair<String?, String?>>(null to null), engine.preferences)
+        val spec = MediaSpec(LINK.url, "hls", emptyList(), mediaId = "s1e1", live = false, headers = LINK.headers)
+        assertEquals(listOf(FakeMediaEngine.Load(spec, null)), engine.loads)
+        assertEquals(ListenPhase.Listening, state.phase)
+        assertEquals("hls", state.mediaKind)
+        assertEquals(FOUND, state.target)
+
+        run(20_000)
+        assertEquals("synced", state.syncLabel)
+        assertTrue(abs(state.driftMs!!) <= 40)
+        assertTrue(api.resolves.isEmpty())
+        assertEquals(1, engine.loads.size)
+        // Neither the URL nor a header value is in what a log or a message could print.
+        for (text in listOf(state.toString(), spec.toString())) {
+            assertFalse(text, text.contains("payload") || text.contains("page.test") || text.contains("xyz"))
+        }
+    }
+
+    @Test
+    fun aPlaylistFarShorterThanTheEpisodeEndsLinkExpiredAtItsFirstReady() = listen {
+        engine.durationMs = 20 * MINUTE
+        api.tv(600_000)
+        session.start(FOUND, LinkTiming(), 0)
+        settle()
+        assertEquals(ListenPhase.Listening, state.phase)
+        run(10) // ready
+        assertEquals(ListenPhase.Idle, state.phase)
+        assertEquals(EndReason.LinkExpired, state.ended)
+        assertEquals("stop", engine.calls.last())
+        assertTrue(api.resolves.isEmpty())
+    }
+
+    @Test
+    fun aPlaylistOverHalfTheEpisodePlays() = listen {
+        engine.durationMs = 70 * MINUTE
+        listening(FOUND)
+        assertEquals(ListenPhase.Listening, state.phase)
+        assertTrue(engine.isPlaying)
+    }
+
+    @Test
+    fun anUnknownEpisodeDurationPlays() = listen {
+        engine.durationMs = 20 * MINUTE
+        listening(FOUND.copy(episodeDurationMs = null))
+        assertEquals(ListenPhase.Listening, state.phase)
+    }
+
+    @Test
+    fun aNewFoundLinkLoadsAtTheCurrentTargetKeepingTheTimingAndTheGuardRunsAgain() = listen {
+        engine.durationMs = 70 * MINUTE
+        listening(FOUND)
+        val timing = LinkTiming(offsetMs = 2_000, rate = 1.0)
+        session.setTiming(timing)
+        session.setNudgeMs(80)
+        run(5_000)
+        session.useFoundLink(LINK2)
+        assertEquals(2, engine.loads.size)
+        val load = engine.loads.last()
+        assertEquals(LINK2.url, load.media.url)
+        assertEquals(LINK2.headers, load.media.headers)
+        assertEquals("hls", load.media.kind)
+        assertEquals(api.tvPosition() + 2_080, load.startAtMs)
+        assertEquals(timing, state.timing)
+        assertEquals(80L, state.nudgeMs)
+        assertEquals(LINK2, state.target?.foundLink)
+        run(20_000)
+        assertEquals("synced", state.syncLabel)
+        assertTrue(api.resolves.isEmpty())
+
+        engine.durationMs = 10 * MINUTE
+        session.useFoundLink(LINK)
+        run(10)
+        assertEquals(EndReason.LinkExpired, state.ended)
+
+        session.useFoundLink(LINK2)
+        assertEquals("a no-op while idle", 3, engine.loads.size)
+    }
+
+    @Test
+    fun aLinkHandedOverWhileStartingIsTheOneThatLoads() = listen {
+        api.tv(600_000)
+        session.start(FOUND, LinkTiming(), 0)
+        session.useFoundLink(LINK2) // before the clock samples
+        assertEquals(ListenPhase.Starting, state.phase)
+        assertEquals(LINK2, state.target?.foundLink)
+        settle()
+        assertEquals(ListenPhase.Listening, state.phase)
+        val load = engine.loads.single()
+        assertEquals(LINK2.url, load.media.url)
+        assertEquals(LINK2.headers, load.media.headers)
+        assertEquals(LINK2, state.target?.foundLink)
+        assertTrue(api.resolves.isEmpty())
+    }
+
+    @Test
+    fun aLinkHandedOverWhileStartingACatalogSourceLoadsWithoutAResolve() = listen {
+        api.tv(600_000)
+        session.start(TARGET, LinkTiming(), 0)
+        session.useFoundLink(LINK)
+        settle()
+        assertEquals(ListenPhase.Listening, state.phase)
+        assertTrue(api.resolves.isEmpty())
+        assertEquals(LINK.url, engine.loads.single().media.url)
+        assertEquals(PASTED_SOURCE_ID, state.target?.sourceId)
+        assertNull(state.target?.language)
+        assertEquals(LINK, state.target?.foundLink)
+    }
+
+    @Test
+    fun aLinkHandedOverDuringTheStartsResolveReplacesTheCatalogSource() = listen {
+        api.tv(600_000)
+        api.resolveAnswer = { session.useFoundLink(LINK); answer(it) }
+        session.start(TARGET, LinkTiming(), 0)
+        settle()
+        assertEquals(ListenPhase.Listening, state.phase)
+        assertEquals(1, api.resolves.size)
+        assertEquals(2, engine.loads.size)
+        assertEquals(LINK.url, engine.loads.last().media.url)
+        assertEquals(LINK.headers, engine.loads.last().media.headers)
+        assertEquals(PASTED_SOURCE_ID, state.target?.sourceId)
+        assertEquals(LINK, state.target?.foundLink)
+        run(20_000)
+        assertEquals("synced", state.syncLabel)
+        assertEquals(2, engine.loads.size)
+    }
+
+    @Test
+    fun aFoundLinkEndsWhenTheTvMovesToAnotherEpisode() = listen {
+        listening(FOUND)
+        api.tv(5_000, episodeId = "s1e2")
+        settle()
+        assertEquals(ListenPhase.Idle, state.phase)
+        assertEquals(EndReason.NoSuchSourceOnNextEpisode, state.ended)
+        assertEquals(0, api.companionCalls)
+        assertTrue(api.resolves.isEmpty())
+        assertEquals("stop", engine.calls.last())
+    }
+
+    @Test
+    fun aFailingFoundLinkIsLoadedAgainWithoutAResolve() = listen {
+        autoReady = false
+        listening(FOUND)
+        engine.fail()
+        run(2_000)
+        assertEquals(2, engine.loads.size)
+        assertEquals(engine.loads[0].media, engine.loads[1].media)
+        assertTrue(api.resolves.isEmpty())
+        assertEquals(ListenPhase.Listening, state.phase)
+    }
+
+    @Test
+    fun aCatalogSourceIsNeverSwitchedToThePastedIdByAResolve() = listen {
+        listening()
+        session.switchSource(PASTED_SOURCE_ID, null)
+        settle()
+        assertEquals(1, api.resolves.size)
+        assertEquals(1, engine.loads.size)
     }
 
     @Test
@@ -453,9 +622,9 @@ class ListenSessionTest {
         }
 
         /** Started on a TV playing at 600 s, then synced. */
-        fun listening() {
+        fun listening(target: ListenTarget = TARGET) {
             api.tv(600_000)
-            session.start(TARGET, LinkTiming(), 0)
+            session.start(target, LinkTiming(), 0)
             settle()
             if (!autoReady) engine.ready()
             run(20_000)
@@ -531,6 +700,13 @@ class ListenSessionTest {
         const val BASE = 1_800_000_000_000L
         const val STEP_MS = 10L
         val TARGET = ListenTarget(deviceId = "tv-1", episodeId = "s1e1", sourceId = "dub", language = "fr", itemTitle = "Show", episodeTitle = "One")
+        const val MINUTE = 60_000L
+        val LINK = FoundLink(
+            "http://media.test/found/master?payload=abc",
+            mapOf("Referer" to "http://page.test/watch", "Origin" to "http://page.test", "Cookie" to "session=xyz"),
+        )
+        val LINK2 = FoundLink("http://media.test/found/master?payload=def", mapOf("Referer" to "http://page.test/watch"))
+        val FOUND = TARGET.copy(sourceId = PASTED_SOURCE_ID, language = null, foundLink = LINK, episodeDurationMs = 90 * MINUTE)
 
         fun iso(ms: Long): String = Instant.ofEpochMilli(ms).toString()
 

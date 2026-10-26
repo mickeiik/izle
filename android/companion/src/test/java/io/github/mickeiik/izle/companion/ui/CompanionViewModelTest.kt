@@ -5,7 +5,11 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import io.github.mickeiik.izle.companion.CompanionApp
+import io.github.mickeiik.izle.companion.finder.FoundLink
+import io.github.mickeiik.izle.companion.finder.LinkFinderState
+import io.github.mickeiik.izle.companion.sync.ApiClientCompanionApi
 import io.github.mickeiik.izle.companion.sync.CompanionApi
+import io.github.mickeiik.izle.companion.sync.EndReason
 import io.github.mickeiik.izle.companion.sync.ListenPhase
 import io.github.mickeiik.izle.companion.sync.ListenService
 import io.github.mickeiik.izle.companion.sync.ListenSession
@@ -33,6 +37,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import java.time.Instant
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -64,6 +69,14 @@ class CompanionViewModelTest {
                 return when {
                     path == "/api/v1/admin/devices" -> devicesAnswer()
                     path == "/api/v1/admin/devices/tv-1/companion" -> companionAnswer()
+                    // For a session on this server: the TV at 60 s; a long-poll answers after a second.
+                    path == "/api/v1/admin/devices/tv-1/now" -> nowAnswer().let { r ->
+                        if (request.url.queryParameter("wait") == "0") r else r.newBuilder().headersDelay(1, TimeUnit.SECONDS).build()
+                    }
+                    path == "/api/v1/admin/devices/tv-1/companion/resolve" ->
+                        json(200, """{"episodeId":"show.e1","sourceId":"dub","media":{"kind":"hls","url":"/p/tok/dub/master.m3u8"}}""")
+                    // What the link finder confirms (a pasted link is fetched from this phone).
+                    path == "/found/master.m3u8" -> MockResponse.Builder().code(200).body("#EXTM3U\n").build()
                     path.endsWith("/copy-to-item") -> json(200, """{"updated":3,"episodeIds":["show.e2","show.e3","show.e4"]}""")
                     path.startsWith("/api/v1/admin/companion/links/") && request.method == "PUT" ->
                         json(200, """{"link":{"episodeId":"show.e1","sourceId":"dub","offsetMs":-1300,"rate":1.0427,"language":"fr","updatedAt":"2026-10-26T10:00:00.000Z"}}""")
@@ -172,7 +185,7 @@ class CompanionViewModelTest {
         val listen = vm.ui.value as CompanionUi.Listen
         assertEquals("Pilot", listen.nowPlaying?.episodeTitle)
         assertEquals(
-            listOf("main" to null, "dub" to "fr", "dub" to "de"),
+            listOf("main" to null, "dub" to "fr", "dub" to "de", "pasted" to null),
             listen.options.map { it.sourceId to it.language },
         )
         // Not the TV's own source by default.
@@ -312,6 +325,150 @@ class CompanionViewModelTest {
         runBlocking { assertFalse(app.graph.store.current().isPaired) }
     }
 
+    // --- a link found on this phone --------------------------------------------------------------------------------
+
+    @Test
+    fun thePastedOptionHasItsOwnTimingAndNeedsAFoundLink() {
+        val vm = startListening()
+        val pasted = (vm.ui.value as CompanionUi.Listen).options.last()
+        assertEquals(CandidateOption("pasted", null, "a link found on this phone", null), pasted)
+        vm.choose(pasted)
+        val chosen = vm.ui.value as CompanionUi.Listen
+        assertEquals("3.500", chosen.offsetText)
+        assertEquals("1", chosen.speedText)
+        assertNull(chosen.foundLink)
+        assertFalse(chosen.canListen)
+
+        vm.openFinder()
+        assertTrue((vm.ui.value as CompanionUi.Listen).finderOpen)
+        vm.closeFinder()
+        assertFalse((vm.ui.value as CompanionUi.Listen).finderOpen)
+        vm.openFinder()
+        vm.useFoundLink(LINK)
+        val ready = vm.ui.value as CompanionUi.Listen
+        assertEquals(LINK, ready.foundLink)
+        assertFalse(ready.finderOpen)
+        assertTrue(ready.canListen)
+        assertEquals("3.500", ready.offsetText)
+
+        vm.refresh() // an unchanged answer keeps the link
+        settle()
+        assertEquals(LINK, (vm.ui.value as CompanionUi.Listen).foundLink)
+    }
+
+    @Test
+    fun listeningToAFoundLinkPlaysItOnThePhoneAndNoRequestCarriesIt() {
+        val engine = FakeMediaEngine()
+        app.graph.newSession = { api, scope -> ListenSession(ApiClientCompanionApi(api), engine, scope, { it }) }
+        val vm = startListening()
+        vm.choose((vm.ui.value as CompanionUi.Listen).options.last())
+        vm.openFinder()
+        vm.useFoundLink(LINK)
+        vm.listen()
+        val session = app.graph.currentSession!!
+        val target = session.state.value.target!!
+        assertEquals("pasted", target.sourceId)
+        assertNull(target.language)
+        assertEquals(LINK, target.foundLink)
+        assertEquals(1_200_000L, target.episodeDurationMs)
+        assertEquals(3_500L, session.state.value.timing.offsetMs)
+
+        waitUntil("the link loaded") { engine.loads.isNotEmpty() && (vm.ui.value as CompanionUi.Listen).listening }
+        val media = engine.loads.single().media
+        assertEquals(LINK.url, media.url)
+        assertEquals(LINK.headers, media.headers)
+        assertEquals("hls", media.kind)
+        waitUntil("the long-poll") { requests.any { it.url.queryParameter("wait") == "25" } }
+        vm.saveTiming() // the pasted link's timing is stored on the server, the link itself is not
+        waitUntil("the snackbar") { vm.snackbar.value == "Timing saved for this episode." }
+        val put = requests.single { it.method == "PUT" }
+        assertEquals("/api/v1/admin/companion/links/show.e1/pasted", put.url.encodedPath)
+        assertEquals("""{"offsetMs":3500,"rate":1.0}""", put.body?.utf8())
+
+        assertTrue(requests.none { it.url.encodedPath.endsWith("/resolve") })
+        for (r in requests) {
+            val seen = listOf(r.url.toString(), r.headers.joinToString("\n") { (name, value) -> "$name: $value" }, r.body?.utf8().orEmpty())
+            for (text in seen) {
+                for (secret in SECRETS) assertFalse("${r.method} ${r.url.encodedPath} carries part of the link", text.contains(secret))
+            }
+        }
+    }
+
+    @Test
+    fun anExpiredLinkEndsListeningForgetsTheLinkAndKeepsTheTiming() {
+        val engine = FakeMediaEngine()
+        app.graph.newSession = { api, scope -> ListenSession(ApiClientCompanionApi(api), engine, scope, { it }) }
+        val vm = startListening()
+        vm.choose((vm.ui.value as CompanionUi.Listen).options.last())
+        vm.useFoundLink(LINK)
+        vm.setOffsetText("4.250")
+        vm.listen()
+        waitUntil("the link loaded") { engine.loads.isNotEmpty() && (vm.ui.value as CompanionUi.Listen).listening }
+        findInFinder(vm)
+        engine.durationMs = 5 * 60_000L // a decoy, against an episode of 20 min
+        engine.ready()
+        waitUntil("the snackbar") { vm.snackbar.value == endedText(EndReason.LinkExpired, null) }
+        assertEquals("the finder forgets the expired link", LinkFinderState(), vm.linkFinder.state.value)
+        assertEquals(EndReason.LinkExpired, app.graph.currentSession!!.state.value.ended)
+        val listen = vm.ui.value as CompanionUi.Listen
+        assertFalse(listen.listening)
+        assertNull(listen.foundLink)
+        assertEquals("4.250", listen.offsetText)
+        assertEquals("pasted", listen.chosen?.sourceId)
+        assertFalse(listen.canListen)
+    }
+
+    @Test
+    fun anotherEpisodeDropsTheFoundLinkAndTheFinderForgetsIt() {
+        val vm = startListening()
+        vm.choose((vm.ui.value as CompanionUi.Listen).options.last())
+        findInFinder(vm)
+        vm.useFoundLink(vm.linkFinder.state.value.found!!)
+        companionAnswer = { json(200, EPISODE.replace("show.e1", "show.e2").replace("Pilot", "Second")) }
+        vm.refresh()
+        waitUntil("the next episode") { (vm.ui.value as CompanionUi.Listen).nowPlaying?.episodeId == "show.e2" }
+        assertNull((vm.ui.value as CompanionUi.Listen).foundLink)
+        assertEquals(LinkFinderState(), vm.linkFinder.state.value)
+    }
+
+    @Test
+    fun changingTheTvMakesTheFinderForgetItsLink() {
+        val vm = startListening()
+        findInFinder(vm)
+        vm.changeTv()
+        waitUntil("the TV list") { vm.ui.value is CompanionUi.PickTv }
+        assertEquals(LinkFinderState(), vm.linkFinder.state.value)
+    }
+
+    @Test
+    fun aPendingPastedChoiceSurvivesARefreshAndAFoundLinkThenSwitches() {
+        val engine = FakeMediaEngine()
+        app.graph.newSession = { api, scope -> ListenSession(ApiClientCompanionApi(api), engine, scope, { it }) }
+        val vm = startListening()
+        vm.listen()
+        val session = app.graph.currentSession!!
+        waitUntil("listening to the catalog source") { session.state.value.phase == ListenPhase.Listening }
+        val pasted = (vm.ui.value as CompanionUi.Listen).options.last()
+        vm.choose(pasted) // no link yet: the dub keeps playing
+        assertEquals("dub", session.state.value.target?.sourceId)
+        val gets = count(COMPANION)
+        vm.saveTiming() // a forced read follows
+        waitUntil("the read after the save") { count(COMPANION) > gets && !(vm.ui.value as CompanionUi.Listen).refreshing }
+        assertEquals(pasted, (vm.ui.value as CompanionUi.Listen).chosen)
+
+        vm.useFoundLink(LINK)
+        val target = session.state.value.target!!
+        assertEquals("pasted", target.sourceId)
+        assertEquals(LINK, target.foundLink)
+        assertEquals(LINK.url, engine.loads.last().media.url)
+    }
+
+    /** The finder confirms a link pasted into it (served by the test server). */
+    private fun findInFinder(vm: CompanionViewModel) {
+        vm.linkFinder.paste(server.url("/found/master.m3u8").toString())
+        waitUntil("the finder's link") { vm.linkFinder.state.value.found != null && !vm.linkFinder.state.value.checking }
+    }
+
     private fun startUnpaired(): CompanionViewModel = viewModel().also { vm ->
         waitUntil("the pairing screen") { vm.ui.value is CompanionUi.Pairing }
     }
@@ -372,7 +529,25 @@ class CompanionViewModelTest {
             {"sourceId":"dub","type":"direct","kind":"dash","label":"Dub","languages":{"audio":["fr","de"],"subtitles":null},"current":false,
              "supported":false,"reason":"dash","link":{"offsetMs":-1250,"rate":1.0427,"language":"fr","updatedAt":"2026-10-20T10:00:00.000Z"}},
             {"sourceId":"pasted","type":"pasted","kind":null,"label":null,"languages":{"audio":null,"subtitles":null},"current":false,
-             "supported":true,"reason":null,"link":{"offsetMs":0,"rate":1,"language":null,"updatedAt":null}}]}"""
+             "supported":true,"reason":null,"link":{"offsetMs":3500,"rate":1,"language":null,"updatedAt":"2026-10-21T10:00:00.000Z"}}]}"""
+
+        /** Found on a page: neither the URL nor a header value may reach the server. */
+        val LINK = FoundLink(
+            "http://media.test/found/master?payload=abc123",
+            mapOf("Referer" to "http://page.test/watch/42", "Origin" to "http://page.test", "Cookie" to "visit=cookie-value-789"),
+        )
+        val SECRETS = listOf("media.test", "payload", "abc123", "page.test", "watch/42", "cookie-value-789")
+
+        /** `/now`: the TV playing show.e1 at 60 s, now. */
+        fun nowAnswer(): MockResponse {
+            val now = System.currentTimeMillis()
+            return json(
+                200,
+                """{"online":true,"serverNowMs":$now,"seq":1,"nowPlaying":{"itemId":"show","itemKind":"series","episodeId":"show.e1",
+                "sourceId":"main","durationMs":1200000,"state":"playing","updatedAt":"${Instant.ofEpochMilli(now)}","playing":true},
+                "anchor":{"positionMs":60000,"atMs":$now,"playing":true,"rate":1}}""",
+            )
+        }
 
         val CHANNEL = """{"nowPlaying":{"itemId":"news","itemKind":"live","itemTitle":"News","state":"playing"},"candidates":[]}"""
     }

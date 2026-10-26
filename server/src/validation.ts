@@ -1,5 +1,5 @@
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
-import { ID_PATTERN, simplifySchemaErrors } from "@izle/contract";
+import { ID_PATTERN, simplifySchemaErrors, MEDIA_KINDS } from "@izle/contract";
 import type { Context } from "hono";
 import { COMMAND_RESULTS, MAX_SEEK_DELTA_MS, MESSAGE_DURATION_SEC, MESSAGE_MAX_CHARS, PLAIN_COMMANDS, type CommandBody, type CommandResult } from "./commands.ts";
 import type { CompanionResolveInput, LinkInput } from "./companion.ts";
@@ -164,7 +164,11 @@ const RATE = { type: "number", minimum: 0.5, maximum: 2 };
 export const companionLinkBody = ajv.compile<LinkInput>(object({ offsetMs: OFFSET_MS, rate: RATE, language: LANGUAGE_TAG_OR_NULL }, ["offsetMs", "rate"]));
 
 export const companionResolveBody = ajv.compile<CompanionResolveInput>(
-  object({ episodeId: ID, sourceId: ID, language: LANGUAGE_TAG_OR_NULL }, ["episodeId", "sourceId"]),
+  object({
+    episodeId: ID, sourceId: ID, language: LANGUAGE_TAG_OR_NULL,
+    // The media kinds the client plays (the native app: all four; absent: the admin page's HLS and MP4).
+    kinds: { type: "array", items: { enum: MEDIA_KINDS }, minItems: 1, maxItems: MEDIA_KINDS.length, uniqueItems: true },
+  }, ["episodeId", "sourceId"]),
 );
 
 export async function parseBody<T>(c: Context, validate: ValidateFunction<T>): Promise<T> {

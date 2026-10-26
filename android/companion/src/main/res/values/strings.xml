@@ -6,6 +6,8 @@
     <string name="change_tv">Change TV</string>
     <string name="change_server">Change server</string>
     <string name="more_options">More options</string>
+    <string name="clear_browser_data">Clear browser cookies</string>
+    <string name="browser_data_cleared">Browser cookies cleared.</string>
 
     <!-- Pairing -->
     <string name="pairing_title">Connect to your izle server</string>
@@ -55,8 +57,25 @@
     <string name="nudge_plus">+50 ms</string>
     <string name="nudge_hint">for your earphones\' delay; remembered on this phone</string>
 
+    <!-- A link found on this phone (the pasted option) -->
+    <string name="found_link_none">No link yet</string>
+    <string name="found_link_ready">A link is ready</string>
+    <string name="find_link">Find a link</string>
+    <string name="find_new_link">Find a new link</string>
+
     <!-- The notification -->
     <string name="notification_channel">Listen along</string>
     <string name="notification_stop">Stop</string>
     <string name="notification_starting">starting</string>
+
+    <!-- The link finder -->
+    <string name="finder_close">Close</string>
+    <string name="finder_address">Web address</string>
+    <string name="finder_go">Go</string>
+    <string name="finder_hint">Open the page that plays the episode and start its video: a stream it loads shows up here.</string>
+    <string name="finder_paste">Or paste a link</string>
+    <string name="finder_use">Use</string>
+    <string name="finder_paste_error">That link did not open as a playlist on this phone.</string>
+    <string name="finder_found">A stream was found on this page</string>
+    <string name="finder_listen_to_this">Listen to this</string>
 </resources>

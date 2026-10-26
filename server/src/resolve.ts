@@ -23,6 +23,8 @@ export type ResolveInput = PlayableId & {
 /** Proxy-session owner key of a device's companion streams (separate from the TV's own two sessions). */
 export const companionScope = (deviceId: string): string => `companion:${deviceId}`;
 export const isCompanionScope = (owner: string): boolean => owner.startsWith("companion:");
+/** The media kinds a companion client plays when its request names none: what the admin page plays. */
+export const COMPANION_DEFAULT_KINDS: readonly MediaKind[] = ["hls", "mp4"];
 
 /** Proxy-session owner key of one source check of the admin's catalog checks (its own, so it never ends a TV's). */
 export const checkScope = (id: string): string => `check:${id}`;
@@ -268,15 +270,16 @@ export class ResolveService {
   /**
    * Delivers the first candidate source that resolves within the request's time budget, with a new playback
    * session; none does: 502 `no_playable_source`. `companion` ("Listen along" on the owner's phone): its own proxy
-   * owner key, always proxied (the admin page loads same-origin media only), no DASH or MPEG-TS (a browser cannot
-   * play them), and its failures do not reorder the TV's fallback.
+   * owner key, always proxied where the proxy can (the admin page loads same-origin media only; DASH stays direct, the
+   * proxy does not rewrite manifests), only the media kinds the client plays (`kinds`, default HLS and MP4: what the
+   * admin page plays), and its failures do not reorder the TV's fallback.
    */
   async resolve(
     deviceId: string,
     preferredAudioLanguage: string | null,
     input: ResolveInput,
     signal?: AbortSignal,
-    opts: { scope?: "tv" | "companion" } = {},
+    opts: { scope?: "tv" | "companion"; kinds?: readonly MediaKind[] } = {},
   ): Promise<ResolvedStream> {
     const ref = requirePlayableRef(this.catalog, input, 404);
     requireAllowed(ref, 403);
@@ -306,9 +309,8 @@ export class ResolveService {
         continue;
       }
       const kind = a.stream.media.kind;
-      if (companion && (kind === "dash" || kind === "ts")) {
-        const why = kind === "dash" ? "DASH cannot be played on the phone: the proxy does not rewrite manifests" : "MPEG-TS cannot be played by the phone's browser";
-        throw new HttpError(400, "unsupported_media", why, { kind });
+      if (companion && !(opts.kinds ?? COMPANION_DEFAULT_KINDS).includes(kind)) {
+        throw new HttpError(400, "unsupported_media", `the client does not play ${kind}`, { kind });
       }
       const session = this.o.sessions.open({ deviceId: owner, catalogId: this.catalog.catalogId, ...playing, sourceId: source.id });
       const delivered = this.deliver(owner, a.stream, this.o.proxyAlways || companion, { ...playing, sourceId: source.id });

@@ -189,7 +189,14 @@ class ApiClientTest {
         assertEquals(1_791_979_200_000L, r.serverDateMs)
         val request = takeRequest("POST", "/api/v1/admin/devices/tv1/companion/resolve")
         assertTrue(request.headers["Content-Type"]!!.startsWith("application/json"))
-        assertEquals("""{"episodeId":"show.e2","sourceId":"dub","language":"de"}""", request.body?.utf8())
+        assertEquals("""{"episodeId":"show.e2","sourceId":"dub","language":"de"}""", request.body?.utf8()) // no kinds key
+        // A client that plays more than HLS and MP4 says so.
+        server.enqueue(json(200, COMPANION_RESOLVE))
+        api.companionResolve("tv1", CompanionResolveRequest("show.e2", "dub", kinds = listOf("hls", "dash", "mp4", "ts")))
+        assertEquals(
+            """{"episodeId":"show.e2","sourceId":"dub","kinds":["hls","dash","mp4","ts"]}""",
+            takeRequest("POST", "/api/v1/admin/devices/tv1/companion/resolve").body?.utf8(),
+        )
     }
 
     @Test

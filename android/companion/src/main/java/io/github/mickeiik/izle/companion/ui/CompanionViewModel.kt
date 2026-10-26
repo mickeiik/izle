@@ -6,12 +6,16 @@ import androidx.lifecycle.viewModelScope
 import io.github.mickeiik.izle.companion.BuildConfig
 import io.github.mickeiik.izle.companion.CompanionApp
 import io.github.mickeiik.izle.companion.CompanionGraph
+import io.github.mickeiik.izle.companion.finder.FoundLink
+import io.github.mickeiik.izle.companion.finder.LinkConfirmer
+import io.github.mickeiik.izle.companion.finder.LinkFinder
 import io.github.mickeiik.izle.companion.sync.ListenPhase
 import io.github.mickeiik.izle.companion.sync.ListenService
 import io.github.mickeiik.izle.companion.sync.ListenSession
 import io.github.mickeiik.izle.companion.sync.ListenState
 import io.github.mickeiik.izle.companion.sync.ListenTarget
 import io.github.mickeiik.izle.companion.sync.EndReason
+import io.github.mickeiik.izle.companion.sync.PASTED_SOURCE_ID
 import io.github.mickeiik.izle.data.api.AdminDevice
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.ApiException
@@ -63,7 +67,8 @@ sealed interface CompanionUi {
     /**
      * Listen along for one TV. [loaded]: the first answer arrived; [nowPlaying] null: the TV plays nothing. [chosen] is
      * one of [options]; the two texts are the timing fields ([timingValid]: both parse). [error]: the last refresh
-     * failed (the text says why).
+     * failed (the text says why). [foundLink]: the link found on this phone for the `pasted` option (in memory only,
+     * dropped when the TV moves to another episode or the link expires); [finderOpen]: the link finder is shown.
      */
     data class Listen(
         val tvId: String,
@@ -80,12 +85,16 @@ sealed interface CompanionUi {
         val nudgeMs: Long = 0,
         val refreshing: Boolean = false,
         val error: String? = null,
+        val foundLink: FoundLink? = null,
+        val finderOpen: Boolean = false,
     ) : CompanionUi {
         val isChannel: Boolean get() = nowPlaying?.isLive == true
         val listening: Boolean get() = session.phase != ListenPhase.Idle
 
-        /** Listen needs an episode playing and a source chosen. */
-        val canListen: Boolean get() = nowPlaying?.episodeId != null && !isChannel && chosen != null
+        /** Listen needs an episode playing and a source chosen; the `pasted` option, a found link too. */
+        val canListen: Boolean
+            get() = nowPlaying?.episodeId != null && !isChannel && chosen != null &&
+                (chosen.sourceId != PASTED_SOURCE_ID || foundLink != null)
     }
 }
 
@@ -104,6 +113,9 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _snackbar = MutableStateFlow<String?>(null)
     val snackbar: StateFlow<String?> = _snackbar.asStateFlow()
+
+    /** The link finder's state: what its in-app browser found, confirmed by a fetch from this phone (memory only). */
+    val linkFinder = LinkFinder(LinkConfirmer(graph.http)::confirm, viewModelScope)
 
     private var baseUrl: HttpUrl? = null
     private var api: ApiClient? = null
@@ -179,6 +191,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     fun changeTv() {
         session?.stop()
         leaveListen()
+        // The Listen screen and its found link are gone (the picker replaces it); the finder forgets the link too.
+        linkFinder.clear()
         viewModelScope.launch {
             store.setTv(null)
             showPicker()
@@ -197,6 +211,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun forget() {
         leaveListen()
+        linkFinder.clear()
         sessionJob?.cancel()
         session = null
         graph.releaseSession()
@@ -221,6 +236,12 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 val ended = previous != ListenPhase.Idle && state.phase == ListenPhase.Idle
                 previous = state.phase
                 if (!ended) return@collect
+                // The timing fields stay as typed: only the link is gone.
+                if (state.ended == EndReason.LinkExpired) {
+                    updateListen { it.copy(foundLink = null) }
+                    // Or reopening the finder would offer the expired link again.
+                    linkFinder.clear()
+                }
                 endedText(state.ended, state.error)?.let { _snackbar.value = it }
                 // Not in this collector, which forget() cancels.
                 if (state.ended == EndReason.Unauthorized) viewModelScope.launch { forget() }
@@ -250,7 +271,10 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         candidates = null
         candidatesKey = null
         val nudge = store.current().nudgeMs
-        _ui.value = CompanionUi.Listen(tvId = tvId, tvName = name, session = session?.state?.value ?: ListenState(), nudgeMs = nudge)
+        val sessionState = session?.state?.value ?: ListenState()
+        // A new screen over a session still playing a found link: the link it plays.
+        val playingLink = sessionState.target?.takeIf { sessionState.phase != ListenPhase.Idle && it.deviceId == tvId }?.foundLink
+        _ui.value = CompanionUi.Listen(tvId = tvId, tvName = name, session = sessionState, nudgeMs = nudge, foundLink = playingLink)
         if (name == null) {
             viewModelScope.launch {
                 val found = orNullOnFailure { api?.devices() }?.devices?.firstOrNull { it.id == tvId }
@@ -332,19 +356,30 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val options = candidateOptions(r.candidates)
+        var droppedLink = false
         updateListen { l ->
+            // The owner's choice of a link found on this phone, still waiting for one: kept over the session's source.
+            val pending = l.chosen?.takeIf { !episodeChanged && it.sourceId == PASTED_SOURCE_ID && l.foundLink == null }
+                ?.let { c -> options.firstOrNull { it.key == c.key } }
             val target = l.session.target.takeIf { l.listening && it?.episodeId == n?.episodeId }
-            val chosen = target?.let { t -> options.firstOrNull { it.sourceId == t.sourceId && it.language == t.language } }
+            val chosen = pending
+                ?: target?.let { t -> options.firstOrNull { it.sourceId == t.sourceId && it.language == t.language } }
                 ?: l.chosen?.takeIf { !episodeChanged }?.let { c -> options.firstOrNull { it.key == c.key } }
                 ?: n?.itemId?.let { remembered[it] }?.let { k -> options.firstOrNull { it.key == k } }
                 ?: options.firstOrNull { it.sourceId != n?.sourceId }
                 ?: options.firstOrNull()
+            // A found link belongs to the episode it was found for.
+            val foundLink = l.foundLink.takeIf { previous == null || !episodeChanged }
+            droppedLink = l.foundLink != null && foundLink == null
             val base = l.copy(
                 loaded = true, refreshing = false, error = null, nowPlaying = n, options = options, chosen = chosen,
                 applyAllVisible = n?.itemKind == "series",
+                foundLink = foundLink,
             )
             if (!l.listening || episodeChanged) base.withTiming(linkOf(chosen)) else base
         }
+        // The finder forgets it too, or reopening it would offer the other episode's link.
+        if (droppedLink) linkFinder.clear()
     }
 
     fun choose(option: CandidateOption) {
@@ -355,9 +390,41 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         val s = session ?: return
         val target = next.session.target
         if (next.listening && target != null && (target.sourceId != option.sourceId || target.language != option.language)) {
+            // The `pasted` option without a link yet: the stream keeps playing until one is found.
+            val link = next.foundLink
+            if (option.sourceId == PASTED_SOURCE_ID && link == null) return
             parseTiming(next.offsetText, next.speedText)?.let { s.setTiming(LinkTiming(it.offsetMs, it.rate, option.language)) }
-            s.switchSource(option.sourceId, option.language)
+            if (link != null && option.sourceId == PASTED_SOURCE_ID) s.useFoundLink(link) else s.switchSource(option.sourceId, option.language)
         }
+    }
+
+    // --- the link finder -------------------------------------------------------------------------------------------
+
+    /** Shows the link finder (for the `pasted` option). */
+    fun openFinder() {
+        updateListen { it.copy(finderOpen = true) }
+    }
+
+    fun closeFinder() {
+        updateListen { it.copy(finderOpen = false) }
+    }
+
+    /**
+     * The finder's "Listen to this": keeps [link] for the `pasted` option (in memory only) and closes the finder; while
+     * listening with that option chosen, the session switches to the new link at once, keeping its timing.
+     */
+    fun useFoundLink(link: FoundLink) {
+        val listen = _ui.value as? CompanionUi.Listen ?: return
+        val next = listen.copy(foundLink = link, finderOpen = false)
+        _ui.value = next
+        val s = session ?: return
+        val option = next.chosen
+        if (!next.listening || option?.sourceId != PASTED_SOURCE_ID) return
+        if (next.session.target?.sourceId != PASTED_SOURCE_ID) {
+            // From a catalog source: the timing of the `pasted` option, as the fields show it.
+            parseTiming(next.offsetText, next.speedText)?.let { s.setTiming(LinkTiming(it.offsetMs, it.rate, null)) }
+        }
+        s.useFoundLink(link)
     }
 
     fun setOffsetText(text: String) = editTiming { it.copy(offsetText = text) }
@@ -415,7 +482,14 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         val stored = linkOf(option)
         val typed = parseTiming(listen.offsetText, listen.speedText)
         val timing = LinkTiming(typed?.offsetMs ?: stored.offsetMs, typed?.rate ?: stored.rate, option.language)
-        s.start(ListenTarget(listen.tvId, episodeId, option.sourceId, option.language, n.itemTitle, n.episodeTitle), timing, listen.nudgeMs)
+        val link = listen.foundLink.takeIf { option.sourceId == PASTED_SOURCE_ID }
+        val target = ListenTarget(
+            listen.tvId, episodeId, option.sourceId, option.language, n.itemTitle, n.episodeTitle,
+            foundLink = link,
+            // Also for a catalog source: the owner may switch to a found link while listening.
+            episodeDurationMs = n.durationMs,
+        )
+        s.start(target, timing, listen.nudgeMs)
         ListenService.start(getApplication())
     }
 
