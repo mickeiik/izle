@@ -32,13 +32,15 @@ inline fun <T> orNullOnFailure(block: () -> T): T? = try {
 }
 
 /**
- * The TV side of the server API. Network failures surface as [IOException], error answers as [ApiException]. The
- * device token and [userAgent] (read anew: it changes with the update capability) are attached per request, never
- * through an interceptor, so they cannot leak to media hosts that share the OkHttp connection pool.
+ * The server API: the TV routes, and the admin routes the companion app uses. Network failures surface as
+ * [IOException], error answers as [ApiException]. [token] is a device token on a TV and an access token (`izat_…`)
+ * in the companion app, sent as the same bearer header. It and [userAgent] (read anew: it changes with the update
+ * capability) are attached per request, never through an interceptor, so they cannot leak to media hosts that share
+ * the OkHttp connection pool.
  */
 class ApiClient(
     private val baseUrl: HttpUrl,
-    private val deviceToken: String?,
+    private val token: String?,
     private val http: OkHttpClient,
     private val longPollHttp: OkHttpClient = http,
     private val userAgent: () -> String? = { null },
@@ -52,7 +54,7 @@ class ApiClient(
 
     fun authorize(builder: Request.Builder): Request.Builder {
         withUserAgent(builder)
-        return if (deviceToken != null) builder.header("Authorization", "Bearer $deviceToken") else builder
+        return if (token != null) builder.header("Authorization", "Bearer $token") else builder
     }
 
     private fun withUserAgent(builder: Request.Builder): Request.Builder {
@@ -117,12 +119,52 @@ class ApiClient(
     /** Streamed by [io.github.mickeiik.izle.update.ApkDownloader]. */
     fun apkRequest(): Request = authorize(Request.Builder().url(url("api/v1/tv/app/apk"))).build()
 
+    suspend fun devices(): DevicesResponse = get(url("api/v1/admin/devices"), DevicesResponse.serializer())
+
+    suspend fun companion(deviceId: String): CompanionResponse =
+        get(device(deviceId).addPathSegment("companion").build(), CompanionResponse.serializer())
+
+    /** `seq` + `waitSec` > 0: a long-poll (on longPollHttp) that returns on the next now-playing write. */
+    suspend fun now(deviceId: String, seq: Long? = null, waitSec: Int = 0): NowResponse {
+        val builder = device(deviceId).addPathSegment("now")
+        if (seq != null) builder.addQueryParameter("seq", seq.toString())
+        val url = builder.addQueryParameter("wait", waitSec.toString()).build()
+        val raw = exchange(authorize(Request.Builder().url(url)).build(), if (waitSec > 0) longPollHttp else http)
+        return raw.decode(NowResponse.serializer())
+    }
+
+    /** On the long-poll client (the resolver may take up to 30 s); fills serverDateMs. */
+    suspend fun companionResolve(deviceId: String, request: CompanionResolveRequest): CompanionResolveResponse {
+        val url = device(deviceId).addPathSegment("companion").addPathSegment("resolve").build()
+        val raw = exchange(jsonRequest(url, "POST", CompanionResolveRequest.serializer(), request), longPollHttp)
+        return raw.decode(CompanionResolveResponse.serializer()).copy(serverDateMs = raw.dateMs)
+    }
+
+    suspend fun putLink(episodeId: String, sourceId: String, update: LinkUpdate): LinkResponse =
+        exchange(jsonRequest(link(episodeId, sourceId).build(), "PUT", LinkUpdate.serializer(), update))
+            .decode(LinkResponse.serializer())
+
+    suspend fun copyLinkToItem(episodeId: String, sourceId: String): CopyToItemResponse {
+        val url = link(episodeId, sourceId).addPathSegment("copy-to-item").build()
+        return exchange(authorize(Request.Builder().url(url).post(EMPTY_BODY)).build()).decode(CopyToItemResponse.serializer())
+    }
+
+    /** `api/v1/admin/devices/:id`; ids are path segments, never concatenated (they may contain anything). */
+    private fun device(deviceId: String): HttpUrl.Builder =
+        url("api/v1/admin/devices").newBuilder().addPathSegment(deviceId)
+
+    private fun link(episodeId: String, sourceId: String): HttpUrl.Builder =
+        url("api/v1/admin/companion/links").newBuilder().addPathSegment(episodeId).addPathSegment(sourceId)
+
     private suspend fun <T> get(url: HttpUrl, serializer: KSerializer<T>): T =
         exchange(authorize(Request.Builder().url(url)).build()).decode(serializer)
 
-    private fun <T> jsonPost(path: String, serializer: KSerializer<T>, body: T): Request {
+    private fun <T> jsonPost(path: String, serializer: KSerializer<T>, body: T): Request =
+        jsonRequest(url(path), "POST", serializer, body)
+
+    private fun <T> jsonRequest(url: HttpUrl, method: String, serializer: KSerializer<T>, body: T): Request {
         val json = ApiJson.encodeToString(serializer, body).toRequestBody(JSON)
-        return authorize(Request.Builder().url(url(path)).post(json)).build()
+        return authorize(Request.Builder().url(url).method(method, json)).build()
     }
 
     private fun <T> RawResponse.decode(serializer: KSerializer<T>): T {

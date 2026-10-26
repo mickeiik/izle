@@ -1,5 +1,8 @@
 [versions]
-# Both modules compile against compileSdk and run from minSdk (targetSdk is the TV app's own).
+# The version of both apps (versionName; buildSrc's IzleVersion derives the versionCode), the same as the server's:
+# set with `node scripts/version.mjs set X.Y.Z`.
+izle = "0.6.1"
+# Every module compiles against compileSdk and runs from minSdk (each app sets its own targetSdk).
 compileSdk = "37"
 minSdk = "24"
 agp = "9.4.1"
@@ -27,6 +30,8 @@ androidx-activity-compose = { module = "androidx.activity:activity-compose", ver
 androidx-compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 androidx-compose-ui = { module = "androidx.compose.ui:ui" }
 androidx-compose-foundation = { module = "androidx.compose.foundation:foundation" }
+androidx-compose-material3 = { module = "androidx.compose.material3:material3" }
+androidx-compose-material-icons-core = { module = "androidx.compose.material:material-icons-core" }
 androidx-tv-material = { module = "androidx.tv:tv-material", version.ref = "tvMaterial" }
 androidx-lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }

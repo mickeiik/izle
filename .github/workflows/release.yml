@@ -45,8 +45,8 @@ jobs:
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with: { distribution: temurin, java-version: 21 }
       - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
-      - run: ./gradlew --no-configuration-cache :app:assembleDebug :core:testDebugUnitTest :app:testDebugUnitTest
-      - name: Signed release APK
+      - run: ./gradlew --no-configuration-cache :app:assembleDebug :core:testDebugUnitTest :app:testDebugUnitTest :companion:assembleDebug :companion:testDebugUnitTest
+      - name: Signed release APKs
         if: env.HAS_RELEASE_KEY == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -57,7 +57,7 @@ jobs:
           export IZLE_SIGNING_STORE_FILE="$RUNNER_TEMP/release.jks"
           trap 'rm -f "$IZLE_SIGNING_STORE_FILE"' EXIT
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$IZLE_SIGNING_STORE_FILE"
-          ./gradlew --no-configuration-cache :app:assembleRelease
+          ./gradlew --no-configuration-cache :app:assembleRelease :companion:assembleRelease
       - name: Name the APKs
         run: |
           version=$(node ../scripts/version.mjs check)
@@ -66,8 +66,12 @@ jobs:
           if [ -f app/build/outputs/apk/release/app-release.apk ]; then
             cp app/build/outputs/apk/release/app-release.apk "../dist/izle-tv-$version.apk"
           fi
+          cp companion/build/outputs/apk/debug/companion-debug.apk "../dist/izle-companion-$version-debug.apk"
+          if [ -f companion/build/outputs/apk/release/companion-release.apk ]; then
+            cp companion/build/outputs/apk/release/companion-release.apk "../dist/izle-companion-$version.apk"
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with: { name: izle-tv, path: dist/*.apk, if-no-files-found: error }
+        with: { name: izle-android, path: dist/*.apk, if-no-files-found: error }
 
   release:
     needs: [server, android]
@@ -81,8 +85,13 @@ jobs:
         run: |
           (cd dist && sha256sum -- * > SHA256SUMS && cat SHA256SUMS)
           signed=""
-          for apk in dist/izle-tv-*.apk; do
-            case "$apk" in *-debug.apk) ;; *) signed=yes ;; esac
+          signed_companion=""
+          for apk in dist/izle-tv-*.apk dist/izle-companion-*.apk; do
+            case "$apk" in
+              *-debug.apk) ;;
+              dist/izle-companion-*) signed_companion=yes ;;
+              *) signed=yes ;;
+            esac
           done
           {
             echo "## Downloads"
@@ -96,6 +105,13 @@ jobs:
             fi
             echo "- \`izle-tv-<version>-debug.apk\`: debug build for trying izle and for the emulator. It is signed with a"
             echo "  throwaway key, so a later APK cannot be installed over it: uninstall it first (the TV pairs again)."
+            if [ -n "$signed_companion" ]; then
+              echo "- \`izle-companion-<version>.apk\`: izle companion, the phone app for Listen along, signed with the"
+              echo "  release key. Sideload it on the owner's Android phone; later releases install over it. A server's"
+              echo "  TV app updates ignore it."
+            fi
+            echo "- \`izle-companion-<version>-debug.apk\`: izle companion's debug build, signed with a throwaway key like"
+            echo "  the TV's debug build (uninstall it before installing another build)."
             echo "- \`SHA256SUMS\`: checksums of the files above."
             echo
             echo "What izle is, with screenshots: https://${GITHUB_REPOSITORY_OWNER}.github.io/${GITHUB_REPOSITORY#*/}/"

@@ -20,6 +20,8 @@ class FakeMediaEngine : MediaEngine {
     override val isPlaying get() = playing
     override var positionMs = 0L
     override var durationMs: Long? = null
+    override var playbackRate = 1f
+        set(value) { calls += "rate"; field = value }
     override var buffering = false
         private set
     override var playWhenReady = false

@@ -21,13 +21,18 @@ import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import okhttp3.OkHttpClient
 
-/** Owns Media3's decoder and transport choices; playback recovery belongs to the controller. */
+/**
+ * Owns Media3's decoder and transport choices; playback recovery belongs to the controller. [audioOnly] (the companion
+ * app, which plays with the screen off) disables video tracks and keeps the Wi-Fi and the CPU awake while playing,
+ * which needs `WAKE_LOCK` in that app's manifest; the TV app leaves it false.
+ */
 @OptIn(UnstableApi::class)
 class ExoMediaEngine(
     private val context: Context,
     private val mediaHttp: OkHttpClient,
     private val userAgent: String,
     private val capVideoTo720p: Boolean,
+    private val audioOnly: Boolean = false,
 ) : MediaEngine {
     private var player: ExoPlayer? = null
     private var listener: MediaEngine.Listener? = null
@@ -38,6 +43,9 @@ class ExoMediaEngine(
     override var playWhenReady: Boolean
         get() = player?.playWhenReady ?: false
         set(value) { player?.playWhenReady = value }
+    override var playbackRate: Float
+        get() = player?.playbackParameters?.speed ?: 1f
+        set(value) { player?.setPlaybackSpeed(value) }
     override val isPlaying: Boolean get() = player?.isPlaying == true
     override val positionMs: Long get() = player?.currentPosition ?: 0
     override val durationMs: Long? get() = player?.duration?.takeIf { it != C.TIME_UNSET && it > 0 }
@@ -152,6 +160,7 @@ class ExoMediaEngine(
             /* handleAudioFocus = */ true,
         )
         .setHandleAudioBecomingNoisy(true)
+        .apply { if (audioOnly) setWakeMode(C.WAKE_MODE_NETWORK) }
         .build()
         .apply {
             addListener(playerListener)
@@ -159,7 +168,10 @@ class ExoMediaEngine(
         }
         .also { player = it }
 
-    /** The owner's audio language; subtitles off unless the owner chose a language. Also on a decoder created later. */
+    /**
+     * The owner's audio language; subtitles off unless the owner chose a language; no video when [audioOnly]. Also on a
+     * decoder created later.
+     */
     private fun applyTrackPreferences(p: ExoPlayer) {
         val builder = p.trackSelectionParameters.buildUpon()
             .clearOverrides()
@@ -167,6 +179,7 @@ class ExoMediaEngine(
             .setPreferredTextLanguages(*languagePreference(subtitlesLanguage))
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, subtitlesLanguage == null)
         if (capVideoTo720p) builder.setMaxVideoSize(1280, 720)
+        if (audioOnly) builder.setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, true)
         p.trackSelectionParameters = builder.build()
     }
 

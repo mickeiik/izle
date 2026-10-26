@@ -13,6 +13,8 @@ interface MediaEngine {
     /** Frees the decoder; a later [load] may create it again. */
     fun release()
     var playWhenReady: Boolean
+    /** Playback speed, nominally 1f; the companion app's sync nudges it to catch up with or hold back for the TV. */
+    var playbackRate: Float
     val isPlaying: Boolean
     val positionMs: Long
     /** Null when unknown; for a channel, the live window (the controller shows none). */

@@ -5,8 +5,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import kotlinx.serialization.json.Json
 
-// DTOs of docs/spec/server-api-v1.md, with the fields the TV reads. The server may add response fields within v1:
-// decoding ignores unknown keys, requests omit null fields, and every field the TV can live without has a default.
+// DTOs of docs/spec/server-api-v1.md, with the fields the apps read. The server may add response fields within v1:
+// decoding ignores unknown keys, requests omit null fields, and every field the app can live without has a default.
 val ApiJson: Json = Json {
     ignoreUnknownKeys = true
     explicitNulls = false
@@ -294,6 +294,110 @@ data class PairWait(val status: String, val deviceId: String? = null, val device
 /** The TV app version the server offers (`GET /tv/app`). [auto]: the owner lets TVs install it by themselves. */
 @Serializable
 data class AvailableUpdate(val versionName: String, val versionCode: Long, val sha256: String, val size: Long, val auto: Boolean = true)
+
+/** `GET /admin/devices`: one TV; `status` `pending` or `active`. */
+@Serializable
+data class AdminDevice(val id: String, val name: String, val status: String = "active", val online: Boolean = false, val lastSeenAt: String? = null)
+
+@Serializable
+data class DevicesResponse(val devices: List<AdminDevice> = emptyList())
+
+/** `nowPlaying` of `GET …/now` and of `GET …/companion` (each route fills the fields it has). */
+@Serializable
+data class NowPlaying(
+    val itemId: String,
+    val itemKind: String,
+    val episodeId: String? = null,
+    val sourceId: String? = null,
+    val itemTitle: String? = null,
+    val episodeTitle: String? = null,
+    val positionMs: Long? = null,
+    val durationMs: Long? = null,
+    val state: String = "stopped",
+    val updatedAt: String? = null,
+    val playing: Boolean? = null,
+) {
+    /** A channel: Listen along has no timeline to follow. */
+    val isLive: Boolean get() = itemKind == ItemCard.KIND_LIVE
+}
+
+/** The TV's timeline: `positionMs` as of `atMs` (server clock), advancing at `rate` while `playing`. */
+@Serializable
+data class Anchor(val positionMs: Long, val atMs: Long, val playing: Boolean, val rate: Double = 1.0)
+
+/** `GET …/devices/:id/now`: [seq] is bumped on every now-playing write; [anchor] is null for a channel or nothing. */
+@Serializable
+data class NowResponse(
+    val online: Boolean = false,
+    val serverNowMs: Long,
+    val seq: Long = 0,
+    val nowPlaying: NowPlaying? = null,
+    val anchor: Anchor? = null,
+)
+
+/** A Listen along link's timing: companion = rate · tv + offsetMs; `updatedAt` null = defaults, nothing stored. */
+@Serializable
+data class LinkTiming(val offsetMs: Long = 0, val rate: Double = 1.0, val language: String? = null, val updatedAt: String? = null)
+
+/** A source's languages (null: unknown, as for the `pasted` candidate). */
+@Serializable
+data class CandidateLanguages(val audio: List<String>? = null, val subtitles: List<String>? = null)
+
+/** A source Listen along may play; `type` `direct`, `adapter` or `pasted` (clients skip types they do not know). */
+@Serializable
+data class CompanionCandidate(
+    val sourceId: String,
+    val type: String = "direct",
+    val kind: String? = null,
+    val label: String? = null,
+    val languages: CandidateLanguages = CandidateLanguages(),
+    val current: Boolean = false,
+    val supported: Boolean = true,
+    val reason: String? = null,
+    val link: LinkTiming = LinkTiming(),
+)
+
+/** `GET …/devices/:id/companion`: what the TV plays and the candidates (none for a channel). */
+@Serializable
+data class CompanionResponse(val nowPlaying: NowPlaying? = null, val candidates: List<CompanionCandidate> = emptyList())
+
+/** `POST …/devices/:id/companion/resolve`; [language]: the audio language to pick inside the stream. */
+@Serializable
+data class CompanionResolveRequest(val episodeId: String, val sourceId: String, val language: String? = null)
+
+/** [serverDateMs]: the answer's `Date` header, as in [ResolveResponse]. */
+@Serializable
+data class CompanionResolveResponse(
+    val episodeId: String,
+    val sourceId: String,
+    val media: Media,
+    val languages: CandidateLanguages = CandidateLanguages(),
+    val expiresAt: String? = null,
+    val link: LinkTiming = LinkTiming(),
+    @Transient val serverDateMs: Long? = null,
+)
+
+/** `PUT /admin/companion/links/:episodeId/:sourceId`. */
+@Serializable
+data class LinkUpdate(val offsetMs: Long, val rate: Double, val language: String? = null)
+
+/** A link as the server stored it. */
+@Serializable
+data class StoredLink(
+    val episodeId: String,
+    val sourceId: String,
+    val offsetMs: Long,
+    val rate: Double,
+    val language: String? = null,
+    val updatedAt: String? = null,
+)
+
+@Serializable
+data class LinkResponse(val link: StoredLink)
+
+/** `POST …/links/:episodeId/:sourceId/copy-to-item`: how many other episodes got the same timing, and which. */
+@Serializable
+data class CopyToItemResponse(val updated: Int, val episodeIds: List<String> = emptyList())
 
 @Serializable
 internal data class ErrorBody(val error: String = "unknown")
