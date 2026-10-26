@@ -80,6 +80,15 @@
     <string name="about_update_available">Güncelleme var</string>
     <string name="about_up_to_date">Güncel</string>
     <string name="settings_install_update">Güncellemeyi kur</string>
+    <string name="settings_connect_phone">Telefon bağla</string>
+
+    <!-- Telefon bağla -->
+    <string name="phone_instructions">Bunu telefonun kamerasıyla okutun ya da izle companion uygulamasını açıp kodu girin</string>
+    <string name="phone_connected">%1$s bağlandı</string>
+    <string name="phone_connected_unnamed">Telefon bağlandı</string>
+    <string name="phone_failed">Telefon bağlanamadı</string>
+    <string name="phone_qr_description">Telefon bağlamak için QR kod</string>
+    <string name="phone_back_hint">Geri: ana ekran</string>
 
     <!-- Update -->
     <string name="update_overline">Yeni sürüm</string>

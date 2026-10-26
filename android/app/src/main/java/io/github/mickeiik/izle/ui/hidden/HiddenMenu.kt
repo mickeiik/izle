@@ -107,6 +107,7 @@ fun HiddenMenu(
                             Triple(SettingsEntry.ServerAddress, R.string.settings_server, about.server),
                             Triple(SettingsEntry.Language, R.string.settings_language, language),
                             Triple(SettingsEntry.PairAgain, R.string.settings_pair_again, null),
+                            Triple(SettingsEntry.ConnectPhone, R.string.settings_connect_phone, null),
                             // Last, so the focus never starts on it.
                             MenuPlan.installUpdateVersion(about.updateVersion, menu.fromPlayer)
                                 ?.let { Triple(SettingsEntry.InstallUpdate, R.string.settings_install_update, it) },

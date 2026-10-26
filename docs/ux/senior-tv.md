@@ -153,8 +153,26 @@ its rows ending at the safe margin; the focused row has the tiles' white border.
 | Start over | shows (not channels) | plays the episode OK would play from the beginning (in the player: seeks to 0) |
 | Audio language | player, ≥ 2 audio tracks | Automatic (the owner's preference) or a specific track, for this playback |
 | Subtitles | player | Off or one of the stream's subtitle tracks, for this playback |
-| Settings | always | Server address (back to the address screen), Language (Automatic → Türkçe → English), Pair again; Install update (with the version) while the server offers a newer one, as the owner's command (not in the player's menu) |
+| Settings | always | Server address (back to the address screen), Language (Automatic → Türkçe → English), Pair again, [Connect a phone](#connect-a-phone); Install update (with the version) while the server offers a newer one, as the owner's command (not in the player's menu) |
 | About | always | app version, TV name, server, catalog and catalog build; "Update available" with the version, or "Up to date" |
+
+### Connect a phone
+
+Hidden menu → Settings → **Connect a phone** gives a phone running izle companion the owner's access (no
+confirmation anywhere: being in front of the TV is the proof). Like Server address, it ends what was playing. The TV
+asks the server for an invite and shows, full screen: a QR code (black on white, a 4-module quiet zone, about 45 % of
+the screen's height) of `<server address>/connect#<invite>`, the 6-digit code as "483 920" in 96 sp, "Scan this with
+the phone's camera, or open izle companion and enter the code", and the server address in 24 sp. Nothing takes the
+focus.
+
+- A phone claims the invite: "<phone name> connected" for 3 s, then Home.
+- The invite expires (the server's 410, or 5 minutes on the TV's clock), or the server no longer knows it (404): Home.
+- Back, HOME or standby: Home at once; the long poll stops with the screen (the invite expires on the server).
+- The server unreachable or refusing the invite (429 included), or an error answer to the long poll: "The server cannot
+  be reached." or "Could not connect a phone" for 5 s, then Home. A lost long poll is tried again after 5 s with the
+  same code, within the 5 minutes.
+- As on the pairing and update screens, owner commands answer `ignored`, `not_ready` (messages are not shown), and the
+  Menu key and holding OK do nothing.
 
 ### First run
 
