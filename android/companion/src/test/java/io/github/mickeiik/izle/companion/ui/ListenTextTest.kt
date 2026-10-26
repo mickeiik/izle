@@ -18,7 +18,7 @@ class ListenTextTest {
         CompanionCandidate(sourceId = sourceId, type = type, kind = kind, label = label, languages = CandidateLanguages(audio), current = current)
 
     @Test
-    fun candidateOptionsAsTheAdminPageButDashAndTsArePlayable() {
+    fun candidateOptionsAsTheAdminPageButDashAndTsArePlayableAndALinkFoundOnThisPhone() {
         val options = candidateOptions(
             listOf(
                 source("hls-multi-audio", listOf("en", "it"), label = "Unified", current = true, kind = "hls"),
@@ -38,9 +38,11 @@ class ListenTextTest {
                 CandidateOption("silent", null, "silent · no dialogue", "hls"),
                 CandidateOption("mystery", null, "mystery", null),
                 CandidateOption("dash", null, "dash · Deutsch (de)", "dash"),
+                CandidateOption("pasted", null, "a link found on this phone", null),
             ),
             options,
         )
+        assertEquals("pasted\u0000", options.last().key)
         assertEquals("hls-multi-audio\u0000it", options[1].key)
         assertEquals("fr-dub\u0000", options[2].key)
     }
@@ -111,6 +113,10 @@ class ListenTextTest {
         )
         assertEquals("Could not start: The source could not be resolved right now.", endedText(EndReason.Failed, "no_playable_source"))
         assertEquals("Could not start: SocketTimeoutException", endedText(EndReason.Failed, "SocketTimeoutException"))
+        assertEquals(
+            "The link looks expired or obtained from another address: its playlist is far shorter than the episode. Find a new link.",
+            endedText(EndReason.LinkExpired, null),
+        )
         assertEquals("No other episode has that source.", copiedText(0))
         assertEquals("Timing copied to 1 other episode.", copiedText(1))
         assertEquals("Timing copied to 7 other episodes.", copiedText(7))

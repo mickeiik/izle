@@ -55,6 +55,12 @@
     <string name="nudge_plus">+50 ms</string>
     <string name="nudge_hint">for your earphones\' delay; remembered on this phone</string>
 
+    <!-- A link found on this phone (the pasted option) -->
+    <string name="found_link_none">No link yet</string>
+    <string name="found_link_ready">A link is ready</string>
+    <string name="find_link">Find a link</string>
+    <string name="find_new_link">Find a new link</string>
+
     <!-- The notification -->
     <string name="notification_channel">Listen along</string>
     <string name="notification_stop">Stop</string>
