@@ -346,6 +346,54 @@ class ListenSessionTest {
     }
 
     @Test
+    fun aLinkHandedOverWhileStartingIsTheOneThatLoads() = listen {
+        api.tv(600_000)
+        session.start(FOUND, LinkTiming(), 0)
+        session.useFoundLink(LINK2) // before the clock samples
+        assertEquals(ListenPhase.Starting, state.phase)
+        assertEquals(LINK2, state.target?.foundLink)
+        settle()
+        assertEquals(ListenPhase.Listening, state.phase)
+        val load = engine.loads.single()
+        assertEquals(LINK2.url, load.media.url)
+        assertEquals(LINK2.headers, load.media.headers)
+        assertEquals(LINK2, state.target?.foundLink)
+        assertTrue(api.resolves.isEmpty())
+    }
+
+    @Test
+    fun aLinkHandedOverWhileStartingACatalogSourceLoadsWithoutAResolve() = listen {
+        api.tv(600_000)
+        session.start(TARGET, LinkTiming(), 0)
+        session.useFoundLink(LINK)
+        settle()
+        assertEquals(ListenPhase.Listening, state.phase)
+        assertTrue(api.resolves.isEmpty())
+        assertEquals(LINK.url, engine.loads.single().media.url)
+        assertEquals(PASTED_SOURCE_ID, state.target?.sourceId)
+        assertNull(state.target?.language)
+        assertEquals(LINK, state.target?.foundLink)
+    }
+
+    @Test
+    fun aLinkHandedOverDuringTheStartsResolveReplacesTheCatalogSource() = listen {
+        api.tv(600_000)
+        api.resolveAnswer = { session.useFoundLink(LINK); answer(it) }
+        session.start(TARGET, LinkTiming(), 0)
+        settle()
+        assertEquals(ListenPhase.Listening, state.phase)
+        assertEquals(1, api.resolves.size)
+        assertEquals(2, engine.loads.size)
+        assertEquals(LINK.url, engine.loads.last().media.url)
+        assertEquals(LINK.headers, engine.loads.last().media.headers)
+        assertEquals(PASTED_SOURCE_ID, state.target?.sourceId)
+        assertEquals(LINK, state.target?.foundLink)
+        run(20_000)
+        assertEquals("synced", state.syncLabel)
+        assertEquals(2, engine.loads.size)
+    }
+
+    @Test
     fun aFoundLinkEndsWhenTheTvMovesToAnotherEpisode() = listen {
         listening(FOUND)
         api.tv(5_000, episodeId = "s1e2")
