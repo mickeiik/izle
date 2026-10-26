@@ -8,6 +8,7 @@
 //   bin/izle-server.js               checks the Node.js version, then runs the bundle
 //   server/dist/izle-server.js       the bundle
 //   server/admin/                    admin page
+//   server/connect/                  the /connect page a phone opens from the QR code a TV shows
 //   server/schema/                   catalog bundle and resolve-result JSON Schemas (from contract/schema)
 //   sample-catalog/                  the sample bundle served when no catalog is configured
 //   deploy/                          example config, systemd units (server, backup) and Caddyfile (from docs/deploy)
@@ -57,6 +58,7 @@ async function copyFiles(/** @type {string} */ from, /** @type {string} */ into,
 }
 
 await copyFiles(at("server", "admin"), to("server", "admin"), (n) => /\.(html|js|css|svg)$/.test(n));
+await copyFiles(at("server", "connect"), to("server", "connect"), (n) => /\.(html|js|css)$/.test(n));
 await copyFiles(at("server", "admin", "vendor"), to("server", "admin", "vendor"), (n) => n.endsWith(".js") || n.startsWith("LICENSE-") || n === "README.md");
 await copyFiles(at("contract", "schema"), to("server", "schema"), (n) => n.endsWith(".schema.json"));
 await copyFiles(at("sample-catalog"), to("sample-catalog"), (n) => n.endsWith(".json") || n === "NOTICE.md");

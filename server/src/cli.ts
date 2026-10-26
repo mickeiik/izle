@@ -30,11 +30,15 @@ const USAGE = `usage:
   izle-server token create <name…> --scope <${SCOPES.join("|")}> [--config <file>]
                                                    create an access token for an agent or an app and print its
                                                    secret, once (read: see everything; control: also send commands;
-                                                   manage: also change home lists, cursors, settings, marks;
-                                                   companion: read, and Listen along's resolves and links)
+                                                   manage: also change home lists, cursors, settings, marks)
   izle-server token list [--config <file>]         list the access tokens
   izle-server token revoke <id> [--config <file>]  revoke one; requests with it answer 401 from now on
                                                    token talks to the running server, like pair (--server <url>)
+  izle-server phone list [--config <file>]         list the phones connected from a TV (hidden menu, Settings,
+                                                   Connect a phone), which have owner access
+  izle-server phone disconnect <id> [--config <file>]
+                                                   cut a phone off (a lost one): its requests answer 401 from now
+                                                   on; phone talks to the running server, like pair (--server <url>)
   izle-server backup <file> [--config <file>] [--force]
                                                    copy the database to <file> (mode 0600) while the server keeps
                                                    running; --force replaces an existing file
@@ -176,6 +180,33 @@ async function token(config: ServerConfig, args: string[], serverUrl: string | u
   return 0;
 }
 
+/** `phone list` / `phone disconnect <id>`. */
+async function phone(config: ServerConfig, args: string[], serverUrl: string | undefined): Promise<number> {
+  const [sub, ...rest] = args;
+  if (sub !== "list" && sub !== "disconnect") return usage(`phone needs "list" or "disconnect <id>"`);
+  const api = adminApi(config, serverUrl);
+  if (sub === "list") {
+    if (rest.length > 0) return fail("phone list takes no arguments");
+    type Phone = { id: string; name: string; createdAt: string; lastUsedAt: string | null; deviceId: string | null };
+    const [{ phones }, { devices }] = await Promise.all([
+      api<{ phones: Phone[] }>("GET", "/phones", 200),
+      api<{ devices: Array<{ id: string; name: string }> }>("GET", "/devices", 200),
+    ]);
+    if (phones.length === 0) out("no phones; connect one from a TV: hidden menu, Settings, Connect a phone");
+    const tvName = (id: string | null) => devices.find((d) => d.id === id)?.name;
+    for (const p of phones) {
+      const via = p.deviceId === null ? "through a deleted TV" : `through "${tvName(p.deviceId) ?? p.deviceId}"`;
+      out(`${p.id}  ${p.lastUsedAt ? `last used ${p.lastUsedAt}` : "never used"}  ${via}  ${p.name}`);
+    }
+    return 0;
+  }
+  const [id, ...extra] = rest;
+  if (!id || extra.length > 0) return fail("phone disconnect needs the phone's id (see phone list)");
+  await api("DELETE", `/phones/${encodeURIComponent(id)}`, 204, { 404: `no phone with the id ${id}` });
+  out(`disconnected phone ${id}; its requests answer 401 from now on`);
+  return 0;
+}
+
 function adminToken(config: ServerConfig, opts: { rotate: boolean; link: boolean; base: string | undefined }): number {
   const { token, source } = loadAdminToken(config, stderrLog, { rotate: opts.rotate });
   if (source === "env") process.stderr.write("note: IZLE_ADMIN_TOKEN is set and overrides the token file\n");
@@ -231,12 +262,15 @@ export async function main(argv: string[]): Promise<number> {
     return usage((err as Error).message);
   }
   const { values, positionals } = parsed;
-  const maxPositionals = command === "pair" || command === "token" ? Infinity : command === "backup" ? 1 : 0;
+  const maxPositionals = command === "pair" || command === "token" || command === "phone" ? Infinity : command === "backup" ? 1 : 0;
   if (positionals.length > maxPositionals) return usage(`unexpected argument "${positionals[maxPositionals]}"`);
-  const owners = [["rotate", "admin-token"], ["link", "admin-token"], ["base", "admin-token"], ["server", "pair, token"], ["scope", "token"], ["force", "backup"]] as const;
+  const owners = [["rotate", "admin-token"], ["link", "admin-token"], ["base", "admin-token"], ["server", "pair, token, phone"], ["scope", "token"], ["force", "backup"]] as const;
   for (const [flag, owner] of owners) {
     const commands = owner.split(", ");
-    if (values[flag] !== undefined && !commands.includes(command ?? "")) return usage(`--${flag} belongs to the ${commands.join(" and ")} command${commands.length > 1 ? "s" : ""}`);
+    if (values[flag] !== undefined && !commands.includes(command ?? "")) {
+      const names = commands.length > 1 ? `${commands.slice(0, -1).join(", ")} and ${commands.at(-1)} commands` : `${commands[0]} command`;
+      return usage(`--${flag} belongs to the ${names}`);
+    }
   }
   for (const flag of ["base", "server"] as const) {
     const url = values[flag];
@@ -260,6 +294,7 @@ export async function main(argv: string[]): Promise<number> {
     if (command === "admin-token") return adminToken(config, { rotate: values.rotate ?? false, link: values.link ?? false, base: values.base });
     if (command === "pair") return await pair(config, positionals, values.server);
     if (command === "token") return await token(config, positionals, values.server, values.scope);
+    if (command === "phone") return await phone(config, positionals, values.server);
     if (command !== undefined) return usage(`unknown command "${command}"`);
 
     const server = await startServer({ config, log });

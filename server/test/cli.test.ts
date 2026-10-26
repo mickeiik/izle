@@ -85,7 +85,7 @@ test("cli: pair pending / pair approve drive the running server's admin API", as
   await refused(["pair", "cancel", "12ab", ...cfg], 1, /one 6-digit code/);
   await refused(["pair", "cancel", "123456", "654321", ...cfg], 1, /one 6-digit code/);
   await refused(["pair", "approve", "123456", "--config", s.config.configPath!, "--server", "ftp://x"], 2);
-  await refused(["admin-token", "--config", s.config.configPath!, "--server", s.base], 2, /--server belongs to the pair and token commands/);
+  await refused(["admin-token", "--config", s.config.configPath!, "--server", s.base], 2, /--server belongs to the pair, token and phone commands/);
   await refused(["check-resolver", "extra", "--config", s.config.configPath!], 2, undefined, "stray arguments are still refused");
 
   // A wrong admin token is reported, not retried.
@@ -133,6 +133,48 @@ test("cli: token create / list / revoke drive the running server's admin API; th
   assert.equal(r.out, `revoked access token ${id}; requests with it answer 401 from now on\n`);
   assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: secret })).status, 401);
   assert.ok(!s.logs.some((l) => l.includes(secret)), "the server never logged the secret");
+});
+
+test("cli: phone list / disconnect drive the running server's admin API, without the admin page", async (t) => {
+  const s = await testServer(t);
+  const cfg = ["--config", s.config.configPath!, "--server", s.base];
+  let r = await run(["phone", "list", ...cfg]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.out, "no phones; connect one from a TV: hidden menu, Settings, Connect a phone\n");
+  await refused(["phone", "frob", ...cfg], 2, /phone needs "list" or "disconnect <id>"/);
+  await refused(["phone", "list", "extra", ...cfg], 1, /phone list takes no arguments/);
+  await refused(["phone", "disconnect", ...cfg], 1, /needs the phone's id/);
+  await refused(["phone", "list", "--scope", "read", ...cfg], 2, /--scope belongs to the token command/);
+
+  const tv = await s.pair("Salon");
+  const connect = async (name: string) => {
+    const invite = (await s.call("POST", "/api/v1/tv/phones/invite", { token: tv.token })).json.invite;
+    return (await s.call("POST", "/api/v1/phones/claim", { body: { invite, name } })).json;
+  };
+  const kept = await connect("Tablet");
+  const lost = await connect("Pixel 8");
+  assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: lost.secret })).status, 200);
+  await s.admin("DELETE", `/devices/${tv.deviceId}`);
+  r = await run(["phone", "list", ...cfg]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.out, `${kept.phone.id}  never used  through a deleted TV  Tablet\n${lost.phone.id}  last used 2026-10-10T12:00:00.000Z  through a deleted TV  Pixel 8\n`);
+  assert.ok(!r.out.includes("izph_"), "the list never has secrets");
+
+  await refused(["phone", "disconnect", "nope", ...cfg], 1, /no phone with the id nope/);
+  r = await run(["phone", "disconnect", lost.phone.id, ...cfg]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.out, `disconnected phone ${lost.phone.id}; its requests answer 401 from now on\n`);
+  assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: lost.secret })).status, 401);
+  assert.equal((await s.call("GET", "/api/v1/admin/devices", { token: kept.secret })).status, 200);
+});
+
+test("cli: phone list names the TV a phone connected through", async (t) => {
+  const s = await testServer(t);
+  const tv = await s.pair("Salon");
+  const invite = (await s.call("POST", "/api/v1/tv/phones/invite", { token: tv.token })).json.invite;
+  const { phone } = (await s.call("POST", "/api/v1/phones/claim", { body: { invite, name: "Pixel 8" } })).json;
+  const r = await run(["phone", "list", "--config", s.config.configPath!, "--server", s.base]);
+  assert.equal(r.out, `${phone.id}  never used  through "Salon"  Pixel 8\n`);
 });
 
 test("cli: admin-token prints the token, with --link the sign-in link and its QR code; --rotate is refused under IZLE_ADMIN_TOKEN", async (t) => {

@@ -2,6 +2,7 @@
 // header), and a long-poll for clients that cannot keep a stream open (MCP tools, scripts).
 
 import type { Context, Hono } from "hono";
+import type { Actor } from "../../actor.ts";
 import type { StreamingApi } from "hono/utils/stream";
 import { streamSSE, type SSEStreamingApi } from "hono/streaming";
 import { limiterKey } from "../../clientip.ts";
@@ -24,8 +25,22 @@ function passes(e: Event, f: ReturnType<typeof filters>): boolean {
 
 /** Frames a stream may have waiting for a reader that fell behind before it is closed (it reconnects and replays). */
 export const MAX_QUEUED_FRAMES = 2 * EVENT_REPLAY_MAX;
-/** Event streams open at once per access token, and for the owner token per client address. */
+/** Event streams open at once per access token or phone, and for the owner token per client address. */
 export const MAX_ADMIN_STREAMS = 10;
+
+/**
+ * How a caller's credential can go while its stream or long-poll is open: an access token revoked, a phone
+ * disconnected. Null for the owner token.
+ */
+function revocable(ctx: AppContext, actor: Actor): { key: string; onGone(close: () => void): () => void; exists(): boolean } | null {
+  if (actor.type === "token") {
+    return { key: `token ${actor.tokenId}`, onGone: (close) => ctx.tokens.onRevoke(actor.tokenId, close), exists: () => ctx.tokens.exists(actor.tokenId) };
+  }
+  if (actor.type === "phone") {
+    return { key: `phone ${actor.phoneId}`, onGone: (close) => ctx.phones.onRemove(actor.phoneId, close), exists: () => ctx.phones.exists(actor.phoneId) };
+  }
+  return null;
+}
 
 /** One writer for a stream's frames, in order; aborts the stream once more than `max` wait instead of queuing on. */
 export function frameWriter(stream: Pick<StreamingApi, "abort" | "aborted">, max: number): (frame: () => Promise<unknown>) => void {
@@ -52,10 +67,9 @@ export function registerAdminEvents(app: Hono<Env>, ctx: AppContext, clientKey: 
     const f = filters(c);
     // Without `after` the caller is finding out where to start following from.
     if (after === undefined) return c.json({ events: [], last: eventLog.lastId(), gap: false });
-    // A token revoked while its long-poll waits gets the 401 any later request would.
-    const actor = c.get("actor");
+    // A token revoked (a phone disconnected) while its long-poll waits gets the 401 any later request would.
     const revoked = new AbortController();
-    const unregister = actor.type === "token" ? ctx.tokens.onRevoke(actor.tokenId, () => revoked.abort()) : () => {};
+    const unregister = revocable(ctx, c.get("actor"))?.onGone(() => revoked.abort()) ?? (() => {});
     try {
       const page = await eventLog.wait({ after, limit, ...f }, waitSec * 1000, AbortSignal.any([c.req.raw.signal, revoked.signal]));
       if (revoked.signal.aborted) throw unauthorized("izle-admin", "missing or invalid admin token");
@@ -69,9 +83,8 @@ export function registerAdminEvents(app: Hono<Env>, ctx: AppContext, clientKey: 
   app.get("/api/v1/admin/events/stream", (c) => {
     const after = intQuery(c.req.query("after") ?? c.req.header("Last-Event-ID"), "after", 0);
     const f = filters(c);
-    const actor = c.get("actor");
-    const tokenId = actor.type === "token" ? actor.tokenId : null;
-    const key = tokenId === null ? `owner ${limiterKey(clientKey(c))}` : `token ${tokenId}`;
+    const credential = revocable(ctx, c.get("actor"));
+    const key = credential?.key ?? `owner ${limiterKey(clientKey(c))}`;
     const count = open.get(key) ?? 0;
     if (count >= MAX_ADMIN_STREAMS) throw tooManyRequests("too_many_streams", "too many event streams are open with this token", 5);
     open.set(key, count + 1);
@@ -91,14 +104,14 @@ export function registerAdminEvents(app: Hono<Env>, ctx: AppContext, clientKey: 
       // Replay and subscription in one synchronous run (the store is synchronous): no event missed or sent twice.
       const replay = after === undefined ? null : eventLog.replay({ after, limit: EVENT_REPLAY_MAX, ...f });
       const unsubscribe = eventLog.subscribe((e) => void (passes(e, f) && send(e)));
-      // Revoking the stream's access token ends it at once; each ping checks again.
-      const unregister = tokenId === null ? () => {} : ctx.tokens.onRevoke(tokenId, () => stream.abort());
+      // Revoking the stream's access token (disconnecting its phone) ends it at once; each ping checks again.
+      const unregister = credential?.onGone(() => stream.abort()) ?? (() => {});
       try {
         write(() => stream.write("retry: 5000\n\n"));
         if (replay?.gap) write(() => stream.writeSSE({ event: "gap", data: JSON.stringify({ oldest: replay.oldest }) }));
         for (const e of replay?.events ?? []) send(e);
         ping = setInterval(() => {
-          if (tokenId !== null && !ctx.tokens.exists(tokenId)) stream.abort();
+          if (credential && !credential.exists()) stream.abort();
           else write(() => stream.write(": ping\n\n"));
         }, ctx.pingMs);
         await closed;

@@ -28,10 +28,12 @@ import { registerAdminHistory } from "./http/routes/admin-history.ts";
 import { registerAdminHome } from "./http/routes/admin-home.ts";
 import { registerAdminStatus } from "./http/routes/admin-status.ts";
 import { registerAdminTokens } from "./http/routes/admin-tokens.ts";
+import { registerPhones } from "./http/routes/phones.ts";
 import { registerTv } from "./http/routes/tv.ts";
 import { registerStatic } from "./http/static.ts";
 import { createLogger, type Logger } from "./log.ts";
 import { PairingService, type PairingOptions } from "./pairing.ts";
+import { PhoneService } from "./phones.ts";
 import { PlayingService, VIEWING_SWEEP_MS } from "./playing.ts";
 import { ProblemService } from "./problems.ts";
 import { ProxyService, type ProxyProblem } from "./proxy.ts";
@@ -102,8 +104,9 @@ export function createContext(opts: StartOptions, { log, now, store, catalog, re
   const modules = { config, store, catalog, browse, events, notifier, eventLog, resolver, sessions, problems, viewings, appUpdates, home, playing, proxy, checker, log, now };
   return {
     ...modules, checks: new CheckService(modules), tv: new TvService(modules), companion: new CompanionService(modules), pairing: new PairingService(modules, opts.pairing),
-    devices: new DeviceService(modules), commands: new CommandService(modules), tokens: new TokenService(store, log, now),
+    devices: new DeviceService(modules), commands: new CommandService(modules), tokens: new TokenService(store, log, now), phones: new PhoneService(modules),
     resolverModule, adminToken, pingMs: opts.pingMs ?? 20_000, fetch: fetchUpstream, adminUiDir: fileURLToPath(new URL("../admin", import.meta.url)),
+    connectDir: fileURLToPath(new URL("../connect", import.meta.url)),
   };
 }
 
@@ -140,6 +143,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
     registerTv(app, ctx, (c) => limiterKey(clientKey(c)));
     registerAdmin(app, ctx);
     registerAdminTokens(app, ctx);
+    registerPhones(app, ctx, (c) => limiterKey(clientKey(c)));
     registerAdminApp(app, ctx);
     registerAdminEvents(app, ctx, clientKey);
     registerAdminStatus(app, ctx);
@@ -162,6 +166,7 @@ export async function startServer(opts: StartOptions): Promise<RunningServer> {
 
   const housekeeping = setInterval(() => {
     ctx.pairing.purge();
+    ctx.phones.purge();
     ctx.commands.purge();
     ctx.problems.purge();
     ctx.checker.purge();

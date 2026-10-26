@@ -8,8 +8,19 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 
 ### Added
 
-- **izle companion, an Android phone app for Listen along (first step).** It pairs with the server through a
-  `companion` access token, lets the owner pick the TV, shows what it plays with the Listen along candidates and
+- **Connect a phone from the TV.** The TV's hidden menu has **Settings → Connect a phone** (Turkish: **Telefon
+  bağla**): it shows a QR code and a 6-digit code for 5 minutes. Scanning the QR code with the phone's camera opens
+  izle companion, which connects at once; in the app, the server's address and the code do the same. A connected phone
+  gets owner access, like the admin page: being in front of the TV, which the owner approved at pairing, is the
+  security, so there is no other step. The phones are listed on the admin page's **Access** view and in the app, each
+  with **Disconnect** (the phone loses access at once); `izle-server phone list` and `izle-server phone disconnect
+  <id>` do the same from the server's shell, so a lost phone can be cut off without the admin page. The companion app
+  no longer takes an access token (debug builds still accept one, for development). For clients of the API: the
+  routes `POST`/`GET /api/v1/tv/phones/invite`, `POST /api/v1/phones/claim`, `GET /api/v1/admin/phones` and
+  `DELETE /api/v1/admin/phones/:id`, the page `/connect`, `izph_` phone secrets at the owner level, the events
+  `phone.connected` and `phone.disconnected`, and the actor type `phone`.
+- **izle companion, an Android phone app for Listen along (first step).** It connects from a TV (see **Connect a
+  phone from the TV**), lets the owner pick the TV, shows what it plays with the Listen along candidates and
   their timing, and plays a candidate from the catalog bundle through the server proxy, in sync with the TV, as a
   foreground service (it keeps playing with the screen off). Releases now carry `izle-companion-X.Y.Z.apk` (signed
   with the TV app's release key) and `izle-companion-X.Y.Z-debug.apk`, sideloaded on the owner's phone; a server's TV
@@ -29,11 +40,6 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 - **Listen along's resolve takes the media kinds the client plays.** `POST …/companion/resolve` accepts an optional
   `kinds` (among `hls`, `dash`, `mp4`, `ts`); without it the server answers HLS and MP4 only, as before. A client that
   lists them gets MPEG-TS through the proxy and DASH direct instead of `400 unsupported_media`.
-- **A `companion` access token scope, for Listen along from the coming companion app.** It allows everything `read`
-  does, plus Listen along's resolve and link routes, which needed the admin token until now; it allows no command,
-  home screen or other change. Create one under **Access** on the admin page or with
-  `izle-server token create <name> --scope companion`. `control` and `manage` tokens are unchanged: they still cannot
-  use Listen along's resolve and link routes.
 - **Listen along keeps the timing of a link found on the phone.** For a release the owner finds in a browser, which
   is short-lived and bound to the address that fetched it, the companion app will play the link on the phone itself;
   the link never reaches the server. The server stores only its offset, rate and language, for any episode, under

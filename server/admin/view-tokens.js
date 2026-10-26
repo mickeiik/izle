@@ -1,10 +1,57 @@
 // @ts-check
-// Access tokens for apps and agents: the tokens with their scope, created and revoked here. A new token's secret is
-// shown once, right after it is created, and never again (the server keeps only its hash).
+// Who else has access: the owner's phones (connected from a TV, with owner access), disconnected here, and the access
+// tokens for apps and agents, with their scope, created and revoked here. A new token's secret is shown once, right
+// after it is created, and never again (the server keeps only its hash).
 
 import { api, attempt } from "./api.js";
 import { actionButton, card, chip, h, keyedRows, onSubmit, options, page, slot, toast } from "./dom.js";
-import { SCOPES, formatRelative, scopeLabel } from "./lib.js";
+import { watchEvents } from "./events.js";
+import { SCOPES, formatRelative, phoneEventText, phoneLine, scopeLabel } from "./lib.js";
+
+/** The phones connected from a TV: each with the TV it came through and its dates, and Disconnect. @param {import("./router.js").Scope} scope */
+function phonesCard(scope) {
+  const listSlot = slot();
+  const list = h("div", { class: "list" });
+  const empty = h("p", { class: "muted" }, "No phone yet. A phone connects from a TV: on the TV, open the hidden menu, then Settings → Connect a phone, and scan the code with the phone (it needs the izle companion app).");
+  /** @type {Array<{ id: string, name: string }>} */
+  let devices = [];
+
+  const phoneRow = (/** @type {any} */ p) => {
+    const name = h("strong");
+    const meta = h("div", { class: "muted" });
+    const disconnect = actionButton("Disconnect", { class: "danger", "data-control": "disconnect", "aria-label": `Disconnect ${p.name}` }, async () => {
+      if (!confirm(`Disconnect “${p.name}”? It loses access at once; to use it again, connect it from a TV.`)) return;
+      const r = await attempt(() => api("DELETE", `/phones/${encodeURIComponent(p.id)}`), `“${p.name}” disconnected.`);
+      if (r.ok) await job.now();
+    });
+    return {
+      element: h("div", { class: "row" }, h("div", { class: "grow" }, name, meta), disconnect),
+      /** @param {any} next */
+      update(next) {
+        name.textContent = next.name;
+        meta.textContent = phoneLine(next, devices);
+      },
+    };
+  };
+  const rows = keyedRows(list, (/** @type {any} */ p) => p.id, phoneRow);
+
+  const refresh = async () => {
+    const [{ phones }, tvs] = await Promise.all([scope.read("/phones"), scope.read("/devices")]);
+    devices = tvs.devices;
+    rows.set(phones);
+    empty.hidden = phones.length > 0;
+    listSlot.show(empty, list);
+  };
+  const job = scope.poll(refresh, 30_000, (err) => listSlot.fail(err, job.now, "Could not load the phones."));
+  watchEvents(scope, { types: ["phone.", "device.removed", "device.updated"] }, (e) => {
+    const text = phoneEventText(e);
+    if (text && e.type === "phone.connected") toast(text, "info");
+    void job.now();
+  });
+
+  const intro = "A phone with the izle companion app has full access, like this page. It connects from a TV; disconnect a lost one here, or from the server's shell: izle-server phone list, phone disconnect <id>.";
+  return card({ title: "Phones", intro }, listSlot.element);
+}
 
 /** @param {import("./router.js").Scope} scope */
 export function tokensView(scope) {
@@ -91,9 +138,10 @@ export function tokensView(scope) {
 
   const intro = "A token lets an app or an AI agent use the admin API with one scope. Revoking it cuts it off at once. The same from the server's shell: izle-server token create <name> --scope <scope>, token list, token revoke <id>.";
   return page(
-    { title: "Access tokens" },
+    { title: "Access" },
     scope.note,
-    card({ title: "Tokens", intro }, listSlot.element),
+    phonesCard(scope),
+    card({ title: "Access tokens", intro }, listSlot.element),
     card("New token", secretBox, form),
   );
 }

@@ -25,8 +25,8 @@ test("a new database gets every migration and opens again as it is; one written 
   raw.close();
   assert.deepEqual(tables, [
     "access_tokens", "app_apk", "catalog_builds", "catalog_seen", "catalog_seen_items", "commands", "companion_links", "devices", "episode_marks",
-    "events", "home_entries", "home_sections", "item_cursor", "now_playing", "pair_codes", "problems", "progress", "source_checks", "viewing_ranges",
-    "viewings",
+    "events", "home_entries", "home_sections", "item_cursor", "now_playing", "pair_codes", "phone_invites", "phones", "problems", "progress",
+    "source_checks", "viewing_ranges", "viewings",
   ]);
   const b = new Store(file);
   assert.deepEqual([b.schemaVersion, b.getDevice("d1")?.name], [MIGRATIONS.length, "TV"]);
@@ -143,27 +143,43 @@ test("commands carry who sent them; access tokens: one per secret, by id, hash o
   s.close();
 });
 
-test("the companion scope: a database from before it keeps its tokens, and takes companion tokens once migrated", async () => {
+test("phones replace the unreleased companion scope: its tokens go, the others stay, and the scope is refused again", async () => {
   const file = path.join(await tempDir(), "izle.db");
-  const rebuild = MIGRATIONS.findIndex((m) => m.includes("access_tokens_new"));
-  assert.ok(rebuild > 0);
+  const phones = MIGRATIONS.findIndex((m) => m.includes("CREATE TABLE phones"));
+  assert.ok(phones > 0);
   const old = new DatabaseSync(file);
-  old.exec(`${MIGRATIONS.slice(0, rebuild).join(";")}; PRAGMA user_version = ${rebuild}`);
+  old.exec(`${MIGRATIONS.slice(0, phones).join(";")}; PRAGMA user_version = ${phones}`);
   const insert = "INSERT INTO access_tokens (id, name, scope, secret_hash, created_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?)";
   old.prepare(insert).run("tok000000001", "agent", "manage", "hash1", 7, 9);
-  assert.throws(() => old.prepare(insert).run("tok000000002", "phone", "companion", "hash2", 8, null), /CHECK/, "the old table refuses it");
+  old.prepare(insert).run("tok000000002", "phone", "companion", "hash2", 8, null);
   old.close();
 
   const s = new Store(file);
   assert.equal(s.schemaVersion, MIGRATIONS.length);
   const kept = { id: "tok000000001", name: "agent", scope: "manage" as const, createdAt: 7, lastUsedAt: 9 };
-  assert.deepEqual(s.getAccessTokenBy("secret_hash", "hash1"), kept);
-  const phone = { id: "tok000000002", name: "phone", scope: "companion" as const, createdAt: 8, lastUsedAt: null };
-  assert.deepEqual(s.insertAccessToken({ ...phone, secretHash: "hash2" }), phone);
-  assert.deepEqual(s.listAccessTokens(), [kept, phone]);
-  assert.throws(() => s.insertAccessToken({ ...phone, id: "tok000000003", name: "again", secretHash: "hash1" }), /UNIQUE/, "one secret, one token");
-  assert.throws(() => s.insertAccessToken({ ...phone, id: "tok000000003", secretHash: "hash3" }), /UNIQUE/, "one name, one token");
-  assert.throws(() => s.insertAccessToken({ ...phone, id: "tok000000003", name: "x", scope: "owner" as never, secretHash: "hash3" }), /CHECK/);
+  assert.deepEqual(s.listAccessTokens(), [kept], "the companion token is gone");
+  const again = { id: "tok000000003", name: "again", scope: "companion" as never, createdAt: 8, lastUsedAt: null, secretHash: "hash3" };
+  assert.throws(() => s.insertAccessToken(again), /CHECK/);
+  assert.throws(() => s.insertAccessToken({ ...again, scope: "read", secretHash: "hash1" }), /UNIQUE/, "one secret, one token");
+  assert.throws(() => s.insertAccessToken({ ...again, scope: "read", name: "agent" }), /UNIQUE/, "one name, one token");
+  s.close();
+});
+
+test("phones outlive the TV they connected through (its id becomes null); its invite goes with it", async () => {
+  const { s } = await storeWithDevice();
+  const phone = { id: "ph0000000001", name: "Pixel", deviceId: "d1", createdAt: 5, lastUsedAt: null };
+  assert.deepEqual(s.insertPhone({ ...phone, secretHash: "h1" }), phone);
+  assert.throws(() => s.insertPhone({ ...phone, id: "ph0000000002", secretHash: "h1" }), /UNIQUE/, "one secret, one phone");
+  s.setPhoneInvite({ deviceId: "d1", code: "123456", inviteHash: "i1", createdAt: 5, expiresAt: 10 });
+  assert.equal(s.getOpenPhoneInviteByCode("123456", 9)?.inviteHash, "i1");
+  assert.equal(s.getOpenPhoneInviteByCode("123456", 10), null, "expired");
+  s.setPhoneInvite({ deviceId: "d1", code: "654321", inviteHash: "i2", createdAt: 6, expiresAt: 11 });
+  assert.deepEqual([s.getPhoneInviteByHash("i1"), s.getPhoneInvite("d1")?.code], [null, "654321"], "a new invite replaces the TV's");
+  s.touchPhone(phone.id, 9);
+  assert.deepEqual(s.getPhoneBy("secret_hash", "h1"), { ...phone, lastUsedAt: 9 });
+  assert.equal(s.deleteDevice("d1"), true);
+  assert.deepEqual([s.listPhones().map((p) => p.deviceId), s.getPhoneInvite("d1")], [[null], null]);
+  assert.deepEqual([s.deletePhone(phone.id), s.deletePhone(phone.id), s.listPhones()], [true, false, []]);
   s.close();
 });
 

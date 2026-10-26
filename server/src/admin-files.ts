@@ -10,5 +10,8 @@ export const ADMIN_FILES: Record<string, string> = {
   "icon.svg": "image/svg+xml",
 };
 
+/** The `/connect` page's files (`server/connect/`), which a phone opens from the QR code a TV shows. */
+export const CONNECT_FILES: Record<string, string> = { "connect.js": JS, "link.js": JS, "connect.css": "text/css; charset=utf-8" };
+
 /** Third-party files vendored under `server/admin/vendor/` (pinned builds; see the README there). */
 export const ADMIN_VENDOR_FILES: Record<string, string> = { "hls.min.js": JS };

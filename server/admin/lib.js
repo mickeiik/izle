@@ -1062,6 +1062,7 @@ export function formatDuration(ms) {
 export function actorLabel(actor) {
   if (!actor) return "";
   if (actor.type === "token") return `token “${actor.name}”`;
+  if (actor.type === "phone") return `phone “${actor.name}”`;
   return new Map([["owner", "the owner"], ["tv", "the TV"], ["server", "the server"]]).get(actor.type) ?? actor.type;
 }
 
@@ -1204,11 +1205,33 @@ export const SCOPES = /** @type {const} */ ([
   ["read", "Read", "sees the TVs, the catalog, the history and the events"],
   ["control", "Control", "read, and sends commands to the TVs (play, pause, a message)"],
   ["manage", "Manage", "control, and changes home screens, settings and the history's marks"],
-  ["companion", "Listen along", "read, and Listen along from the companion app: what the TV plays, resolves and links"],
 ]);
 
-/** `Read`, `Control`, `Manage`, `Listen along`; the scope itself when unknown. @param {string} scope */
+/** `Read`, `Control`, `Manage`; the scope itself when unknown. @param {string} scope */
 export const scopeLabel = (scope) => SCOPES.find(([s]) => s === scope)?.[1] ?? scope;
+
+/**
+ * What the Phones card says under a phone's name: the TV it connected through (a deleted one too), and its dates.
+ * @param {{ deviceId: string | null, createdAt: string, lastUsedAt: string | null }} phone
+ * @param {Array<{ id: string, name: string }>} devices @param {number} [now]
+ */
+export function phoneLine(phone, devices, now = Date.now()) {
+  const tv = phone.deviceId === null ? undefined : devices.find((d) => d.id === phone.deviceId);
+  const via = tv ? `connected through ${tv.name}` : "connected through a deleted TV";
+  return `${via} · created ${formatRelative(phone.createdAt, now)} · last used ${formatRelative(phone.lastUsedAt, now)}`;
+}
+
+/**
+ * An event about a phone, for a line of text (the Phones card's toast); null for any other event.
+ * @param {{ type: string, actor?: { type: string, name?: string, phoneId?: string } | null, data?: { phoneId?: string, name?: string } }} e
+ */
+export function phoneEventText(e) {
+  const name = `“${e.data?.name ?? "a phone"}”`;
+  if (e.type === "phone.connected") return `Phone ${name} connected.`;
+  if (e.type !== "phone.disconnected") return null;
+  const self = e.actor?.type === "phone" && e.actor.phoneId === e.data?.phoneId;
+  return `Phone ${name} disconnected by ${self ? "itself" : actorLabel(e.actor) || "someone"}.`;
+}
 
 // --- TV app updates ----------------------------------------------------------------------------------------------
 

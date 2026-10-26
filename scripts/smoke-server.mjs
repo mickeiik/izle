@@ -97,6 +97,14 @@ try {
   for (const name of adminFiles) if ((await call("GET", `/admin/${name}`)).res.status !== 200) unserved.push(`not served: ${name}`);
   check(adminFiles.includes("app.js"), `the admin page's ${adminFiles.length} files, hls.js included, are served`, unserved);
 
+  // The page a phone opens from the TV's QR code, and its files (the package copies server/connect/).
+  const connect = await call("GET", "/connect");
+  const connectOk = connect.res.status === 200 && connect.text.includes("connect/connect.js") && connect.res.headers.get("content-security-policy") === csp;
+  const connectFiles = (await readdir(path.join(ROOT, "server", "connect"))).filter((n) => /\.(js|css)$/.test(n));
+  const connectMissing = [];
+  for (const name of connectFiles) if ((await call("GET", `/connect/${name}`)).res.status !== 200) connectMissing.push(`not served: connect/${name}`);
+  check(connectOk && connectFiles.includes("connect.js"), `the /connect page and its ${connectFiles.length} files are served with the admin page's CSP`, connectMissing);
+
   const info = await call("GET", "/api/v1/admin/catalog", { token: admin });
   check(info.json?.id === "izle-sample" && info.json.server?.version === version, "the admin API answers with the catalog and server version");
 
@@ -128,6 +136,17 @@ try {
   const resolve = await call("POST", "/api/v1/tv/resolve", { token: tv, body: { episodeId: state.json.home[0].continue.episodeId } });
   check(resolve.res.status === 200 && /^https:\/\//.test(resolve.json.media?.url), "resolve returns the episode's stream");
 
+  const invite = await call("POST", "/api/v1/tv/phones/invite", { token: tv });
+  const claim = await call("POST", "/api/v1/phones/claim", { body: { code: invite.json?.code, name: "Smoke phone" } });
+  const phone = claim.json?.secret;
+  check(claim.res.status === 201 && /^izph_/.test(phone) && claim.json.deviceId === wait.json.deviceId, "a phone connects with the code the TV shows");
+  const claimed = await call("GET", "/api/v1/tv/phones/invite?wait=0", { token: tv });
+  check(claimed.json?.status === "claimed" && (await call("GET", "/api/v1/admin/tokens", { token: phone })).res.status === 200, "the TV sees it claimed; the phone has owner access");
+  const phones = await cli(["phone", "list", "--config", config, "--server", base]);
+  check(phones.includes(`${claim.json.phone.id}  last used`) && phones.includes('through "Smoke test"  Smoke phone'), "izle-server phone list lists it");
+  await cli(["phone", "disconnect", claim.json.phone.id, "--config", config, "--server", base]);
+  check((await call("GET", "/api/v1/admin/devices", { token: phone })).res.status === 401, "izle-server phone disconnect cuts it off");
+
   const backupFile = path.join(work, "izle-backup.db");
   const backup = await cli(["backup", backupFile, "--config", config]);
   const { DatabaseSync } = await import("node:sqlite");
@@ -147,7 +166,7 @@ try {
   server = null;
   const unexpected = stderr.split("\n").filter((l) => l.trim() && !/ExperimentalWarning: SQLite|--trace-warnings/.test(l));
   check(true, "nothing unexpected on stderr", unexpected);
-  const secrets = [admin, tv, start.json.pairToken];
+  const secrets = [admin, tv, start.json.pairToken, phone, invite.json.invite];
   check(!logs.some((l) => secrets.some((s) => JSON.stringify(l).includes(s))), "no token appears in the log");
   process.stdout.write(`smoke test passed for ${path.basename(tarball)}\n`);
 } catch (err) {

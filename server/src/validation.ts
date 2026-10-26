@@ -9,6 +9,7 @@ import type { DiagnosticsInput } from "./diagnostics.ts";
 import { HttpError } from "./errors.ts";
 import { HOME_COLUMNS, HOME_ROWS, SECTION_LAYOUTS, SECTION_TITLE_MAX, type ExpectedSection, type ItemMove, type SectionInput, type SectionLayout, type SectionPatch } from "./home.ts";
 import { PAIR_CODE } from "./pairing.ts";
+import { PHONE_CODE, type ClaimInput } from "./phones.ts";
 import { LIVE_REPORT_STATUSES, PROGRESS_REPORT_STATUSES } from "./playback.ts";
 import type { ProgressInput } from "./playing.ts";
 import { TV_PROBLEM_KINDS, type ProblemReportBody } from "./problems.ts";
@@ -43,6 +44,14 @@ export const devicePatchBody = ajv.compile<DevicePatch>({
 });
 
 export const tokenBody = ajv.compile<{ name: string; scope: Scope }>(object({ name: NAME, scope: { enum: SCOPES } }, ["name", "scope"]));
+
+/** A phone's claim: the invite from the QR code or the code the TV shows (exactly one), and the phone's name. */
+export const claimBody = ajv.compile<ClaimInput>({
+  oneOf: [
+    object({ invite: { type: "string", minLength: 1, maxLength: 128 }, name: { type: "string", maxLength: 200 } }, ["invite", "name"]),
+    object({ code: { type: "string", pattern: PHONE_CODE.source }, name: { type: "string", maxLength: 200 } }, ["code", "name"]),
+  ],
+});
 
 type Branch = { properties?: object; required?: string[] };
 

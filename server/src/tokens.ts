@@ -8,10 +8,10 @@ import { iso } from "./presenters.ts";
 import type { AccessToken, Store } from "./store.ts";
 
 /**
- * What an access token may do: `read`, `control` and `manage` each include the ones before them; `companion` is `read`
- * plus the Listen along routes (resolves and links). The owner token may do everything.
+ * What an access token may do: `read`, `control` and `manage` each include the ones before them. The owner token and
+ * the owner's phones may do everything.
  */
-export const SCOPES = ["read", "control", "manage", "companion"] as const;
+export const SCOPES = ["read", "control", "manage"] as const;
 
 export type Scope = (typeof SCOPES)[number];
 

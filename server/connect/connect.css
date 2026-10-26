@@ -1,0 +1,31 @@
+/* The /connect page: one large button on a phone. Served under `style-src 'self'`: no inline styles. */
+
+:root {
+  --bg: #f4f5f7; --surface: #ffffff; --text: #1b1e24; --muted: #576070;
+  --accent: #1d4e89; --accent-hover: #163d6c; --accent-text: #ffffff; --focus: var(--accent);
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  font-size: 18px;
+  line-height: 1.45;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111318; --surface: #1b1e25; --text: #e8eaee; --muted: #a3aab6;
+    --accent: #79b0ef; --accent-hover: #9cc4f4; --accent-text: #0b1f3a;
+  }
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+main { max-width: 30rem; margin: 0 auto; padding: 2rem 1rem; }
+h1 { display: flex; align-items: center; gap: 0.75rem; font-size: 1.75rem; line-height: 1.2; margin: 0 0 1.5rem; }
+p { margin: 0 0 1rem; }
+.muted { color: var(--muted); font-size: 0.9rem; }
+.button {
+  display: block; margin: 1.5rem 0; padding: 1.1rem 1rem; border-radius: 12px; text-align: center; text-decoration: none;
+  font-size: 1.25rem; font-weight: 600; background: var(--accent); color: var(--accent-text);
+}
+.button:hover { background: var(--accent-hover); }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }

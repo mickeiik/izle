@@ -13,7 +13,7 @@ const LEVELS: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40
 /** A key with one of these words (camelCase, snake_case or kebab-case) drops the whole value. */
 const SECRET_WORDS = new Set([
   "url", "urls", "uri", "href", "header", "headers", "authorization", "cookie", "cookies", "token", "tokens",
-  "ref", "refs", "config", "playlist", "password", "secret", "body",
+  "ref", "refs", "config", "playlist", "password", "secret", "secrets", "body", "invite", "invites",
 ]);
 
 /** `scheme://…`, or protocol-relative `//host…` (not preceded by a word character, `:` or `/`, as in a file path). */

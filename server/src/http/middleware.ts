@@ -1,6 +1,6 @@
 // What runs around every route: security headers and the access log, the API's cache and body limits, error
-// answers, and the token checks (device tokens on /tv; on /admin the owner token or an access token with the scope
-// the route needs, behind the sign-in throttle).
+// answers, and the token checks (device tokens on /tv; on /admin the owner token, a phone's secret (owner level) or an
+// access token with the scope the route needs, behind the sign-in throttle).
 
 import { getConnInfo } from "@hono/node-server/conninfo";
 import type { Context, Hono } from "hono";
@@ -8,7 +8,7 @@ import { bodyLimit } from "hono/body-limit";
 import { createMiddleware } from "hono/factory";
 import { HTTPException } from "hono/http-exception";
 import { routePath } from "hono/route";
-import { OWNER, type Actor } from "../actor.ts";
+import { OWNER, phoneActor, type Actor } from "../actor.ts";
 import { parseTvUserAgent } from "../app-updates.ts";
 import { bearerToken, secretsEqual, sha256 } from "../auth.ts";
 import { clientAddress, compileTrustedProxies, limiterKey } from "../clientip.ts";
@@ -18,6 +18,7 @@ import { sameApp } from "../devices.ts";
 import { HttpError, tooManyRequests, unauthorized } from "../errors.ts";
 import { RateLimiter } from "../ratelimit.ts";
 import { stopwatch } from "../stopwatch.ts";
+import { PHONE_SECRET_PREFIX } from "../phones.ts";
 import type { Device } from "../store.ts";
 import { ACCESS_TOKEN_PREFIX, type Scope } from "../tokens.ts";
 
@@ -26,15 +27,11 @@ export type Env = { Variables: { device: Device; actor: Actor } };
 
 type Required = Scope | "owner";
 
-/**
- * Who satisfies each requirement: `read`, `control` and `manage` nest; `companion` is `read` plus the Listen along
- * routes; the owner token satisfies everything.
- */
+/** Who satisfies each requirement: `read`, `control` and `manage` nest; the owner level (owner token, phone) everything. */
 const SATISFIED_BY: Record<Required, readonly Required[]> = {
-  read: ["read", "control", "manage", "companion", "owner"],
+  read: ["read", "control", "manage", "owner"],
   control: ["control", "manage", "owner"],
   manage: ["manage", "owner"],
-  companion: ["companion", "owner"],
   owner: ["owner"],
 };
 
@@ -47,23 +44,16 @@ const MANAGE_ROUTES = [
   "POST /catalog/reload", "PUT /app/apk", "DELETE /app/apk", "POST /app/check",
 ];
 
-/** The admin routes `companion` opens beyond `read`: Listen along resolves and links (its GETs are `read` routes). */
-const COMPANION_ROUTES = [
-  "POST /devices/:id/companion/resolve", "PUT /companion/links/:episodeId/:sourceId",
-  "POST /companion/links/:episodeId/:sourceId/copy-to-item",
-];
-
 /**
- * The scope an admin route needs: `read` for every GET but the access tokens', `control` for commands, `manage` for
- * MANAGE_ROUTES, `companion` for COMPANION_ROUTES, and the owner token for the rest (pairing approval, deleting a TV,
- * history deletions and adoption, diagnostics and check runs, the access tokens).
+ * The scope an admin route needs: `read` for every GET but the access tokens' and the phones', `control` for
+ * commands, `manage` for MANAGE_ROUTES, and the owner level for the rest (pairing approval, deleting a TV, history
+ * deletions and adoption, diagnostics and check runs, Listen along's resolves and links, the access tokens, phones).
  */
 function requiredScope(method: string, route: string): Required {
   const r = `${method} ${route.replace("/api/v1/admin", "")}`;
-  if (r === "GET /tokens") return "owner";
+  if (r === "GET /tokens" || r === "GET /phones") return "owner";
   if (r === "POST /devices/:id/commands") return "control";
   if (MANAGE_ROUTES.includes(r)) return "manage";
-  if (COMPANION_ROUTES.includes(r)) return "companion";
   return method === "GET" ? "read" : "owner";
 }
 
@@ -99,9 +89,11 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
     await next();
     // Route templates only: raw paths can carry tokens.
     const route = c.res.status === 404 && routePath(c, -1) === "*" ? "<unmatched>" : routePath(c, -1);
-    // An access token is logged by its id, under a key without the word "token" (which the redaction would drop).
+    // An access token or a phone is logged by its id, under a key without the word "token" (which the redaction
+    // would drop).
     const actor = c.get("actor");
-    const fields = { method: c.req.method, route, status: c.res.status, ms: ms(), deviceId: c.get("device")?.id, actorId: actor?.type === "token" ? actor.tokenId : undefined };
+    const actorId = actor?.type === "token" ? actor.tokenId : actor?.type === "phone" ? actor.phoneId : undefined;
+    const fields = { method: c.req.method, route, status: c.res.status, ms: ms(), deviceId: c.get("device")?.id, actorId };
     // Health checks and the proxy's steady stream of segment requests only show up at debug level.
     if (route === "/healthz" || (route.startsWith("/p/") && c.res.status < 400)) log.debug("request", fields);
     else log.info("request", fields);
@@ -143,8 +135,12 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
   // 429 on every admin request until the window ends, even with the right token, so the lockout tells a guesser
   // nothing. Never counted: successes, requests without a token, and tokens lacking the route's scope.
   const adminFailures = new RateLimiter(ADMIN_AUTH_MAX_FAILURES, ADMIN_AUTH_WINDOW_MS, ctx.now);
-  /** The owner, or an access token (told apart by its prefix); null for a wrong or revoked one. */
+  /** The owner, a phone or an access token (told apart by their prefixes); null for a wrong or revoked one. */
   const authenticate = (token: string): { actor: Actor; level: Required } | null => {
+    if (token.startsWith(PHONE_SECRET_PREFIX)) {
+      const p = ctx.phones.authenticate(token);
+      return p ? { actor: phoneActor(p), level: "owner" } : null;
+    }
     if (token.startsWith(ACCESS_TOKEN_PREFIX)) {
       const t = ctx.tokens.authenticate(token);
       return t ? { actor: { type: "token", tokenId: t.id, name: t.name }, level: t.scope } : null;
@@ -173,7 +169,7 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
     const route = routePath(c, -1);
     const required = route === "*" ? "read" : requiredScope(c.req.method, route);
     if (!SATISFIED_BY[required].includes(who.level)) {
-      throw new HttpError(403, "insufficient_scope", `this route needs the ${required === "owner" ? "owner token" : `${required} scope`}`, { required });
+      throw new HttpError(403, "insufficient_scope", `this route needs the ${required === "owner" ? "owner token or a phone" : `${required} scope`}`, { required });
     }
     await next();
   }));

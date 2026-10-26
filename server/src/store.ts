@@ -168,6 +168,28 @@ export interface AccessToken {
   lastUsedAt: number | null;
 }
 
+/** A phone connected from a TV, at owner level; only the hash of its secret is kept. */
+export interface Phone {
+  id: string;
+  name: string;
+  /** The TV it connected through; null once that TV is deleted. */
+  deviceId: string | null;
+  createdAt: number;
+  lastUsedAt: number | null;
+}
+
+/** The invite a TV shows to connect a phone (one per TV). */
+export interface PhoneInvite {
+  deviceId: string;
+  code: string;
+  inviteHash: string;
+  createdAt: number;
+  expiresAt: number;
+  claimedAt: number | null;
+  phoneId: string | null;
+  phoneName: string | null;
+}
+
 export interface StoredEvent {
   id: number;
   at: number;
@@ -350,6 +372,7 @@ const PATCHABLE = ["name", "uiLanguage", "preferredAudioLanguage", "subtitlesLan
 /** 0/1 columns, read as booleans. */
 const FLAGS = new Set(["autoplay_on_start", "wrapped", "playing", "baseline", "seen", "last_playing"]);
 const TOKEN_COLUMNS = "id, name, scope, created_at, last_used_at";
+const PHONE_COLUMNS = "id, name, device_id, created_at, last_used_at";
 const column = (key: string) => key.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
 const sqlValue = (v: unknown) => (typeof v === "boolean" ? Number(v) : v) as SQLInputValue;
 
@@ -695,6 +718,61 @@ export class Store {
 
   deleteAccessToken(id: string): boolean {
     return this.run("DELETE FROM access_tokens WHERE id = ?", id) > 0;
+  }
+
+  // --- phones --------------------------------------------------------------------------------------------------
+
+  insertPhone(p: Phone & { secretHash: string }): Phone {
+    return fromRow(this.insert("phones", p, undefined, ` RETURNING ${PHONE_COLUMNS}`)!);
+  }
+
+  getPhoneBy(key: "id" | "secret_hash", value: string): Phone | null {
+    return this.one(`SELECT ${PHONE_COLUMNS} FROM phones WHERE ${key} = ?`, [value]);
+  }
+
+  /** Every phone, oldest first. */
+  listPhones(): Phone[] {
+    return this.many(`SELECT ${PHONE_COLUMNS} FROM phones ORDER BY created_at, id`, []);
+  }
+
+  touchPhone(id: string, now: number): void {
+    this.run("UPDATE phones SET last_used_at = ? WHERE id = ?", now, id);
+  }
+
+  deletePhone(id: string): boolean {
+    return this.run("DELETE FROM phones WHERE id = ?", id) > 0;
+  }
+
+  /** Stores the TV's invite, replacing the one it had. */
+  setPhoneInvite(i: Pick<PhoneInvite, "deviceId" | "code" | "inviteHash" | "createdAt" | "expiresAt">): void {
+    this.insert("phone_invites", { ...i, claimedAt: null, phoneId: null, phoneName: null }, "device_id");
+  }
+
+  getPhoneInvite(deviceId: string): PhoneInvite | null {
+    return this.one("SELECT * FROM phone_invites WHERE device_id = ?", [deviceId]);
+  }
+
+  getPhoneInviteByHash(inviteHash: string): PhoneInvite | null {
+    return this.one("SELECT * FROM phone_invites WHERE invite_hash = ?", [inviteHash]);
+  }
+
+  /** The invite with this code that is neither claimed nor expired. */
+  getOpenPhoneInviteByCode(code: string, now: number): PhoneInvite | null {
+    return this.one("SELECT * FROM phone_invites WHERE code = ? AND claimed_at IS NULL AND expires_at > ?", [code, now]);
+  }
+
+  /** Whether an invite that has not expired (claimed or not) has this code. */
+  phoneInviteCodeTaken(code: string, now: number): boolean {
+    return this.get("SELECT 1 AS taken FROM phone_invites WHERE code = ? AND expires_at > ?", code, now) !== undefined;
+  }
+
+  claimPhoneInvite(deviceId: string, phone: { id: string; name: string }, now: number): void {
+    this.run("UPDATE phone_invites SET claimed_at = ?, phone_id = ?, phone_name = ? WHERE device_id = ?", now, phone.id, phone.name, deviceId);
+  }
+
+  /** Deletes invites that expired more than `graceMs` ago. */
+  purgePhoneInvites(now: number, graceMs: number): void {
+    this.run("DELETE FROM phone_invites WHERE expires_at <= ?", now - graceMs);
   }
 
   // --- events --------------------------------------------------------------------------------------------------
