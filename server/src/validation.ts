@@ -1,5 +1,5 @@
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
-import { ID_PATTERN, simplifySchemaErrors, type MediaKind } from "@izle/contract";
+import { ID_PATTERN, simplifySchemaErrors, MEDIA_KINDS } from "@izle/contract";
 import type { Context } from "hono";
 import { COMMAND_RESULTS, MAX_SEEK_DELTA_MS, MESSAGE_DURATION_SEC, MESSAGE_MAX_CHARS, PLAIN_COMMANDS, type CommandBody, type CommandResult } from "./commands.ts";
 import type { CompanionResolveInput, LinkInput } from "./companion.ts";
@@ -158,7 +158,6 @@ export const problemBody = ajv.compile<ProblemReportBody>(
   }, ["kind", "code"]),
 );
 
-const MEDIA_KINDS: readonly MediaKind[] = ["hls", "dash", "mp4", "ts"];
 const OFFSET_MS = { type: "integer", minimum: -21_600_000, maximum: 21_600_000 };
 const RATE = { type: "number", minimum: 0.5, maximum: 2 };
 

@@ -18,8 +18,9 @@ export const PASTED_SOURCE_ID = "pasted";
 /** Simplified BCP 47 language tag, e.g. "en", "tr", "pt-BR", "und". */
 export type LanguageTag = string;
 
-/** "ts" = progressive MPEG-TS over HTTP (for a channel, an endless response). */
-export type MediaKind = "hls" | "dash" | "mp4" | "ts";
+/** The media kinds a source can deliver; "ts" = progressive MPEG-TS over HTTP (for a channel, an endless response). */
+export const MEDIA_KINDS = ["hls", "dash", "mp4", "ts"] as const;
+export type MediaKind = (typeof MEDIA_KINDS)[number];
 
 export interface BundleManifest {
   format: "izle-bundle";

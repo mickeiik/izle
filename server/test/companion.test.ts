@@ -3,12 +3,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import path from "node:path";
+import { MEDIA_KINDS } from "@izle/contract";
 import { fixtureItems, fixtureManifest, listen, logged, publishBuild, tempDir, testServer, writeBundle, type Json } from "./helpers.ts";
 
 const PROXY_MP4 = /^\/p\/([A-Za-z0-9_-]{43})\/video\.mp4$/;
 const PROXY_HLS = /^\/p\/([A-Za-z0-9_-]{43})\/index\.m3u8$/;
 const PROXY_TS = /^\/p\/([A-Za-z0-9_-]{43})\/stream\.ts$/;
-const ALL_KINDS = ["hls", "dash", "mp4", "ts"];
 const REFERER = "https://site.example.test/";
 
 /** A local upstream: a plain MP4 anybody may fetch, and an HLS playlist and an MPEG-TS stream that need a Referer. */
@@ -273,7 +273,7 @@ test("a client that plays MPEG-TS and DASH: MPEG-TS through the proxy, DASH dire
   assert.equal((await as("POST", "/resolve", { episodeId: "dual.e3", sourceId: "tv-hls" })).status, 200);
   const before = (await now()).json;
 
-  const ts = await companion({ episodeId: "dual.e3", sourceId: "tr-ts", kinds: ALL_KINDS });
+  const ts = await companion({ episodeId: "dual.e3", sourceId: "tr-ts", kinds: MEDIA_KINDS });
   assert.equal(ts.status, 200, JSON.stringify(ts.json));
   assert.deepEqual([ts.json.media.kind, ts.json.sourceId, ts.json.episodeId], ["ts", "tr-ts", "dual.e3"]);
   const [, tsToken] = PROXY_TS.exec(ts.json.media.url) ?? [];
@@ -285,7 +285,7 @@ test("a client that plays MPEG-TS and DASH: MPEG-TS through the proxy, DASH dire
   assert.ok(!JSON.stringify(ts.json).includes(up.url) && !JSON.stringify(ts.json).includes(REFERER), "no upstream URL or header reaches the phone");
 
   // DASH is delivered direct (the proxy does not rewrite manifests), as the TV gets it.
-  const dash = await companion({ episodeId: "dual.e1", sourceId: "dash-only", kinds: ALL_KINDS });
+  const dash = await companion({ episodeId: "dual.e1", sourceId: "dash-only", kinds: MEDIA_KINDS });
   assert.equal(dash.status, 200, JSON.stringify(dash.json));
   assert.deepEqual([dash.json.media.kind, dash.json.media.url, dash.json.sourceId], ["dash", "https://dash.example.test/m.mpd", "dash-only"]);
   assert.ok(!("delivery" in dash.json));
@@ -295,7 +295,7 @@ test("a client that plays MPEG-TS and DASH: MPEG-TS through the proxy, DASH dire
   const mp4 = await companion({ episodeId: "dual.e1", sourceId: "fr-mp4", kinds: ["hls"] });
   assert.deepEqual([mp4.status, mp4.json.error, mp4.json.kind], [400, "unsupported_media", "mp4"]);
   assert.equal((await companion({ episodeId: "dual.e1", sourceId: "fr-mp4", kinds: ["hls", "mp4"] })).status, 200);
-  for (const kinds of [[], ["avi"], "hls", ["hls", "hls"], [...ALL_KINDS, "hls"], null]) {
+  for (const kinds of [[], ["avi"], "hls", ["hls", "hls"], [...MEDIA_KINDS, "hls"], null]) {
     const r = await companion({ episodeId: "dual.e1", sourceId: "fr-mp4", kinds });
     assert.deepEqual([r.status, r.json.error], [400, "invalid_request"], JSON.stringify(kinds));
   }
