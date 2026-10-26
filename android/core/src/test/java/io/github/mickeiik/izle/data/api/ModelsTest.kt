@@ -198,6 +198,106 @@ class ModelsTest {
     }
 
     @Test
+    fun decodesTheDeviceList() {
+        val devices = ApiJson.decodeFromString(
+            DevicesResponse.serializer(),
+            """{"devices": [
+                 {"id": "tv1", "name": "Living room", "status": "active", "online": true, "createdAt": "c", "lastSeenAt": "2026-10-26T10:00:00.000Z",
+                  "settings": {}, "effective": {}, "problems": {"recent": 0, "lastAt": null}, "app": null, "homeCount": 3},
+                 {"id": "tv2", "name": "Kitchen", "status": "pending", "online": null, "lastSeenAt": null}
+               ], "future": 1}""",
+        ).devices
+        assertEquals(AdminDevice("tv1", "Living room", "active", online = true, lastSeenAt = "2026-10-26T10:00:00.000Z"), devices[0])
+        assertEquals(AdminDevice("tv2", "Kitchen", "pending", online = false, lastSeenAt = null), devices[1])
+    }
+
+    @Test
+    fun decodesNowWithAndWithoutAnAnchor() {
+        val now = ApiJson.decodeFromString(NowResponse.serializer(), NOW)
+        assertTrue(now.online)
+        assertEquals(1_791_979_200_000L, now.serverNowMs)
+        assertEquals(12L, now.seq)
+        val playing = now.nowPlaying!!
+        assertEquals("show.e2", playing.episodeId)
+        assertEquals("dub", playing.sourceId)
+        assertEquals(61_000L, playing.positionMs)
+        assertEquals(1_500_000L, playing.durationMs)
+        assertEquals("playing", playing.state)
+        assertEquals(true, playing.playing)
+        assertFalse(playing.isLive)
+        assertEquals(Anchor(positionMs = 61_000, atMs = 1_791_979_199_400, playing = true, rate = 1.0), now.anchor)
+
+        // A channel: no anchor, no position; and before the TV played anything, nothing at all.
+        val channel = ApiJson.decodeFromString(
+            NowResponse.serializer(),
+            """{"online": false, "serverNowMs": 5, "seq": 3, "anchor": null, "extra": [],
+                "nowPlaying": {"itemId": "news-24", "itemKind": "live", "episodeId": null, "sourceId": "main", "itemTitle": "News 24",
+                               "episodeTitle": null, "positionMs": null, "durationMs": null, "state": "starting", "updatedAt": "u", "playing": null}}""",
+        )
+        assertNull(channel.anchor)
+        assertTrue(channel.nowPlaying!!.isLive)
+        assertNull(channel.nowPlaying!!.positionMs)
+        assertNull(channel.nowPlaying!!.playing)
+        val idle = ApiJson.decodeFromString(NowResponse.serializer(), """{"online": true, "serverNowMs": 5, "seq": 0, "nowPlaying": null, "anchor": null}""")
+        assertNull(idle.nowPlaying)
+        assertEquals(0L, idle.seq)
+    }
+
+    @Test
+    fun decodesTheCompanionCandidates() {
+        val c = ApiJson.decodeFromString(CompanionResponse.serializer(), COMPANION)
+        assertEquals("Caminandes", c.nowPlaying?.itemTitle)
+        assertEquals(1_500_000L, c.nowPlaying?.durationMs)
+        assertNull("not in this route", c.nowPlaying?.positionMs)
+        val (dub, adapter, dash, pasted) = c.candidates
+        assertEquals(
+            CompanionCandidate(
+                "dub", "direct", "hls", "German dub", CandidateLanguages(listOf("de"), emptyList()), current = false, supported = true,
+                link = LinkTiming(1_500, 1.0427, "de", "2026-10-14T11:00:00.000Z"),
+            ),
+            dub,
+        )
+        assertEquals("adapter", adapter.type)
+        assertNull(adapter.kind)
+        assertTrue(adapter.current)
+        assertEquals("defaults, nothing stored", LinkTiming(), adapter.link)
+        assertFalse(dash.supported)
+        assertEquals("dash", dash.reason)
+        assertEquals(
+            CompanionCandidate("pasted", "pasted", null, null, CandidateLanguages(null, null), link = LinkTiming(-250, 1.0, null, "t")),
+            pasted,
+        )
+        // A channel: no candidates.
+        val channel = ApiJson.decodeFromString(
+            CompanionResponse.serializer(),
+            """{"nowPlaying": {"itemId": "news-24", "itemKind": "live", "state": "playing"}, "candidates": []}""",
+        )
+        assertTrue(channel.nowPlaying!!.isLive)
+        assertEquals(emptyList<CompanionCandidate>(), channel.candidates)
+    }
+
+    @Test
+    fun companionRequestsOmitNulls() {
+        assertEquals(
+            """{"episodeId":"show.e2","sourceId":"dub"}""",
+            ApiJson.encodeToString(CompanionResolveRequest.serializer(), CompanionResolveRequest("show.e2", "dub")),
+        )
+        assertEquals(
+            """{"offsetMs":1500,"rate":1.0427,"language":"de"}""",
+            ApiJson.encodeToString(LinkUpdate.serializer(), LinkUpdate(1_500, 1.0427, "de")),
+        )
+        val resolved = ApiJson.decodeFromString(
+            CompanionResolveResponse.serializer(),
+            """{"episodeId": "show.e2", "sourceId": "dub", "media": {"kind": "hls", "url": "/p/tok/index.m3u8"},
+                "languages": {"audio": null, "subtitles": null}, "expiresAt": null,
+                "link": {"offsetMs": 0, "rate": 1, "language": null, "updatedAt": null}, "more": true}""",
+        )
+        assertEquals(CandidateLanguages(), resolved.languages)
+        assertEquals(LinkTiming(), resolved.link)
+        assertNull(resolved.serverDateMs)
+    }
+
+    @Test
     fun parsesEvents() {
         assertEquals(ServerEvent.State(8), ServerEvent.parse("state", """{"version":8}"""))
         // The owner removed the stored APK: the TV checks `/tv/app` again like for any other app event.
@@ -220,6 +320,38 @@ class ModelsTest {
 
     private companion object {
         const val POSTER = "\"posterUrl\": \"/assets/f3f9.jpg\""
+
+        val NOW = """
+            {
+              "online": true, "serverNowMs": 1791979200000, "seq": 12,
+              "nowPlaying": {
+                "itemId": "caminandes", "itemKind": "series", "episodeId": "show.e2", "sourceId": "dub", "itemTitle": "Caminandes",
+                "episodeTitle": "Gran Dillama", "positionMs": 61000, "durationMs": 1500000, "state": "playing",
+                "updatedAt": "2026-10-14T11:59:59.400Z", "playing": true, "viewingId": "v1"
+              },
+              "anchor": { "positionMs": 61000, "atMs": 1791979199400, "playing": true, "rate": 1, "next": 0 }
+            }
+        """.trimIndent()
+
+        val COMPANION = """
+            {
+              "nowPlaying": { "itemId": "caminandes", "itemKind": "series", "episodeId": "show.e2", "sourceId": "multi", "itemTitle": "Caminandes",
+                              "episodeTitle": "Gran Dillama", "durationMs": 1500000, "state": "playing" },
+              "candidates": [
+                { "sourceId": "dub", "type": "direct", "kind": "hls", "label": "German dub", "languages": { "audio": ["de"], "subtitles": [] },
+                  "current": false, "supported": true, "reason": null,
+                  "link": { "offsetMs": 1500, "rate": 1.0427, "language": "de", "updatedAt": "2026-10-14T11:00:00.000Z" } },
+                { "sourceId": "multi", "type": "adapter", "kind": null, "label": null, "languages": { "audio": null, "subtitles": null },
+                  "current": true, "supported": true, "reason": null,
+                  "link": { "offsetMs": 0, "rate": 1, "language": null, "updatedAt": null } },
+                { "sourceId": "hd", "type": "direct", "kind": "dash", "label": "HD", "languages": { "audio": ["en"], "subtitles": null },
+                  "current": false, "supported": false, "reason": "dash", "link": { "offsetMs": 0, "rate": 1, "language": null, "updatedAt": null } },
+                { "sourceId": "pasted", "type": "pasted", "kind": null, "label": null, "languages": { "audio": null, "subtitles": null },
+                  "current": false, "supported": true, "reason": null, "unknown": "x",
+                  "link": { "offsetMs": -250, "rate": 1, "language": null, "updatedAt": "t" } }
+              ]
+            }
+        """.trimIndent()
 
         val STATE = """
             {

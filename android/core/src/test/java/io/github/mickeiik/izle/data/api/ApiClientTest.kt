@@ -136,6 +136,79 @@ class ApiClientTest {
     }
 
     @Test
+    fun devicesAndCompanionAreReadWithTheAccessToken() = runBlocking<Unit> {
+        server.enqueue(json(200, """{"devices":[{"id":"tv1","name":"Living room","status":"active","online":true,"lastSeenAt":"x","homeCount":3}]}"""))
+        server.enqueue(json(200, COMPANION))
+        val api = client()
+        assertEquals(listOf(AdminDevice("tv1", "Living room", "active", online = true, lastSeenAt = "x")), api.devices().devices)
+        takeRequest("GET", "/api/v1/admin/devices")
+        val companion = api.companion("tv 1/a")
+        assertEquals("show.e2", companion.nowPlaying?.episodeId)
+        assertEquals(listOf("dub", "pasted"), companion.candidates.map { it.sourceId })
+        // An id is one path segment, whatever it contains.
+        takeRequest("GET", "/api/v1/admin/devices/tv%201%2Fa/companion")
+    }
+
+    @Test
+    fun nowAsksForTheNextWriteOnTheLongPollClient() = runBlocking<Unit> {
+        val short = OkHttpClient.Builder().readTimeout(200, TimeUnit.MILLISECONDS).build()
+        val long = OkHttpClient.Builder().readTimeout(5, TimeUnit.SECONDS).build()
+        val api = ApiClient(server.url("/"), "device-token", short, long)
+        val slow = { body: String -> json(200, body).newBuilder().headersDelay(600, TimeUnit.MILLISECONDS).build() }
+        server.enqueue(json(200, NOW))
+        val now = api.now("tv1")
+        assertEquals(7L, now.seq)
+        assertEquals(1_000L, now.anchor?.positionMs)
+        val first = takeRequest("GET", "/api/v1/admin/devices/tv1/now")
+        assertNull("no seq: the current row", first.url.queryParameter("seq"))
+        assertEquals("0", first.url.queryParameter("wait"))
+        server.enqueue(slow(NOW))
+        assertEquals(7L, api.now("tv1", seq = 7, waitSec = 25).seq)
+        val poll = takeRequest("GET", "/api/v1/admin/devices/tv1/now")
+        assertEquals("7", poll.url.queryParameter("seq"))
+        assertEquals("25", poll.url.queryParameter("wait"))
+        server.enqueue(slow(NOW))
+        failsWith<IOException> { api.now("tv1", seq = 7) } // no wait: the ordinary client, a read timeout
+    }
+
+    @Test
+    fun companionResolveWaitsLongAndCarriesTheServersClock() = runBlocking<Unit> {
+        val short = OkHttpClient.Builder().readTimeout(200, TimeUnit.MILLISECONDS).build()
+        val long = OkHttpClient.Builder().readTimeout(5, TimeUnit.SECONDS).build()
+        val api = ApiClient(server.url("/"), "device-token", short, long)
+        server.enqueue(
+            json(200, COMPANION_RESOLVE).newBuilder()
+                .addHeader("Date", "Wed, 14 Oct 2026 12:00:00 GMT")
+                .headersDelay(600, TimeUnit.MILLISECONDS)
+                .build(),
+        )
+        val r = api.companionResolve("tv1", CompanionResolveRequest("show.e2", "dub", language = "de"))
+        assertEquals(Media("hls", "/p/tok/index.m3u8"), r.media)
+        assertEquals(listOf("de", "en"), r.languages.audio)
+        assertEquals(LinkTiming(1_500, 1.0427, "de", "2026-10-14T11:00:00.000Z"), r.link)
+        assertEquals(1_791_979_200_000L, r.serverDateMs)
+        val request = takeRequest("POST", "/api/v1/admin/devices/tv1/companion/resolve")
+        assertTrue(request.headers["Content-Type"]!!.startsWith("application/json"))
+        assertEquals("""{"episodeId":"show.e2","sourceId":"dub","language":"de"}""", request.body?.utf8())
+    }
+
+    @Test
+    fun linksArePutAndCopiedToTheItem() = runBlocking<Unit> {
+        server.enqueue(
+            json(200, """{"link":{"episodeId":"show.e2","sourceId":"pasted","offsetMs":-250,"rate":1.0,"language":null,"updatedAt":"t"}}"""),
+        )
+        server.enqueue(json(200, """{"updated":2,"episodeIds":["show.e1","show.e3"]}"""))
+        val api = client()
+        val stored = api.putLink("show/e2", "pasted", LinkUpdate(-250, 1.0)).link
+        assertEquals(StoredLink("show.e2", "pasted", -250, 1.0, null, "t"), stored)
+        val put = takeRequest("PUT", "/api/v1/admin/companion/links/show%2Fe2/pasted")
+        assertTrue(put.headers["Content-Type"]!!.startsWith("application/json"))
+        assertEquals("""{"offsetMs":-250,"rate":1.0}""", put.body?.utf8())
+        assertEquals(CopyToItemResponse(2, listOf("show.e1", "show.e3")), api.copyLinkToItem("show.e2", "dub"))
+        assertEquals("", takeRequest("POST", "/api/v1/admin/companion/links/show.e2/dub/copy-to-item").body?.utf8().orEmpty())
+    }
+
+    @Test
     fun errorAnswersBecomeApiExceptions() = runBlocking {
         server.enqueue(json(403, """{"error":"not_allowed","message":"playback of this episode is not allowed"}"""))
         server.enqueue(MockResponse.Builder().code(429).addHeader("Retry-After", "42").body("""{"error":"rate_limited"}""").build())
@@ -223,6 +296,14 @@ class ApiClientTest {
     }
 
     private companion object {
+        const val COMPANION = """{"nowPlaying":{"itemId":"show","itemKind":"series","episodeId":"show.e2","state":"playing"},""" +
+            """"candidates":[{"sourceId":"dub","type":"direct","kind":"hls"},{"sourceId":"pasted","type":"pasted","kind":null}]}"""
+        const val NOW = """{"online":true,"serverNowMs":1791979200000,"seq":7,""" +
+            """"nowPlaying":{"itemId":"show","itemKind":"series","episodeId":"show.e2","state":"playing","playing":true},""" +
+            """"anchor":{"positionMs":1000,"atMs":1791979199000,"playing":true,"rate":1}}"""
+        const val COMPANION_RESOLVE = """{"episodeId":"show.e2","sourceId":"dub","media":{"kind":"hls","url":"/p/tok/index.m3u8"},""" +
+            """"languages":{"audio":["de","en"],"subtitles":[]},"expiresAt":"2026-10-14T12:30:00.000Z",""" +
+            """"link":{"offsetMs":1500,"rate":1.0427,"language":"de","updatedAt":"2026-10-14T11:00:00.000Z"}}"""
         const val STATE = """{"version":3,"device":{"id":"d","name":"TV"},"catalog":{"id":"c","buildId":"b","name":"n"},"home":[]}"""
         const val RESOLVE = """{"sessionId":"s","sourceId":"a","media":{"kind":"hls","url":"/p/x/index.m3u8"},""" +
             """"item":{"id":"m","kind":"movie","title":"M"},"episode":{"id":"m.film"}}"""
