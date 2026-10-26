@@ -119,6 +119,19 @@ class ApiClient(
     /** Streamed by [io.github.mickeiik.izle.update.ApkDownloader]. */
     fun apkRequest(): Request = authorize(Request.Builder().url(url("api/v1/tv/app/apk"))).build()
 
+    /** "Connect a phone": a new invite for this TV (the previous one stops working). */
+    suspend fun phoneInvite(): PhoneInvite =
+        exchange(authorize(Request.Builder().url(url("api/v1/tv/phones/invite")).post(EMPTY_BODY)).build()).decode(PhoneInvite.serializer())
+
+    /** Long-polls this TV's latest invite (on longPollHttp): `open`, `claimed`, `expired` (410) or `not_found` (404). */
+    suspend fun phoneInviteWait(waitSec: Int = 25): PhoneInviteStatus {
+        val url = url("api/v1/tv/phones/invite").newBuilder().addQueryParameter("wait", waitSec.toString()).build()
+        val raw = exchange(authorize(Request.Builder().url(url)).build(), longPollHttp)
+        if (raw.status == 410) return PhoneInviteStatus(PhoneInviteStatus.EXPIRED)
+        if (raw.status == 404) return PhoneInviteStatus(PhoneInviteStatus.NOT_FOUND)
+        return raw.decode(PhoneInviteStatus.serializer())
+    }
+
     suspend fun devices(): DevicesResponse = get(url("api/v1/admin/devices"), DevicesResponse.serializer())
 
     suspend fun companion(deviceId: String): CompanionResponse =

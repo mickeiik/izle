@@ -84,6 +84,15 @@
     <string name="about_update_available">Update available</string>
     <string name="about_up_to_date">Up to date</string>
     <string name="settings_install_update">Install update</string>
+    <string name="settings_connect_phone">Connect a phone</string>
+
+    <!-- Connect a phone -->
+    <string name="phone_instructions">Scan this with the phone\'s camera, or open izle companion and enter the code</string>
+    <string name="phone_connected">%1$s connected</string>
+    <string name="phone_connected_unnamed">Phone connected</string>
+    <string name="phone_failed">Could not connect a phone</string>
+    <string name="phone_qr_description">QR code to connect a phone</string>
+    <string name="phone_back_hint">Back: Home</string>
 
     <!-- Update -->
     <string name="update_overline">New version</string>
