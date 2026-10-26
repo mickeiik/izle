@@ -4,7 +4,7 @@
 // reserved source id PASTED_SOURCE_ID, which a bundle source should not have (one that has it anyway is served as that
 // source, and no pasted candidate is added for its episode).
 
-import { PASTED_SOURCE_ID, type Episode } from "@izle/contract";
+import { PASTED_SOURCE_ID, type Episode, type MediaKind } from "@izle/contract";
 import type { CatalogService, EpisodeRef } from "./catalog.ts";
 import { HttpError } from "./errors.ts";
 import { requireEpisode, requireEpisodeSource } from "./lookup.ts";
@@ -22,6 +22,8 @@ export interface CompanionResolveInput {
   episodeId: string;
   sourceId: string;
   language?: string | null;
+  /** The media kinds the client plays; absent: HLS and MP4 (the admin page). */
+  kinds?: MediaKind[];
 }
 
 /** A link as the admin API shows it: the stored values, or the defaults (no offset, same speed). */
@@ -100,7 +102,8 @@ export class CompanionService {
     const links = new Map(this.s.store.listCompanionLinks(this.s.catalog.catalogId, episode.id).map((l) => [l.sourceId, l]));
     const sources = episode.sources.map((s) => {
       const kind = s.type === "direct" ? s.media.kind : null;
-      // A browser plays neither DASH (not proxied) nor MPEG-TS; an adapter that answers either is refused on resolve.
+      // For the admin page: a browser plays neither DASH (not proxied) nor MPEG-TS. A resolve that does not list them in
+      // its `kinds` (the page's does not) refuses them, also when an adapter answers either.
       const reason = kind === "dash" || kind === "ts" ? kind : null;
       const link = linkJson(links.get(s.id) ?? null);
       const current = s.id === n.sourceId;
@@ -116,12 +119,15 @@ export class CompanionService {
     return { nowPlaying, candidates: [...sources, ...pasted] };
   }
 
-  /** The forced source, always proxied, without touching the TV's now-playing row or playback session. */
+  /**
+   * The forced source, proxied (DASH direct: the proxy does not rewrite manifests) and only of a kind the client plays,
+   * without touching the TV's now-playing row or playback session.
+   */
   async resolve(device: Device, input: CompanionResolveInput, signal?: AbortSignal) {
     const { ref } = requireEpisodeSource(this.s.catalog, input.episodeId, input.sourceId);
     const episodeId = ref.episode.id;
     const forced = { episodeId, sourceId: input.sourceId };
-    const r = await this.s.resolver.resolve(device.id, input.language ?? null, forced, signal, { scope: "companion" });
+    const r = await this.s.resolver.resolve(device.id, input.language ?? null, forced, signal, { scope: "companion", kinds: input.kinds });
     const { source, media, languages, expiresAt } = r;
     return { episodeId, sourceId: source.id, media, languages, expiresAt, link: this.link(episodeId, source.id) };
   }

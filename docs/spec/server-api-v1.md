@@ -616,10 +616,14 @@ Nothing changes on the TV.
   `offsetMs` (companion position when the TV is at 0, ±6 h), `rate` (companion seconds per TV second, 0.5–2; a PAL
   transfer against a film-rate source is 1.0427) and `language` (audio language to pick inside the stream, or null).
   The companion target is `rate · tv + offsetMs`. Earphone latency is a per-phone nudge kept in the browser.
-- **Companion media from the catalog is always proxied** (`/p/<token>/…`, under the owner key
-  `companion:<deviceId>` with its own two-session limit), so the page only loads same-origin media (plus `blob:`
-  object URLs when hls.js feeds the element through Media Source Extensions). DASH and MPEG-TS are refused. A
-  companion resolve never writes now playing, creates no TV playback session and never penalizes a source for the TV.
+- **Companion media from the catalog is proxied** (`/p/<token>/…`, under the owner key `companion:<deviceId>` with
+  its own two-session limit), so the page only loads same-origin media (plus `blob:` object URLs when hls.js feeds
+  the element through Media Source Extensions). A resolve answers only the media kinds its request's `kinds` lists
+  (absent: `["hls", "mp4"]`, what the page plays); another kind is refused (`400 unsupported_media` with `kind`). A
+  client that lists them (the companion app) gets MPEG-TS through the proxy (`/p/<token>/stream.ts`) and DASH
+  direct, its upstream URL as the TV gets it, since the proxy does not rewrite manifests (DASH that needs upstream
+  headers is not served, as for the TV). A companion resolve never writes now playing, creates no TV playback
+  session and never penalizes a source for the TV.
 - **Channels are not covered** (no timeline to sync to): while a channel plays, `GET …/companion` answers `nowPlaying`
   with `itemKind: "live"` and `candidates: []`; the other routes take episodes only.
 - **A link found on the phone** (the reserved source id `pasted`, which a bundle source SHOULD NOT use, see the
@@ -642,13 +646,13 @@ Nothing changes on the TV.
 | Route | Body | Response |
 |---|---|---|
 | `GET /api/v1/admin/devices/:id/companion` | | `{"nowPlaying": {itemId, itemKind, episodeId, sourceId, itemTitle, episodeTitle, durationMs, state} \| null, "candidates": [{sourceId, type, kind, label, languages, current, supported, reason, link}]}`: the sources of the episode now playing (`kind` for direct sources; `supported: false` with `reason` `dash` or `ts`, which the browser cannot play), then the `pasted` entry (`type: "pasted"`), each with its stored link or the defaults; clients skip a candidate whose `type` they do not know; no URLs, headers or refs |
-| `POST /api/v1/admin/devices/:id/companion/resolve` | `{"episodeId", "sourceId", "language"?}` | `{"episodeId", "sourceId", "media": {"kind", "url": "/p/…"}, "languages", "expiresAt", "link"}` |
+| `POST /api/v1/admin/devices/:id/companion/resolve` | `{"episodeId", "sourceId", "language"?, "kinds"?}`; `kinds`: the media kinds the client plays, 1–4 unique values among `"hls"`, `"dash"`, `"mp4"`, `"ts"` (absent: `["hls", "mp4"]`) | `{"episodeId", "sourceId", "media": {"kind", "url"}, "languages", "expiresAt", "link"}`; `url` is `/p/…`, for DASH the upstream URL |
 | `PUT /api/v1/admin/companion/links/:episodeId/:sourceId` | `{"offsetMs", "rate", "language"?}` | `{"link": {episodeId, sourceId, offsetMs, rate, language, updatedAt}}`; `:sourceId` a source of the episode, or `pasted` for any episode |
 | `POST /api/v1/admin/companion/links/:episodeId/:sourceId/copy-to-item` | | `{"updated", "episodeIds"}`: the same values written for every other episode of the item that has a source with that id (for `pasted`, every other episode) |
 
 `link` = `{"offsetMs", "rate", "language", "updatedAt"}` (`updatedAt` null = defaults, nothing stored). Errors:
 `404 unknown_episode`, `404 unknown_source` (also a resolve of `pasted`), `403 not_allowed`, `400 unsupported_media`
-(DASH, MPEG-TS), `404 no_link` (copy without a stored link), `502 no_playable_source`. The resolve and link routes
+(a kind the request's `kinds` does not list: DASH and MPEG-TS without `kinds`), `404 no_link` (copy without a stored link), `502 no_playable_source`. The resolve and link routes
 need the `companion` [scope](#access-tokens) or the owner token.
 
 ### TV app
@@ -1086,3 +1090,6 @@ The example's values are the defaults, except the samples for `publicUrl`, `trus
   `GET …/companion` with the new candidate `type` `"pasted"`, which clients skip when they do not know it); and
   `nowPlaying.durationMs` in `GET …/companion` (additive: a scope value, which clients show as it is, a link key, a
   candidate type and a response field).
+- **v1 (2026-10-26)** — [Listen along](#listen-along): `POST …/companion/resolve` takes `kinds`, the media kinds the
+  client plays (absent: `["hls", "mp4"]`, the refusals as before); a client that lists them gets MPEG-TS through the
+  proxy and DASH direct instead of `400 unsupported_media` (additive: an optional request field).

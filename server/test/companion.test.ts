@@ -7,11 +7,15 @@ import { fixtureItems, fixtureManifest, listen, logged, publishBuild, tempDir, t
 
 const PROXY_MP4 = /^\/p\/([A-Za-z0-9_-]{43})\/video\.mp4$/;
 const PROXY_HLS = /^\/p\/([A-Za-z0-9_-]{43})\/index\.m3u8$/;
+const PROXY_TS = /^\/p\/([A-Za-z0-9_-]{43})\/stream\.ts$/;
+const ALL_KINDS = ["hls", "dash", "mp4", "ts"];
 const REFERER = "https://site.example.test/";
 
-/** A local upstream: a plain MP4 anybody may fetch, and an HLS playlist that needs a Referer. */
+/** A local upstream: a plain MP4 anybody may fetch, and an HLS playlist and an MPEG-TS stream that need a Referer. */
 function startUpstream() {
   const mp4 = Buffer.alloc(4096, 7);
+  const ts = Buffer.alloc(188 * 8, 0xff);
+  for (let i = 0; i < ts.length; i += 188) ts[i] = 0x47; // MPEG-TS sync bytes
   const server = createServer((req, res) => {
     if (req.url === "/plain/video.mp4") return void res.writeHead(200, { "Content-Type": "video/mp4" }).end(mp4);
     if (req.url?.startsWith("/ref/") && req.headers.referer !== REFERER) return void res.writeHead(403).end("no referer");
@@ -19,6 +23,7 @@ function startUpstream() {
       const playlist = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nseg0.ts\n#EXT-X-ENDLIST\n";
       return void res.writeHead(200, { "Content-Type": "application/vnd.apple.mpegurl" }).end(playlist);
     }
+    if (req.url === "/ref/live.ts") return void res.writeHead(200, { "Content-Type": "video/mp2t" }).end(ts);
     res.writeHead(404).end();
   });
   return listen(server);
@@ -261,6 +266,45 @@ test("an episode's MPEG-TS source: a candidate marked unsupported (ts), refused 
   assert.ok(!JSON.stringify(cand).includes(up.url) && !JSON.stringify(ts.json).includes(up.url), "no upstream URL reaches the phone");
   const logs = s.logs.join("\n");
   for (const leak of [up.url, "http://", REFERER, "live.ts"]) assert.ok(!logs.includes(leak), `log leaked ${leak}`);
+});
+
+test("a client that plays MPEG-TS and DASH: MPEG-TS through the proxy, DASH direct; other kinds still refused", async (t) => {
+  const { s, up, as, now, companion, get } = await setup(t);
+  assert.equal((await as("POST", "/resolve", { episodeId: "dual.e3", sourceId: "tv-hls" })).status, 200);
+  const before = (await now()).json;
+
+  const ts = await companion({ episodeId: "dual.e3", sourceId: "tr-ts", kinds: ALL_KINDS });
+  assert.equal(ts.status, 200, JSON.stringify(ts.json));
+  assert.deepEqual([ts.json.media.kind, ts.json.sourceId, ts.json.episodeId], ["ts", "tr-ts", "dual.e3"]);
+  const [, tsToken] = PROXY_TS.exec(ts.json.media.url) ?? [];
+  assert.ok(tsToken, ts.json.media.url);
+  assert.ok(!("delivery" in ts.json));
+  const body = await get(ts.json.media.url);
+  assert.deepEqual([body.status, (await body.arrayBuffer()).byteLength], [200, 188 * 8], "the proxy sends the Referer upstream");
+  assert.deepEqual((await now()).json, before, "the TV's now-playing row is untouched");
+  assert.ok(!JSON.stringify(ts.json).includes(up.url) && !JSON.stringify(ts.json).includes(REFERER), "no upstream URL or header reaches the phone");
+
+  // DASH is delivered direct (the proxy does not rewrite manifests), as the TV gets it.
+  const dash = await companion({ episodeId: "dual.e1", sourceId: "dash-only", kinds: ALL_KINDS });
+  assert.equal(dash.status, 200, JSON.stringify(dash.json));
+  assert.deepEqual([dash.json.media.kind, dash.json.media.url, dash.json.sourceId], ["dash", "https://dash.example.test/m.mpd", "dash-only"]);
+  assert.ok(!("delivery" in dash.json));
+  assert.deepEqual((await now()).json, before, "the TV's now-playing row is untouched");
+
+  // A kind the client does not list is refused with its kind; malformed lists are invalid.
+  const mp4 = await companion({ episodeId: "dual.e1", sourceId: "fr-mp4", kinds: ["hls"] });
+  assert.deepEqual([mp4.status, mp4.json.error, mp4.json.kind], [400, "unsupported_media", "mp4"]);
+  assert.equal((await companion({ episodeId: "dual.e1", sourceId: "fr-mp4", kinds: ["hls", "mp4"] })).status, 200);
+  for (const kinds of [[], ["avi"], "hls", ["hls", "hls"], [...ALL_KINDS, "hls"], null]) {
+    const r = await companion({ episodeId: "dual.e1", sourceId: "fr-mp4", kinds });
+    assert.deepEqual([r.status, r.json.error], [400, "invalid_request"], JSON.stringify(kinds));
+  }
+
+  const logs = s.logs.join("\n");
+  for (const leak of [tsToken!, up.url, "http://", "https://", REFERER, "live.ts", "m.mpd"]) assert.ok(!logs.includes(leak), `log leaked ${leak}`);
+  const resolved = logged(s, "resolved");
+  assert.ok(resolved.some((l) => l.companion === true && l.kind === "ts" && l.delivery === "proxy" && l.sourceId === "tr-ts"));
+  assert.ok(resolved.some((l) => l.companion === true && l.kind === "dash" && l.delivery === "direct" && l.sourceId === "dash-only"));
 });
 
 test("a link found in a browser: kept under the reserved id for any episode, listed last, copied to every episode, never resolved", async (t) => {
