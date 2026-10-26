@@ -115,6 +115,9 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     private var candidates: CompanionResponse? = null
     private var candidatesKey: String? = null
 
+    /** Numbers the `/companion` reads: only the newest one's answer is shown. */
+    private var companionReadSeq = 0
+
     /** The option chosen per item, for this view model's life. */
     private val remembered = mutableMapOf<String, String>()
 
@@ -146,7 +149,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val client = graph.apiClient(parsed, secret)
             val devices = try {
-                client.devices().devices.filter { it.status == "active" }
+                activeDevices(client)
             } catch (e: Exception) {
                 _ui.value = current.copy(busy = false, error = connectError(e) ?: throw e)
                 return@launch
@@ -231,14 +234,17 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         val shown = _ui.value as? CompanionUi.PickTv
         _ui.value = CompanionUi.PickTv(server, shown?.devices.orEmpty(), loading = true)
         try {
-            val devices = client.devices().devices.filter { it.status == "active" }
-            _ui.value = CompanionUi.PickTv(server, devices, loading = false)
+            _ui.value = CompanionUi.PickTv(server, activeDevices(client), loading = false)
         } catch (e: Exception) {
             val error = connectError(e) ?: throw e
             if (error == ConnectError.TokenNotAccepted) return unauthorized()
             _ui.value = CompanionUi.PickTv(server, shown?.devices.orEmpty(), loading = false, error = error)
         }
     }
+
+    /** The paired server's active TVs: a pending TV plays nothing. */
+    private suspend fun activeDevices(client: ApiClient): List<AdminDevice> =
+        client.devices().devices.filter { it.status == "active" }
 
     private suspend fun enterListen(tvId: String, name: String?) {
         candidates = null
@@ -261,7 +267,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- Listen along ----------------------------------------------------------------------------------------------
 
-    /** While the Listen screen is shown: what the TV plays, now and every 10 s. */
+    /** While the Listen screen is shown: what the TV plays, every 10 s (skipped while a read is in flight). */
     fun startRefreshing() {
         if (refreshJob?.isActive == true) return
         refreshJob = viewModelScope.launch {
@@ -276,6 +282,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         leaveListen()
     }
 
+    /** Reads again, unless a read is in flight. */
     fun refresh() {
         viewModelScope.launch { load(force = false) }
     }
@@ -283,15 +290,21 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun load(force: Boolean) {
         val client = api ?: return
         val listen = _ui.value as? CompanionUi.Listen ?: return
+        // One read at a time, or a slower older answer would overwrite a newer one; a forced read (a new TV, a save) runs anyway.
+        if (!force && listen.refreshing) return
         updateListen { it.copy(refreshing = true) }
+        val my = ++companionReadSeq
         val r = try {
             client.companion(listen.tvId)
         } catch (e: Exception) {
             if (e !is IOException && e !is ApiException) throw e
             if (e is ApiException && e.status == 401) return unauthorized()
+            // A newer read is on its way (a forced one started meanwhile): it shows its answer and clears refreshing.
+            if (my != companionReadSeq) return
             updateListen { it.copy(refreshing = false, loaded = true, error = errorText(e)) }
             return
         }
+        if (my != companionReadSeq) return
         show(r, force)
     }
 

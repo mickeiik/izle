@@ -127,6 +127,31 @@ class ListenSessionTest {
     }
 
     @Test
+    fun theEnginePausingItselfEndsListeningInterrupted() = listen {
+        listening()
+        val plays = engine.calls.count { it == "play" }
+        engine.playWhenReady = false // earphones unplugged, or another app took the audio focus
+        settle()
+        assertEquals(ListenPhase.Idle, state.phase)
+        assertEquals(EndReason.Interrupted, state.ended)
+        run(1_000)
+        assertEquals("not played again", plays, engine.calls.count { it == "play" })
+        assertFalse(engine.playWhenReady)
+    }
+
+    @Test
+    fun aFailedSwitchKeepsThePreviousSourceAndItsLanguage() = listen {
+        listening()
+        api.resolveFailures += IOException("down")
+        session.switchSource("dub", "de")
+        settle()
+        assertEquals(listOf<Pair<String?, String?>>("fr" to null), engine.preferences)
+        assertEquals(ListenPhase.Listening, state.phase)
+        assertEquals("IOException", state.error)
+        assertEquals(1, engine.loads.size)
+    }
+
+    @Test
     fun aTargetBeforeZeroWaits() = listen {
         api.tv(2_000)
         session.start(TARGET, LinkTiming(offsetMs = -10_000), 0)

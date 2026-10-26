@@ -34,6 +34,8 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * The real [CompanionViewModel], store and API client under Robolectric against an in-process server: pairing and its
@@ -197,6 +199,25 @@ class CompanionViewModelTest {
         vm.refresh()
         waitUntil("the second read") { count(COMPANION) > gets && !(vm.ui.value as CompanionUi.Listen).refreshing }
         assertEquals("-2", (vm.ui.value as CompanionUi.Listen).offsetText)
+    }
+
+    @Test
+    fun aRefreshWhileOneIsInFlightSendsNoSecondRequest() {
+        val vm = startListening()
+        val gate = CountDownLatch(1)
+        companionAnswer = { gate.await(5, TimeUnit.SECONDS); json(200, EPISODE) }
+        try {
+            val gets = count(COMPANION)
+            vm.refresh()
+            waitUntil("the first read") { count(COMPANION) > gets }
+            assertTrue((vm.ui.value as CompanionUi.Listen).refreshing)
+            vm.refresh()
+            settle()
+            assertEquals(gets + 1, count(COMPANION))
+        } finally {
+            gate.countDown()
+        }
+        waitUntil("the answer") { !(vm.ui.value as CompanionUi.Listen).refreshing }
     }
 
     @Test

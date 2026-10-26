@@ -147,10 +147,5 @@ class ListenService : Service() {
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, ListenService::class.java))
         }
-
-        /** Stops listening; the service then stops itself. */
-        fun stop(context: Context) {
-            context.startService(Intent(context, ListenService::class.java).setAction(ACTION_STOP))
-        }
     }
 }

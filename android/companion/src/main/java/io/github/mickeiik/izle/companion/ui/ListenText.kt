@@ -118,6 +118,7 @@ fun endedText(reason: EndReason?, error: String?): String? = when (reason) {
     EndReason.NoSuchSourceOnNextEpisode -> "The next episode has no such source; listening ended."
     EndReason.StreamKeepsFailing -> "The companion stream keeps failing; listening ended."
     EndReason.Unauthorized -> "The token was not accepted; pair again."
+    EndReason.Interrupted -> "The phone's audio was interrupted (earphones unplugged, or another app took over); listening ended."
     EndReason.Failed -> "Could not start: ${error?.let { ERRORS[it] ?: it } ?: "something went wrong."}"
 }
 

@@ -105,6 +105,10 @@ class ListenTextTest {
         assertEquals("The next episode has no such source; listening ended.", endedText(EndReason.NoSuchSourceOnNextEpisode, null))
         assertEquals("The companion stream keeps failing; listening ended.", endedText(EndReason.StreamKeepsFailing, null))
         assertEquals("The token was not accepted; pair again.", endedText(EndReason.Unauthorized, null))
+        assertEquals(
+            "The phone's audio was interrupted (earphones unplugged, or another app took over); listening ended.",
+            endedText(EndReason.Interrupted, null),
+        )
         assertEquals("Could not start: The source could not be resolved right now.", endedText(EndReason.Failed, "no_playable_source"))
         assertEquals("Could not start: SocketTimeoutException", endedText(EndReason.Failed, "SocketTimeoutException"))
         assertEquals("No other episode has that source.", copiedText(0))

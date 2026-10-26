@@ -54,7 +54,12 @@ data class ListenTarget(
 enum class ListenPhase { Idle, Starting, Listening }
 
 /** Why the last session ended. */
-enum class EndReason { Stopped, TvIdle, TvSwitchedToChannel, NoSuchSourceOnNextEpisode, StreamKeepsFailing, Unauthorized, Failed }
+enum class EndReason {
+    Stopped, TvIdle, TvSwitchedToChannel, NoSuchSourceOnNextEpisode, StreamKeepsFailing, Unauthorized, Failed,
+
+    /** The engine paused itself: earphones unplugged or another app took the audio. */
+    Interrupted,
+}
 
 data class ListenState(
     val phase: ListenPhase = ListenPhase.Idle,
@@ -134,6 +139,8 @@ class ListenSession(
     private var lastReResolveAt: Long? = null
     private var generation = 0
     private var loadSeq = 0
+    /** Whether the engine's pause is the tick's own; any other pause while listening ends the session. */
+    private var pausedBySync = false
 
     private val listener = object : MediaEngine.Listener {
         override fun onReady() {
@@ -152,7 +159,12 @@ class ListenSession(
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) = Unit
-        override fun onStateChanged() = Unit
+        override fun onStateChanged() {
+            // Earphones unplugged or a lost audio focus: the tick would play again, out of the speaker.
+            if (phase == ListenPhase.Listening && playing != null && !engine.playWhenReady && !pausedBySync) {
+                end(EndReason.Interrupted)
+            }
+        }
         override fun onCues(text: String?) = Unit
     }
 
@@ -171,6 +183,7 @@ class ListenSession(
         seekHoldUntil = 0
         recoveries = 0
         lastReResolveAt = null
+        pausedBySync = false
         _state.value = ListenState(phase = ListenPhase.Starting, target = target, timing = timing, nudgeMs = nudgeMs)
         engine.setListener(listener)
         val job = SupervisorJob(scope.coroutineContext[Job]).also { work = it }
@@ -187,7 +200,14 @@ class ListenSession(
                 launch {
                     while (true) {
                         delay(this@ListenSession.timing.tickMs)
-                        tick()
+                        try {
+                            tick()
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            fail(e, EndReason.Failed)
+                            break
+                        }
                     }
                 }
                 launch {
@@ -302,13 +322,15 @@ class ListenSession(
         if (phase == ListenPhase.Idle) return false
         val my = ++loadSeq
         val gen = generation
-        engine.applyPreferences(language, null)
         val r = api.resolve(deviceId, CompanionResolveRequest(episodeId, sourceId, language))
         if (my != loadSeq || gen != generation || phase == ListenPhase.Idle) return false
         val url = absoluteUrl(r.media.url) ?: throw UnusableMediaUrl()
+        // Only now: after a failed resolve the previous stream keeps playing in its own language.
+        engine.applyPreferences(language, null)
         engine.load(MediaSpec(url = url, kind = r.media.kind, subtitles = emptyList(), mediaId = episodeId, live = false), startAt())
         playing = Playing(episodeId, sourceId, language, r.expiresAt?.let(IsoTime::parseEpochMs))
         seekHoldUntil = 0
+        pausedBySync = false
         engine.play()
         _state.update {
             it.copy(target = it.target?.copy(episodeId = episodeId, sourceId = sourceId, language = language), mediaKind = r.media.kind)
@@ -396,13 +418,22 @@ class ListenSession(
             settled && d.action == ListenSync.Action.Seek -> {
                 engine.seekTo(max(0.0, (d.toMs ?: target) + timing.seekLeadMs).roundToLong())
                 seekHoldUntil = wallClock() + timing.seekHoldMs
-                if (!engine.playWhenReady) engine.play()
+                if (!engine.playWhenReady) {
+                    pausedBySync = false
+                    engine.play()
+                }
             }
             settled && d.action == ListenSync.Action.Play -> {
-                if (!engine.playWhenReady) engine.play()
+                if (!engine.playWhenReady) {
+                    pausedBySync = false
+                    engine.play()
+                }
                 if (abs(engine.playbackRate - d.rate) > RATE_EPSILON) engine.playbackRate = d.rate.toFloat()
             }
-            settled && engine.playWhenReady -> engine.pause()
+            settled && engine.playWhenReady -> {
+                pausedBySync = true
+                engine.pause()
+            }
         }
         _state.update {
             it.copy(
@@ -450,7 +481,7 @@ class ListenSession(
     /** Stops everything and reports [reason]; [error] replaces the last error when given. */
     private fun end(reason: EndReason, error: String? = null) {
         if (phase == ListenPhase.Idle) return
-        teardown()
+        // Idle first: a callback the engine raises while stopping finds the session ended.
         _state.update {
             it.copy(
                 phase = ListenPhase.Idle,
@@ -463,6 +494,7 @@ class ListenSession(
                 ended = reason,
             )
         }
+        teardown()
     }
 
     /** Cancels the session's coroutines (possibly the caller's own) and stops the engine; the state is the caller's. */
