@@ -149,6 +149,22 @@ class ApiClient(
         return exchange(authorize(Request.Builder().url(url).post(EMPTY_BODY)).build()).decode(CopyToItemResponse.serializer())
     }
 
+    // Phones: a phone claims an invite the TV shows and gets its own owner-level secret (`izph_…`).
+
+    /** Without an Authorization header: the invite (or the code) is the credential. */
+    suspend fun claimPhone(request: PhoneClaimRequest): PhoneClaim {
+        val body = ApiJson.encodeToString(PhoneClaimRequest.serializer(), request).toRequestBody(JSON)
+        return exchange(Request.Builder().url(url("api/v1/phones/claim")).post(body).build()).decode(PhoneClaim.serializer())
+    }
+
+    suspend fun phones(): PhonesResponse = get(url("api/v1/admin/phones"), PhonesResponse.serializer())
+
+    /** `204`; a phone may delete itself (its secret answers `401` from then on). */
+    suspend fun deletePhone(phoneId: String) {
+        val url = url("api/v1/admin/phones").newBuilder().addPathSegment(phoneId).build()
+        exchange(authorize(Request.Builder().url(url).delete()).build()).requireOk()
+    }
+
     /** `api/v1/admin/devices/:id`; ids are path segments, never concatenated (they may contain anything). */
     private fun device(deviceId: String): HttpUrl.Builder =
         url("api/v1/admin/devices").newBuilder().addPathSegment(deviceId)
