@@ -15,7 +15,8 @@ izle.json
 # Android
 android/.gradle/
 android/build/
-android/app/build/
+android/*/build/
+android/buildSrc/.gradle/
 android/local.properties
 android/.kotlin/
 *.jks

@@ -3,7 +3,7 @@ import java.util.Properties
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.kotlin.serialization)
+    id("izle.robolectric-tests")
 }
 
 // Release signing is optional: CI passes IZLE_SIGNING_* environment variables, a local build reads
@@ -72,33 +72,8 @@ android {
     testOptions.unitTests.isIncludeAndroidResources = true
 }
 
-// Robolectric runs the UI tests on this Android framework jar (one SDK: see the UI tests' @Config). Gradle resolves it
-// like any other dependency and the tests read it from there (offline mode), so a test run never downloads anything.
-val robolectricSdk: Configuration = configurations.create("robolectricSdk") {
-    isCanBeConsumed = false
-    isTransitive = false
-}
-
-class RobolectricOffline(
-    @get:InputFiles @get:PathSensitive(PathSensitivity.NAME_ONLY) val sdkJar: FileCollection,
-) : CommandLineArgumentProvider {
-    override fun asArguments() = listOf(
-        "-Drobolectric.offline=true",
-        "-Drobolectric.dependency.dir=${sdkJar.singleFile.parentFile.absolutePath}",
-    )
-}
-
-tasks.withType<Test>().configureEach {
-    jvmArgumentProviders.add(RobolectricOffline(robolectricSdk))
-    // On Java 17+ Robolectric needs these JDK internals opened (https://robolectric.org/getting-started/).
-    val opened = listOf("java.lang", "java.util", "java.io", "java.net", "java.security", "java.text", "jdk.internal.access")
-    jvmArgs(
-        opened.map { "--add-opens=java.base/$it=ALL-UNNAMED" } +
-            listOf("--add-opens=java.desktop/java.awt.font=ALL-UNNAMED", "--add-opens=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED"),
-    )
-}
-
 dependencies {
+    implementation(project(":core"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
@@ -108,18 +83,14 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.datastore.preferences)
-    implementation(libs.media3.exoplayer)
-    implementation(libs.media3.exoplayer.hls)
-    implementation(libs.media3.exoplayer.dash)
-    implementation(libs.media3.datasource.okhttp)
     implementation(libs.media3.ui.compose)
     implementation(libs.okhttp)
-    implementation(libs.okhttp.sse)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.kotlinx.coroutines.android)
 
+    testImplementation(testFixtures(project(":core")))
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)

@@ -59,9 +59,10 @@ the same commit.
 - Resolver module + proxy end to end: [server/examples/resolver-example/](server/examples/resolver-example/README.md)
   (`make-media.sh` needs ffmpeg; `upstream.js` is the local stand-in site; `izle.example.json` the server config,
   state in `server/data/example/`)
-- `android/` (needs `JAVA_HOME` = JDK 21+ and `ANDROID_HOME`): `./gradlew :app:assembleDebug :app:testDebugUnitTest`;
-  `:app:assembleRelease` is signed only with `android/keystore.properties` or the `IZLE_SIGNING_*` variables. A
-  device with a release-signed build needs `adb uninstall io.github.mickeiik.izle` before a debug install.
+- `android/` (needs `JAVA_HOME` = JDK 21+ and `ANDROID_HOME`): `./gradlew :app:assembleDebug :core:testDebugUnitTest
+  :app:testDebugUnitTest`; `:app:assembleRelease` is signed only with `android/keystore.properties` or the
+  `IZLE_SIGNING_*` variables. A device with a release-signed build needs `adb uninstall io.github.mickeiik.izle`
+  before a debug install.
 
 The admin UI (`server/admin/`, served at `/admin/`) is plain ES modules without a build step or dependencies,
 typechecked by `server/admin/tsconfig.json` (DOM types) as part of `npm run typecheck`; its pure helpers in
@@ -79,6 +80,10 @@ imports, ESM only, erasable syntax only (no enums, no parameter properties, no n
 - AGP 9 has built-in Kotlin: **never apply `org.jetbrains.kotlin.android`**. It is declared `apply false` in the
   root build only to lift the Kotlin Gradle Plugin version; check with `./gradlew buildEnvironment`.
 - `compileSdk` 37 (required by the compose BOM), `targetSdk` 36, `minSdk` 24.
+- `android/core` is the library module shared with any future second app (API client and models, the media engine,
+  shared domain helpers); Kotlin packages are unchanged (`io.github.mickeiik.izle.*`), shared test doubles live in its
+  test fixtures (`testFixtures(project(":core"))`), and Robolectric's test setup is the `izle.robolectric-tests` plugin
+  in `buildSrc`.
 
 ## Emulator loop
 

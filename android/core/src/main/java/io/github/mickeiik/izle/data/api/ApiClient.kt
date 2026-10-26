@@ -1,6 +1,5 @@
 package io.github.mickeiik.izle.data.api
 
-import io.github.mickeiik.izle.update.AvailableUpdate
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.KSerializer
 import okhttp3.Call
@@ -19,8 +18,8 @@ import kotlin.coroutines.resumeWithException
 /** The server answered with an error status. `code` is the API error code (`not_allowed`, `expired`, …). */
 class ApiException(val status: Int, val code: String, val retryAfterSec: Long? = null) : Exception("HTTP $status $code")
 
-/** An error answer, with its API error code (`http_<status>` without one). */
-internal fun apiError(status: Int, body: String, retryAfter: String? = null): ApiException {
+/** An error answer, with its API error code (`http_<status>` without one). Public: the TV app's APK download uses it. */
+fun apiError(status: Int, body: String, retryAfter: String? = null): ApiException {
     val code = runCatching { ApiJson.decodeFromString(ErrorBody.serializer(), body).error }.getOrNull() ?: "http_$status"
     return ApiException(status, code, retryAfter?.toLongOrNull())
 }

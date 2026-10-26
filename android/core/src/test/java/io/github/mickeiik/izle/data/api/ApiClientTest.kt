@@ -1,7 +1,6 @@
 package io.github.mickeiik.izle.data.api
 
 import io.github.mickeiik.izle.json
-import io.github.mickeiik.izle.update.AvailableUpdate
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking

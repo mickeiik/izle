@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import io.github.mickeiik.izle.AppGraph
 import io.github.mickeiik.izle.BuildConfig
 import io.github.mickeiik.izle.data.api.ApiClient
+import io.github.mickeiik.izle.data.api.AvailableUpdate
 import io.github.mickeiik.izle.data.api.CommandResult
 import io.github.mickeiik.izle.data.api.EpisodeDetails
 import io.github.mickeiik.izle.data.api.HomeEntry
@@ -25,7 +26,6 @@ import io.github.mickeiik.izle.domain.countDown
 import io.github.mickeiik.izle.player.PlaybackController
 import io.github.mickeiik.izle.player.PlayerPhase
 import io.github.mickeiik.izle.player.TrackOption
-import io.github.mickeiik.izle.update.AvailableUpdate
 import io.github.mickeiik.izle.update.InstallStatus
 import io.github.mickeiik.izle.update.UpdatePlan
 import io.github.mickeiik.izle.update.UpdateRun

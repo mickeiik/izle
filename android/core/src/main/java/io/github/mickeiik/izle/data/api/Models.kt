@@ -291,5 +291,9 @@ data class PairStart(val code: String, val pairToken: String)
 @Serializable
 data class PairWait(val status: String, val deviceId: String? = null, val deviceToken: String? = null)
 
+/** The TV app version the server offers (`GET /tv/app`). [auto]: the owner lets TVs install it by themselves. */
+@Serializable
+data class AvailableUpdate(val versionName: String, val versionCode: Long, val sha256: String, val size: Long, val auto: Boolean = true)
+
 @Serializable
 internal data class ErrorBody(val error: String = "unknown")

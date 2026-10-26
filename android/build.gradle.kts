@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.android.library) apply false
     // AGP 9 compiles Kotlin itself (built-in Kotlin) and must NOT have org.jetbrains.kotlin.android applied.
     // Declaring it here with `apply false` only lifts the Kotlin Gradle Plugin on the build classpath
     // from the version AGP pins to libs.versions.kotlin; verify with `./gradlew buildEnvironment`.

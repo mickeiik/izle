@@ -2,6 +2,7 @@ package io.github.mickeiik.izle.update
 
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.ApiException
+import io.github.mickeiik.izle.data.api.AvailableUpdate
 import io.github.mickeiik.izle.data.api.CommandResult
 import io.github.mickeiik.izle.data.api.apiError
 import kotlinx.coroutines.Dispatchers
