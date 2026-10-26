@@ -19,6 +19,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 
 /**
@@ -70,24 +71,21 @@ class ExoMediaEngine(
             .build()
         val restarts = restartsInsteadOfResuming(media.kind, media.live)
         val sources = when {
-            // Built for this load: the headers are this stream's, on its playlist, keys and segments.
-            media.headers.isNotEmpty() -> mediaSources(
-                DefaultDataSource.Factory(
-                    context,
-                    OkHttpDataSource.Factory(mediaHttp).setUserAgent(userAgent).setDefaultRequestProperties(media.headers),
-                ),
-                noRetryInPlace = restarts,
-            )
+            // Built for this load: the headers are this stream's, on its playlist, keys and segments, for its host only.
+            media.headers.isNotEmpty() -> {
+                val host = media.url.toHttpUrlOrNull()?.host
+                val http = if (host == null) mediaHttp else mediaHttp.withHostBoundHeaders(host, media.headers)
+                mediaSources(
+                    DefaultDataSource.Factory(context, OkHttpDataSource.Factory(http).setUserAgent(userAgent)),
+                    noRetryInPlace = restarts,
+                )
+            }
             restarts -> liveStreamSources
-            else -> null // the player's own factory
+            else -> defaultSources
         }
+        val source = sources.createMediaSource(item)
         val startAt = startAtMs.takeUnless { media.live }
-        when {
-            sources != null && startAt != null -> p.setMediaSource(sources.createMediaSource(item), startAt)
-            sources != null -> p.setMediaSource(sources.createMediaSource(item))
-            startAt == null -> p.setMediaItem(item)
-            else -> p.setMediaItem(item, startAt)
-        }
+        if (startAt == null) p.setMediaSource(source) else p.setMediaSource(source, startAt)
         p.prepare()
     }
 
@@ -164,6 +162,9 @@ class ExoMediaEngine(
         DefaultDataSource.Factory(context, OkHttpDataSource.Factory(mediaHttp).setUserAgent(userAgent))
     }
 
+    /** Everything else, and the player's own factory. */
+    private val defaultSources by lazy { mediaSources(dataSources, noRetryInPlace = false) }
+
     /** A channel's progressive stream: no retry in place, see [restartsInsteadOfResuming]. */
     private val liveStreamSources by lazy { mediaSources(dataSources, noRetryInPlace = true) }
 
@@ -172,7 +173,7 @@ class ExoMediaEngine(
 
     private fun ensurePlayer(): ExoPlayer = player ?: ExoPlayer.Builder(context)
         .setRenderersFactory(DefaultRenderersFactory(context).setEnableDecoderFallback(true))
-        .setMediaSourceFactory(mediaSources(dataSources, noRetryInPlace = false))
+        .setMediaSourceFactory(defaultSources)
         .setAudioAttributes(
             AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),
             /* handleAudioFocus = */ true,

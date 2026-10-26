@@ -50,7 +50,8 @@ data class MediaSpec(
     val live: Boolean,
     /**
      * Sent with every request of the stream (playlist, keys, segments): a found link's `Referer`, `Origin` and
-     * `Cookie` in the companion app. Empty for everything the TV plays.
+     * `Cookie` in the companion app. Only to the URL's host, never to another host a redirect leads to. Empty for
+     * everything the TV plays.
      */
     val headers: Map<String, String> = emptyMap(),
 ) {
