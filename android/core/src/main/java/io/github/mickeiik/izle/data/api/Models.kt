@@ -361,9 +361,17 @@ data class CompanionCandidate(
 @Serializable
 data class CompanionResponse(val nowPlaying: NowPlaying? = null, val candidates: List<CompanionCandidate> = emptyList())
 
-/** `POST …/devices/:id/companion/resolve`; [language]: the audio language to pick inside the stream. */
+/**
+ * `POST …/devices/:id/companion/resolve`; [language]: the audio language to pick inside the stream; [kinds]: the media
+ * kinds the client plays (the server treats absence as `hls` and `mp4`).
+ */
 @Serializable
-data class CompanionResolveRequest(val episodeId: String, val sourceId: String, val language: String? = null)
+data class CompanionResolveRequest(
+    val episodeId: String,
+    val sourceId: String,
+    val language: String? = null,
+    val kinds: List<String>? = null,
+)
 
 /** [serverDateMs]: the answer's `Date` header, as in [ResolveResponse]. */
 @Serializable

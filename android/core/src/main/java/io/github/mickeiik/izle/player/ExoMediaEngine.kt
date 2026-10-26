@@ -68,10 +68,25 @@ class ExoMediaEngine(
             .setSubtitleConfigurations(subtitles)
             .setMediaId(media.mediaId)
             .build()
+        val restarts = restartsInsteadOfResuming(media.kind, media.live)
+        val sources = when {
+            // Built for this load: the headers are this stream's, on its playlist, keys and segments.
+            media.headers.isNotEmpty() -> mediaSources(
+                DefaultDataSource.Factory(
+                    context,
+                    OkHttpDataSource.Factory(mediaHttp).setUserAgent(userAgent).setDefaultRequestProperties(media.headers),
+                ),
+                noRetryInPlace = restarts,
+            )
+            restarts -> liveStreamSources
+            else -> null // the player's own factory
+        }
+        val startAt = startAtMs.takeUnless { media.live }
         when {
-            restartsInsteadOfResuming(media.kind, media.live) -> p.setMediaSource(liveStreamSources.createMediaSource(item))
-            media.live || startAtMs == null -> p.setMediaItem(item)
-            else -> p.setMediaItem(item, startAtMs)
+            sources != null && startAt != null -> p.setMediaSource(sources.createMediaSource(item), startAt)
+            sources != null -> p.setMediaSource(sources.createMediaSource(item))
+            startAt == null -> p.setMediaItem(item)
+            else -> p.setMediaItem(item, startAt)
         }
         p.prepare()
     }
@@ -150,11 +165,14 @@ class ExoMediaEngine(
     }
 
     /** A channel's progressive stream: no retry in place, see [restartsInsteadOfResuming]. */
-    private val liveStreamSources by lazy { DefaultMediaSourceFactory(dataSources).setLoadErrorHandlingPolicy(NoRetryInPlace()) }
+    private val liveStreamSources by lazy { mediaSources(dataSources, noRetryInPlace = true) }
+
+    private fun mediaSources(data: DataSource.Factory, noRetryInPlace: Boolean): DefaultMediaSourceFactory =
+        DefaultMediaSourceFactory(data).apply { if (noRetryInPlace) setLoadErrorHandlingPolicy(NoRetryInPlace()) }
 
     private fun ensurePlayer(): ExoPlayer = player ?: ExoPlayer.Builder(context)
         .setRenderersFactory(DefaultRenderersFactory(context).setEnableDecoderFallback(true))
-        .setMediaSourceFactory(DefaultMediaSourceFactory(dataSources))
+        .setMediaSourceFactory(mediaSources(dataSources, noRetryInPlace = false))
         .setAudioAttributes(
             AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(),
             /* handleAudioFocus = */ true,

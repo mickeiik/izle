@@ -2,9 +2,11 @@ package io.github.mickeiik.izle.player
 
 import android.Manifest
 import android.app.Application
+import android.os.Looper
 import androidx.media3.common.C
 import androidx.test.core.app.ApplicationProvider
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
@@ -20,6 +22,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowPowerManager
+import java.util.concurrent.CopyOnWriteArrayList
 
 /** The real adapter's decoder lifecycle needs Android services; transport is answered in memory. */
 @RunWith(RobolectricTestRunner::class)
@@ -31,10 +34,71 @@ class ExoMediaEngineTest {
     }.build()
     private val media = MediaSpec("http://media.test/one", "mp4", emptyList(), "episode", live = false)
 
+    /** Every request of [hlsHttp], which answers a tiny AES-128 HLS stream under any directory of `media.test`. */
+    private val requests = CopyOnWriteArrayList<Request>()
+    private val hlsHttp = OkHttpClient.Builder().addInterceptor { chain ->
+        val request = chain.request().also { requests += it }
+        val body = when (request.url.pathSegments.last()) {
+            "master" -> "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n" +
+                "#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n#EXTINF:4,\nseg0.ts\n#EXT-X-ENDLIST\n"
+            "key.bin" -> String(CharArray(16) { 'k' })
+            "seg0.ts" -> String(CharArray(4 * 188) { 'G' })
+            else -> null
+        }
+        Response.Builder().request(request).protocol(okhttp3.Protocol.HTTP_1_1)
+            .code(if (body == null) 404 else 200).message("fixture")
+            .body((body ?: "").toByteArray().toResponseBody()).build()
+    }.build()
+
     @After
     fun tearDown() {
-        http.dispatcher.executorService.shutdown()
-        http.connectionPool.evictAll()
+        for (client in listOf(http, hlsHttp)) {
+            client.dispatcher.executorService.shutdown()
+            client.connectionPool.evictAll()
+        }
+    }
+
+    /** Waits (driving the main looper) until a request for each of [paths] was made; the requests, by path. */
+    private fun awaitRequests(vararg paths: String): Map<String, Request> {
+        val deadline = System.currentTimeMillis() + 10_000
+        fun seen() = requests.associateBy { it.url.encodedPath }.filterKeys { it in paths }
+        while (seen().size < paths.size && System.currentTimeMillis() < deadline) {
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(10)
+        }
+        return seen().also { assertEquals(paths.toSet(), it.keys) }
+    }
+
+    @Test
+    fun aStreamsHeadersGoWithEveryOneOfItsRequests() {
+        val headers = mapOf("Referer" to "https://page.test/", "Origin" to "https://page.test", "Cookie" to "a=b")
+        val found = MediaSpec(
+            "http://media.test/found/master?payload=abc", "hls", emptyList(), "found", live = false, headers = headers,
+        )
+        assertEquals(
+            "the values stay out of logs",
+            "MediaSpec(kind=hls, mediaId=found, live=false, subtitles=0, headers=[Referer, Origin, Cookie])",
+            found.toString(),
+        )
+        val engine = ExoMediaEngine(ApplicationProvider.getApplicationContext(), hlsHttp, "izle-test", capVideoTo720p = false)
+        try {
+            engine.load(found, 0)
+            // No .m3u8 in the URL: the kind makes it HLS, so the key and the segment are asked for too.
+            val seen = awaitRequests("/found/master", "/found/key.bin", "/found/seg0.ts")
+            assertEquals("abc", seen.getValue("/found/master").url.queryParameter("payload"))
+            for (request in requests) {
+                val path = request.url.encodedPath
+                for ((name, value) in headers) assertEquals("$path $name", value, request.header(name))
+                assertEquals("$path User-Agent", "izle-test", request.header("User-Agent"))
+            }
+            // A stream without headers (everything the TV plays) sends none of them.
+            engine.load(MediaSpec("http://media.test/plain/master", "hls", emptyList(), "plain", live = false), null)
+            val plain = awaitRequests("/plain/master").getValue("/plain/master")
+            for (name in headers.keys) assertNull(name, plain.header(name))
+            assertEquals("izle-test", plain.header("User-Agent"))
+        } finally {
+            engine.release()
+        }
     }
 
     @Test
