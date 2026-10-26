@@ -191,6 +191,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     fun changeTv() {
         session?.stop()
         leaveListen()
+        // The Listen screen and its found link are gone (the picker replaces it); the finder forgets the link too.
+        linkFinder.clear()
         viewModelScope.launch {
             store.setTv(null)
             showPicker()
@@ -209,6 +211,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun forget() {
         leaveListen()
+        linkFinder.clear()
         sessionJob?.cancel()
         session = null
         graph.releaseSession()
@@ -234,7 +237,11 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 previous = state.phase
                 if (!ended) return@collect
                 // The timing fields stay as typed: only the link is gone.
-                if (state.ended == EndReason.LinkExpired) updateListen { it.copy(foundLink = null) }
+                if (state.ended == EndReason.LinkExpired) {
+                    updateListen { it.copy(foundLink = null) }
+                    // Or reopening the finder would offer the expired link again.
+                    linkFinder.clear()
+                }
                 endedText(state.ended, state.error)?.let { _snackbar.value = it }
                 // Not in this collector, which forget() cancels.
                 if (state.ended == EndReason.Unauthorized) viewModelScope.launch { forget() }
@@ -349,21 +356,30 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val options = candidateOptions(r.candidates)
+        var droppedLink = false
         updateListen { l ->
+            // The owner's choice of a link found on this phone, still waiting for one: kept over the session's source.
+            val pending = l.chosen?.takeIf { !episodeChanged && it.sourceId == PASTED_SOURCE_ID && l.foundLink == null }
+                ?.let { c -> options.firstOrNull { it.key == c.key } }
             val target = l.session.target.takeIf { l.listening && it?.episodeId == n?.episodeId }
-            val chosen = target?.let { t -> options.firstOrNull { it.sourceId == t.sourceId && it.language == t.language } }
+            val chosen = pending
+                ?: target?.let { t -> options.firstOrNull { it.sourceId == t.sourceId && it.language == t.language } }
                 ?: l.chosen?.takeIf { !episodeChanged }?.let { c -> options.firstOrNull { it.key == c.key } }
                 ?: n?.itemId?.let { remembered[it] }?.let { k -> options.firstOrNull { it.key == k } }
                 ?: options.firstOrNull { it.sourceId != n?.sourceId }
                 ?: options.firstOrNull()
+            // A found link belongs to the episode it was found for.
+            val foundLink = l.foundLink.takeIf { previous == null || !episodeChanged }
+            droppedLink = l.foundLink != null && foundLink == null
             val base = l.copy(
                 loaded = true, refreshing = false, error = null, nowPlaying = n, options = options, chosen = chosen,
                 applyAllVisible = n?.itemKind == "series",
-                // A found link belongs to the episode it was found for.
-                foundLink = l.foundLink.takeIf { previous == null || !episodeChanged },
+                foundLink = foundLink,
             )
             if (!l.listening || episodeChanged) base.withTiming(linkOf(chosen)) else base
         }
+        // The finder forgets it too, or reopening it would offer the other episode's link.
+        if (droppedLink) linkFinder.clear()
     }
 
     fun choose(option: CandidateOption) {

@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import io.github.mickeiik.izle.companion.CompanionApp
 import io.github.mickeiik.izle.companion.finder.FoundLink
+import io.github.mickeiik.izle.companion.finder.LinkFinderState
 import io.github.mickeiik.izle.companion.sync.ApiClientCompanionApi
 import io.github.mickeiik.izle.companion.sync.CompanionApi
 import io.github.mickeiik.izle.companion.sync.EndReason
@@ -72,6 +73,10 @@ class CompanionViewModelTest {
                     path == "/api/v1/admin/devices/tv-1/now" -> nowAnswer().let { r ->
                         if (request.url.queryParameter("wait") == "0") r else r.newBuilder().headersDelay(1, TimeUnit.SECONDS).build()
                     }
+                    path == "/api/v1/admin/devices/tv-1/companion/resolve" ->
+                        json(200, """{"episodeId":"show.e1","sourceId":"dub","media":{"kind":"hls","url":"/p/tok/dub/master.m3u8"}}""")
+                    // What the link finder confirms (a pasted link is fetched from this phone).
+                    path == "/found/master.m3u8" -> MockResponse.Builder().code(200).body("#EXTM3U\n").build()
                     path.endsWith("/copy-to-item") -> json(200, """{"updated":3,"episodeIds":["show.e2","show.e3","show.e4"]}""")
                     path.startsWith("/api/v1/admin/companion/links/") && request.method == "PUT" ->
                         json(200, """{"link":{"episodeId":"show.e1","sourceId":"dub","offsetMs":-1300,"rate":1.0427,"language":"fr","updatedAt":"2026-10-26T10:00:00.000Z"}}""")
@@ -399,9 +404,11 @@ class CompanionViewModelTest {
         vm.setOffsetText("4.250")
         vm.listen()
         waitUntil("the link loaded") { engine.loads.isNotEmpty() && (vm.ui.value as CompanionUi.Listen).listening }
+        findInFinder(vm)
         engine.durationMs = 5 * 60_000L // a decoy, against an episode of 20 min
         engine.ready()
         waitUntil("the snackbar") { vm.snackbar.value == endedText(EndReason.LinkExpired, null) }
+        assertEquals("the finder forgets the expired link", LinkFinderState(), vm.linkFinder.state.value)
         assertEquals(EndReason.LinkExpired, app.graph.currentSession!!.state.value.ended)
         val listen = vm.ui.value as CompanionUi.Listen
         assertFalse(listen.listening)
@@ -409,6 +416,57 @@ class CompanionViewModelTest {
         assertEquals("4.250", listen.offsetText)
         assertEquals("pasted", listen.chosen?.sourceId)
         assertFalse(listen.canListen)
+    }
+
+    @Test
+    fun anotherEpisodeDropsTheFoundLinkAndTheFinderForgetsIt() {
+        val vm = startListening()
+        vm.choose((vm.ui.value as CompanionUi.Listen).options.last())
+        findInFinder(vm)
+        vm.useFoundLink(vm.linkFinder.state.value.found!!)
+        companionAnswer = { json(200, EPISODE.replace("show.e1", "show.e2").replace("Pilot", "Second")) }
+        vm.refresh()
+        waitUntil("the next episode") { (vm.ui.value as CompanionUi.Listen).nowPlaying?.episodeId == "show.e2" }
+        assertNull((vm.ui.value as CompanionUi.Listen).foundLink)
+        assertEquals(LinkFinderState(), vm.linkFinder.state.value)
+    }
+
+    @Test
+    fun changingTheTvMakesTheFinderForgetItsLink() {
+        val vm = startListening()
+        findInFinder(vm)
+        vm.changeTv()
+        waitUntil("the TV list") { vm.ui.value is CompanionUi.PickTv }
+        assertEquals(LinkFinderState(), vm.linkFinder.state.value)
+    }
+
+    @Test
+    fun aPendingPastedChoiceSurvivesARefreshAndAFoundLinkThenSwitches() {
+        val engine = FakeMediaEngine()
+        app.graph.newSession = { api, scope -> ListenSession(ApiClientCompanionApi(api), engine, scope, { it }) }
+        val vm = startListening()
+        vm.listen()
+        val session = app.graph.currentSession!!
+        waitUntil("listening to the catalog source") { session.state.value.phase == ListenPhase.Listening }
+        val pasted = (vm.ui.value as CompanionUi.Listen).options.last()
+        vm.choose(pasted) // no link yet: the dub keeps playing
+        assertEquals("dub", session.state.value.target?.sourceId)
+        val gets = count(COMPANION)
+        vm.saveTiming() // a forced read follows
+        waitUntil("the read after the save") { count(COMPANION) > gets && !(vm.ui.value as CompanionUi.Listen).refreshing }
+        assertEquals(pasted, (vm.ui.value as CompanionUi.Listen).chosen)
+
+        vm.useFoundLink(LINK)
+        val target = session.state.value.target!!
+        assertEquals("pasted", target.sourceId)
+        assertEquals(LINK, target.foundLink)
+        assertEquals(LINK.url, engine.loads.last().media.url)
+    }
+
+    /** The finder confirms a link pasted into it (served by the test server). */
+    private fun findInFinder(vm: CompanionViewModel) {
+        vm.linkFinder.paste(server.url("/found/master.m3u8").toString())
+        waitUntil("the finder's link") { vm.linkFinder.state.value.found != null && !vm.linkFinder.state.value.checking }
     }
 
     private fun startUnpaired(): CompanionViewModel = viewModel().also { vm ->

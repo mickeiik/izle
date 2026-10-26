@@ -174,6 +174,8 @@ class ListenSession(
     private var pausedBySync = false
     /** A found link was loaded and its first ready has not come yet: then its playlist's duration is checked. */
     private var expiryCheckPending = false
+    /** A link handed over while a catalog source of the start is being resolved: it plays once that load is done. */
+    private var startingLink: FoundLink? = null
 
     private val listener = object : MediaEngine.Listener {
         override fun onReady() {
@@ -222,6 +224,7 @@ class ListenSession(
         lastReResolveAt = null
         pausedBySync = false
         expiryCheckPending = false
+        startingLink = null
         _state.value = ListenState(phase = ListenPhase.Starting, target = target, timing = timing, nudgeMs = nudgeMs)
         engine.setListener(listener)
         val job = SupervisorJob(scope.coroutineContext[Job]).also { work = it }
@@ -232,8 +235,14 @@ class ListenSession(
                     readNow(wait = false)
                     if (gen != generation) return@launch
                 }
-                val loaded = target.foundLink?.let { loadFound(target.episodeId, it, startAt = null) }
-                    ?: load(target.episodeId, target.sourceId, target.language, startAt = { null })
+                // The target as it is now: a link handed over during the samples is the one that loads.
+                val latest = _state.value.target ?: target
+                startingLink = null
+                var loaded = latest.foundLink?.let { loadFound(latest.episodeId, it, startAt = null) }
+                    ?: load(latest.episodeId, latest.sourceId, latest.language, startAt = { null })
+                // One handed over during the resolve replaces the catalog source at once.
+                if (loaded && gen == generation) startingLink?.let { loaded = loadFound(latest.episodeId, it, startAt = null) }
+                startingLink = null
                 if (!loaded || gen != generation) return@launch
                 _state.update { it.copy(phase = ListenPhase.Listening) }
                 launch { followLoop() }
@@ -310,9 +319,15 @@ class ListenSession(
     /**
      * While listening (a new link for the same episode, typically after the previous one expired): loads [link] at the
      * current position, keeping the timing, the nudge and the rate; its playlist is checked against the episode again
-     * on its first ready. A no-op while idle, starting or following the TV to its next episode.
+     * on its first ready. While starting, [link] replaces the target's source (a catalog source or an earlier link):
+     * it is the one the start loads. A no-op while idle or following the TV to its next episode.
      */
     fun useFoundLink(link: FoundLink) {
+        if (phase == ListenPhase.Starting) {
+            startingLink = link
+            _state.update { it.copy(target = it.target?.copy(sourceId = PASTED_SOURCE_ID, language = null, foundLink = link)) }
+            return
+        }
         if (phase != ListenPhase.Listening) return
         val p = playing ?: return
         loadFound(p.episodeId, link, currentTarget())
