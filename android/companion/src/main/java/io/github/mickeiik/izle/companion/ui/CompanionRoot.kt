@@ -69,7 +69,12 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
             CompanionUi.Starting -> Box(modifier)
             is CompanionUi.Pairing -> PairingScreen(screen, onConnect = vm::connect, modifier = modifier)
             is CompanionUi.PickTv -> TvPickerScreen(screen, onPick = vm::pickTv, onRetry = vm::reloadTvs, modifier = modifier)
-            is CompanionUi.Listen -> ListenScreen(screen, vm, modifier = modifier)
+            is CompanionUi.Listen ->
+                if (screen.finderOpen) {
+                    LinkFinderScreen(vm.linkFinder, initialUrl = null, onListenToThis = vm::useFoundLink, onClose = vm::closeFinder, modifier = modifier)
+                } else {
+                    ListenScreen(screen, vm, modifier = modifier)
+                }
         }
     }
 }

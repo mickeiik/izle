@@ -7,6 +7,8 @@ import io.github.mickeiik.izle.companion.BuildConfig
 import io.github.mickeiik.izle.companion.CompanionApp
 import io.github.mickeiik.izle.companion.CompanionGraph
 import io.github.mickeiik.izle.companion.finder.FoundLink
+import io.github.mickeiik.izle.companion.finder.LinkConfirmer
+import io.github.mickeiik.izle.companion.finder.LinkFinder
 import io.github.mickeiik.izle.companion.sync.ListenPhase
 import io.github.mickeiik.izle.companion.sync.ListenService
 import io.github.mickeiik.izle.companion.sync.ListenSession
@@ -111,6 +113,9 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _snackbar = MutableStateFlow<String?>(null)
     val snackbar: StateFlow<String?> = _snackbar.asStateFlow()
+
+    /** The link finder's state: what its in-app browser found, confirmed by a fetch from this phone (memory only). */
+    val linkFinder = LinkFinder(LinkConfirmer(graph.http)::confirm, viewModelScope)
 
     private var baseUrl: HttpUrl? = null
     private var api: ApiClient? = null
