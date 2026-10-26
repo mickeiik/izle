@@ -23,13 +23,17 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.mickeiik.izle.companion.R
+import io.github.mickeiik.izle.companion.finder.BrowserData
+import kotlinx.coroutines.launch
 
 /** The app: one screen at a time, as the view model says, under an app bar with the TV's name. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -52,7 +56,9 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
                     if (ui is CompanionUi.Listen) {
                         TextButton(onClick = vm::changeTv) { Text(stringResource(R.string.change_tv)) }
                     }
-                    if (ui is CompanionUi.Listen || ui is CompanionUi.PickTv) OverflowMenu(onChangeServer = vm::forgetPairing)
+                    if (ui is CompanionUi.Listen || ui is CompanionUi.PickTv) {
+                        OverflowMenu(onChangeServer = vm::forgetPairing, onBrowserDataCleared = { snackbars.showSnackbar(it) })
+                    }
                 },
             )
         },
@@ -69,8 +75,11 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
 }
 
 @Composable
-private fun OverflowMenu(onChangeServer: () -> Unit) {
+private fun OverflowMenu(onChangeServer: () -> Unit, onBrowserDataCleared: suspend (String) -> Unit) {
     var open by rememberSaveable { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val cleared = stringResource(R.string.browser_data_cleared)
     Box {
         IconButton(onClick = { open = true }) {
             Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
@@ -81,6 +90,13 @@ private fun OverflowMenu(onChangeServer: () -> Unit) {
                 onClick = {
                     open = false
                     onChangeServer()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.clear_browser_data)) },
+                onClick = {
+                    open = false
+                    BrowserData.clear(context) { scope.launch { onBrowserDataCleared(cleared) } }
                 },
             )
         }
