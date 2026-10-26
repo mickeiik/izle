@@ -15,8 +15,8 @@ import kotlin.coroutines.resume
 /**
  * Confirms a candidate link from this phone (same device, same address as the page): one `GET` with exactly the given
  * headers (to the link's host only, never to a redirect's other host), the start of the body read (at most
- * [MAX_BYTES]), a playlist when the answer is 2xx and starts with `#EXTM3U`. A WebView never sees response headers, so this fetch is what tells a playlist from anything else.
- * Never logs: the URL and the header values are the owner's.
+ * [MAX_BYTES]), a playlist when the answer is 2xx and starts with `#EXTM3U`. A WebView never sees response headers, so
+ * this fetch is what tells a playlist from anything else. Never logs: the URL and the header values are the owner's.
  */
 class LinkConfirmer(private val http: OkHttpClient) {
     suspend fun confirm(url: String, headers: Map<String, String>): FoundLink? {
