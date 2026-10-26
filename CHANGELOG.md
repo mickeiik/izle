@@ -8,6 +8,12 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 
 ### Added
 
+- **izle companion, an Android phone app for Listen along (first step).** It pairs with the server through a
+  `companion` access token, lets the owner pick the TV, shows what it plays with the Listen along candidates and
+  their timing, and plays a candidate from the catalog bundle through the server proxy, in sync with the TV, as a
+  foreground service (it keeps playing with the screen off). Finding a link in a browser and playing found links
+  come later. Releases now carry `izle-companion-X.Y.Z.apk` (signed with the TV app's release key) and
+  `izle-companion-X.Y.Z-debug.apk`, sideloaded on the owner's phone; a server's TV app updates never offer them.
 - **A `companion` access token scope, for Listen along from the coming companion app.** It allows everything `read`
   does, plus Listen along's resolve and link routes, which needed the admin token until now; it allows no command,
   home screen or other change. Create one under **Access** on the admin page or with

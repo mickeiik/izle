@@ -21,4 +21,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "izle"
-include(":app", ":core")
+include(":app", ":companion", ":core")
