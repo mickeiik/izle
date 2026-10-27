@@ -35,8 +35,8 @@ account and no cloud.
 
 <table>
 <tr>
-<td><img src="docs/images/companion-now.jpg" width="200" alt="izle companion on a phone, the Now tab of the TV Living room: Online, Sintel playing at 5:35 of 14:48 with its poster and a progress bar, the remote's row of buttons (previous, −30, pause, +30, next), Stop the TV, Listen along and Send a message to the TV"></td>
-<td><img src="docs/images/companion-catalog.jpg" width="200" alt="izle companion on a phone, the Catalog tab: a search field, the Films, Series, Channels and Not on Home chips, &quot;6 shows&quot; sorted by title, and the sample films as rows with their year, &quot;On Home&quot; on those the TV has"></td>
+<td><img src="docs/images/companion-now.jpg" width="200" alt="izle companion on a phone, the Now tab of the TV Living room: Online, Sintel playing at 5:40 of 14:48 with its poster and a progress bar, the remote's row of buttons (previous, −30, pause, +30, next), Stop the TV, Listen along and Send a message to the TV"></td>
+<td><img src="docs/images/companion-catalog.jpg" width="200" alt="izle companion on a phone, the Catalog tab: a search field, the Films, Series, Channels and Not on Home chips, &quot;6 shows&quot; sorted by title, and the sample films as rows with their year, each one marked &quot;On Home&quot;"></td>
 </tr>
 </table>
 
