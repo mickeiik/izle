@@ -15,7 +15,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.test.core.app.ActivityScenario
 import io.github.mickeiik.izle.companion.MainActivity
-import io.github.mickeiik.izle.companion.ui.theme.CompanionTheme
+import io.github.mickeiik.izle.companion.ui.design.IzleTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Rule
@@ -38,7 +38,7 @@ class ConnectScreenTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
                 activity.setContent {
-                    CompanionTheme {
+                    IzleTheme {
                         ConnectScreen(
                             state,
                             onConnect = { url, code -> connected = url to code },

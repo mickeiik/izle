@@ -10,6 +10,12 @@
     <string name="browser_data_cleared">Browser cookies cleared.</string>
     <string name="back">Back</string>
 
+    <!-- Shared words -->
+    <string name="close">Close</string>
+    <string name="show">Show</string>
+    <string name="hide">Hide</string>
+    <string name="just_now">just now</string>
+
     <!-- Connecting this phone -->
     <string name="connect_title">Connect to your TV</string>
     <string name="connect_intro">On the TV, hold OK, then Settings → Connect a phone. Scan the code on the TV with this phone\'s camera, or enter the server address and the 6-digit code here.</string>
@@ -18,8 +24,6 @@
     <string name="use_token">Use a token instead</string>
     <string name="use_code">Use the code instead</string>
     <string name="access_token">Access token</string>
-    <string name="show_token">Show</string>
-    <string name="hide_token">Hide</string>
     <string name="connect">Connect</string>
     <string name="error_invalid_address">That is not a valid server address.</string>
     <string name="error_unreachable">The server cannot be reached. Check the address, and that this phone can reach it.</string>
@@ -31,12 +35,10 @@
     <string name="error_server">The server answered: %1$s.</string>
 
     <!-- The phones -->
-    <string name="phones_title">Phones</string>
     <string name="phones_hint">Each phone was connected from a TV. To connect another one, on the TV hold OK, then Settings → Connect a phone.</string>
     <string name="this_phone">This phone</string>
     <string name="phone_last_used">Last used %1$s</string>
     <string name="phone_never_used">Not used yet</string>
-    <string name="phone_used_just_now">Last used just now</string>
     <string name="disconnect">Disconnect</string>
     <string name="cancel">Cancel</string>
     <string name="disconnect_title">Disconnect %1$s?</string>
@@ -63,7 +65,6 @@
     <string name="channel_line">Channel · %1$s</string>
     <string name="listen_along">Listen along</string>
     <string name="listening_bar">Listening · %1$s</string>
-    <string name="remote">Remote</string>
     <string name="previous_episode">Previous episode</string>
     <string name="next_episode">Next episode</string>
     <string name="previous_channel">Previous channel</string>
@@ -74,9 +75,8 @@
     <string name="play">Play</string>
     <string name="pause">Pause</string>
     <string name="stop_the_tv">Stop the TV</string>
-    <string name="send_message">Send a message to the TV</string>
+    <string name="message">Message</string>
     <string name="message_title">A message for %1$s</string>
-    <string name="message_label">Message</string>
     <string name="message_counter">%1$d / %2$d</string>
     <string name="show_for">Show for</string>
     <string name="show_15s">15 s</string>
@@ -95,8 +95,6 @@
     <string name="earphone_delay_hint">kept on this phone</string>
     <string name="sync_details">Sync details</string>
     <string name="not_listening">Not listening</string>
-    <string name="fold_open">Show</string>
-    <string name="fold_close">Hide</string>
 
     <!-- Timing for this source (issue #34; the admin card has the same words) -->
     <string name="timing_title">Timing for this source</string>
@@ -125,17 +123,13 @@
     <string name="forget_link">Forget</string>
 
     <!-- The notification -->
-    <string name="notification_channel">Listen along</string>
-    <string name="notification_stop">Stop</string>
     <string name="notification_starting">starting</string>
 
     <!-- The link finder -->
-    <string name="finder_close">Close</string>
     <string name="finder_address">Web address</string>
     <string name="finder_go">Go</string>
     <string name="finder_hint">Start the video on the page; its stream shows up here.</string>
     <string name="finder_paste_toggle">Paste a link</string>
-    <string name="finder_paste_hide">Hide</string>
     <string name="finder_paste">Link to a playlist</string>
     <string name="finder_use">Use</string>
     <string name="finder_paste_error">That link did not open as a playlist on this phone.</string>

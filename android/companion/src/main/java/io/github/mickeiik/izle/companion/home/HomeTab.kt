@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -51,9 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -66,8 +63,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import coil3.compose.AsyncImage
 import io.github.mickeiik.izle.companion.R
+import io.github.mickeiik.izle.companion.tv.episodeName
+import io.github.mickeiik.izle.companion.ui.design.IzleTheme
+import io.github.mickeiik.izle.companion.ui.design.Poster
 import io.github.mickeiik.izle.data.api.AdminEpisode
 import io.github.mickeiik.izle.data.api.AdminHomeEntry
 import io.github.mickeiik.izle.data.api.ApiClient
@@ -121,7 +120,7 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.home_load_failed), style = MaterialTheme.typography.bodyLarge)
                     Text(errorText(resources(), error), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-                    OutlinedButton(onClick = vm::retry, enabled = !state.loading) { Label(stringResource(R.string.home_try_again)) }
+                    OutlinedButton(onClick = vm::retry, enabled = !state.loading) { Label(stringResource(R.string.try_again)) }
                 }
             }
             return@Column
@@ -368,7 +367,7 @@ private fun ShowRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Row(Modifier.weight(1f).alpha(if (hidden != null) 0.5f else 1f), verticalAlignment = Alignment.CenterVertically) {
-                Poster(api, entry?.posterUrl)
+                RowPoster(api, entry?.posterUrl)
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -383,7 +382,7 @@ private fun ShowRow(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            CheckChip(verdictOf(entry.check))
+                            VerdictChip(verdictOf(entry.check))
                             if (entry.newEpisodes > 0) {
                                 Text(
                                     pluralStringResource(R.plurals.home_new_episodes, entry.newEpisodes, entry.newEpisodes),
@@ -408,33 +407,11 @@ private fun ShowRow(
     }
 }
 
+/** A show's poster in a row, resolved against the server. */
 @Composable
-private fun Poster(api: ApiClient, posterUrl: String?) {
+internal fun RowPoster(api: ApiClient, posterUrl: String?) {
     val url = remember(posterUrl) { api.resolve(posterUrl)?.toString() }
-    Box(
-        Modifier.size(width = 40.dp, height = 60.dp).clip(RoundedCornerShape(4.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
-    ) {
-        if (url != null) AsyncImage(url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-    }
-}
-
-@Composable
-internal fun CheckChip(verdict: Verdict) {
-    val colors = MaterialTheme.colorScheme
-    val (bg, fg) = when (verdict) {
-        Verdict.Works -> colors.primaryContainer to colors.onPrimaryContainer
-        Verdict.Warns -> colors.tertiaryContainer to colors.onTertiaryContainer
-        Verdict.Fails -> colors.errorContainer to colors.onErrorContainer
-        Verdict.Stale, Verdict.NotChecked -> colors.surfaceVariant to colors.onSurfaceVariant
-    }
-    Surface(color = bg, contentColor = fg, shape = RoundedCornerShape(8.dp)) {
-        Text(
-            verdictText(resources(), verdict),
-            style = MaterialTheme.typography.labelSmall,
-            maxLines = 1,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-        )
-    }
+    Poster(url, IzleTheme.sizes.posterRow)
 }
 
 /** A button's label: one line, centred. */
@@ -481,7 +458,7 @@ private fun TitleDialog(
         confirmButton = {
             TextButton(onClick = { onDismiss(); onConfirm(text) }, enabled = ok) { Label(confirm) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Label(stringResource(R.string.home_cancel)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Label(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -520,7 +497,7 @@ private fun MoveToDialog(sections: List<HomeSection>, current: String, onPick: (
             }
         },
         confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Label(stringResource(R.string.home_cancel)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Label(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -550,7 +527,7 @@ private fun EpisodesDialog(pick: EpisodePick?, entry: AdminHomeEntry?, onPick: (
             }
         },
         confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Label(stringResource(R.string.home_cancel)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Label(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -571,7 +548,7 @@ private fun GridDialog(columns: Int, rows: Int, onSave: (Int, Int) -> Unit, onDi
         confirmButton = {
             TextButton(onClick = { onDismiss(); onSave(c, r) }, enabled = c != columns || r != rows) { Label(stringResource(R.string.home_save)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Label(stringResource(R.string.home_cancel)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Label(stringResource(R.string.cancel)) } },
     )
 }
 

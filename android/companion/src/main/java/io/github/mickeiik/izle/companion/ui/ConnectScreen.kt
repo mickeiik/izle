@@ -90,7 +90,7 @@ fun ConnectScreen(
                 keyboardActions = KeyboardActions(onDone = { connect() }),
                 trailingIcon = {
                     TextButton(onClick = { showToken = !showToken }) {
-                        Text(stringResource(if (showToken) R.string.hide_token else R.string.show_token))
+                        Text(stringResource(if (showToken) R.string.hide else R.string.show))
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),

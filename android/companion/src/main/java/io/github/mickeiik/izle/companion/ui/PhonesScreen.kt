@@ -1,6 +1,5 @@
 package io.github.mickeiik.izle.companion.ui
 
-import android.text.format.DateUtils
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -23,9 +22,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.mickeiik.izle.companion.R
+import io.github.mickeiik.izle.companion.tv.timeAgo
 import io.github.mickeiik.izle.data.api.Phone
 import io.github.mickeiik.izle.domain.IsoTime
 
@@ -89,9 +90,5 @@ fun PhonesScreen(
 @Composable
 private fun usedText(phone: Phone): String {
     val at = phone.lastUsedAt?.let(IsoTime::parseEpochMs) ?: return stringResource(R.string.phone_never_used)
-    val now = System.currentTimeMillis()
-    // lastUsedAt is written at most once a minute, and DateUtils would say "0 minutes ago".
-    if (now - at < DateUtils.MINUTE_IN_MILLIS) return stringResource(R.string.phone_used_just_now)
-    val ago = DateUtils.getRelativeTimeSpanString(at, now, DateUtils.MINUTE_IN_MILLIS).toString()
-    return stringResource(R.string.phone_last_used, ago)
+    return stringResource(R.string.phone_last_used, timeAgo(LocalContext.current.resources, at))
 }

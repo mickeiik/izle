@@ -15,7 +15,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ActivityScenario
 import io.github.mickeiik.izle.companion.MainActivity
-import io.github.mickeiik.izle.companion.ui.theme.CompanionTheme
+import io.github.mickeiik.izle.companion.ui.design.IzleTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -24,6 +24,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import kotlin.math.abs
 
 /**
@@ -32,6 +33,8 @@ import kotlin.math.abs
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36], qualifiers = "w360dp-h800dp")
+// Real text measurement: the legacy graphics measure a character as 1 px wide.
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 class TimingControlsTest {
     @get:Rule
     val compose = createEmptyComposeRule()
@@ -48,7 +51,7 @@ class TimingControlsTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
                 activity.setContent {
-                    CompanionTheme {
+                    IzleTheme {
                         Column(Modifier.padding(16.dp)) {
                             TimingControls(
                                 state,

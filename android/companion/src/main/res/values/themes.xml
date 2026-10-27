@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- The window behind the Compose content (Material 3 draws the rest, light or dark from the system). -->
+    <!-- The window behind the Compose content: the design system's background (ui/design/Tokens.kt), light or dark. -->
     <style name="Theme.IzleCompanion" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:windowBackground">@color/izle_background</item>
     </style>
 </resources>

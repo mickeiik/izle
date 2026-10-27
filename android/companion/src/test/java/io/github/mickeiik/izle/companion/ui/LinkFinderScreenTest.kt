@@ -18,7 +18,7 @@ import androidx.test.core.app.ActivityScenario
 import io.github.mickeiik.izle.companion.MainActivity
 import io.github.mickeiik.izle.companion.finder.FoundLink
 import io.github.mickeiik.izle.companion.finder.LinkFinder
-import io.github.mickeiik.izle.companion.ui.theme.CompanionTheme
+import io.github.mickeiik.izle.companion.ui.design.IzleTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -56,7 +56,7 @@ class LinkFinderScreenTest {
     private var closed = false
 
     private fun show(activity: ComponentActivity) = activity.setContent {
-        CompanionTheme {
+        IzleTheme {
             LinkFinderScreen(finder, initialUrl = "page.test/watch/1", onListenToThis = { listened = it }, onClose = { closed = true })
         }
     }
@@ -218,7 +218,7 @@ class LinkFinderScreenTest {
             lateinit var web: WebView
             scenario.onActivity { activity ->
                 activity.setContent {
-                    CompanionTheme {
+                    IzleTheme {
                         LinkFinderScreen(finder, initialUrl = null, onListenToThis = { listened = it }, onClose = { closed = true })
                     }
                 }

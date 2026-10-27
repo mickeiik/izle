@@ -3,52 +3,14 @@ package io.github.mickeiik.izle.companion.ui
 import io.github.mickeiik.izle.companion.sync.ListenPhase
 import io.github.mickeiik.izle.companion.sync.ListenState
 import io.github.mickeiik.izle.companion.sync.ListenSync
-import io.github.mickeiik.izle.data.api.CommandInfo
+import io.github.mickeiik.izle.companion.tv.formatClock
 import io.github.mickeiik.izle.data.api.NowPlaying
 import io.github.mickeiik.izle.data.api.NowResponse
 import java.math.BigDecimal
 import kotlin.math.abs
 
-// The TV page's texts and the pure parts of the Now tab (what plays, the remote's results, the listening bar). Plain
-// Kotlin: unit-tested without Android.
-
-/** A command the TV gets only if it connects within the next 2 minutes. */
-fun offlineText(tvName: String): String = "$tvName is offline. It gets this if it connects in the next 2 minutes."
-
-/**
- * What a command's result is worth saying, for a snackbar; null when nothing is (done, or no result yet). A message
- * shown says so. Reasons as lib.js's `commandResultText` has them, in a sentence about [tvName].
- */
-fun commandResultText(tvName: String, command: CommandInfo): String? {
-    val result = command.result ?: return null
-    if (result == "done") return if (command.type == "message") "Shown on $tvName" else null
-    val back = command.type == "previous"
-    return when (command.reason) {
-        "not_in_player" -> "Nothing is playing on $tvName."
-        "no_episode" -> if (back) "No previous episode." else "No next episode."
-        "no_channel" -> if (back) "No channel before this one on Home." else "No channel after this one on Home."
-        "live" -> "A channel can't be paused or skipped through."
-        "not_ready" -> "$tvName isn't ready (it shows its pairing screen)."
-        else -> {
-            val why = command.reason?.let { " (${REASONS[it] ?: it.replace('_', ' ')})" }.orEmpty()
-            if (result == "failed") "$tvName couldn't do that$why." else "$tvName didn't do that$why."
-        }
-    }
-}
-
-/** A command the TV did not report on within the wait: it is online by the 60 s rule but not answering. */
-fun noAnswerText(tvName: String): String = "$tvName hasn't answered. It may be off or asleep."
-
-/** lib.js's REASONS, for the reasons without a sentence of their own. */
-private val REASONS = mapOf(
-    "unknown_type" to "it does not know this command",
-    "no_playable_source" to "no source could be played",
-    "playback_error" to "the player failed",
-    "superseded" to "something else started first",
-    "stopped" to "the player was left first",
-    "busy" to "it was busy",
-    "episodes_unavailable" to "the episode list could not be fetched",
-)
+// The TV page's texts and the pure parts of the Now tab (what plays, the listening bar); a command's words are in the
+// tv package. Plain Kotlin: unit-tested without Android.
 
 /** Whether the TV plays something now: online, and a starting, playing or paused report within 2 min (lib.js `isActive`). */
 fun isPlayingNow(now: NowResponse): Boolean = now.online && ListenSync.isActive(now.nowPlaying, now.serverNowMs)
@@ -59,8 +21,8 @@ fun tvPositionAfter(now: NowResponse, elapsedMs: Long): Long? =
 
 /** `12:04 / 30:10 · playing`; without a duration `12:04 · paused`. */
 fun progressText(positionMs: Long, durationMs: Long?, state: String): String {
-    val at = ListenSync.formatClock(positionMs.toDouble())
-    val of = durationMs?.let { " / ${ListenSync.formatClock(it.toDouble())}" }.orEmpty()
+    val at = formatClock(positionMs)
+    val of = durationMs?.let { " / ${formatClock(it)}" }.orEmpty()
     return "$at$of · $state"
 }
 

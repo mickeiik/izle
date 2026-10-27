@@ -44,7 +44,7 @@ Its Home tab is in [The companion's Home tab](companion-home.md); the routes are
 
 ## Send a message
 
-- **Send a message to the TV** opens a bottom sheet: the text (1–200 characters, trimmed, with a counter), **Show
+- **Message** (beside **Stop the TV**) opens a bottom sheet: the text (1–200 characters, trimmed, with a counter), **Show
   for** 15 s, 1 min (the default) or 2 min, and **Send**. Once the TV reports it shown: "Shown on Salon".
 
 ## Listen along

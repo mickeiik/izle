@@ -2,7 +2,9 @@ package io.github.mickeiik.izle.companion.home
 
 import androidx.test.core.app.ApplicationProvider
 import android.content.Context
+import io.github.mickeiik.izle.companion.tv.CommandOutcome
 import io.github.mickeiik.izle.data.api.AdminHomeEntry
+import io.github.mickeiik.izle.data.api.CommandInfo
 import io.github.mickeiik.izle.data.api.CheckSummary
 import io.github.mickeiik.izle.data.api.ContinueInfo
 import io.github.mickeiik.izle.data.api.CatalogHit
@@ -17,18 +19,6 @@ import org.robolectric.annotation.Config
 @Config(sdk = [36])
 class HomeTextTest {
     private val res = ApplicationProvider.getApplicationContext<Context>().resources
-
-    @Test
-    fun clockAndEpisodeNames() {
-        assertEquals("0:00", formatClock(0))
-        assertEquals("12:04", formatClock(724_900))
-        assertEquals("1:02:03", formatClock(3_723_000))
-        assertEquals("S1 · E5 — Rain", episodeName(1, 5, null, "Rain"))
-        assertEquals("Episode 5", episodeName(null, 5, null, null))
-        assertEquals("Special", episodeName(1, 5, "Special", null))
-        assertEquals("Pilot", episodeName(null, null, null, "Pilot"))
-        assertEquals("S1 E5", episodeLabel(1, 5, null, "Rain"))
-    }
 
     @Test
     fun whatOkPlays() {
@@ -66,9 +56,9 @@ class HomeTextTest {
         assertEquals("Channel", hitLine(res, CatalogHit("c", "live", "News")))
         assertEquals("Sintel added to Films.", noticeText(res, HomeNotice.Added("Sintel", "Films"), "Salon"))
         assertEquals("Sintel added to Home.", noticeText(res, HomeNotice.Added("Sintel", null), "Salon"))
-        assertEquals("Salon continues Sintel from S1 E5.", noticeText(res, HomeNotice.Continues("Sintel", "S1 E5"), "Salon"))
-        assertEquals("Salon is offline. It gets this if it connects in the next 2 minutes.", noticeText(res, HomeNotice.PlayQueued("Sintel"), "Salon"))
-        assertEquals("Salon isn't ready (it shows its pairing screen).", noticeText(res, HomeNotice.NotPlayed("Sintel", "not_ready"), "Salon"))
+        assertEquals("Salon continues Sintel from S1 · E5.", noticeText(res, HomeNotice.Continues("Sintel", "S1 · E5"), "Salon"))
+        assertEquals("Sintel is playing on Salon.", noticeText(res, HomeNotice.Played("Sintel", CommandOutcome.Answered(CommandInfo(1, "play", result = "done"))), "Salon"))
+        assertEquals("Sent to Salon.", noticeText(res, HomeNotice.Played("Sintel", CommandOutcome.NoAnswer), "Salon"))
         assertEquals("Home changed on another screen; this is the current one.", noticeText(res, HomeNotice.Failed(HomeError.Server("not_on_home")), "Salon"))
         assertEquals("A Home holds at most 20 sections.", noticeText(res, HomeNotice.Failed(HomeError.Server("too_many_sections")), "Salon"))
         assertEquals("The server did not accept this (teapot).", noticeText(res, HomeNotice.Failed(HomeError.Server("teapot")), "Salon"))

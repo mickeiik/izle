@@ -1,6 +1,5 @@
 package io.github.mickeiik.izle.companion.home
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,12 +9,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
@@ -42,17 +39,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import coil3.compose.AsyncImage
 import io.github.mickeiik.izle.companion.R
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.HomeSection
@@ -78,7 +71,7 @@ internal fun AddShowScreen(
             Column(Modifier.fillMaxSize()) {
                 TopAppBar(
                     title = { Text(stringResource(R.string.home_add_show)) },
-                    navigationIcon = { IconButton(onClick = onClose) { Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.home_close)) } },
+                    navigationIcon = { IconButton(onClick = onClose) { Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close)) } },
                 )
                 Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
@@ -111,7 +104,7 @@ internal fun AddShowScreen(
                 LazyColumn(state = list, modifier = Modifier.fillMaxSize()) {
                     items(search.items, key = { it.id }) { hit ->
                         ListItem(
-                            leadingContent = { HitPoster(api, hit.posterUrl) },
+                            leadingContent = { RowPoster(api, hit.posterUrl) },
                             headlineContent = { Text(hit.title, maxLines = 2, overflow = TextOverflow.Ellipsis) },
                             supportingContent = { Text(hitLine(res, hit), maxLines = 1) },
                             trailingContent = {
@@ -155,12 +148,5 @@ private fun AddToPicker(sections: List<HomeSection>, addTo: String, onPick: (Str
     }
 }
 
-@Composable
-private fun HitPoster(api: ApiClient, posterUrl: String?) {
-    val url = remember(posterUrl) { api.resolve(posterUrl)?.toString() }
-    Box(Modifier.size(width = 40.dp, height = 60.dp).clip(RoundedCornerShape(4.dp)).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
-        if (url != null) AsyncImage(url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-    }
-}
 
 private val KINDS = listOf("movie" to R.string.home_kind_movie, "series" to R.string.home_kind_series, "live" to R.string.home_kind_live)

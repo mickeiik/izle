@@ -13,6 +13,8 @@ import io.github.mickeiik.izle.companion.finder.FoundLink
 import io.github.mickeiik.izle.companion.finder.LinkConfirmer
 import io.github.mickeiik.izle.companion.finder.LinkFinder
 import io.github.mickeiik.izle.companion.sync.EndReason
+import io.github.mickeiik.izle.companion.tv.commandOutcomeText
+import io.github.mickeiik.izle.companion.tv.sendAndAwait
 import io.github.mickeiik.izle.companion.sync.ListenPhase
 import io.github.mickeiik.izle.companion.sync.ListenService
 import io.github.mickeiik.izle.companion.sync.ListenSession
@@ -23,7 +25,6 @@ import io.github.mickeiik.izle.companion.sync.PASTED_SOURCE_ID
 import io.github.mickeiik.izle.data.api.AdminDevice
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.ApiException
-import io.github.mickeiik.izle.data.api.CommandInfo
 import io.github.mickeiik.izle.data.api.CompanionResponse
 import io.github.mickeiik.izle.data.api.LinkTiming
 import io.github.mickeiik.izle.data.api.LinkUpdate
@@ -607,7 +608,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * A remote button: `previous`, `next`, `pause`, `resume`, `stop`, or `seek` by [deltaMs]. The result is read
-     * afterwards and said only when worth saying ([commandResultText]).
+     * afterwards and said only when worth saying ([commandOutcomeText]).
      */
     fun remote(type: String, deltaMs: Long? = null) {
         val fields = if (deltaMs != null) mapOf("deltaMs" to JsonPrimitive(deltaMs)) else emptyMap()
@@ -626,25 +627,12 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         val client = api ?: return
         val name = tv.displayName
         viewModelScope.launch {
-            val sent = try {
-                client.sendCommand(tv.tvId, type, fields)
+            val outcome = try {
+                client.sendAndAwait(tv.tvId, type, fields)
             } catch (e: Exception) {
                 return@launch failed(e)
             }
-            if (!sent.online) {
-                _snackbar.value = offlineText(name)
-                return@launch
-            }
-            val result = withTimeoutOrNull(COMMAND_WAIT_MS) {
-                var c: CommandInfo? = null
-                while (c?.result == null) {
-                    delay(COMMAND_POLL_MS)
-                    c = orNullOnFailure { client.command(tv.tvId, sent.id) }
-                }
-                c
-            }
-            if (result == null) _snackbar.value = noAnswerText(name)
-            else commandResultText(name, result)?.let { _snackbar.value = it }
+            commandOutcomeText(name, outcome)?.let { _snackbar.value = it }
         }
     }
 
@@ -980,10 +968,6 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         /** `/now`'s long-poll, and the pause after a failed read. */
         private const val NOW_WAIT_SEC = 25
         private const val NOW_RETRY_MS = 5_000L
-
-        /** A command's result is read every 500 ms for up to 5 s. */
-        private const val COMMAND_POLL_MS = 500L
-        private const val COMMAND_WAIT_MS = 5_000L
 
         const val MESSAGE_MAX = 200
 

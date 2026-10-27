@@ -9,7 +9,7 @@ import androidx.activity.viewModels
 import io.github.mickeiik.izle.companion.connect.ConnectLink
 import io.github.mickeiik.izle.companion.ui.CompanionRoot
 import io.github.mickeiik.izle.companion.ui.CompanionViewModel
-import io.github.mickeiik.izle.companion.ui.theme.CompanionTheme
+import io.github.mickeiik.izle.companion.ui.design.IzleTheme
 
 /**
  * The only activity: connecting, the TV picker, the phones and a TV's page (see [CompanionRoot]). It also opens the
@@ -23,7 +23,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // A recreated activity gets its intent again: the invite was claimed already (it is single use).
         if (savedInstanceState == null) openLink(intent)
-        setContent { CompanionTheme { CompanionRoot(vm) } }
+        setContent { IzleTheme { CompanionRoot(vm) } }
     }
 
     override fun onNewIntent(intent: Intent) {

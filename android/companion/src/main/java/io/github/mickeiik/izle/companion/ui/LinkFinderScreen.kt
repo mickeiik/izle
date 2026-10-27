@@ -120,7 +120,7 @@ fun LinkFinderScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = onClose) {
-                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.finder_close))
+                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.close))
                 }
                 OutlinedTextField(
                     value = address,
@@ -216,7 +216,7 @@ fun LinkFinderScreen(
                                 modifier = Modifier.weight(1f),
                             )
                             TextButton(onClick = togglePaste) {
-                                Text(stringResource(if (pasteOpen) R.string.finder_paste_hide else R.string.finder_paste_toggle))
+                                Text(stringResource(if (pasteOpen) R.string.hide else R.string.finder_paste_toggle))
                             }
                         }
                     }

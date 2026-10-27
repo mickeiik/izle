@@ -11,13 +11,13 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 - **izle companion: a TV's page, with a remote and its Home.** After choosing a TV, the app shows its page with two
   tabs. **Now**: whether the TV is online, what it plays (poster, progress), a remote (previous, −30 s, play/pause,
   +30 s, next, **Stop the TV**; previous/next channel on a channel) that says in words when the TV ignores a press,
-  and **Send a message to the TV** (shown for 15 s, 1 min or 2 min); while the phone listens, a bar says so, with
+  and **Message** (shown on the TV for 15 s, 1 min or 2 min); while the phone listens, a bar says so, with
   **Stop**. **Home**: the TV's Home by sections, as on the admin page: drag a show by its handle within or across
   sections, a show's sheet (**Play on the TV now**, **Continue from episode…**, **Move to section…**, **Move to
   first**, **Remove from Home**), sections (add, rename, one scrolling line, move, delete), **Add show** (a catalog
   search that leaves out what is already on this TV) and the grid size; each edit is one single change, and edits made
   elsewhere show at once. Listen along opens from **Now**, slimmer: the source, **Listen**, the earphone delay, and
-  the timing and sync details folded away.
+  the timing and sync details folded away. The app has one flat, compact look, light or dark as the phone is.
 - **Listen along timing by ear, in the companion app and on the admin page** ([#34](https://github.com/mickeiik/izle/issues/34)).
   **Mark on TV** when a moment shows on the TV and **Mark on phone** when it is heard, in either order, set the
   offset; ±30 s, ±5 s and ±0.5 s move it at once while listening, with the offset shown as `−0:01.3`; the speed is a

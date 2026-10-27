@@ -38,7 +38,7 @@ Tapping a show opens a sheet:
   "Sent to Salon." (no result yet), or, offline, "Salon is offline. It gets this if it connects in the next 2
   minutes."
 - **Continue from episode…** (a series): the episodes that may be played, the one OK plays now marked; choosing one
-  sets the TV's place ("Salon continues Sintel from S1 E5."), starting that episode from its beginning.
+  sets the TV's place ("Salon continues Sintel from S1 · E5 — Rain.", the episode named as in the list), starting that episode from its beginning.
 - **Move to section…** (the sections, the current one marked "here now"): to the end of the one chosen. **Move to
   first** of its section (not for the first one).
 - **Remove from Home**.

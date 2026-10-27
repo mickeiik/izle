@@ -66,7 +66,7 @@ internal fun ShowSheet(
                 Text(stringResource(hidden), style = MaterialTheme.typography.bodyMedium)
             } else if (entry != null) {
                 Text(showLine(res, entry), style = MaterialTheme.typography.bodyMedium)
-                CheckChip(verdictOf(entry.check))
+                VerdictChip(verdictOf(entry.check))
             }
             Spacer(Modifier.height(8.dp))
             if (hidden == null) {

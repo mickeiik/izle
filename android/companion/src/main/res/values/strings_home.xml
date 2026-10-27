@@ -12,7 +12,6 @@
     <string name="home_new_section_button">Section</string>
     <string name="home_nothing_yet">Nothing on Home yet. Add a show and it appears on the TV.</string>
     <string name="home_load_failed">Home could not be read.</string>
-    <string name="home_try_again">Try again</string>
 
     <!-- Sections -->
     <string name="home_no_title">No title</string>
@@ -38,14 +37,13 @@
     <string name="home_sections_full">A Home holds at most %d sections.</string>
     <string name="home_add">Add</string>
     <string name="home_save">Save</string>
-    <string name="home_cancel">Cancel</string>
 
     <!-- A show -->
     <string name="home_drag">Drag %s to move it</string>
     <string name="home_hidden_missing">Hidden on the TV: not in the catalog</string>
     <string name="home_hidden_unplayable">Hidden on the TV: can\'t play</string>
     <string name="home_remove">Remove</string>
-    <string name="home_ok_film">Film</string>
+    <string name="home_film">Film</string>
     <string name="home_ok_live">Live</string>
     <string name="home_ok_nothing">Nothing playable</string>
     <string name="home_ok_new">%s · new</string>
@@ -84,7 +82,6 @@
     <string name="home_grid_hint">The cards one screen of Home shows on the TV.</string>
 
     <!-- Add show -->
-    <string name="home_close">Close</string>
     <string name="home_search">Search the catalog</string>
     <string name="home_kind_movie">Films</string>
     <string name="home_kind_series">Series</string>
@@ -92,7 +89,6 @@
     <string name="home_add_to">Add to</string>
     <string name="home_add_to_section">Add to: %s</string>
     <string name="home_no_results">Nothing found that %s does not have on Home already.</string>
-    <string name="home_hit_film">Film</string>
     <string name="home_hit_film_year">Film · %d</string>
     <string name="home_hit_channel">Channel</string>
     <plurals name="home_hit_series">
@@ -106,18 +102,9 @@
     <string name="home_added_to">%1$s added to %2$s.</string>
     <string name="home_added_home">%s added to Home.</string>
     <string name="home_continues">%1$s continues %2$s from %3$s.</string>
-    <string name="home_offline">%s is offline. It gets this if it connects in the next 2 minutes.</string>
-    <string name="home_playing">%2$s is playing on %1$s.</string>
-    <string name="home_play_sent">Sent to %s.</string>
-    <string name="home_not_ready">%s isn\'t ready (it shows its pairing screen).</string>
-    <string name="home_not_played">%1$s could not play %2$s.</string>
-    <string name="home_unreachable">The server cannot be reached.</string>
     <string name="home_error_too_many_items">A Home holds at most 200 shows.</string>
     <string name="home_error_duplicate_item">That show is on Home already.</string>
     <string name="home_error_unknown_item">That show is not in the catalog (any more).</string>
     <string name="home_error_not_playable">Nothing in that show may be played.</string>
-    <string name="home_error_unknown_episode">That episode is not in the catalog (any more).</string>
-    <string name="home_error_not_allowed">The catalog does not allow playing that episode.</string>
-    <string name="home_error_unknown_device">This TV does not exist any more.</string>
     <string name="home_error_other">The server did not accept this (%s).</string>
 </resources>

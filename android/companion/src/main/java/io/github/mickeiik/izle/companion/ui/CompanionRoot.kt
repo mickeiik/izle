@@ -1,33 +1,19 @@
 package io.github.mickeiik.izle.companion.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,17 +22,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.mickeiik.izle.companion.R
 import io.github.mickeiik.izle.companion.finder.BrowserData
 import io.github.mickeiik.izle.companion.home.HomeTab
+import io.github.mickeiik.izle.companion.ui.design.ButtonKind
+import io.github.mickeiik.izle.companion.ui.design.IzleBottomBar
+import io.github.mickeiik.izle.companion.ui.design.IzleButton
+import io.github.mickeiik.izle.companion.ui.design.IzleTopBar
+import io.github.mickeiik.izle.companion.ui.design.MenuItem
+import io.github.mickeiik.izle.companion.ui.design.OverflowMenu
+import io.github.mickeiik.izle.companion.ui.design.TabItem
 import kotlinx.coroutines.launch
 
 /**
@@ -56,7 +46,6 @@ import kotlinx.coroutines.launch
  * this phone, the browser's cookies; screens opened from it (Phones) have a back arrow. Back on a TV's page goes to
  * the TV list when the server has more than one TV, else it leaves the app (listening goes on in its notification).
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
     val ui by vm.ui.collectAsStateWithLifecycle()
@@ -78,54 +67,42 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
     BackHandler(enabled = tv != null && !tv.listenOpen && tv.severalTvs, onBack = vm::changeTv)
     Scaffold(
         topBar = {
-            if (!finderOpen) TopAppBar(
-                title = {
-                    when {
-                        tv?.listenOpen == true -> Text(stringResource(R.string.listen_along))
-                        tv != null -> TvName(tv.tvName ?: stringResource(R.string.app_name), onClick = vm::changeTv)
-                        ui is CompanionUi.Phones -> Text(stringResource(R.string.phones_title))
-                        else -> Text(stringResource(R.string.app_name))
-                    }
-                },
-                navigationIcon = {
-                    val back = when {
+            if (!finderOpen) {
+                val appName = stringResource(R.string.app_name)
+                IzleTopBar(
+                    title = when {
+                        tv?.listenOpen == true -> stringResource(R.string.listen_along)
+                        tv != null -> tv.tvName ?: appName
+                        ui is CompanionUi.Phones -> stringResource(R.string.phones)
+                        else -> appName
+                    },
+                    onBack = when {
                         ui is CompanionUi.Phones -> vm::closePhones
                         tv?.listenOpen == true -> vm::closeListen
                         else -> null
-                    }
-                    if (back != null) {
-                        IconButton(onClick = back) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+                    },
+                    onTitleClick = if (tv != null && !tv.listenOpen) vm::changeTv else null,
+                    titleClickLabel = stringResource(R.string.switch_tv),
+                    actions = {
+                        if (onTvScreen) {
+                            AppMenu(
+                                onPhones = vm::openPhones,
+                                onDisconnect = { confirmDisconnect = true },
+                                onBrowserDataCleared = { snackbars.showSnackbar(it) },
+                            )
                         }
-                    }
-                },
-                actions = {
-                    if (onTvScreen) {
-                        OverflowMenu(
-                            onPhones = vm::openPhones,
-                            onDisconnect = { confirmDisconnect = true },
-                            onBrowserDataCleared = { snackbars.showSnackbar(it) },
-                        )
-                    }
-                },
-            )
+                    },
+                )
+            }
         },
         bottomBar = {
             if (tv != null && !tv.listenOpen && !finderOpen) {
-                NavigationBar {
-                    NavigationBarItem(
-                        selected = tv.tab == TvTab.Now,
-                        onClick = { vm.selectTab(TvTab.Now) },
-                        icon = { Icon(Icons.Filled.PlayArrow, contentDescription = null) },
-                        label = { Text(stringResource(R.string.tab_now)) },
-                    )
-                    NavigationBarItem(
-                        selected = tv.tab == TvTab.Home,
-                        onClick = { vm.selectTab(TvTab.Home) },
-                        icon = { Icon(Icons.Filled.Home, contentDescription = null) },
-                        label = { Text(stringResource(R.string.tab_home)) },
-                    )
-                }
+                IzleBottomBar(
+                    listOf(
+                        TabItem(stringResource(R.string.tab_now), Icons.Outlined.PlayArrow, tv.tab == TvTab.Now) { vm.selectTab(TvTab.Now) },
+                        TabItem(stringResource(R.string.tab_home), Icons.Outlined.Home, tv.tab == TvTab.Home) { vm.selectTab(TvTab.Home) },
+                    ),
+                )
             }
         },
         snackbarHost = { SnackbarHost(snackbars) },
@@ -157,61 +134,30 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
             title = { Text(stringResource(R.string.disconnect_this_phone_title)) },
             text = { Text(stringResource(R.string.disconnect_self_text)) },
             confirmButton = {
-                TextButton(onClick = {
+                IzleButton(stringResource(R.string.disconnect), kind = ButtonKind.Danger, onClick = {
                     confirmDisconnect = false
                     vm.forgetPairing()
-                }) { Text(stringResource(R.string.disconnect)) }
+                })
             },
-            dismissButton = { TextButton(onClick = { confirmDisconnect = false }) { Text(stringResource(R.string.cancel)) } },
+            dismissButton = { IzleButton(stringResource(R.string.cancel), kind = ButtonKind.Quiet, onClick = { confirmDisconnect = false }) },
         )
     }
 }
 
-/** The TV's name in the app bar: tapping it goes to the TV list. */
+/** The app bar's ⋮: Phones, Disconnect this phone, Clear browser cookies. */
 @Composable
-private fun TvName(name: String, onClick: () -> Unit) {
-    val switch = stringResource(R.string.switch_tv)
-    Row(
-        modifier = Modifier.clickable(onClickLabel = switch, onClick = onClick).padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(name, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-        Icon(Icons.Filled.ArrowDropDown, contentDescription = null)
-    }
-}
-
-@Composable
-private fun OverflowMenu(onPhones: () -> Unit, onDisconnect: () -> Unit, onBrowserDataCleared: suspend (String) -> Unit) {
-    var open by rememberSaveable { mutableStateOf(false) }
+private fun AppMenu(onPhones: () -> Unit, onDisconnect: () -> Unit, onBrowserDataCleared: suspend (String) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val cleared = stringResource(R.string.browser_data_cleared)
-    Box {
-        IconButton(onClick = { open = true }) {
-            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
-        }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.phones)) },
-                onClick = {
-                    open = false
-                    onPhones()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.disconnect_this_phone)) },
-                onClick = {
-                    open = false
-                    onDisconnect()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.clear_browser_data)) },
-                onClick = {
-                    open = false
-                    BrowserData.clear(context) { scope.launch { onBrowserDataCleared(cleared) } }
-                },
-            )
-        }
-    }
+    OverflowMenu(
+        stringResource(R.string.more_options),
+        listOf(
+            MenuItem(stringResource(R.string.phones), onPhones),
+            MenuItem(stringResource(R.string.disconnect_this_phone), onDisconnect),
+            MenuItem(stringResource(R.string.clear_browser_data), {
+                BrowserData.clear(context) { scope.launch { onBrowserDataCleared(cleared) } }
+            }),
+        ),
+    )
 }

@@ -1,35 +1,19 @@
 package io.github.mickeiik.izle.companion.ui
 
 import android.os.SystemClock
-import android.text.format.DateUtils
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -40,27 +24,38 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import coil3.compose.AsyncImage
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.LifecycleStartEffect
 import io.github.mickeiik.izle.companion.R
+import io.github.mickeiik.izle.companion.tv.timeAgo
+import io.github.mickeiik.izle.companion.ui.design.ButtonKind
+import io.github.mickeiik.izle.companion.ui.design.ButtonRow
+import io.github.mickeiik.izle.companion.ui.design.ButtonSize
+import io.github.mickeiik.izle.companion.ui.design.Caption
+import io.github.mickeiik.izle.companion.ui.design.Card
+import io.github.mickeiik.izle.companion.ui.design.ChoiceGrid
+import io.github.mickeiik.izle.companion.ui.design.EmptyState
+import io.github.mickeiik.izle.companion.ui.design.IzleButton
+import io.github.mickeiik.izle.companion.ui.design.IzleIcons
+import io.github.mickeiik.izle.companion.ui.design.IzleSheet
+import io.github.mickeiik.izle.companion.ui.design.IzleTheme
+import io.github.mickeiik.izle.companion.ui.design.Poster
+import io.github.mickeiik.izle.companion.ui.design.ProgressBar
+import io.github.mickeiik.izle.companion.ui.design.RemoteBar
+import io.github.mickeiik.izle.companion.ui.design.RemoteKey
+import io.github.mickeiik.izle.companion.ui.design.StatusLine
+import io.github.mickeiik.izle.companion.ui.design.Tone
 import io.github.mickeiik.izle.data.api.NowResponse
 import io.github.mickeiik.izle.domain.IsoTime
 import kotlinx.coroutines.delay
 
 /**
  * The TV page's Now tab: whether the TV is online, what it plays (followed with `GET …/now` while shown), Listen
- * along (or the listening bar while this phone listens), the remote and a message for the TV.
+ * along (or the listening bar while this phone listens), the remote, Stop the TV and a message for the TV.
  */
 @Composable
 fun NowTab(state: CompanionUi.Tv, vm: CompanionViewModel, modifier: Modifier = Modifier) {
@@ -69,31 +64,14 @@ fun NowTab(state: CompanionUi.Tv, vm: CompanionViewModel, modifier: Modifier = M
         onStopOrDispose { vm.stopFollowingNow() }
     }
     var messageOpen by rememberSaveable { mutableStateOf(false) }
-
-    Column(modifier = modifier.fillMaxSize()) {
-        if (state.now == null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            Text(
-                onlineText(state),
-                style = MaterialTheme.typography.labelLarge,
-                color = if (state.online) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            state.now?.let { NowCard(it, state.nowAtMs, state.posterUrl) }
-            ListenAlongEntry(state, vm)
-            Text(stringResource(R.string.remote), style = MaterialTheme.typography.titleMedium)
-            Remote(state.now, vm)
-            EqualRow {
-                ChoiceButton(stringResource(R.string.stop_the_tv), onClick = { vm.remote("stop") }, modifier = Modifier.weight(1f))
-            }
-            EqualRow {
-                ChoiceButton(stringResource(R.string.send_message), onClick = { messageOpen = true }, modifier = Modifier.weight(1f))
-            }
-        }
-    }
-
+    NowContent(
+        state,
+        onRemote = vm::remote,
+        onListen = vm::openListen,
+        onStopListening = vm::stopListening,
+        onMessage = { messageOpen = true },
+        modifier = modifier,
+    )
     if (messageOpen) {
         MessageSheet(
             tvName = state.displayName,
@@ -106,88 +84,114 @@ fun NowTab(state: CompanionUi.Tv, vm: CompanionViewModel, modifier: Modifier = M
     }
 }
 
+/** Now's content, without the view model: [onRemote] gets a command's type and, for a seek, its delta. */
+@Composable
+internal fun NowContent(
+    state: CompanionUi.Tv,
+    onRemote: (String, Long?) -> Unit,
+    onListen: () -> Unit,
+    onStopListening: () -> Unit,
+    onMessage: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val s = IzleTheme.spacing
+    Column(modifier = modifier.fillMaxSize()) {
+        if (state.now == null) ProgressBar(null)
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(s.lg),
+            verticalArrangement = Arrangement.spacedBy(s.lg),
+        ) {
+            StatusLine(onlineText(state), if (state.online) Tone.Success else Tone.Neutral)
+            val now = state.now
+            when {
+                now == null -> Unit
+                isPlayingNow(now) && now.nowPlaying != null -> NowCard(now, state.nowAtMs, state.posterUrl)
+                else -> EmptyState(stringResource(R.string.nothing_is_playing))
+            }
+            ListenAlongEntry(state, onListen, onStopListening)
+            Remote(state.now, onRemote)
+            ButtonRow {
+                IzleButton(stringResource(R.string.stop_the_tv), onClick = { onRemote("stop", null) }, icon = IzleIcons.Stop)
+                IzleButton(stringResource(R.string.message), onClick = onMessage, icon = IzleIcons.Message)
+            }
+        }
+    }
+}
+
+/** "Online", or "Offline · seen 5 minutes ago". */
 @Composable
 private fun onlineText(state: CompanionUi.Tv): String {
     if (state.online) return stringResource(R.string.tv_online)
     val at = state.device?.lastSeenAt?.let(IsoTime::parseEpochMs) ?: return stringResource(R.string.tv_offline)
-    val ago = DateUtils.getRelativeTimeSpanString(at, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
-    return stringResource(R.string.tv_offline_seen, ago)
+    return stringResource(R.string.tv_offline_seen, timeAgo(LocalContext.current.resources, at))
 }
 
-/** What plays: the title, the episode, a progress bar and `12:04 / 30:10 · playing`, moved on from the anchor. */
+/** What plays: the poster, the title, the episode, a progress bar and `12:04 / 30:10 · playing`, moved on from the anchor. */
 @Composable
 private fun NowCard(now: NowResponse, nowAtMs: Long, posterUrl: String?) {
-    val n = now.nowPlaying
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (n == null || !isPlayingNow(now)) {
-                Text(stringResource(R.string.nothing_is_playing), style = MaterialTheme.typography.titleMedium)
-                return@Column
-            }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (posterUrl != null) {
-                    AsyncImage(
-                        posterUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(width = 48.dp, height = 72.dp).clip(RoundedCornerShape(4.dp)),
-                    )
+    val n = now.nowPlaying ?: return
+    val c = IzleTheme.colors
+    Card {
+        Row(horizontalArrangement = Arrangement.spacedBy(IzleTheme.spacing.md), verticalAlignment = Alignment.CenterVertically) {
+            Poster(posterUrl, IzleTheme.sizes.posterNow)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(IzleTheme.spacing.xs)) {
+                Text(n.itemTitle ?: n.itemId, style = IzleTheme.type.heading, color = c.textPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (n.isLive) {
+                    Caption(stringResource(R.string.channel_line, n.state))
+                    return@Column
                 }
-                Text(n.itemTitle ?: n.itemId, style = MaterialTheme.typography.titleLarge)
-            }
-            if (n.isLive) {
-                Text(stringResource(R.string.channel_line, n.state), style = MaterialTheme.typography.bodyMedium)
-                return@Column
-            }
-            n.episodeTitle?.takeIf { it != n.itemTitle }?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
-            // Ticks once a second while the TV plays.
-            var clock by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-            val moving = now.anchor?.playing == true
-            LaunchedEffect(nowAtMs, moving) {
-                clock = SystemClock.elapsedRealtime()
-                while (moving) {
-                    delay(1_000)
+                n.episodeTitle?.takeIf { it != n.itemTitle }?.let {
+                    Text(it, style = IzleTheme.type.body, color = c.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                // Ticks once a second while the TV plays.
+                var clock by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+                val moving = now.anchor?.playing == true
+                LaunchedEffect(nowAtMs, moving) {
                     clock = SystemClock.elapsedRealtime()
+                    while (moving) {
+                        delay(1_000)
+                        clock = SystemClock.elapsedRealtime()
+                    }
                 }
+                val position = tvPositionAfter(now, (clock - nowAtMs).coerceAtLeast(0)) ?: 0
+                progressFraction(position, n.durationMs)?.let { ProgressBar(it, Modifier.padding(top = IzleTheme.spacing.xs)) }
+                Caption(progressText(position, n.durationMs, n.state))
             }
-            val position = tvPositionAfter(now, (clock - nowAtMs).coerceAtLeast(0)) ?: 0
-            progressFraction(position, n.durationMs)?.let { LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth()) }
-            Text(
-                progressText(position, n.durationMs, n.state),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
 
 /** While this phone listens to this TV: the listening bar (tap: Listen along); else Listen along, or why not. */
 @Composable
-private fun ListenAlongEntry(state: CompanionUi.Tv, vm: CompanionViewModel) {
+private fun ListenAlongEntry(state: CompanionUi.Tv, onListen: () -> Unit, onStop: () -> Unit) {
     val target = state.session.target
     if (state.listening && target?.deviceId == state.tvId) {
         val source = state.options.firstOrNull { it.sourceId == target.sourceId && it.language == target.language }?.label ?: target.sourceId
-        Surface(
-            color = MaterialTheme.colorScheme.primaryContainer,
-            shape = MaterialTheme.shapes.medium,
-            modifier = Modifier.fillMaxWidth().clickable(onClick = vm::openListen),
-        ) {
-            Row(modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(stringResource(R.string.listening_bar, listeningWord(state.session)), style = MaterialTheme.typography.titleSmall)
-                    Text(source, style = MaterialTheme.typography.bodySmall, maxLines = 1)
+        Card(accent = true, onClick = onListen, onClickLabel = stringResource(R.string.listen_along)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(IzleTheme.spacing.md)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(IzleTheme.spacing.line)) {
+                    Text(
+                        stringResource(R.string.listening_bar, listeningWord(state.session)),
+                        style = IzleTheme.type.heading,
+                        color = IzleTheme.colors.accent,
+                        maxLines = 1,
+                    )
+                    Caption(source, maxLines = 1)
                 }
-                TextButton(onClick = vm::stopListening) { Text(stringResource(R.string.stop)) }
+                IzleButton(stringResource(R.string.stop), onClick = onStop, size = ButtonSize.Small)
             }
         }
         return
     }
     val why = nothingToListenText(state.now, state.displayName)
     when {
-        why != null -> Text(why, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        state.now != null -> Button(onClick = vm::openListen, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-            Text(stringResource(R.string.listen_along), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, maxLines = 1)
-        }
+        why != null -> Caption(why)
+        state.now != null -> IzleButton(
+            stringResource(R.string.listen_along),
+            onClick = onListen,
+            icon = IzleIcons.Headphones,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
@@ -196,40 +200,29 @@ private fun ListenAlongEntry(state: CompanionUi.Tv, vm: CompanionViewModel) {
  * Previous channel and Next channel.
  */
 @Composable
-private fun Remote(now: NowResponse?, vm: CompanionViewModel) {
+private fun Remote(now: NowResponse?, onRemote: (String, Long?) -> Unit) {
     val n = now?.nowPlaying
     if (n?.isLive == true) {
-        EqualRow {
-            ChoiceButton(stringResource(R.string.previous_channel), onClick = { vm.remote("previous") }, modifier = Modifier.weight(1f))
-            ChoiceButton(stringResource(R.string.next_channel), onClick = { vm.remote("next") }, modifier = Modifier.weight(1f))
-        }
+        RemoteBar(
+            listOf(
+                RemoteKey(stringResource(R.string.previous_channel), { onRemote("previous", null) }, IzleIcons.SkipPrevious, stringResource(R.string.previous_channel)),
+                RemoteKey(stringResource(R.string.next_channel), { onRemote("next", null) }, IzleIcons.SkipNext, stringResource(R.string.next_channel)),
+            ),
+        )
         return
     }
     val playing = n?.state == "playing"
-    EqualRow {
-        RemoteButton(RemoteIcons.SkipPrevious, stringResource(R.string.previous_episode)) { vm.remote("previous") }
-        val thirty = stringResource(R.string.seek_30)
-        RemoteButton(RemoteIcons.FastRewind, stringResource(R.string.back_30), label = thirty) { vm.remote("seek", -SEEK_MS) }
-        if (playing) {
-            RemoteButton(RemoteIcons.Pause, stringResource(R.string.pause)) { vm.remote("pause") }
-        } else {
-            RemoteButton(Icons.Filled.PlayArrow, stringResource(R.string.play)) { vm.remote("resume") }
-        }
-        RemoteButton(RemoteIcons.FastForward, stringResource(R.string.forward_30), label = thirty) { vm.remote("seek", SEEK_MS) }
-        RemoteButton(RemoteIcons.SkipNext, stringResource(R.string.next_episode)) { vm.remote("next") }
-    }
-}
-
-@Composable
-private fun RowScope.RemoteButton(icon: ImageVector, description: String, label: String? = null, onClick: () -> Unit) {
-    FilledTonalButton(
-        onClick = onClick,
-        contentPadding = PaddingValues(0.dp),
-        modifier = Modifier.weight(1f).height(56.dp).semantics { contentDescription = description },
-    ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp))
-        if (label != null) Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
-    }
+    val thirty = stringResource(R.string.seek_30)
+    RemoteBar(
+        listOf(
+            RemoteKey(stringResource(R.string.previous_episode), { onRemote("previous", null) }, IzleIcons.SkipPrevious),
+            RemoteKey(stringResource(R.string.back_30), { onRemote("seek", -SEEK_MS) }, IzleIcons.FastRewind, thirty),
+            if (playing) RemoteKey(stringResource(R.string.pause), { onRemote("pause", null) }, IzleIcons.Pause, primary = true)
+            else RemoteKey(stringResource(R.string.play), { onRemote("resume", null) }, Icons.Filled.PlayArrow, primary = true),
+            RemoteKey(stringResource(R.string.forward_30), { onRemote("seek", SEEK_MS) }, IzleIcons.FastForward, thirty),
+            RemoteKey(stringResource(R.string.next_episode), { onRemote("next", null) }, IzleIcons.SkipNext),
+        ),
+    )
 }
 
 private const val SEEK_MS = 30_000L
@@ -238,41 +231,33 @@ private const val SEEK_MS = 30_000L
 private val MESSAGE_SECONDS = listOf(15, 60, 120)
 private const val DEFAULT_SECONDS = 60
 
-/** "Send a message to the TV": its text (1–200 characters), how long it shows, Send. */
-@OptIn(ExperimentalMaterial3Api::class)
+/** "A message for Salon": its text (1–200 characters), how long it shows, Send. */
 @Composable
 private fun MessageSheet(tvName: String, onSend: (String, Int) -> Unit, onDismiss: () -> Unit) {
     var text by rememberSaveable { mutableStateOf("") }
     var seconds by rememberSaveable { mutableIntStateOf(DEFAULT_SECONDS) }
     val max = CompanionViewModel.MESSAGE_MAX
     val valid = text.isNotBlank() && text.trim().length <= max
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(stringResource(R.string.message_title, tvName), style = MaterialTheme.typography.titleMedium)
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                label = { Text(stringResource(R.string.message_label)) },
-                isError = text.trim().length > max,
-                supportingText = { Text(stringResource(R.string.message_counter, text.trim().length, max)) },
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                minLines = 2,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Text(stringResource(R.string.show_for), style = MaterialTheme.typography.labelLarge)
-            EqualRow {
-                for (s in MESSAGE_SECONDS) {
-                    val label = when (s) {
-                        15 -> stringResource(R.string.show_15s)
-                        60 -> stringResource(R.string.show_1min)
-                        else -> stringResource(R.string.show_2min)
-                    }
-                    ChoiceButton(label, onClick = { seconds = s }, selected = seconds == s, modifier = Modifier.weight(1f))
-                }
-            }
-            Button(onClick = { onSend(text, seconds) }, enabled = valid, modifier = Modifier.fillMaxWidth().height(48.dp)) {
-                Text(stringResource(R.string.send), textAlign = TextAlign.Center, maxLines = 1)
-            }
-        }
+    val labels = mapOf(15 to stringResource(R.string.show_15s), 60 to stringResource(R.string.show_1min), 120 to stringResource(R.string.show_2min))
+    IzleSheet(onDismiss = onDismiss, title = stringResource(R.string.message_title, tvName)) {
+        OutlinedTextField(
+            value = text,
+            onValueChange = { text = it },
+            label = { Text(stringResource(R.string.message)) },
+            isError = text.trim().length > max,
+            supportingText = { Text(stringResource(R.string.message_counter, text.trim().length, max)) },
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            minLines = 2,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Caption(stringResource(R.string.show_for))
+        ChoiceGrid(MESSAGE_SECONDS, label = { labels.getValue(it) }, selected = { it == seconds }, onSelect = { seconds = it })
+        IzleButton(
+            stringResource(R.string.send),
+            onClick = { onSend(text, seconds) },
+            kind = ButtonKind.Primary,
+            enabled = valid,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }

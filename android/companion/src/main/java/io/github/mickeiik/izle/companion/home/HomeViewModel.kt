@@ -2,6 +2,9 @@ package io.github.mickeiik.izle.companion.home
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.github.mickeiik.izle.companion.tv.CommandOutcome
+import io.github.mickeiik.izle.companion.tv.episodeName
+import io.github.mickeiik.izle.companion.tv.sendAndAwait
 import io.github.mickeiik.izle.data.api.AdminEpisode
 import io.github.mickeiik.izle.data.api.AdminHomeEntry
 import io.github.mickeiik.izle.data.api.ApiClient
@@ -23,7 +26,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonPrimitive
-import java.io.IOException
 
 /** Why a call failed: [Unreachable] (no answer) or the API's error [code] (`http_<status>` without one). */
 sealed interface HomeError {
@@ -82,12 +84,8 @@ sealed interface HomeNotice {
     /** [sectionTitle] null: the untitled section ("added to Home."). */
     data class Added(val title: String, val sectionTitle: String?) : HomeNotice
     data class Continues(val title: String, val episode: String) : HomeNotice
-    /** The play command was sent and the TV is offline: it gets it if it connects within 2 minutes. */
-    data class PlayQueued(val title: String) : HomeNotice
-    data class Playing(val title: String) : HomeNotice
-    /** Sent, no result yet. */
-    data class PlaySent(val title: String) : HomeNotice
-    data class NotPlayed(val title: String, val reason: String?) : HomeNotice
+    /** What Play now came to (queued for an offline TV, playing, refused, or no result yet). */
+    data class Played(val title: String, val outcome: CommandOutcome) : HomeNotice
 }
 
 /**
@@ -270,30 +268,7 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
         val title = titleOf(itemId)
         viewModelScope.launch {
             try {
-                val sent = api.sendCommand(tvId, "play", mapOf("itemId" to JsonPrimitive(itemId)))
-                if (!sent.online) {
-                    _notices.trySend(HomeNotice.PlayQueued(title))
-                    return@launch
-                }
-                repeat(RESULT_POLLS) {
-                    delay(RESULT_POLL_MS)
-                    val c = try {
-                        api.command(tvId, sent.id)
-                    } catch (e: IOException) {
-                        null
-                    }
-                    when (c?.result) {
-                        "done" -> {
-                            _notices.trySend(HomeNotice.Playing(title))
-                            return@launch
-                        }
-                        "ignored", "failed" -> {
-                            _notices.trySend(HomeNotice.NotPlayed(title, c.reason))
-                            return@launch
-                        }
-                    }
-                }
-                _notices.trySend(HomeNotice.PlaySent(title))
+                _notices.trySend(HomeNotice.Played(title, api.sendAndAwait(tvId, "play", mapOf("itemId" to JsonPrimitive(itemId)))))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -326,7 +301,7 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
         viewModelScope.launch {
             try {
                 api.setCursor(tvId, itemId, episode.id)
-                _notices.trySend(HomeNotice.Continues(title, episodeLabel(episode.season, episode.number, episode.label, episode.title)))
+                _notices.trySend(HomeNotice.Continues(title, episodeName(episode)))
                 _episodes.value = null
                 reload()
             } catch (e: CancellationException) {
@@ -436,18 +411,8 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
         const val PAGE = 50
         const val SEARCH_DEBOUNCE_MS = 300L
         const val RETRY_MS = 5_000L
-        const val RESULT_POLL_MS = 500L
-        const val RESULT_POLLS = 10
 
         fun errorOf(e: Exception): HomeError =
             if (e is ApiException) HomeError.Server(e.code) else HomeError.Unreachable
     }
-}
-
-/** "S1 E5", "Episode 5", the catalog label, else the title (else "?"): how a snackbar names an episode. */
-fun episodeLabel(season: Int?, number: Int?, label: String?, title: String?): String = when {
-    label != null -> label
-    number != null && season != null -> "S$season E$number"
-    number != null -> "E$number"
-    else -> title ?: "?"
 }

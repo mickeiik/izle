@@ -53,6 +53,10 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleStartEffect
 import io.github.mickeiik.izle.companion.R
+import io.github.mickeiik.izle.companion.ui.design.ButtonGrid
+import io.github.mickeiik.izle.companion.ui.design.ButtonRow
+import io.github.mickeiik.izle.companion.ui.design.ChoiceGrid
+import io.github.mickeiik.izle.companion.ui.design.IzleButton
 import io.github.mickeiik.izle.companion.sync.ListenTiming
 import io.github.mickeiik.izle.companion.sync.PASTED_SOURCE_ID
 
@@ -188,16 +192,10 @@ private fun SourceRow(option: CandidateOption, state: CompanionUi.Tv, vm: Compan
 private fun EarphoneDelay(nudgeMs: Long, onNudge: (Long) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(stringResource(R.string.earphone_delay), style = MaterialTheme.typography.titleMedium)
-        EqualRow(modifier = Modifier.padding(top = 4.dp)) {
-            ChoiceButton(stringResource(R.string.nudge_minus), onClick = { onNudge(-NUDGE_STEP_MS) }, modifier = Modifier.weight(1f))
-            Text(
-                nudgeText(nudgeMs),
-                style = MaterialTheme.typography.bodyMedium,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                modifier = Modifier.weight(1f).align(Alignment.CenterVertically),
-            )
-            ChoiceButton(stringResource(R.string.nudge_plus), onClick = { onNudge(NUDGE_STEP_MS) }, modifier = Modifier.weight(1f))
+        ButtonRow(modifier = Modifier.padding(top = 4.dp)) {
+            IzleButton(stringResource(R.string.nudge_minus), onClick = { onNudge(-NUDGE_STEP_MS) })
+            Text(nudgeText(nudgeMs), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, maxLines = 1)
+            IzleButton(stringResource(R.string.nudge_plus), onClick = { onNudge(NUDGE_STEP_MS) })
         }
         Text(
             stringResource(R.string.earphone_delay_hint),
@@ -240,11 +238,9 @@ internal fun TimingControls(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.line_it_up), style = MaterialTheme.typography.titleSmall)
         Text(stringResource(R.string.mark_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        EqualRow {
-            val tvMarked = state.tvMarkMs != null
-            val phoneMarked = state.phoneMarkMs != null
-            ChoiceButton(stringResource(R.string.mark_on_tv), onClick = { onMark(true) }, selected = tvMarked, modifier = Modifier.weight(1f))
-            ChoiceButton(stringResource(R.string.mark_on_phone), onClick = { onMark(false) }, selected = phoneMarked, modifier = Modifier.weight(1f))
+        ButtonRow {
+            IzleButton(stringResource(R.string.mark_on_tv), onClick = { onMark(true) }, selected = state.tvMarkMs != null)
+            IzleButton(stringResource(R.string.mark_on_phone), onClick = { onMark(false) }, selected = state.phoneMarkMs != null)
         }
         markPendingText(state.tvMarkMs, state.phoneMarkMs)?.let {
             Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
@@ -275,10 +271,8 @@ internal fun TimingControls(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        for (row in ListenTiming.OFFSET_NUDGES_MS.chunked(3)) {
-            EqualRow {
-                for (ms in row) ChoiceButton(ListenTiming.nudgeLabel(ms), onClick = { onNudge(ms) }, modifier = Modifier.weight(1f))
-            }
+        ButtonGrid(columns = 3) {
+            for (ms in ListenTiming.OFFSET_NUDGES_MS) IzleButton(ListenTiming.nudgeLabel(ms), onClick = { onNudge(ms) })
         }
         Text(stringResource(R.string.nudges_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
@@ -287,13 +281,7 @@ internal fun TimingControls(
         val preset = if (state.otherSpeed || rate == null) ListenTiming.OTHER else ListenTiming.speedPreset(rate)
         val choices = ListenTiming.SPEED_PRESETS.map { Triple(it.label, it.rate as Double?, it.id) } +
             Triple(stringResource(R.string.speed_other), null, ListenTiming.OTHER)
-        for (row in choices.chunked(2)) {
-            EqualRow {
-                for ((label, value, id) in row) {
-                    ChoiceButton(label, onClick = { onSpeed(value) }, selected = preset == id, modifier = Modifier.weight(1f))
-                }
-            }
-        }
+        ChoiceGrid(choices, label = { it.first }, selected = { preset == it.third }, onSelect = { onSpeed(it.second) }, columns = 2)
         if (preset == ListenTiming.OTHER) {
             OutlinedTextField(
                 value = state.speedText,
@@ -308,12 +296,10 @@ internal fun TimingControls(
         if (!state.timingValid) {
             Text(stringResource(R.string.timing_invalid), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
         }
-        EqualRow(modifier = Modifier.padding(top = 8.dp)) {
+        ButtonRow(modifier = Modifier.padding(top = 8.dp)) {
             val chosen = state.chosen != null
-            ChoiceButton(stringResource(R.string.save_timing), onClick = onSave, enabled = state.timingValid && chosen, modifier = Modifier.weight(1f))
-            if (state.applyAllVisible) {
-                ChoiceButton(stringResource(R.string.apply_to_all), onClick = onApplyAll, enabled = chosen, modifier = Modifier.weight(1f))
-            }
+            IzleButton(stringResource(R.string.save_timing), onClick = onSave, enabled = state.timingValid && chosen)
+            if (state.applyAllVisible) IzleButton(stringResource(R.string.apply_to_all), onClick = onApplyAll, enabled = chosen)
         }
     }
 }
@@ -323,7 +309,7 @@ internal fun TimingControls(
 private fun Fold(title: String, summary: String?, open: Boolean, onToggle: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
     Column(modifier = Modifier.fillMaxWidth()) {
         HorizontalDivider()
-        val action = stringResource(if (open) R.string.fold_close else R.string.fold_open)
+        val action = stringResource(if (open) R.string.hide else R.string.show)
         Row(
             modifier = Modifier.fillMaxWidth().clickable(onClickLabel = action, onClick = onToggle).padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
