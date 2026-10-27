@@ -2,6 +2,10 @@ package io.github.mickeiik.izle.data.api
 
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
@@ -140,11 +144,11 @@ class ApiClient(
     suspend fun devices(): DevicesResponse = get(url("api/v1/admin/devices"), DevicesResponse.serializer())
 
     suspend fun companion(deviceId: String): CompanionResponse =
-        get(device(deviceId).addPathSegment("companion").build(), CompanionResponse.serializer())
+        get(deviceUrl(deviceId).addPathSegment("companion").build(), CompanionResponse.serializer())
 
     /** `seq` + `waitSec` > 0: a long-poll (on longPollHttp) that returns on the next now-playing write. */
     suspend fun now(deviceId: String, seq: Long? = null, waitSec: Int = 0): NowResponse {
-        val builder = device(deviceId).addPathSegment("now")
+        val builder = deviceUrl(deviceId).addPathSegment("now")
         if (seq != null) builder.addQueryParameter("seq", seq.toString())
         val url = builder.addQueryParameter("wait", waitSec.toString()).build()
         val raw = exchange(authorize(Request.Builder().url(url)).build(), if (waitSec > 0) longPollHttp else http)
@@ -153,7 +157,7 @@ class ApiClient(
 
     /** On the long-poll client (the resolver may take up to 30 s); fills serverDateMs. */
     suspend fun companionResolve(deviceId: String, request: CompanionResolveRequest): CompanionResolveResponse {
-        val url = device(deviceId).addPathSegment("companion").addPathSegment("resolve").build()
+        val url = deviceUrl(deviceId).addPathSegment("companion").addPathSegment("resolve").build()
         val raw = exchange(jsonRequest(url, "POST", CompanionResolveRequest.serializer(), request), longPollHttp)
         return raw.decode(CompanionResolveResponse.serializer()).copy(serverDateMs = raw.dateMs)
     }
@@ -183,8 +187,140 @@ class ApiClient(
         exchange(authorize(Request.Builder().url(url).delete()).build()).requireOk()
     }
 
+    // The admin routes of a TV's page (the companion app): its Home, remote commands, the catalog and the event log.
+
+    /** The TV with its Home list and sections (`GET admin/devices/:id`). */
+    suspend fun device(deviceId: String): DeviceDetail = get(deviceUrl(deviceId).build(), DeviceDetail.serializer())
+
+    /** `PATCH`: only the fields given are sent (the name and language settings are not the companion's to change). */
+    suspend fun updateDevice(deviceId: String, homeColumns: Int? = null, homeRows: Int? = null): AdminDevice {
+        val body = buildJsonObject {
+            homeColumns?.let { put("homeColumns", it) }
+            homeRows?.let { put("homeRows", it) }
+        }
+        return exchange(jsonRequest(deviceUrl(deviceId).build(), "PATCH", body)).decode(DeviceUpdated.serializer()).device
+    }
+
+    /** `POST …/commands` (`202`): [fields] go next to `type` (`itemId`, `deltaMs`, `text`, …). */
+    suspend fun sendCommand(deviceId: String, type: String, fields: Map<String, JsonPrimitive> = emptyMap()): CommandSent {
+        val body = buildJsonObject {
+            put("type", type)
+            fields.forEach { (key, value) -> put(key, value) }
+        }
+        val url = deviceUrl(deviceId).addPathSegment("commands").build()
+        return exchange(jsonRequest(url, "POST", body)).decode(CommandSent.serializer())
+    }
+
+    /** A command while the server keeps it (7 days); `result` stays null until the TV reports. */
+    suspend fun command(deviceId: String, commandId: Long): CommandInfo {
+        val url = deviceUrl(deviceId).addPathSegment("commands").addPathSegment(commandId.toString()).build()
+        return get(url, CommandResponse.serializer()).command
+    }
+
+    /** One single change to the Home list (never the whole list): the answer holds the list as it is now. */
+    suspend fun addHomeItem(deviceId: String, itemId: String, sectionId: String? = null, position: Int? = null): HomeChange {
+        val body = buildJsonObject {
+            put("itemId", itemId)
+            sectionId?.let { put("sectionId", it) }
+            position?.let { put("position", it) }
+        }
+        return homeChange(jsonRequest(homeUrl(deviceId, "items").build(), "POST", body))
+    }
+
+    /** Moves a show to [position] (0-based, in [sectionId] or the section it is in). `404 not_on_home` / `unknown_section`. */
+    suspend fun moveHomeItem(deviceId: String, itemId: String, sectionId: String? = null, position: Int? = null): HomeChange {
+        val body = buildJsonObject {
+            sectionId?.let { put("sectionId", it) }
+            position?.let { put("position", it) }
+        }
+        return homeChange(jsonRequest(homeUrl(deviceId, "items").addPathSegment(itemId).build(), "PATCH", body))
+    }
+
+    suspend fun removeHomeItem(deviceId: String, itemId: String): HomeChange =
+        homeChange(authorize(Request.Builder().url(homeUrl(deviceId, "items").addPathSegment(itemId).build()).delete()).build())
+
+    suspend fun addSection(deviceId: String, title: String, layout: String? = null, position: Int? = null): HomeChange {
+        val body = buildJsonObject {
+            put("title", title)
+            layout?.let { put("layout", it) }
+            position?.let { put("position", it) }
+        }
+        return homeChange(jsonRequest(homeUrl(deviceId, "sections").build(), "POST", body))
+    }
+
+    suspend fun updateSection(deviceId: String, sectionId: String, title: String? = null, layout: String? = null, position: Int? = null): HomeChange {
+        val body = buildJsonObject {
+            title?.let { put("title", it) }
+            layout?.let { put("layout", it) }
+            position?.let { put("position", it) }
+        }
+        return homeChange(jsonRequest(homeUrl(deviceId, "sections").addPathSegment(sectionId).build(), "PATCH", body))
+    }
+
+    /** The section's shows move to the end of the untitled one. */
+    suspend fun deleteSection(deviceId: String, sectionId: String): HomeChange =
+        homeChange(authorize(Request.Builder().url(homeUrl(deviceId, "sections").addPathSegment(sectionId).build()).delete()).build())
+
+    /** Where OK continues a series on this TV. */
+    suspend fun setCursor(deviceId: String, itemId: String, episodeId: String) {
+        val body = buildJsonObject {
+            put("itemId", itemId)
+            put("episodeId", episodeId)
+        }
+        exchange(jsonRequest(deviceUrl(deviceId).addPathSegment("cursor").build(), "PUT", body)).requireOk()
+    }
+
+    /** `GET admin/catalog/search`: [kinds] `movie`, `series`, `live`; [notOnDevice] leaves out that TV's Home. */
+    suspend fun catalogSearch(
+        q: String = "",
+        kinds: List<String> = emptyList(),
+        notOnDevice: String? = null,
+        playable: Boolean? = null,
+        offset: Int = 0,
+        limit: Int = 50,
+    ): CatalogSearch {
+        val url = url("api/v1/admin/catalog/search").newBuilder().apply {
+            if (q.isNotEmpty()) addQueryParameter("q", q)
+            if (kinds.isNotEmpty()) addQueryParameter("kind", kinds.joinToString(","))
+            notOnDevice?.let { addQueryParameter("notOnDevice", it) }
+            playable?.let { addQueryParameter("playable", it.toString()) }
+            addQueryParameter("offset", offset.toString())
+            addQueryParameter("limit", limit.toString())
+        }.build()
+        return get(url, CatalogSearch.serializer())
+    }
+
+    suspend fun catalogItem(itemId: String): AdminItem {
+        val url = url("api/v1/admin/catalog/items").newBuilder().addPathSegment(itemId).build()
+        return get(url, ItemResponse.serializer()).item
+    }
+
+    /**
+     * The event log after [after] (null: the answer is empty and its `last` is where to follow from). [waitSec] > 0 is a
+     * long-poll (on longPollHttp). [types] may end in `.` (a prefix); events without a device pass [devices].
+     */
+    suspend fun adminEvents(after: Long?, waitSec: Int = 0, types: List<String> = emptyList(), devices: List<String> = emptyList()): EventsPage {
+        val url = url("api/v1/admin/events").newBuilder().apply {
+            after?.let { addQueryParameter("after", it.toString()) }
+            addQueryParameter("wait", waitSec.toString())
+            if (types.isNotEmpty()) addQueryParameter("types", types.joinToString(","))
+            if (devices.isNotEmpty()) addQueryParameter("devices", devices.joinToString(","))
+        }.build()
+        val raw = exchange(authorize(Request.Builder().url(url)).build(), if (waitSec > 0) longPollHttp else http)
+        return raw.decode(EventsPage.serializer())
+    }
+
+    private suspend fun homeChange(request: Request): HomeChange = exchange(request).decode(HomeChange.serializer())
+
+    /** `api/v1/admin/devices/:id/home/<kind>` (`items` or `sections`). */
+    private fun homeUrl(deviceId: String, kind: String): HttpUrl.Builder =
+        deviceUrl(deviceId).addPathSegment("home").addPathSegment(kind)
+
+    private fun jsonRequest(url: HttpUrl, method: String, body: JsonObject): Request =
+        authorize(Request.Builder().url(url).method(method, ApiJson.encodeToString(JsonObject.serializer(), body).toRequestBody(JSON))).build()
+
     /** `api/v1/admin/devices/:id`; ids are path segments, never concatenated (they may contain anything). */
-    private fun device(deviceId: String): HttpUrl.Builder =
+    private fun deviceUrl(deviceId: String): HttpUrl.Builder =
         url("api/v1/admin/devices").newBuilder().addPathSegment(deviceId)
 
     private fun link(episodeId: String, sourceId: String): HttpUrl.Builder =

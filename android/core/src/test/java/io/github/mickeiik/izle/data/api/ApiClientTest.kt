@@ -140,7 +140,7 @@ class ApiClientTest {
         server.enqueue(json(200, """{"devices":[{"id":"tv1","name":"Living room","status":"active","online":true,"lastSeenAt":"x","homeCount":3}]}"""))
         server.enqueue(json(200, COMPANION))
         val api = client()
-        assertEquals(listOf(AdminDevice("tv1", "Living room", "active", online = true, lastSeenAt = "x")), api.devices().devices)
+        assertEquals(listOf(AdminDevice("tv1", "Living room", "active", online = true, lastSeenAt = "x", homeCount = 3)), api.devices().devices)
         takeRequest("GET", "/api/v1/admin/devices")
         val companion = api.companion("tv 1/a")
         assertEquals("show.e2", companion.nowPlaying?.episodeId)

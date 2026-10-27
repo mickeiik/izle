@@ -297,7 +297,16 @@ data class AvailableUpdate(val versionName: String, val versionCode: Long, val s
 
 /** `GET /admin/devices`: one TV; `status` `pending` or `active`. */
 @Serializable
-data class AdminDevice(val id: String, val name: String, val status: String = "active", val online: Boolean = false, val lastSeenAt: String? = null)
+data class AdminDevice(
+    val id: String,
+    val name: String,
+    val status: String = "active",
+    val online: Boolean = false,
+    val lastSeenAt: String? = null,
+    val effective: DeviceEffective? = null,
+    val problems: DeviceProblems? = null,
+    val homeCount: Int? = null,
+)
 
 @Serializable
 data class DevicesResponse(val devices: List<AdminDevice> = emptyList())
