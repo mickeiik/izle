@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The Home tab of a TV's page (docs/ux/companion-home.md) -->
+    <string name="home_summary">Grid %1$d × %2$d · %3$s</string>
+    <plurals name="home_shows">
+        <item quantity="one">%d show</item>
+        <item quantity="other">%d shows</item>
+    </plurals>
+    <string name="home_options">Home options</string>
+    <string name="home_grid_size">Grid size</string>
+    <string name="home_add_show">Add show</string>
+    <string name="home_new_section_button">Section</string>
+    <string name="home_nothing_yet">Nothing on Home yet. Add a show and it appears on the TV.</string>
+    <string name="home_load_failed">Home could not be read.</string>
+    <string name="home_try_again">Try again</string>
+
+    <!-- Sections -->
+    <string name="home_no_title">No title</string>
+    <string name="home_section_grid">grid · %d</string>
+    <string name="home_section_row">row · %d</string>
+    <string name="home_section_options">Options of %s</string>
+    <string name="home_rename">Rename</string>
+    <string name="home_one_line">One scrolling line</string>
+    <string name="home_move_up">Move up</string>
+    <string name="home_move_down">Move down</string>
+    <string name="home_delete">Delete</string>
+    <string name="home_keep">Keep</string>
+    <string name="home_delete_title">Delete %s?</string>
+    <plurals name="home_delete_text">
+        <item quantity="one">Its %d show moves to No title.</item>
+        <item quantity="other">Its %d shows move to No title.</item>
+    </plurals>
+    <string name="home_delete_empty">It holds no shows.</string>
+    <string name="home_empty_section">Empty: not shown on the TV</string>
+    <string name="home_new_section">New section</string>
+    <string name="home_rename_section">Rename section</string>
+    <string name="home_section_title">Title</string>
+    <string name="home_sections_full">A Home holds at most %d sections.</string>
+    <string name="home_add">Add</string>
+    <string name="home_save">Save</string>
+    <string name="home_cancel">Cancel</string>
+
+    <!-- A show -->
+    <string name="home_drag">Drag %s to move it</string>
+    <string name="home_hidden_missing">Hidden on the TV: not in the catalog</string>
+    <string name="home_hidden_unplayable">Hidden on the TV: can\'t play</string>
+    <string name="home_remove">Remove</string>
+    <string name="home_ok_film">Film</string>
+    <string name="home_ok_live">Live</string>
+    <string name="home_ok_nothing">Nothing playable</string>
+    <string name="home_ok_new">%s · new</string>
+    <string name="home_ok_continues">%1$s · continues at %2$s</string>
+    <string name="home_ok_continues_of">%1$s · continues at %2$s of %3$s</string>
+    <string name="home_ok_restarts">%s · starts from the beginning</string>
+    <string name="home_ok_watched">%s · watched, starts over</string>
+    <plurals name="home_new_episodes">
+        <item quantity="one">%d new</item>
+        <item quantity="other">%d new</item>
+    </plurals>
+    <string name="home_check_ok">Works</string>
+    <string name="home_check_warn">Works, with warnings</string>
+    <string name="home_check_fail">Fails</string>
+    <string name="home_check_stale">Source changed</string>
+    <string name="home_check_none">Not checked</string>
+
+    <!-- A show's sheet -->
+    <string name="home_place">%1$s · card %2$d of %3$d</string>
+    <string name="home_play_now">Play on %s now</string>
+    <string name="home_continue_from">Continue from episode…</string>
+    <string name="home_move_to_section">Move to section…</string>
+    <string name="home_move_first">Move to first</string>
+    <string name="home_remove_from_home">Remove from Home</string>
+    <string name="home_continue_title">Continue %s from</string>
+    <string name="home_no_episodes">No episode of it may be played.</string>
+    <string name="home_now_marker">%s · OK plays this now</string>
+    <string name="home_move_title">Move to section</string>
+    <string name="home_current_section">%s · here now</string>
+
+    <!-- Grid size -->
+    <string name="home_columns">Columns</string>
+    <string name="home_rows">Rows</string>
+    <string name="home_fewer">Fewer %s</string>
+    <string name="home_more">More %s</string>
+    <string name="home_grid_hint">The cards one screen of Home shows on the TV.</string>
+
+    <!-- Add show -->
+    <string name="home_close">Close</string>
+    <string name="home_search">Search the catalog</string>
+    <string name="home_kind_movie">Films</string>
+    <string name="home_kind_series">Series</string>
+    <string name="home_kind_live">Channels</string>
+    <string name="home_add_to">Add to</string>
+    <string name="home_add_to_section">Add to: %s</string>
+    <string name="home_no_results">Nothing found that %s does not have on Home already.</string>
+    <string name="home_hit_film">Film</string>
+    <string name="home_hit_film_year">Film · %d</string>
+    <string name="home_hit_channel">Channel</string>
+    <plurals name="home_hit_series">
+        <item quantity="one">Series · %d episode</item>
+        <item quantity="other">Series · %d episodes</item>
+    </plurals>
+    <string name="home_search_count">%1$d of %2$d</string>
+
+    <!-- Messages -->
+    <string name="home_changed_elsewhere">Home changed on another screen; this is the current one.</string>
+    <string name="home_added_to">%1$s added to %2$s.</string>
+    <string name="home_added_home">%s added to Home.</string>
+    <string name="home_continues">%1$s continues %2$s from %3$s.</string>
+    <string name="home_offline">%s is offline. It gets this if it connects in the next 2 minutes.</string>
+    <string name="home_playing">%2$s is playing on %1$s.</string>
+    <string name="home_play_sent">Sent to %s.</string>
+    <string name="home_not_ready">%s isn\'t ready (it shows its pairing screen).</string>
+    <string name="home_not_played">%1$s could not play %2$s.</string>
+    <string name="home_unreachable">The server cannot be reached.</string>
+    <string name="home_error_too_many_items">A Home holds at most 200 shows.</string>
+    <string name="home_error_duplicate_item">That show is on Home already.</string>
+    <string name="home_error_unknown_item">That show is not in the catalog (any more).</string>
+    <string name="home_error_not_playable">Nothing in that show may be played.</string>
+    <string name="home_error_unknown_episode">That episode is not in the catalog (any more).</string>
+    <string name="home_error_not_allowed">The catalog does not allow playing that episode.</string>
+    <string name="home_error_unknown_device">This TV does not exist any more.</string>
+    <string name="home_error_other">The server did not accept this (%s).</string>
+</resources>
