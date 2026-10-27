@@ -66,17 +66,20 @@
     <string name="channel_line">Channel · %1$s</string>
     <string name="listen_along">Listen along</string>
     <string name="listening_bar">Listening · %1$s</string>
+    <string name="listening_bar_hint">Tap the bar for source and timing</string>
     <string name="previous_episode">Previous episode</string>
     <string name="next_episode">Next episode</string>
     <string name="previous_channel">Previous channel</string>
     <string name="next_channel">Next channel</string>
     <string name="back_30">Back 30 seconds</string>
     <string name="forward_30">Forward 30 seconds</string>
-    <string name="seek_30" translatable="false">30</string>
+    <string name="seek_back_label">−30</string>
+    <string name="seek_forward_label">+30</string>
     <string name="play">Play</string>
     <string name="pause">Pause</string>
     <string name="stop_the_tv">Stop the TV</string>
     <string name="message">Message</string>
+    <string name="send_message">Send a message to the TV</string>
     <string name="message_title">A message for %1$s</string>
     <string name="message_counter">%1$d / %2$d</string>
     <string name="show_for">Show for</string>
@@ -93,6 +96,8 @@
     <string name="earphone_delay">Earphone delay</string>
     <string name="nudge_minus">−50 ms</string>
     <string name="nudge_plus">+50 ms</string>
+    <string name="minus_sign" translatable="false">−</string>
+    <string name="plus_sign" translatable="false">+</string>
     <string name="earphone_delay_hint">kept on this phone</string>
     <string name="sync_details">Sync details</string>
     <string name="not_listening">Not listening</string>

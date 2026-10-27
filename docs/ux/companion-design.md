@@ -76,13 +76,14 @@ Every button label is centred, single line, and never pushed to an edge; equal-w
 - **`ChoiceGrid(options, selected, columns)`**: equal-width choices; the selected one `accentMuted` fill with `accent`
   text and border (speed, a message's duration, Add show's kind filter).
 - **`Card`**: `surface`, 1 dp `border`, radius `md`, padding `lg`. No elevation, no shadow, anywhere.
-- **`ListRow(title, supporting?, leading?, trailing?, onClick?)`**: min 56 dp, `heading`-sized title (Regular weight
-  for rows), one `caption` supporting line (ellipsised), divider hairline between rows, padding `lg` horizontally.
-- **`SectionHeader(title, meta?, trailing?)`**: `surfaceMuted` band, `heading` title, `caption` meta on the same line
-  ("Films · grid · 6"), an overflow icon button as trailing.
+- **`ListRow(title, supporting?, badge?, leading?, trailing?, onClick?)`**: min 56 dp, `heading`-sized title
+  (Regular weight for rows), one `caption` supporting line (ellipsised) with an optional `badge` (a `StatusChip`)
+  after it, divider hairline between rows, padding `lg` horizontally.
+- **`SectionHeader(title, meta?, trailing?)`**: `surfaceMuted` band, `heading` title on the left, the `caption` meta
+  ("grid · 6") and an overflow icon button at the right edge.
 - **`StatusChip(text, tone)`**: tone Success / Warning / Danger / Neutral, `*Muted` fill with the tone's colour as
-  text, radius `sm`, `label` 12 sp. Shown only when it says something: on Home a chip is drawn for Fails and Works
-  with warnings, never for Not checked or Works (those are words in the sheet).
+  text, radius `sm`, `label` 12 sp. Shown only when it says something: on Home a row's line carries a chip for Works,
+  Warnings and Fails, never for Not checked or Source changed.
 - **`StatusLine(tone, text)`**: a 8 dp dot in the tone's colour then `caption` text ("Online", "Offline · seen 5 min
   ago").
 - **`Poster(url, size)`**: radius `sm`, `surfaceMuted` placeholder, `ContentScale.Crop`, coil.
@@ -91,10 +92,10 @@ Every button label is centred, single line, and never pushed to an edge; equal-w
 - **`Disclosure(title, summary, expanded, onToggle) { content }`**: a folded section with a chevron (Timing for this
   source, Sync details).
 - **`RemoteBar`**: one row of 48 dp square-ish buttons (radius `md`), `surfaceMuted` at rest with `textPrimary` icons;
-  Play/Pause is the one filled with `accent`. The ±30 s buttons show the icon and "30" in `caption`.
+  Play/Pause is the one filled with `accent`. The seek buttons read "−30" and "+30".
 - **`IzleSheet`**: `ModalBottomSheet` with `surface`, top radius `lg`, title in `title`, content padded `lg`.
 - **`IzleTopBar(title, onTitleClick?, actions)`** and **`IzleBottomBar`** (64 dp, icon + `label`, active in `accent`,
-  no pill indicator fill beyond `accentMuted`).
+  no pill indicator fill beyond `accentMuted`); Now's tab icon is a TV, Home's a grid.
 - **`EmptyState(text)`**: `caption`-coloured body text, no card around it.
 
 ## Screens
@@ -103,20 +104,24 @@ The approved mockups are the reference: compact, one primary action per screen, 
 
 - **Now**: `StatusLine`; a `Card` with `Poster` (56 × 84) and title / episode / progress (`LinearProgressIndicator`
   4 dp, `accent` on `surfaceMuted`) and `12:04 / 30:10 · playing` in `caption`; "Nothing is playing" is an
-  `EmptyState` line, not a card; `RemoteBar`; a `ButtonRow` with **Stop the TV** (Secondary) and **Message**
-  (Secondary, icon); the listening bar is a `Card` in `accentMuted` with **Stop** (Small); **Listen along** is a
-  Secondary button with the headphones icon.
-- **Home**: a header line "6 shows · grid 4 × 2" in `caption` with the Home options icon; **Add show** (Small,
-  Primary) and **Section** (Small, Secondary) on one line; sections as `SectionHeader`s; shows as `ListRow`s (`Poster`
-  36 × 54, title, one supporting line "Film · watched, starts over", a `StatusChip` only for Fails/Warnings, the drag
-  handle as trailing in `textMuted`); hidden shows with `warning` supporting text and **Remove** (Small, Quiet,
-  danger).
-- **Show sheet**: title, "No title · card 2 of 5 · OK plays S1 E1" as caption, check verdict as a `StatusLine`, then
-  `ActionRow`s.
+  `EmptyState` line, not a card; `RemoteBar`; **Stop the TV** (Secondary, full width); then **Listen along**
+  (Secondary, headphones icon, full width), or while listening the listening bar (a `Card` in `accentMuted`:
+  headphones icon, "Listening · in sync" in `accent`, the source, **Stop** Small) with "Tap the bar for source and
+  timing" centred under it; a hairline; **Send a message to the TV** (Secondary, full width). The message sheet: the
+  field with its counter, "Show for" and a `ChoiceGrid(3)`, then **Cancel** and **Send** (Primary) at the right.
+- **Home**: a header line "Grid 4 × 2 · 6 shows" in `caption` with the Home options icon; sections as
+  `SectionHeader`s; shows as `ListRow`s (`Poster` 36 × 54, title, one supporting line "Film · watched, starts over"
+  with the verdict's chip as its badge, the dotted drag handle as trailing in `textMuted`); hidden shows with
+  `warning` supporting text and **Remove** (Small, Danger). Under the list, above the tabs: **+ Section** (Secondary)
+  and **+ Add show** (Primary), equal width.
+- **Show sheet**: a header with the `Poster`, the title in `title` and one caption "No title · card 2 of 4 · S1 · E3
+  · new" (and the verdict as a `StatusLine` once checked), a hairline, then `ActionRow`s.
 - **Add show**: search field, kind `ChoiceGrid` (3), "Add to" as a Secondary button with the section and a chevron,
   results as `ListRow`s with an **Add** Small Secondary button.
-- **Listen along**: context `caption` line; Source as radio `ListRow`s; **Listen** (Primary, full width, the one
-  primary of the screen; Stop is Danger); Earphone delay as a `ListRow` with two Small buttons; `Disclosure`s for
+- **Listen along** (top bar: back arrow and "Listen along"): context `caption` line; "Source" in `heading`, then radio
+  `ListRow`s, the kind as a Neutral chip, the found link's row with **Find** (Small) at its end; **Listen** (Primary,
+  headphones icon, full width, the one primary of the screen; Stop is Danger); Earphone delay as a `ListRow` ("kept
+  on this phone") ending with **−**, the value and **+**; `Disclosure`s for
   Timing and Sync details; inside Timing: `ButtonRow` (Mark on TV, Mark on phone), the offset readout (`title`,
   monospace digits) with **Edit** (Quiet), `ButtonGrid(3)` nudges, `ChoiceGrid(2)` speed, `ButtonRow` (Save timing and
   Apply to all episodes, both Secondary: Listen is the screen's primary).

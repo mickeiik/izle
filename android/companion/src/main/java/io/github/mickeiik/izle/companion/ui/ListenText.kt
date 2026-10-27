@@ -118,8 +118,6 @@ fun statusLine(state: ListenState): String? {
     return if (parts.isEmpty()) "Starting…" else parts.joinToString(" · ")
 }
 
-/** The nudge row's value: `nudge +0 ms`, `nudge −50 ms`. */
-fun nudgeText(nudgeMs: Long): String = "nudge ${ListenSync.formatDrift(nudgeMs.toDouble())}"
 
 /** Why listening ended, for a snackbar; null when the owner stopped it. */
 fun endedText(reason: EndReason?, error: String?): String? = when (reason) {

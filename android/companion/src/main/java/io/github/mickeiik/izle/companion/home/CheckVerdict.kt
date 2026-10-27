@@ -43,8 +43,8 @@ val Verdict.tone: Tone
         Verdict.Stale, Verdict.NotChecked -> Tone.Neutral
     }
 
-/** Whether a show's row draws a chip for it (the design system: only for Fails and Works with warnings). */
-val Verdict.worthAChip: Boolean get() = this == Verdict.Fails || this == Verdict.Warns
+/** Whether a show's row draws a chip for it (a verdict worth seeing: Works, Warnings, Fails; never Not checked or Source changed). */
+val Verdict.worthAChip: Boolean get() = this == Verdict.Works || this == Verdict.Fails || this == Verdict.Warns
 
 /** The verdict as a [StatusChip]. */
 @Composable

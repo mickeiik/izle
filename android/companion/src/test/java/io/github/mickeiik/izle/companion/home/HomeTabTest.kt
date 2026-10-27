@@ -74,7 +74,7 @@ class HomeTabTest {
                     IzleTheme { HomeTab(api, "tv-1", "Salon", onMessage = {}, modifier = Modifier.width(360.dp)) }
                 }
             }
-            compose.waitUntil(5_000) { compose.onAllNodes(hasText("3 shows · grid 5 × 2")).fetchSemanticsNodes().isNotEmpty() }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Grid 5 × 2 · 3 shows")).fetchSemanticsNodes().isNotEmpty() }
             compose.onNodeWithText("No title").assertIsDisplayed()
             compose.onNodeWithText("Films").assertIsDisplayed()
             compose.onNodeWithText("row · 1").assertIsDisplayed()
@@ -84,7 +84,7 @@ class HomeTabTest {
             compose.onNodeWithText("Add show").assertIsDisplayed()
 
             compose.onNodeWithText("Sintel").performClick()
-            compose.onNodeWithText("Films · card 1 of 1").assertIsDisplayed()
+            compose.onNodeWithText("Films · card 1 of 1", substring = true).assertIsDisplayed()
             compose.onNodeWithText("Play on Salon now").assertIsDisplayed()
             compose.onNodeWithText("Continue from episode…").assertIsDisplayed()
             compose.onNodeWithText("Remove from Home").assertIsDisplayed()

@@ -6,9 +6,6 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -33,6 +30,7 @@ import io.github.mickeiik.izle.companion.home.HomeTab
 import io.github.mickeiik.izle.companion.ui.design.ButtonKind
 import io.github.mickeiik.izle.companion.ui.design.IzleBottomBar
 import io.github.mickeiik.izle.companion.ui.design.IzleButton
+import io.github.mickeiik.izle.companion.ui.design.IzleIcons
 import io.github.mickeiik.izle.companion.ui.design.IzleTopBar
 import io.github.mickeiik.izle.companion.ui.design.MenuItem
 import io.github.mickeiik.izle.companion.ui.design.OverflowMenu
@@ -99,8 +97,8 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
             if (tv != null && !tv.listenOpen && !finderOpen) {
                 IzleBottomBar(
                     listOf(
-                        TabItem(stringResource(R.string.tab_now), Icons.Outlined.PlayArrow, tv.tab == TvTab.Now) { vm.selectTab(TvTab.Now) },
-                        TabItem(stringResource(R.string.tab_home), Icons.Outlined.Home, tv.tab == TvTab.Home) { vm.selectTab(TvTab.Home) },
+                        TabItem(stringResource(R.string.tab_now), IzleIcons.Tv, tv.tab == TvTab.Now) { vm.selectTab(TvTab.Now) },
+                        TabItem(stringResource(R.string.tab_home), IzleIcons.Grid, tv.tab == TvTab.Home) { vm.selectTab(TvTab.Home) },
                     ),
                 )
             }

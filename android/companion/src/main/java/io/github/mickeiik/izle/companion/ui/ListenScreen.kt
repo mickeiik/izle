@@ -33,6 +33,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleStartEffect
 import io.github.mickeiik.izle.companion.R
+import io.github.mickeiik.izle.companion.sync.ListenSync
 import io.github.mickeiik.izle.companion.sync.ListenTiming
 import io.github.mickeiik.izle.companion.sync.PASTED_SOURCE_ID
 import io.github.mickeiik.izle.companion.ui.design.ButtonGrid
@@ -44,10 +45,10 @@ import io.github.mickeiik.izle.companion.ui.design.ChoiceGrid
 import io.github.mickeiik.izle.companion.ui.design.Disclosure
 import io.github.mickeiik.izle.companion.ui.design.EmptyState
 import io.github.mickeiik.izle.companion.ui.design.IzleButton
+import io.github.mickeiik.izle.companion.ui.design.IzleIcons
 import io.github.mickeiik.izle.companion.ui.design.IzleTheme
 import io.github.mickeiik.izle.companion.ui.design.ListRow
 import io.github.mickeiik.izle.companion.ui.design.ProgressBar
-import io.github.mickeiik.izle.companion.ui.design.SectionHeader
 import io.github.mickeiik.izle.companion.ui.design.StatusChip
 import io.github.mickeiik.izle.companion.ui.design.Tone
 import io.github.mickeiik.izle.companion.ui.design.toneColor
@@ -132,7 +133,7 @@ private fun ListenForm(
     inset: Modifier,
 ) {
     Column {
-        SectionHeader(stringResource(R.string.source))
+        Text(stringResource(R.string.source), style = IzleTheme.type.heading, color = IzleTheme.colors.textPrimary, modifier = inset)
         if (state.options.isEmpty()) {
             Caption(stringResource(R.string.no_candidates), modifier = inset.padding(top = IzleTheme.spacing.md))
         } else {
@@ -149,12 +150,13 @@ private fun ListenForm(
             stringResource(R.string.listen),
             onClick = onListen,
             kind = ButtonKind.Primary,
+            icon = IzleIcons.Headphones,
             enabled = state.canListen,
             modifier = inset.fillMaxWidth(),
         )
     }
 
-    EarphoneDelay(state.nudgeMs, onNudge, inset)
+    EarphoneDelay(state.nudgeMs, onNudge)
 
     Column(modifier = inset) {
         var timingOpen by rememberSaveable { mutableStateOf(false) }
@@ -204,44 +206,40 @@ private fun SourceRow(
         supporting = label.substringAfter(LABEL_SEPARATOR, "").ifEmpty { null },
         selected = selected,
         onClick = { onChoose(option) },
-        trailing = { option.kind?.let { StatusChip(mediaKindLabel(it), Tone.Neutral) } },
-    )
-    if (found && selected) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = IzleTheme.spacing.lg, vertical = IzleTheme.spacing.sm),
-            horizontalArrangement = Arrangement.spacedBy(IzleTheme.spacing.sm),
-        ) {
-            IzleButton(
-                stringResource(if (state.foundLink != null) R.string.find_new_link else R.string.find_link),
-                onClick = onFinder,
-                size = ButtonSize.Small,
-            )
-            if (state.foundLink != null) {
-                IzleButton(stringResource(R.string.forget_link), onClick = onForget, kind = ButtonKind.Quiet, size = ButtonSize.Small)
+        trailing = {
+            option.kind?.let { StatusChip(mediaKindLabel(it), Tone.Neutral) }
+            // The found link's row carries its own way to the finder, as in the mockup.
+            if (found) {
+                if (state.foundLink != null) {
+                    IzleButton(stringResource(R.string.forget_link), onClick = onForget, kind = ButtonKind.Quiet, size = ButtonSize.Small)
+                }
+                IzleButton(
+                    stringResource(if (state.foundLink != null) R.string.find_new_link else R.string.find_link),
+                    onClick = onFinder,
+                    size = ButtonSize.Small,
+                )
             }
-        }
-    }
+        },
+    )
 }
 
 private const val LABEL_SEPARATOR = " · "
 
-/** "Earphone delay": the value, then −50 ms and +50 ms buttons; kept on this phone. */
+/** "Earphone delay, kept on this phone", then − value + (50 ms a step), as in the mockup. */
 @Composable
-private fun EarphoneDelay(nudgeMs: Long, onNudge: (Long) -> Unit, inset: Modifier) {
-    Column(verticalArrangement = Arrangement.spacedBy(IzleTheme.spacing.xs)) {
-        ListRow(
-            title = stringResource(R.string.earphone_delay),
-            supporting = nudgeText(nudgeMs),
-            divider = false,
-            trailing = {
-                Row(horizontalArrangement = Arrangement.spacedBy(IzleTheme.spacing.sm)) {
-                    IzleButton(stringResource(R.string.nudge_minus), onClick = { onNudge(-NUDGE_STEP_MS) }, size = ButtonSize.Small)
-                    IzleButton(stringResource(R.string.nudge_plus), onClick = { onNudge(NUDGE_STEP_MS) }, size = ButtonSize.Small)
-                }
-            },
-        )
-        Caption(stringResource(R.string.earphone_delay_hint), modifier = inset)
-    }
+private fun EarphoneDelay(nudgeMs: Long, onNudge: (Long) -> Unit) {
+    val less = stringResource(R.string.nudge_minus)
+    val more = stringResource(R.string.nudge_plus)
+    ListRow(
+        title = stringResource(R.string.earphone_delay),
+        supporting = stringResource(R.string.earphone_delay_hint),
+        divider = false,
+        trailing = {
+            IzleButton(stringResource(R.string.minus_sign), onClick = { onNudge(-NUDGE_STEP_MS) }, size = ButtonSize.Small, modifier = Modifier.semantics { contentDescription = less })
+            Text(ListenSync.formatDrift(nudgeMs.toDouble()), style = IzleTheme.type.body, color = IzleTheme.colors.textPrimary)
+            IzleButton(stringResource(R.string.plus_sign), onClick = { onNudge(NUDGE_STEP_MS) }, size = ButtonSize.Small, modifier = Modifier.semantics { contentDescription = more })
+        },
+    )
 }
 
 /**

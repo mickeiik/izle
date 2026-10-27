@@ -7,11 +7,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,17 +30,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.LifecycleStartEffect
 import io.github.mickeiik.izle.companion.R
 import io.github.mickeiik.izle.companion.tv.timeAgo
 import io.github.mickeiik.izle.companion.ui.design.ButtonKind
-import io.github.mickeiik.izle.companion.ui.design.ButtonRow
 import io.github.mickeiik.izle.companion.ui.design.ButtonSize
 import io.github.mickeiik.izle.companion.ui.design.Caption
 import io.github.mickeiik.izle.companion.ui.design.Card
 import io.github.mickeiik.izle.companion.ui.design.ChoiceGrid
 import io.github.mickeiik.izle.companion.ui.design.EmptyState
+import io.github.mickeiik.izle.companion.ui.design.Hairline
 import io.github.mickeiik.izle.companion.ui.design.IzleButton
 import io.github.mickeiik.izle.companion.ui.design.IzleIcons
 import io.github.mickeiik.izle.companion.ui.design.IzleSheet
@@ -108,12 +111,11 @@ internal fun NowContent(
                 isPlayingNow(now) && now.nowPlaying != null -> NowCard(now, state.nowAtMs, state.posterUrl)
                 else -> EmptyState(stringResource(R.string.nothing_is_playing))
             }
-            ListenAlongEntry(state, onListen, onStopListening)
             Remote(state.now, onRemote)
-            ButtonRow {
-                IzleButton(stringResource(R.string.stop_the_tv), onClick = { onRemote("stop", null) }, icon = IzleIcons.Stop)
-                IzleButton(stringResource(R.string.message), onClick = onMessage, icon = IzleIcons.Message)
-            }
+            IzleButton(stringResource(R.string.stop_the_tv), onClick = { onRemote("stop", null) }, icon = IzleIcons.Stop, modifier = Modifier.fillMaxWidth())
+            ListenAlongEntry(state, onListen, onStopListening)
+            Hairline()
+            IzleButton(stringResource(R.string.send_message), onClick = onMessage, icon = IzleIcons.Message, modifier = Modifier.fillMaxWidth())
         }
     }
 }
@@ -169,6 +171,7 @@ private fun ListenAlongEntry(state: CompanionUi.Tv, onListen: () -> Unit, onStop
         val source = state.options.firstOrNull { it.sourceId == target.sourceId && it.language == target.language }?.label ?: target.sourceId
         Card(accent = true, onClick = onListen, onClickLabel = stringResource(R.string.listen_along)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(IzleTheme.spacing.md)) {
+                Icon(IzleIcons.Headphones, contentDescription = null, tint = IzleTheme.colors.accent, modifier = Modifier.size(IzleTheme.sizes.icon))
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(IzleTheme.spacing.line)) {
                     Text(
                         stringResource(R.string.listening_bar, listeningWord(state.session)),
@@ -181,6 +184,7 @@ private fun ListenAlongEntry(state: CompanionUi.Tv, onListen: () -> Unit, onStop
                 IzleButton(stringResource(R.string.stop), onClick = onStop, size = ButtonSize.Small)
             }
         }
+        Caption(stringResource(R.string.listening_bar_hint), modifier = Modifier.fillMaxWidth(), align = TextAlign.Center)
         return
     }
     val why = nothingToListenText(state.now, state.displayName)
@@ -212,14 +216,13 @@ private fun Remote(now: NowResponse?, onRemote: (String, Long?) -> Unit) {
         return
     }
     val playing = n?.state == "playing"
-    val thirty = stringResource(R.string.seek_30)
     RemoteBar(
         listOf(
             RemoteKey(stringResource(R.string.previous_episode), { onRemote("previous", null) }, IzleIcons.SkipPrevious),
-            RemoteKey(stringResource(R.string.back_30), { onRemote("seek", -SEEK_MS) }, IzleIcons.FastRewind, thirty),
+            RemoteKey(stringResource(R.string.back_30), { onRemote("seek", -SEEK_MS) }, label = stringResource(R.string.seek_back_label)),
             if (playing) RemoteKey(stringResource(R.string.pause), { onRemote("pause", null) }, IzleIcons.Pause, primary = true)
             else RemoteKey(stringResource(R.string.play), { onRemote("resume", null) }, Icons.Filled.PlayArrow, primary = true),
-            RemoteKey(stringResource(R.string.forward_30), { onRemote("seek", SEEK_MS) }, IzleIcons.FastForward, thirty),
+            RemoteKey(stringResource(R.string.forward_30), { onRemote("seek", SEEK_MS) }, label = stringResource(R.string.seek_forward_label)),
             RemoteKey(stringResource(R.string.next_episode), { onRemote("next", null) }, IzleIcons.SkipNext),
         ),
     )
@@ -252,12 +255,9 @@ private fun MessageSheet(tvName: String, onSend: (String, Int) -> Unit, onDismis
         )
         Caption(stringResource(R.string.show_for))
         ChoiceGrid(MESSAGE_SECONDS, label = { labels.getValue(it) }, selected = { it == seconds }, onSelect = { seconds = it })
-        IzleButton(
-            stringResource(R.string.send),
-            onClick = { onSend(text, seconds) },
-            kind = ButtonKind.Primary,
-            enabled = valid,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(IzleTheme.spacing.sm, Alignment.End)) {
+            IzleButton(stringResource(R.string.cancel), onClick = onDismiss)
+            IzleButton(stringResource(R.string.send), onClick = { onSend(text, seconds) }, kind = ButtonKind.Primary, enabled = valid)
+        }
     }
 }

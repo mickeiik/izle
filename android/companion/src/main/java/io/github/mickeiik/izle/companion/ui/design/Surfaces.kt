@@ -39,6 +39,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import io.github.mickeiik.izle.companion.R
 
@@ -80,7 +81,7 @@ fun Hairline(modifier: Modifier = Modifier) {
 
 /**
  * A list row, at least 56 dp: [leading] (a [Poster], an icon), the title (`heading`-sized, Regular) and one
- * `caption` [supporting] line in [supportingTone] (both ellipsised), then [trailing]; a hairline under it when
+ * `caption` [supporting] line in [supportingTone] (both ellipsised) followed by [badge] (a [StatusChip]), then [trailing]; a hairline under it when
  * [divider]. With [selected] non-null it is a radio row (the radio drawn as leading); else [onClick] makes it tappable.
  */
 @Composable
@@ -89,6 +90,7 @@ fun ListRow(
     modifier: Modifier = Modifier,
     supporting: String? = null,
     supportingTone: Tone = Tone.Neutral,
+    badge: (@Composable () -> Unit)? = null,
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null,
     onClick: (() -> Unit)? = null,
@@ -112,8 +114,20 @@ fun ListRow(
             leading?.invoke()
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(s.line)) {
                 Text(title, style = IzleTheme.type.rowTitle, color = IzleTheme.colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (supporting != null) {
-                    Text(supporting, style = IzleTheme.type.caption, color = toneColor(supportingTone), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (supporting != null || badge != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(s.sm)) {
+                        if (supporting != null) {
+                            Text(
+                                supporting,
+                                style = IzleTheme.type.caption,
+                                color = toneColor(supportingTone),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                        }
+                        badge?.invoke()
+                    }
                 }
             }
             trailing?.invoke(this)
@@ -132,18 +146,16 @@ fun SectionHeader(title: String, modifier: Modifier = Modifier, meta: String? = 
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(s.sm),
     ) {
-        // Title and meta take what is left, so the trailing menu sits at the right edge on every header.
-        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(s.sm)) {
-            Text(
-                title,
-                style = IzleTheme.type.heading,
-                color = IzleTheme.colors.textPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            if (meta != null) Text(meta, style = IzleTheme.type.caption, color = IzleTheme.colors.textSecondary, maxLines = 1)
-        }
+        // The title takes what is left; the meta and the menu sit at the right edge on every header.
+        Text(
+            title,
+            style = IzleTheme.type.heading,
+            color = IzleTheme.colors.textPrimary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (meta != null) Text(meta, style = IzleTheme.type.caption, color = IzleTheme.colors.textSecondary, maxLines = 1)
         trailing?.invoke(this)
     }
 }
@@ -211,8 +223,8 @@ fun EmptyState(text: String, modifier: Modifier = Modifier) {
 
 /** A caption line: supporting text, hints and meta in `textSecondary` (or [tone]'s colour). */
 @Composable
-fun Caption(text: String, modifier: Modifier = Modifier, tone: Tone = Tone.Neutral, maxLines: Int = Int.MAX_VALUE) {
-    Text(text, style = IzleTheme.type.caption, color = toneColor(tone), maxLines = maxLines, overflow = TextOverflow.Ellipsis, modifier = modifier)
+fun Caption(text: String, modifier: Modifier = Modifier, tone: Tone = Tone.Neutral, maxLines: Int = Int.MAX_VALUE, align: TextAlign? = null) {
+    Text(text, style = IzleTheme.type.caption, color = toneColor(tone), maxLines = maxLines, overflow = TextOverflow.Ellipsis, textAlign = align, modifier = modifier)
 }
 
 /** An icon-only button (20 dp icon in `textSecondary`, or [tint]) with its spoken [description]. */

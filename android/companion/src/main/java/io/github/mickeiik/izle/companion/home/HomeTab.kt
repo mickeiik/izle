@@ -123,26 +123,9 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
         }
         val sections = drag.preview ?: state.sections
         val rows = homeRows(sections, state.entries)
-        LazyColumn(state = list, modifier = Modifier.fillMaxSize().homeDragContainer(drag)) {
+        LazyColumn(state = list, modifier = Modifier.weight(1f).fillMaxWidth().homeDragContainer(drag)) {
             item(key = "top") {
                 TopLine(state, onGrid = { dialog = HomeDialog.Grid })
-            }
-            item(key = "actions") {
-                ButtonRow(Modifier.padding(horizontal = IzleTheme.spacing.lg).padding(bottom = IzleTheme.spacing.md)) {
-                    IzleButton(
-                        stringResource(R.string.home_add_show),
-                        onClick = { vm.openSearch(); adding = true },
-                        kind = ButtonKind.Primary,
-                        size = ButtonSize.Small,
-                        icon = Icons.Filled.Add,
-                    )
-                    IzleButton(
-                        stringResource(R.string.home_new_section_button),
-                        onClick = { dialog = HomeDialog.NewSection },
-                        size = ButtonSize.Small,
-                        icon = Icons.Filled.Add,
-                    )
-                }
             }
             if (state.showCount == 0) {
                 item(key = "nothing") {
@@ -177,7 +160,22 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
                     }
                 }
             }
-            item(key = "bottom") { Spacer(Modifier.height(IzleTheme.spacing.xl)) }
+            item(key = "bottom") { Spacer(Modifier.height(IzleTheme.spacing.sm)) }
+        }
+        // Under the list, above the tabs, as in the mockup: + Section, then the screen's primary + Add show.
+        Hairline()
+        ButtonRow(Modifier.padding(horizontal = IzleTheme.spacing.lg, vertical = IzleTheme.spacing.sm)) {
+            IzleButton(
+                stringResource(R.string.home_new_section_button),
+                onClick = { dialog = HomeDialog.NewSection },
+                icon = Icons.Filled.Add,
+            )
+            IzleButton(
+                stringResource(R.string.home_add_show),
+                onClick = { vm.openSearch(); adding = true },
+                kind = ButtonKind.Primary,
+                icon = Icons.Filled.Add,
+            )
         }
     }
 
@@ -195,6 +193,7 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
                 index = place.position,
                 sectionCount = state.sections.size,
                 tvName = tvName,
+                poster = { RowPoster(api, state.entries[itemId]?.posterUrl) },
                 onDismiss = { sheetFor = null },
                 onPlay = { vm.play(itemId) },
                 onContinue = { vm.loadEpisodes(itemId); dialog = HomeDialog.Episodes(itemId) },
@@ -334,12 +333,11 @@ private fun ShowRow(
             else -> null
         },
         supportingTone = if (hidden != null) Tone.Warning else Tone.Neutral,
+        badge = if (hidden == null && verdict.worthAChip) ({ VerdictChip(verdict) }) else null,
         leading = { Box(Modifier.alpha(if (hidden != null) 0.5f else 1f)) { RowPoster(api, entry?.posterUrl) } },
         trailing = {
             if (hidden != null) {
                 IzleButton(stringResource(R.string.home_remove), onClick = onRemove, kind = ButtonKind.Danger, size = ButtonSize.Small)
-            } else if (verdict.worthAChip) {
-                VerdictChip(verdict)
             }
             Box(
                 handle.size(IzleTheme.sizes.remoteButton).semantics { contentDescription = res.getString(R.string.home_drag, title) },
