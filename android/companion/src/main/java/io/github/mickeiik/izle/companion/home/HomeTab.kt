@@ -71,17 +71,22 @@ import io.github.mickeiik.izle.data.api.HomeSectionInfo
 /**
  * The Home tab of a TV's page: the TV's Home as a list of sections and their shows, arranged by drag and drop, a
  * show's sheet (play, continue from, move, remove), the sections' menus, Add show and the grid size
- * (docs/ux/companion-home.md). Messages go to [onMessage] (the host's snackbar).
+ * (docs/ux/companion-home.md). Messages go to [onMessage] (the host's snackbar); a `401` to [onRevoked] (this phone was
+ * disconnected).
  */
 @Composable
-fun HomeTab(api: ApiClient, tvId: String, tvName: String, onMessage: (String) -> Unit, modifier: Modifier = Modifier) {
-    val vm: HomeViewModel = viewModel(key = "home-$tvId") { HomeViewModel(api, tvId) }
+fun HomeTab(api: ApiClient, tvId: String, tvName: String, onMessage: (String) -> Unit, onRevoked: () -> Unit, modifier: Modifier = Modifier) {
+    // Per client too: a phone paired anew gets a new one, and a view model kept from before would go on with the old.
+    val vm: HomeViewModel = viewModel(key = "home-$tvId-${System.identityHashCode(api)}") { HomeViewModel(api, tvId) }
     val res = resources()
     val message by rememberUpdatedState(onMessage)
     val name by rememberUpdatedState(tvName)
     LaunchedEffect(vm) { vm.follow() }
-    LaunchedEffect(vm) { vm.notices.collect { message(noticeText(res, it, name)) } }
+    LaunchedEffect(vm) { vm.notices.collect { message(noticeText(res, it, name, vm.state.value.sectionsMax)) } }
     val state by vm.state.collectAsStateWithLifecycle()
+    val revoked by vm.revoked.collectAsStateWithLifecycle()
+    val onRevokedNow by rememberUpdatedState(onRevoked)
+    LaunchedEffect(revoked) { if (revoked) onRevokedNow() }
     HomeList(vm, state, api, tvName, modifier)
 }
 

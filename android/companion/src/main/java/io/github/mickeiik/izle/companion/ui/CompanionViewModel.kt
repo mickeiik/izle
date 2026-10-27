@@ -604,7 +604,15 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             posterFor = key
             viewModelScope.launch {
                 val client = api ?: return@launch
-                val item = orNullOnFailure { client.catalogItem(itemId) }
+                val item = try {
+                    client.catalogItem(itemId)
+                } catch (e: IOException) {
+                    // Read again with the next answer for this episode.
+                    if (posterFor == key) posterFor = null
+                    null
+                } catch (e: ApiException) {
+                    null
+                }
                 val poster = item?.posterUrl?.let { client.resolve(it)?.toString() }
                 // "S1 · E3 — The gate" for a series' episode; a film's only episode says nothing more than its title.
                 val line = item?.takeIf { it.kind == "series" }?.episodes?.firstOrNull { it.id == episodeId }?.let(::episodeName)
@@ -660,7 +668,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stopRefreshing() {
-        leaveTv()
+        refreshJob?.cancel()
+        refreshJob = null
     }
 
     /** Reads again, unless a read is in flight. */
@@ -911,6 +920,11 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         _ui.value = listen.copy(nudgeMs = value)
         session?.setNudgeMs(value)
         viewModelScope.launch { store.setNudgeMs(value) }
+    }
+
+    /** The Home tab was answered `401`: this phone was disconnected. */
+    fun homeRevoked() {
+        viewModelScope.launch { unauthorized() }
     }
 
     /** A snackbar text from elsewhere (the Home tab). */

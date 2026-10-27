@@ -87,10 +87,7 @@ fun dragTarget(sections: List<HomeSection>, draggedId: String, hoveredKey: Strin
         is HomeRow.Header ->
             if (hoveredRow > draggedRow) HomePlace(row.section.id, 0)
             else if (row.index == 0) return null
-            else sections[row.index - 1].let { above ->
-                // The end of the section above, once the dragged show left it (when it was there).
-                HomePlace(above.id, above.itemIds.size - if (above.id == from.sectionId) 1 else 0)
-            }
+            else sections[row.index - 1].let { above -> HomePlace(above.id, above.itemIds.size) }
     }
     return target.takeIf { it != from }
 }

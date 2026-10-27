@@ -41,6 +41,7 @@ class HomeViewModelTest {
     private val notices = CopyOnWriteArrayList<HomeNotice>()
     private val longPolls = AtomicInteger()
 
+    @Volatile private var deviceAnswer: () -> MockResponse = { json(200, DEVICE) }
     @Volatile private var moveAnswer: () -> MockResponse = { json(200, change(MOVED)) }
 
     @Before
@@ -51,7 +52,7 @@ class HomeViewModelTest {
                 val path = request.url.encodedPath
                 val method = request.method
                 return when {
-                    path == "/api/v1/admin/devices/tv-1" && method == "GET" -> json(200, DEVICE)
+                    path == "/api/v1/admin/devices/tv-1" && method == "GET" -> deviceAnswer()
                     path == "/api/v1/admin/events" && request.url.queryParameter("after") == null -> json(200, """{"events":[],"last":10,"gap":false}""")
                     // The first long-poll brings one event; the next ones wait and bring nothing.
                     path == "/api/v1/admin/events" ->
@@ -143,6 +144,7 @@ class HomeViewModelTest {
         assertEquals("tv-1", search.queryParameter("notOnDevice"))
         assertEquals("true", search.queryParameter("playable"))
         assertEquals("50", search.queryParameter("limit"))
+        assertEquals("the next page starts after the hits read", 1, vm.search.value.next)
 
         vm.toggleKind("series")
         vm.toggleKind("movie")
@@ -156,6 +158,8 @@ class HomeViewModelTest {
         assertEquals("""{"itemId":"tears","sectionId":"films01"}""", post.body?.utf8())
         assertEquals(listOf("sintel", "tears"), vm.state.value.section("films01")!!.itemIds)
         assertTrue("it leaves the results", vm.search.value.items.none { it.id == "tears" })
+        assertEquals("and the server's list, so the next page starts one earlier", 0, vm.search.value.next)
+        assertFalse(vm.search.value.hasMore)
     }
 
     @Test
@@ -166,6 +170,16 @@ class HomeViewModelTest {
         waitUntil("deleted") { vm.state.value.section("kids01") == null }
         assertEquals(listOf("DELETE /api/v1/admin/devices/tv-1/home/sections/kids01"), requests.filter { it.method == "DELETE" }.map { "${it.method} ${it.url.encodedPath}" })
         assertFalse(vm.state.value.saving)
+    }
+
+    @Test
+    fun aRevokedPhoneIsSaidToTheHost() {
+        val vm = loaded()
+        assertFalse(vm.revoked.value)
+        deviceAnswer = { json(401, """{"error":"unauthorized"}""") }
+        vm.retry()
+        waitUntil("revoked") { vm.revoked.value }
+        assertTrue("what is shown stays", vm.state.value.loaded)
     }
 
     private fun loaded(): HomeViewModel = viewModel().also { vm ->

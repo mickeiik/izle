@@ -86,7 +86,7 @@ internal fun AddShowScreen(
                 val nearEnd by remember {
                     derivedStateOf { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= list.layoutInfo.totalItemsCount - 5 }
                 }
-                LaunchedEffect(nearEnd, search.items.size) { if (nearEnd) vm.loadMore() }
+                LaunchedEffect(nearEnd, search.next) { if (nearEnd) vm.loadMore() }
                 LazyColumn(state = list, modifier = Modifier.fillMaxSize()) {
                     items(search.items, key = { it.id }) { hit ->
                         ListRow(

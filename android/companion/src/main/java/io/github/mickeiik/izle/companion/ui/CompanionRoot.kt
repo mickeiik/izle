@@ -120,7 +120,7 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
                 screen.listenOpen -> ListenScreen(screen, vm, modifier = modifier)
                 screen.tab == TvTab.Now -> NowTab(screen, vm, modifier = modifier)
                 else -> vm.apiClient?.let { api ->
-                    HomeTab(api, tvId = screen.tvId, tvName = screen.displayName, onMessage = vm::say, modifier = modifier)
+                    HomeTab(api, tvId = screen.tvId, tvName = screen.displayName, onMessage = vm::say, onRevoked = vm::homeRevoked, modifier = modifier)
                 }
             }
         }

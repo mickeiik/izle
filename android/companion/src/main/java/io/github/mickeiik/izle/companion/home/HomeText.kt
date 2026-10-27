@@ -58,11 +58,12 @@ fun hitLine(res: Resources, hit: CatalogHit): String = when (hit.kind) {
 
 fun sectionTitle(res: Resources, title: String?): String = title ?: res.getString(R.string.home_no_title)
 
-fun errorText(res: Resources, error: HomeError): String = when (error) {
+/** [error] in words; [sectionsMax]: the server's limit of titled sections, for `too_many_sections`. */
+fun errorText(res: Resources, error: HomeError, sectionsMax: Int = HomeState().sectionsMax): String = when (error) {
     HomeError.Unreachable -> UNREACHABLE
     is HomeError.Server -> when (error.code) {
         "too_many_items" -> res.getString(R.string.home_error_too_many_items)
-        "too_many_sections" -> res.getString(R.string.home_sections_full, 20)
+        "too_many_sections" -> res.getString(R.string.home_sections_full, sectionsMax)
         "duplicate_item" -> res.getString(R.string.home_error_duplicate_item)
         "unknown_item" -> res.getString(R.string.home_error_unknown_item)
         "not_playable" -> res.getString(R.string.home_error_not_playable)
@@ -74,9 +75,9 @@ fun errorText(res: Resources, error: HomeError): String = when (error) {
 }
 
 /** A notice in words; [tvName] names the TV. */
-fun noticeText(res: Resources, notice: HomeNotice, tvName: String): String = when (notice) {
+fun noticeText(res: Resources, notice: HomeNotice, tvName: String, sectionsMax: Int = HomeState().sectionsMax): String = when (notice) {
     HomeNotice.ChangedElsewhere -> res.getString(R.string.home_changed_elsewhere)
-    is HomeNotice.Failed -> errorText(res, notice.error)
+    is HomeNotice.Failed -> errorText(res, notice.error, sectionsMax)
     is HomeNotice.Added ->
         notice.sectionTitle?.let { res.getString(R.string.home_added_to, notice.title, it) } ?: res.getString(R.string.home_added_home, notice.title)
     is HomeNotice.Continues -> res.getString(R.string.home_continues, tvName, notice.title, notice.episode)

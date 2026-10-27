@@ -71,7 +71,7 @@ class HomeTabTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
                 activity.setContent {
-                    IzleTheme { HomeTab(api, "tv-1", "Salon", onMessage = {}, modifier = Modifier.width(360.dp)) }
+                    IzleTheme { HomeTab(api, "tv-1", "Salon", onMessage = {}, onRevoked = {}, modifier = Modifier.width(360.dp)) }
                 }
             }
             compose.waitUntil(5_000) { compose.onAllNodes(hasText("Grid 5 × 2 · 3 shows")).fetchSemanticsNodes().isNotEmpty() }
@@ -115,7 +115,7 @@ class HomeTabTest {
         val api = ApiClient(server.url("/"), "izph_test", OkHttpClient())
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
-                activity.setContent { IzleTheme { HomeTab(api, "tv-1", "Salon", onMessage = {}) } }
+                activity.setContent { IzleTheme { HomeTab(api, "tv-1", "Salon", onMessage = {}, onRevoked = {}) } }
             }
             compose.waitUntil(5_000) { compose.onAllNodes(hasText("Sintel")).fetchSemanticsNodes().isNotEmpty() }
             // Up from Films, over its header (to the end of No title), then over "gone" (its place).

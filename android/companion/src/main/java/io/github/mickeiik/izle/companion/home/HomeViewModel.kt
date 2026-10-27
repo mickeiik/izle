@@ -66,12 +66,14 @@ data class ShowSearch(
     val total: Int = 0,
     val loading: Boolean = false,
     val error: HomeError? = null,
+    /** Where the next page starts in the server's list (the hits read so far, less those added since). */
+    val next: Int = 0,
     /** The section shows are added to ("No title" unless the owner picks another; kept while the tab lives). */
     val addTo: String = UNTITLED_SECTION,
     /** The item being added. */
     val adding: String? = null,
 ) {
-    val hasMore: Boolean get() = items.size < total
+    val hasMore: Boolean get() = next < total
 }
 
 /** The episodes of a series for Continue from episode… (those that may play), or why they could not be read. */
@@ -107,6 +109,11 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
     private val _episodes = MutableStateFlow<EpisodePick?>(null)
     val episodes: StateFlow<EpisodePick?> = _episodes.asStateFlow()
 
+    private val _revoked = MutableStateFlow(false)
+
+    /** The server answered `401`: this phone was disconnected (the host goes back to Connect). */
+    val revoked: StateFlow<Boolean> = _revoked.asStateFlow()
+
     private val _notices = Channel<HomeNotice>(Channel.BUFFERED)
     val notices: Flow<HomeNotice> = _notices.receiveAsFlow()
 
@@ -137,6 +144,7 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                failure(e)
                 if (first) {
                     // The log could not be read: load anyway, so the tab shows Home (or why not).
                     changes.withLock { reload() }
@@ -175,12 +183,13 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
             _state.update { it.copy(loading = false) }
             throw e
         } catch (e: Exception) {
-            _state.update { it.copy(loading = false, loadError = if (it.loaded) null else errorOf(e)) }
+            val error = failure(e)
+            _state.update { it.copy(loading = false, loadError = if (it.loaded) null else error) }
         }
     }
 
     fun retry() {
-        viewModelScope.launch { reload() }
+        viewModelScope.launch { changes.withLock { reload() } }
     }
 
     // --- single changes ---------------------------------------------------------------------------------------------
@@ -237,7 +246,7 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    _notices.trySend(HomeNotice.Failed(errorOf(e)))
+                    _notices.trySend(HomeNotice.Failed(failure(e)))
                 } finally {
                     _state.update { it.copy(saving = false) }
                 }
@@ -260,7 +269,7 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
                     throw e
                 } catch (e: Exception) {
                     _state.update { it.copy(sections = before) }
-                    val error = errorOf(e)
+                    val error = failure(e)
                     _notices.trySend(if (error is HomeError.Server && error.code in CHANGED_ELSEWHERE) HomeNotice.ChangedElsewhere else HomeNotice.Failed(error))
                     reload()
                 } finally {
@@ -285,7 +294,7 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _notices.trySend(HomeNotice.Failed(errorOf(e)))
+                _notices.trySend(HomeNotice.Failed(failure(e)))
             }
         }
     }
@@ -299,7 +308,7 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                EpisodePick(itemId, loading = false, error = errorOf(e))
+                EpisodePick(itemId, loading = false, error = failure(e))
             }
         }
     }
@@ -316,11 +325,11 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
                 api.setCursor(tvId, itemId, episode.id)
                 _notices.trySend(HomeNotice.Continues(title, episodeName(episode)))
                 _episodes.value = null
-                reload()
+                changes.withLock { reload() }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _notices.trySend(HomeNotice.Failed(errorOf(e)))
+                _notices.trySend(HomeNotice.Failed(failure(e)))
             }
         }
     }
@@ -351,7 +360,7 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
     fun loadMore() {
         val s = _search.value
         if (s.loading || !s.hasMore || s.error != null) return
-        searchJob = viewModelScope.launch { fetch(s.items.size) }
+        searchJob = viewModelScope.launch { fetch(s.next) }
     }
 
     private fun runSearch(debounce: Boolean) {
@@ -372,12 +381,12 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
                 // A page read before an add may still list what was added since.
                 val fresh = page.items.filter { h -> _state.value.entries[h.id] == null }
                 val items = if (offset == 0) fresh else (it.items + fresh).distinctBy(CatalogHit::id)
-                it.copy(items = items, total = page.total, loading = false)
+                it.copy(items = items, total = page.total, next = offset + page.items.size, loading = false)
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            _search.update { it.copy(loading = false, error = errorOf(e)) }
+            _search.update { it.copy(loading = false, error = failure(e)) }
         }
     }
 
@@ -392,13 +401,13 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
                 _state.update { it.copy(saving = true) }
                 try {
                     apply(api.addHomeItem(tvId, hit.id, sectionId))
-                    _search.update { it.copy(items = it.items.filter { h -> h.id != hit.id }, total = (it.total - 1).coerceAtLeast(0)) }
+                    _search.update { it.copy(items = it.items.filter { h -> h.id != hit.id }, total = (it.total - 1).coerceAtLeast(0), next = (it.next - 1).coerceAtLeast(0)) }
                     val section = _state.value.section(sectionId)
                     _notices.trySend(HomeNotice.Added(hit.title, section?.title.takeIf { sectionId != UNTITLED_SECTION }))
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    val error = errorOf(e)
+                    val error = failure(e)
                     if (error is HomeError.Server && error.code in CHANGED_ELSEWHERE) {
                         _notices.trySend(HomeNotice.ChangedElsewhere)
                         reload()
@@ -411,6 +420,12 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
                 }
             }
         }
+    }
+
+    /** [errorOf], noting a revoked phone. */
+    private fun failure(e: Exception): HomeError {
+        if (e is ApiException && e.status == 401) _revoked.value = true
+        return errorOf(e)
     }
 
     private fun titleOf(itemId: String): String = _state.value.entries[itemId]?.title ?: itemId
