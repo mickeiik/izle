@@ -54,9 +54,6 @@ class DesignSystemTest {
 
         /** Screens not rebuilt from the design system yet (phase 2 empties this list). */
         val NOT_MIGRATED = setOf(
-            "home/AddShowScreen.kt",
-            "home/HomeTab.kt",
-            "home/ShowSheet.kt",
             "ui/ConnectScreen.kt",
             "ui/LinkFinderScreen.kt",
             "ui/ListenScreen.kt",
