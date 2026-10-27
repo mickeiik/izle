@@ -5,7 +5,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 
 // The admin routes of a TV's page in the companion app (docs/spec/server-api-v1.md, "Pairing", "Devices", "Problem
-// reports", "Home list changes", "Home sections", "Catalog", "Status", "Events"). Same rules as Models.kt: unknown
+// reports", "Home list changes", "Home sections", "App cards", "Catalog", "Status", "Events"). Same rules as Models.kt: unknown
 // keys ignored, a default for what can be absent.
 
 /** `effective` of an admin device: the settings the TV runs with (the server's defaults and the catalog's hints applied). */
@@ -144,13 +144,30 @@ data class StatusDevice(
     val nowPlaying: NowPlaying? = null,
 )
 
-/** A Home section; [id] is `untitled` for the one without a title (always there). [layout] `grid` or `row`. */
+/**
+ * A Home section; [id] is `untitled` for the one without a title (always there). [layout] `grid` or `row`. [entries]:
+ * all its cards in order, shows and app cards (empty from a server before app cards: its [itemIds] are its cards).
+ */
 @Serializable
 data class HomeSection(
     val id: String,
     val title: String? = null,
     val layout: String = HomeSectionInfo.LAYOUT_GRID,
     val itemIds: List<String> = emptyList(),
+    val entries: List<SectionEntry> = emptyList(),
+)
+
+/**
+ * An app the TV reported, or an app card on Home it no longer reports ([installed] false, with what it was last
+ * called). [imageUrl]: `/app-images/<sha256>.png`, null without a picture; [onHome]: an app card opens it.
+ */
+@Serializable
+data class AdminApp(
+    val appId: String,
+    val label: String? = null,
+    val imageUrl: String? = null,
+    val installed: Boolean = true,
+    val onHome: Boolean = false,
 )
 
 /** The stored check of what OK plays: [verdict] `pass`, `warn` or `fail`; [stale]: a source has no current report. */
@@ -194,7 +211,10 @@ data class AdminHomeEntry(
     val checkAll: CheckAll? = null,
 )
 
-/** `GET admin/devices/:id`: [home] in Home order (the sections in order, each with its items). */
+/**
+ * `GET admin/devices/:id`: [home] in Home order (the sections in order, each with its items). [apps]: the TV's last
+ * report in its order, then the app cards it does not name; [appsReportedAt] null: the TV never reported its apps.
+ */
 @Serializable
 data class DeviceDetail(
     val device: AdminDevice,
@@ -202,15 +222,22 @@ data class DeviceDetail(
     val homeMax: Int = 200,
     val sections: List<HomeSection> = emptyList(),
     val sectionsMax: Int = 20,
+    val apps: List<AdminApp> = emptyList(),
+    val appsMax: Int = 50,
+    val appsReportedAt: String? = null,
 )
 
-/** The answer of every Home change: the new state [version], the list and the sections as they are now. [sectionId]: a new section's. */
+/**
+ * The answer of every Home change: the new state [version], the list and the sections as they are now. [sectionId]: a
+ * new section's. [apps] as in [DeviceDetail], null from a server before app cards.
+ */
 @Serializable
 data class HomeChange(
     val version: Long,
     val home: List<AdminHomeEntry> = emptyList(),
     val sections: List<HomeSection> = emptyList(),
     val sectionId: String? = null,
+    val apps: List<AdminApp>? = null,
 )
 
 /** `POST …/commands`: [online] false = the TV gets the command if it connects within the next 2 minutes. */

@@ -71,6 +71,76 @@ class AdminApiTest {
         assertNull(gone.title)
         assertNull(gone.kind)
         assertNull(gone.check)
+        // A server from before app cards: no entries, no apps, never reported.
+        assertTrue(detail.sections.all { it.entries.isEmpty() })
+        assertEquals(emptyList<AdminApp>(), detail.apps)
+        assertEquals(50, detail.appsMax)
+        assertNull(detail.appsReportedAt)
+    }
+
+    @Test
+    fun deviceDecodesEntriesAndApps() = runBlocking {
+        server.enqueue(
+            json(
+                200,
+                """{"device":{"id":"tv-1","name":"Salon"},"home":[$ENTRY_FILM],
+                "sections":[{"id":"untitled","title":null,"layout":"grid","itemIds":["film-1"],
+                  "entries":[{"itemId":"film-1"},{"appId":"com.example.weather"},{"widget":"clock"}]},
+                  {"id":"a1b2c3d4","title":"Apps","layout":"row","itemIds":[],"entries":[{"appId":"com.example.radio"}]}],
+                "apps":[{"appId":"com.example.weather","label":"Weather","imageUrl":"/app-images/ab12.png","installed":true,"onHome":true},
+                  {"appId":"com.example.mail","label":"Mail","imageUrl":null,"installed":true,"onHome":false},
+                  {"appId":"com.example.radio","label":"Radio","imageUrl":null,"installed":false,"onHome":true}],
+                "appsMax":50,"appsReportedAt":"2026-10-27T09:00:00.000Z"}""",
+            ),
+        )
+        val detail = client().device("tv-1")
+        val (untitled, apps) = detail.sections
+        assertEquals(listOf("film-1"), untitled.itemIds)
+        // A later kind of card decodes as an entry with neither field (the list skips it).
+        assertEquals(listOf(SectionEntry(itemId = "film-1"), SectionEntry(appId = "com.example.weather"), SectionEntry()), untitled.entries)
+        assertEquals(emptyList<String>(), apps.itemIds)
+        assertEquals(listOf(SectionEntry(appId = "com.example.radio")), apps.entries)
+        assertEquals(
+            listOf(
+                AdminApp("com.example.weather", "Weather", "/app-images/ab12.png", installed = true, onHome = true),
+                AdminApp("com.example.mail", "Mail", null, installed = true, onHome = false),
+                AdminApp("com.example.radio", "Radio", null, installed = false, onHome = true),
+            ),
+            detail.apps,
+        )
+        assertEquals("2026-10-27T09:00:00.000Z", detail.appsReportedAt)
+    }
+
+    @Test
+    fun appCardChangesSendOnlyWhatIsGivenAndAnswerTheApps() = runBlocking {
+        val withApps = CHANGE.replace(
+            """"sections":""",
+            """"apps":[{"appId":"com.example.weather","label":"Weather","imageUrl":null,"installed":true,"onHome":true}],"sections":""",
+        )
+        repeat(4) { server.enqueue(json(200, withApps)) }
+        val api = client()
+
+        val added = api.addHomeApp("tv-1", "com.example.weather", sectionId = "a1b2c3d4")
+        assertEquals(
+            """{"appId":"com.example.weather","sectionId":"a1b2c3d4"}""",
+            takeRequest("POST", "/izle/api/v1/admin/devices/tv-1/home/apps").body?.utf8(),
+        )
+        assertEquals(listOf("com.example.weather"), added.apps?.map { it.appId })
+
+        api.moveHomeApp("tv-1", "com.example.weather", sectionId = "untitled", position = 3)
+        assertEquals(
+            """{"sectionId":"untitled","position":3}""",
+            takeRequest("PATCH", "/izle/api/v1/admin/devices/tv-1/home/apps/com.example.weather").body?.utf8(),
+        )
+        api.moveHomeApp("tv-1", "com.example.weather", position = 0)
+        assertEquals("""{"position":0}""", takeRequest("PATCH", "/izle/api/v1/admin/devices/tv-1/home/apps/com.example.weather").body?.utf8())
+
+        api.removeHomeApp("tv-1", "com.example.weather")
+        assertEquals(0, takeRequest("DELETE", "/izle/api/v1/admin/devices/tv-1/home/apps/com.example.weather").body?.size ?: 0)
+
+        // An answer from a server before app cards carries no apps.
+        server.enqueue(json(200, CHANGE))
+        assertNull(api.removeHomeItem("tv-1", "film-1").apps)
     }
 
     @Test
@@ -226,6 +296,11 @@ class AdminApiTest {
         assertEquals(409, conflict.status)
         assertEquals("home_changed", conflict.code)
         assertEquals("unknown_section", assertThrows(ApiException::class.java) { runBlocking { api.deleteSection("tv-1", "zzz") } }.code)
+
+        server.enqueue(json(400, """{"error":"too_many_apps","max":50}"""))
+        server.enqueue(json(400, """{"error":"unknown_app"}"""))
+        assertEquals("too_many_apps", assertThrows(ApiException::class.java) { runBlocking { api.addHomeApp("tv-1", "com.example.a") } }.code)
+        assertEquals("unknown_app", assertThrows(ApiException::class.java) { runBlocking { api.addHomeApp("tv-1", "com.example.b") } }.code)
     }
 
     @Test

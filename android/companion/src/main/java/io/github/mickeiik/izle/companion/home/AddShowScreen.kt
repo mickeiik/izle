@@ -41,13 +41,14 @@ import io.github.mickeiik.izle.data.api.HomeSection
 
 /**
  * Add show, over the whole screen: a catalog search that leaves out what is on this TV and what cannot play, by kind
- * (Films, Series, Channels), paged as the list is scrolled; Add to picks the section ("No title" unless chosen), Add
- * puts the show at its end. Back closes it.
+ * (Films, Series, Channels), paged as the list is scrolled; or, with Apps, the TV's apps not on Home yet, filtered by
+ * the search text. Add to picks the section ("No title" unless chosen), Add puts the show or app card at its end. Back
+ * closes it.
  */
 @Composable
 internal fun AddShowScreen(
     search: ShowSearch,
-    sections: List<HomeSection>,
+    home: HomeState,
     api: ApiClient,
     tvName: String,
     vm: HomeViewModel,
@@ -64,18 +65,22 @@ internal fun AddShowScreen(
                         value = search.query,
                         onValueChange = vm::setQuery,
                         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                        placeholder = { Text(stringResource(R.string.home_search)) },
+                        placeholder = { Text(stringResource(if (search.apps) R.string.home_search_apps else R.string.home_search)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     ChoiceGrid(
                         KINDS,
                         label = { res.getString(it.second) },
-                        selected = { it.first in search.kinds },
-                        onSelect = { vm.toggleKind(it.first) },
+                        selected = { if (it.first == APPS) search.apps else it.first in search.kinds },
+                        onSelect = { if (it.first == APPS) vm.toggleApps() else vm.toggleKind(it.first) },
                         size = ButtonSize.Small,
                     )
-                    AddToPicker(sections, search.addTo, onPick = vm::setAddTo)
+                    AddToPicker(home.sections, search.addTo, onPick = vm::setAddTo)
+                }
+                if (search.apps) {
+                    AppResults(search, home, api, tvName, vm)
+                    return@Column
                 }
                 if (search.loading) ProgressBar(null, Modifier.padding(top = space.md)) else Hairline(Modifier.padding(top = space.md))
                 search.error?.let { Caption(errorText(res, it), Modifier.padding(space.lg), tone = Tone.Danger) }
@@ -104,6 +109,38 @@ internal fun AddShowScreen(
     }
 }
 
+/**
+ * The Apps chip's results: the TV's apps not on Home yet whose name holds the search text, each with Add; or why there
+ * are none (the TV never listed its apps, it has none left to add, or none matches).
+ */
+@Composable
+private fun AppResults(search: ShowSearch, home: HomeState, api: ApiClient, tvName: String, vm: HomeViewModel) {
+    val space = IzleTheme.spacing
+    val choices = appChoices(home.apps.values, search.query)
+    Hairline(Modifier.padding(top = space.md))
+    val none = when {
+        home.appsReportedAt == null -> stringResource(R.string.home_apps_never, tvName)
+        choices.isNotEmpty() -> null
+        appChoices(home.apps.values, "").isEmpty() -> stringResource(R.string.home_apps_none)
+        else -> stringResource(R.string.home_apps_no_results, tvName)
+    }
+    if (none != null) {
+        Caption(none, Modifier.padding(space.lg))
+        return
+    }
+    LazyColumn(Modifier.fillMaxSize()) {
+        items(choices, key = { it.appId }) { app ->
+            ListRow(
+                appName(app, app.appId),
+                leading = { RowAppPicture(api, app.imageUrl) },
+                trailing = {
+                    IzleButton(stringResource(R.string.home_add), onClick = { vm.addApp(app) }, size = ButtonSize.Small, enabled = search.adding == null)
+                },
+            )
+        }
+    }
+}
+
 /** Add to: the sections by title ("No title" for the untitled one). */
 @Composable
 private fun AddToPicker(sections: List<HomeSection>, addTo: String, onPick: (String) -> Unit) {
@@ -115,4 +152,12 @@ private fun AddToPicker(sections: List<HomeSection>, addTo: String, onPick: (Str
     )
 }
 
-private val KINDS = listOf("movie" to R.string.home_kind_movie, "series" to R.string.home_kind_series, "live" to R.string.home_kind_live)
+/** The Apps chip among the kinds. */
+private const val APPS = "apps"
+
+private val KINDS = listOf(
+    "movie" to R.string.home_kind_movie,
+    "series" to R.string.home_kind_series,
+    "live" to R.string.home_kind_live,
+    APPS to R.string.home_kind_apps,
+)

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -89,6 +90,21 @@ fun StatusLine(text: String, tone: Tone, modifier: Modifier = Modifier) {
 fun Poster(url: String?, size: DpSize, modifier: Modifier = Modifier) {
     Box(modifier.size(size).clip(RoundedCornerShape(IzleTheme.radii.sm)).background(IzleTheme.colors.surfaceMuted)) {
         if (url != null) AsyncImage(url, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+    }
+}
+
+/**
+ * An app's picture (the banner or icon the TV reported) in a poster's place, [size] as for [Poster] so that rows line
+ * up: drawn whole and centred on a `surfaceMuted` tile, radius `sm`; without [url], the apps icon in `textMuted`.
+ */
+@Composable
+fun AppPicture(url: String?, size: DpSize, modifier: Modifier = Modifier) {
+    Box(
+        modifier.size(size).clip(RoundedCornerShape(IzleTheme.radii.sm)).background(IzleTheme.colors.surfaceMuted),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (url != null) AsyncImage(url, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+        else Icon(IzleIcons.Apps, contentDescription = null, tint = IzleTheme.colors.textMuted, modifier = Modifier.size(IzleTheme.sizes.icon))
     }
 }
 

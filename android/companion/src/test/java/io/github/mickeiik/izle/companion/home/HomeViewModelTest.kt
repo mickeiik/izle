@@ -3,6 +3,7 @@ package io.github.mickeiik.izle.companion.home
 import android.os.Looper
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.CatalogHit
+import io.github.mickeiik.izle.data.api.SectionEntry
 import io.github.mickeiik.izle.json
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.MainScope
@@ -16,6 +17,7 @@ import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
@@ -43,6 +45,7 @@ class HomeViewModelTest {
 
     @Volatile private var deviceAnswer: () -> MockResponse = { json(200, DEVICE) }
     @Volatile private var moveAnswer: () -> MockResponse = { json(200, change(MOVED)) }
+    @Volatile private var appAnswer: () -> MockResponse = { json(200, appChange(APP_SECTIONS, APPS)) }
 
     @Before
     fun setUp() {
@@ -61,6 +64,9 @@ class HomeViewModelTest {
                     path == "/api/v1/admin/devices/tv-1/home/items/sintel" && method == "PATCH" -> moveAnswer()
                     path == "/api/v1/admin/devices/tv-1/home/items" && method == "POST" -> json(200, change(ADDED))
                     path == "/api/v1/admin/devices/tv-1/home/sections/kids01" && method == "DELETE" -> json(200, change(KIDS_DELETED))
+                    path == "/api/v1/admin/devices/tv-1/home/apps" && method == "POST" -> appAnswer()
+                    path.startsWith("/api/v1/admin/devices/tv-1/home/apps/") -> appAnswer()
+                    path == "/api/v1/admin/devices/tv-1/home/items/bunny" && method == "PATCH" -> json(200, appChange(APP_SECTIONS, APPS))
                     path == "/api/v1/admin/catalog/search" ->
                         json(200, """{"items":[{"id":"tears","kind":"movie","title":"Tears of Steel","year":2012,"playable":true}],"total":1,"offset":0}""")
                     else -> json(404, """{"error":"not_found"}""")
@@ -93,7 +99,7 @@ class HomeViewModelTest {
         waitUntil("the reload") { requests.count { it.url.encodedPath == "/api/v1/admin/devices/tv-1" } == 2 }
         val polls = requests.filter { it.url.encodedPath == "/api/v1/admin/events" }
         assertEquals("tv-1", polls.first().url.queryParameter("devices"))
-        assertEquals("home.changed,cursor.changed,device.updated,catalog.reloaded,check.finished", polls.first().url.queryParameter("types"))
+        assertEquals("home.changed,cursor.changed,device.updated,device.apps,catalog.reloaded,check.finished", polls.first().url.queryParameter("types"))
         assertEquals("10", polls[1].url.queryParameter("after"))
         assertEquals("25", polls[1].url.queryParameter("wait"))
         follow.cancel()
@@ -102,7 +108,7 @@ class HomeViewModelTest {
     @Test
     fun aDropIsOneMoveAndTheAnswerRedrawsTheList() {
         val vm = loaded()
-        vm.move("sintel", HomePlace(UNTITLED_SECTION, 0))
+        vm.move(SINTEL, HomePlace(UNTITLED_SECTION, 0))
         // At once: the list draws the move while it is saved.
         assertEquals(listOf("sintel", "bunny", "gone"), vm.state.value.section(UNTITLED_SECTION)!!.itemIds)
         waitUntil("saved") { !vm.state.value.saving && requests.any { it.method == "PATCH" } }
@@ -112,7 +118,7 @@ class HomeViewModelTest {
         assertEquals(listOf("sintel", "bunny", "gone"), vm.state.value.section(UNTITLED_SECTION)!!.itemIds)
         assertEquals(emptyList<String>(), vm.state.value.section("films01")!!.itemIds)
         // A move to where it is sends nothing.
-        vm.move("sintel", HomePlace(UNTITLED_SECTION, 0))
+        vm.move(SINTEL, HomePlace(UNTITLED_SECTION, 0))
         settle()
         assertEquals(1, requests.count { it.method == "PATCH" })
     }
@@ -122,7 +128,7 @@ class HomeViewModelTest {
         moveAnswer = { json(409, """{"error":"home_changed"}""") }
         val vm = loaded()
         val reads = requests.count { it.url.encodedPath == "/api/v1/admin/devices/tv-1" }
-        vm.move("sintel", HomePlace(UNTITLED_SECTION, 0))
+        vm.move(SINTEL, HomePlace(UNTITLED_SECTION, 0))
         waitUntil("the notice") { HomeNotice.ChangedElsewhere in notices }
         waitUntil("the reload") { requests.count { it.url.encodedPath == "/api/v1/admin/devices/tv-1" } == reads + 1 }
         waitUntil("saved") { !vm.state.value.saving }
@@ -131,7 +137,7 @@ class HomeViewModelTest {
 
         moveAnswer = { json(404, """{"error":"not_on_home"}""") }
         notices.clear()
-        vm.move("sintel", HomePlace(UNTITLED_SECTION, 0))
+        vm.move(SINTEL, HomePlace(UNTITLED_SECTION, 0))
         waitUntil("the notice") { HomeNotice.ChangedElsewhere in notices }
     }
 
@@ -160,6 +166,106 @@ class HomeViewModelTest {
         assertTrue("it leaves the results", vm.search.value.items.none { it.id == "tears" })
         assertEquals("and the server's list, so the next page starts one earlier", 0, vm.search.value.next)
         assertFalse(vm.search.value.hasMore)
+    }
+
+    @Test
+    fun anOlderServerHasNoAppsAndTheTvNeverReported() {
+        val s = loaded().state.value
+        assertEquals(emptyMap<String, Any>(), s.apps)
+        assertNull(s.appsReportedAt)
+        assertEquals(0, s.appCount)
+    }
+
+    @Test
+    fun loadsTheAppsAndCountsTheAppCards() {
+        deviceAnswer = { json(200, DEVICE_APPS) }
+        val s = loaded().state.value
+        assertEquals(listOf(WEATHER, MAIL, CLOCK, RADIO), s.apps.keys.toList())
+        assertEquals("2026-10-27T09:00:00.000Z", s.appsReportedAt)
+        assertEquals(4, s.showCount)
+        assertEquals(2, s.appCount)
+        assertEquals(listOf(SINTEL, SectionEntry(appId = WEATHER), BUNNY, GONE), s.section(UNTITLED_SECTION)!!.cards)
+    }
+
+    @Test
+    fun anAppCardMovesWithItsOwnRouteAndPositionsCountEveryCard() {
+        deviceAnswer = { json(200, DEVICE_APPS) }
+        val vm = loaded()
+        val weather = SectionEntry(appId = WEATHER)
+        // Over Films' one show: its second place.
+        vm.move(weather, HomePlace("films01", 1))
+        assertEquals(listOf(SectionEntry(itemId = "tears"), weather), vm.state.value.section("films01")!!.cards)
+        waitUntil("saved") { !vm.state.value.saving && requests.any { it.method == "PATCH" } }
+        val patch = requests.single { it.method == "PATCH" }
+        assertEquals("/api/v1/admin/devices/tv-1/home/apps/$WEATHER", patch.url.encodedPath)
+        assertEquals("""{"sectionId":"films01","position":1}""", patch.body?.utf8())
+
+        // A show's position counts the app cards: Bunny, after Weather, is at 2 and goes to 1, before it.
+        requests.clear()
+        assertEquals(HomePlace(UNTITLED_SECTION, 2), placeOf(vm.state.value.sections, BUNNY))
+        vm.move(BUNNY, HomePlace(UNTITLED_SECTION, 1))
+        assertEquals(listOf(SINTEL, BUNNY, SectionEntry(appId = WEATHER), GONE), vm.state.value.section(UNTITLED_SECTION)!!.cards)
+        assertEquals(listOf("sintel", "bunny", "gone"), vm.state.value.section(UNTITLED_SECTION)!!.itemIds)
+        waitUntil("saved") { !vm.state.value.saving && requests.any { it.method == "PATCH" } }
+        val show = requests.single { it.method == "PATCH" }
+        assertEquals("/api/v1/admin/devices/tv-1/home/items/bunny", show.url.encodedPath)
+        assertEquals("""{"sectionId":"untitled","position":1}""", show.body?.utf8())
+    }
+
+    @Test
+    fun removesAnAppCardTheTvNoLongerHas() {
+        deviceAnswer = { json(200, DEVICE_APPS) }
+        val vm = loaded()
+        assertTrue(appHidden(vm.state.value.apps[RADIO]))
+        appAnswer = { json(200, appChange(APP_SECTIONS.replace("""{"appId":"$RADIO"}""", ""), APPS.replace(""""onHome":true,"x":1""", """"onHome":false"""))) }
+        vm.remove(SectionEntry(appId = RADIO))
+        assertEquals("at once", emptyList<SectionEntry>(), vm.state.value.section("kids01")!!.cards)
+        waitUntil("saved") { !vm.state.value.saving && requests.any { it.method == "DELETE" } }
+        assertEquals("/api/v1/admin/devices/tv-1/home/apps/$RADIO", requests.single { it.method == "DELETE" }.url.encodedPath)
+        assertEquals(emptyList<SectionEntry>(), vm.state.value.section("kids01")!!.cards)
+    }
+
+    @Test
+    fun theAppsChipAddsAnAppAndTheAnswerTakesItOffTheChoices() {
+        deviceAnswer = { json(200, DEVICE_APPS) }
+        val vm = loaded()
+        vm.openSearch()
+        vm.toggleKind("movie")
+        vm.toggleApps()
+        assertTrue(vm.search.value.apps)
+        assertEquals("the Apps chip lets go of the kinds", emptySet<String>(), vm.search.value.kinds)
+        val searches = requests.count { it.url.encodedPath == "/api/v1/admin/catalog/search" }
+        vm.setQuery("MA")
+        settle()
+        assertEquals("the apps are filtered here, not searched", searches, requests.count { it.url.encodedPath == "/api/v1/admin/catalog/search" })
+        assertEquals(listOf(MAIL), appChoices(vm.state.value.apps.values, vm.search.value.query).map { it.appId })
+
+        appAnswer = { json(200, appChange(APP_SECTIONS.replace("""[{"itemId":"tears"}]""", """[{"itemId":"tears"},{"appId":"$MAIL"}]"""), APPS.replace(""""label":"Mail","imageUrl":null,"installed":true,"onHome":false""", """"label":"Mail","imageUrl":null,"installed":true,"onHome":true"""))) }
+        vm.setAddTo("films01")
+        vm.addApp(vm.state.value.apps.getValue(MAIL))
+        waitUntil("the notice") { notices.isNotEmpty() }
+        assertEquals(HomeNotice.Added("Mail", "Films"), notices.single())
+        assertEquals("""{"appId":"$MAIL","sectionId":"films01"}""", requests.single { it.method == "POST" }.body?.utf8())
+        assertEquals(3, vm.state.value.appCount)
+        assertEquals(emptyList<String>(), appChoices(vm.state.value.apps.values, "MA").map { it.appId })
+
+        // A kind chip lets go of Apps and searches the catalog again.
+        vm.toggleKind("series")
+        assertFalse(vm.search.value.apps)
+        waitUntil("the search") { requests.any { it.url.queryParameter("kind") == "series" } }
+    }
+
+    @Test
+    fun aFullHomeRefusesTheAppInWords() {
+        deviceAnswer = { json(200, DEVICE_APPS) }
+        val vm = loaded()
+        appAnswer = { json(400, """{"error":"too_many_apps","max":50}""") }
+        vm.openSearch()
+        vm.toggleApps()
+        vm.addApp(vm.state.value.apps.getValue(CLOCK))
+        waitUntil("the notice") { notices.isNotEmpty() }
+        assertEquals(HomeNotice.Failed(HomeError.Server("too_many_apps")), notices.single())
+        assertNull(vm.search.value.adding)
     }
 
     @Test
@@ -238,5 +344,29 @@ class HomeViewModelTest {
             "home":[$ENTRIES],"homeMax":200,"sections":$SECTIONS,"sectionsMax":20}"""
 
         fun change(sections: String) = """{"version":42,"home":[$ENTRIES$TEARS],"sections":$sections}"""
+
+        val SINTEL = SectionEntry(itemId = "sintel")
+        val BUNNY = SectionEntry(itemId = "bunny")
+        val GONE = SectionEntry(itemId = "gone")
+        const val WEATHER = "com.example.weather"
+        const val MAIL = "com.example.mail"
+        const val CLOCK = "com.example.clock"
+        const val RADIO = "com.example.radio"
+
+        // Weather among the shows of No title, Radio (the TV no longer has it) alone in Kids.
+        const val APP_SECTIONS = """[{"id":"untitled","title":null,"layout":"grid","itemIds":["sintel","bunny","gone"],
+              "entries":[{"itemId":"sintel"},{"appId":"$WEATHER"},{"itemId":"bunny"},{"itemId":"gone"}]},
+            {"id":"films01","title":"Films","layout":"row","itemIds":["tears"],"entries":[{"itemId":"tears"}]},
+            {"id":"kids01","title":"Kids","layout":"grid","itemIds":[],"entries":[{"appId":"$RADIO"}]}]"""
+        const val APPS = """[{"appId":"$WEATHER","label":"Weather","imageUrl":"/app-images/aa.png","installed":true,"onHome":true},
+            {"appId":"$MAIL","label":"Mail","imageUrl":null,"installed":true,"onHome":false},
+            {"appId":"$CLOCK","label":"Clock","imageUrl":null,"installed":true,"onHome":false},
+            {"appId":"$RADIO","label":"Radio","imageUrl":null,"installed":false,"onHome":true,"x":1}]"""
+
+        val DEVICE_APPS = """{"device":{"id":"tv-1","name":"Salon","online":true,"effective":{"homeColumns":5,"homeRows":2}},
+            "home":[$ENTRIES$TEARS],"homeMax":200,"sections":$APP_SECTIONS,"sectionsMax":20,
+            "apps":$APPS,"appsMax":50,"appsReportedAt":"2026-10-27T09:00:00.000Z"}"""
+
+        fun appChange(sections: String, apps: String) = """{"version":43,"home":[$ENTRIES$TEARS],"sections":$sections,"apps":$apps}"""
     }
 }

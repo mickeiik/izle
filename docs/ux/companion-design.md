@@ -90,6 +90,9 @@ Every button label is centred, single line, and never pushed to an edge; equal-w
 - **`StatusLine(tone, text)`**: a 8 dp dot in the tone's colour then `caption` text ("Online", "Offline · seen 5 min
   ago").
 - **`Poster(url, size)`**: radius `sm`, `surfaceMuted` placeholder, `ContentScale.Crop`, coil.
+- **`AppPicture(url, size)`**: an app's banner or icon in a poster's place (the same size, so rows line up): drawn
+  whole (`ContentScale.Fit`) and centred on a `surfaceMuted` tile, radius `sm`; without a picture, the apps icon in
+  `textMuted`.
 - **`ActionRow(icon, text, tone?, onClick)`**: a sheet's action as a row (icon + text, 52 dp), Danger tone in
   `danger`. Sheets list actions as rows, never as stacked buttons.
 - **`Disclosure(title, summary, expanded, onToggle) { content }`**: a folded section with a chevron (Timing for this

@@ -333,6 +333,31 @@ class ApiClient(
     suspend fun removeHomeItem(deviceId: String, itemId: String): HomeChange =
         homeChange(authorize(Request.Builder().url(homeUrl(deviceId, "items").addPathSegment(itemId).build()).delete()).build())
 
+    /**
+     * Puts an app card for [appId] (an app of the TV's last report) on Home, as [addHomeItem] does a show. `400
+     * unknown_app` / `duplicate_app` / `too_many_apps`.
+     */
+    suspend fun addHomeApp(deviceId: String, appId: String, sectionId: String? = null, position: Int? = null): HomeChange {
+        val body = buildJsonObject {
+            put("appId", appId)
+            sectionId?.let { put("sectionId", it) }
+            position?.let { put("position", it) }
+        }
+        return homeChange(jsonRequest(homeUrl(deviceId, "apps").build(), "POST", body))
+    }
+
+    /** Moves an app card, as [moveHomeItem] does a show: [position] counts every card of the section. */
+    suspend fun moveHomeApp(deviceId: String, appId: String, sectionId: String? = null, position: Int? = null): HomeChange {
+        val body = buildJsonObject {
+            sectionId?.let { put("sectionId", it) }
+            position?.let { put("position", it) }
+        }
+        return homeChange(jsonRequest(homeUrl(deviceId, "apps").addPathSegment(appId).build(), "PATCH", body))
+    }
+
+    suspend fun removeHomeApp(deviceId: String, appId: String): HomeChange =
+        homeChange(authorize(Request.Builder().url(homeUrl(deviceId, "apps").addPathSegment(appId).build()).delete()).build())
+
     suspend fun addSection(deviceId: String, title: String, layout: String? = null, position: Int? = null): HomeChange {
         val body = buildJsonObject {
             put("title", title)
@@ -351,7 +376,7 @@ class ApiClient(
         return homeChange(jsonRequest(homeUrl(deviceId, "sections").addPathSegment(sectionId).build(), "PATCH", body))
     }
 
-    /** The section's shows move to the end of the untitled one. */
+    /** The section's cards move to the end of the untitled one. */
     suspend fun deleteSection(deviceId: String, sectionId: String): HomeChange =
         homeChange(authorize(Request.Builder().url(homeUrl(deviceId, "sections").addPathSegment(sectionId).build()).delete()).build())
 

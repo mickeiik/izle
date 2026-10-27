@@ -440,3 +440,5 @@ data class CopyToItemResponse(val updated: Int, val episodeIds: List<String> = e
 
 @Serializable
 internal data class ErrorBody(val error: String = "unknown", val runId: String? = null, val issues: List<CatalogIssue> = emptyList())
+
+@Serializable data class SectionEntry(val itemId: String? = null, val appId: String? = null)

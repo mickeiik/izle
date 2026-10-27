@@ -167,10 +167,13 @@ fun eventWords(res: Resources, event: AdminEvent, ctx: EventContext = EventConte
         }
         "home.changed" -> {
             val added = d.array("added")
-            val removed = d.array("removed")
-            val title = if (added == 0 && removed == 0) res.getString(R.string.activity_home_rearranged) else {
+            val appsAdded = d.array("appsAdded")
+            // Shows and app cards that left Home, together.
+            val removed = d.array("removed") + d.array("appsRemoved")
+            val title = if (added == 0 && appsAdded == 0 && removed == 0) res.getString(R.string.activity_home_rearranged) else {
                 val counts = listOfNotNull(
                     added.takeIf { it > 0 }?.let { res.getQuantityString(R.plurals.activity_home_added, it, it) },
+                    appsAdded.takeIf { it > 0 }?.let { res.getQuantityString(R.plurals.activity_home_apps_added, it, it) },
                     removed.takeIf { it > 0 }?.let { res.getString(R.string.activity_home_removed, it) },
                 )
                 res.getString(R.string.activity_home_changed, counts.joinToString(", "))

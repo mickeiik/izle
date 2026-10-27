@@ -159,3 +159,9 @@ entries, and how each feature was built, are in git history.
   them, and its answer to a report names them again. A report counts as sent once every missing picture is uploaded.
 - TV app: app cards are keyed `app:<appId>` beside shows' item ids (item ids cannot hold a colon), so focus restore
   and the lazy keys need no second id space.
+- Companion: an app card's picture is drawn whole in a show's poster place (36 × 54 dp, letterboxed), not cropped or
+  wider: a banner cropped to a poster loses its name, and a wider picture would push the app's title off the shows'.
+- Companion: Add show's **Apps** chip and the show kinds exclude each other (Apps lists the TV's apps, the kinds the
+  catalog; there is no list of both), and the apps are filtered on the phone as the search text changes.
+- Companion: a section entry with neither `itemId` nor `appId` (a later kind of card) is left out of the list and of
+  the positions the phone sends; a Home holding such a card may get a position one off until the phone knows it.
