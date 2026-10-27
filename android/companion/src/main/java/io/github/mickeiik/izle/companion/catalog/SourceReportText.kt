@@ -27,7 +27,8 @@ fun sourceFindingsText(source: AdminSource?, report: SourceReport?): String {
     if (report == null) return listOfNotNull(audio, "not checked").joinToString(" · ")
     if (report.verdict == "fail") return failureText(report)
     val parts = listOfNotNull(audio, resolutionText(report)) + report.warnings.map { WARNINGS[it] ?: it.replace('_', ' ') }
-    val line = parts.ifEmpty { listOf("works") }.joinToString(" · ")
+    // With nothing else to say, how the stream reaches the TV (the chip beside the line already says it works).
+    val line = parts.ifEmpty { listOfNotNull(DELIVERY[report.stream?.delivery]) }.joinToString(" · ")
     return if (report.stale) "$line · source changed since" else line
 }
 
@@ -114,3 +115,5 @@ private val WARNINGS = mapOf(
     "manifest_only" to "only the manifest checked",
     "playlists_unchecked" to "some playlists not checked",
 )
+
+private val DELIVERY = mapOf("direct" to "straight from the source", "proxy" to "through the server")

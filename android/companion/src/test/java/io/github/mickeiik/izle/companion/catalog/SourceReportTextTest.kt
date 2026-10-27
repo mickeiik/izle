@@ -33,7 +33,8 @@ class SourceReportTextTest {
         // The stream's languages, when the check saw them, before the catalog's.
         val seen = report.copy(stream = CheckedStream(kind = "hls", languages = CandidateLanguages(audio = listOf("fr"))))
         assertEquals("audio fr · 1080p", sourceFindingsText(hls, seen))
-        assertEquals("works", sourceFindingsText(AdminSource("x", "direct"), report("ok")))
+        assertEquals("", sourceFindingsText(AdminSource("x", "direct"), report("ok")))
+        assertEquals("through the server", sourceFindingsText(AdminSource("x", "direct"), report("ok").copy(stream = CheckedStream(delivery = "proxy"))))
         assertEquals(Verdict.Works, reportVerdict(report))
     }
 

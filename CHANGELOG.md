@@ -8,6 +8,13 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 
 ### Added
 
+- **izle companion: the catalog, from a TV's page.** A third tab, **Catalog**: search with **Films**, **Series**,
+  **Channels**, **New** and **Not on Home**, sorted by title, newest or year, "On Home" on what this TV has; **What's
+  new** lists each catalog build with the shows and episodes it added (with **Add**) and removed; the tab's menu has
+  **Reload catalog** and **About the catalog**. A show's page has its synopsis, **Add to Home** or **On Home**, **Play
+  on the TV**, and its episodes with what OK plays next on this TV and each one's check; **Check all** runs a check of
+  the show. An episode's sheet plays it, makes the TV continue from it, checks it, and lists its sources in the order
+  the TV tries them with what their last check found. Catalog content itself is not edited from the phone.
 - **izle companion: a TV's page, with a remote and its Home.** After choosing a TV, the app shows its page with two
   tabs. **Now**: whether the TV is online, what it plays (poster, progress), a remote (previous, −30 s, play/pause,
   +30 s, next, **Stop the TV**; previous/next channel on a channel) that says in words when the TV ignores a press,

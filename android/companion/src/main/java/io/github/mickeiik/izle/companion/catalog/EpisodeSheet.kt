@@ -114,7 +114,7 @@ internal fun SourceRows(sources: List<AdminSource>, checks: PlayableSources?) {
         val verdict = reportVerdict(report)
         ListRow(
             sourceKindText(source),
-            supporting = sourceFindingsText(source, report),
+            supporting = sourceFindingsText(source, report).ifEmpty { null },
             supportingTone = if (report?.verdict == "fail" && !report.stale) Tone.Danger else Tone.Neutral,
             badge = if (verdict.worthAChip) ({ VerdictChip(verdict) }) else null,
             divider = i < sources.lastIndex,
