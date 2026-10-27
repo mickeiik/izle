@@ -1,5 +1,6 @@
 package io.github.mickeiik.izle.companion.ui.design
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -36,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -57,7 +59,7 @@ data class RemoteKey(
     val primary: Boolean = false,
 )
 
-/** The remote: one row of equal 48 dp buttons (radius `md`), `surfaceMuted` with `textPrimary` icons, the primary key in `accent`. */
+/** The remote: one row of equal 48 dp outlined buttons (radius `md`), `textPrimary` icons, the primary key outlined in `accent`. */
 @Composable
 fun RemoteBar(keys: List<RemoteKey>, modifier: Modifier = Modifier) {
     val c = IzleTheme.colors
@@ -66,8 +68,9 @@ fun RemoteBar(keys: List<RemoteKey>, modifier: Modifier = Modifier) {
             Surface(
                 onClick = key.onClick,
                 shape = RoundedCornerShape(IzleTheme.radii.md),
-                color = if (key.primary) c.accent else c.surfaceMuted,
-                contentColor = if (key.primary) c.onAccent else c.textPrimary,
+                color = Color.Transparent,
+                contentColor = if (key.primary) c.accent else c.textPrimary,
+                border = BorderStroke(IzleTheme.sizes.hairline, if (key.primary) c.accent else c.border),
                 modifier = Modifier.height(IzleTheme.sizes.remoteButton).semantics { contentDescription = key.description },
             ) {
                 Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {

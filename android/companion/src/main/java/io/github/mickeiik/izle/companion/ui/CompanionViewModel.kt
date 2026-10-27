@@ -13,8 +13,6 @@ import io.github.mickeiik.izle.companion.finder.FoundLink
 import io.github.mickeiik.izle.companion.finder.LinkConfirmer
 import io.github.mickeiik.izle.companion.finder.LinkFinder
 import io.github.mickeiik.izle.companion.sync.EndReason
-import io.github.mickeiik.izle.companion.tv.commandOutcomeText
-import io.github.mickeiik.izle.companion.tv.sendAndAwait
 import io.github.mickeiik.izle.companion.sync.ListenPhase
 import io.github.mickeiik.izle.companion.sync.ListenService
 import io.github.mickeiik.izle.companion.sync.ListenSession
@@ -22,6 +20,9 @@ import io.github.mickeiik.izle.companion.sync.ListenState
 import io.github.mickeiik.izle.companion.sync.ListenTarget
 import io.github.mickeiik.izle.companion.sync.ListenTiming
 import io.github.mickeiik.izle.companion.sync.PASTED_SOURCE_ID
+import io.github.mickeiik.izle.companion.tv.commandOutcomeText
+import io.github.mickeiik.izle.companion.tv.episodeName
+import io.github.mickeiik.izle.companion.tv.sendAndAwait
 import io.github.mickeiik.izle.data.api.AdminDevice
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.ApiException
@@ -34,6 +35,7 @@ import io.github.mickeiik.izle.data.api.Phone
 import io.github.mickeiik.izle.data.api.PhoneClaimRequest
 import io.github.mickeiik.izle.data.api.ServerUrls
 import io.github.mickeiik.izle.data.api.orNullOnFailure
+import java.io.IOException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,7 +47,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import java.io.IOException
 
 /** Why connecting (or listing the TVs or the phones) failed; the screens say it in words. */
 sealed interface ConnectError {
@@ -118,6 +119,7 @@ sealed interface CompanionUi {
         val now: NowResponse? = null,
         val nowAtMs: Long = 0,
         val posterUrl: String? = null,
+        val episodeLine: String? = null,
         val loaded: Boolean = false,
         val nowPlaying: NowPlaying? = null,
         val options: List<CandidateOption> = emptyList(),
@@ -182,7 +184,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     private var refreshJob: Job? = null
     private var nowJob: Job? = null
 
-    /** The item whose poster [CompanionUi.Tv.posterUrl] is (or is being read). */
+    /** The episode (else the item) whose poster and episode line in [CompanionUi.Tv] are (or are being read). */
     private var posterFor: String? = null
 
     /** The last `/companion` answer and its identity (as companion.js's `candidatesKey`: unchanged answers are skipped). */
@@ -596,12 +598,20 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         // When it was last seen: the list has it.
         if (wentOffline) viewModelScope.launch { readDevice(tvId) }
         val itemId = r.nowPlaying?.itemId
-        if (itemId != null && itemId != posterFor) {
-            posterFor = itemId
+        val episodeId = r.nowPlaying?.episodeId
+        val key = episodeId ?: itemId
+        if (itemId != null && key != posterFor) {
+            posterFor = key
             viewModelScope.launch {
                 val client = api ?: return@launch
-                val poster = orNullOnFailure { client.catalogItem(itemId) }?.posterUrl?.let { client.resolve(it)?.toString() }
-                updateTv { if (it.tvId == tvId && it.now?.nowPlaying?.itemId == itemId) it.copy(posterUrl = poster) else it }
+                val item = orNullOnFailure { client.catalogItem(itemId) }
+                val poster = item?.posterUrl?.let { client.resolve(it)?.toString() }
+                // "S1 · E3 — The gate" for a series' episode; a film's only episode says nothing more than its title.
+                val line = item?.takeIf { it.kind == "series" }?.episodes?.firstOrNull { it.id == episodeId }?.let(::episodeName)
+                updateTv {
+                    val n = it.now?.nowPlaying
+                    if (it.tvId == tvId && n?.itemId == itemId && n.episodeId == episodeId) it.copy(posterUrl = poster, episodeLine = line) else it
+                }
             }
         }
     }

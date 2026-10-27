@@ -55,10 +55,10 @@ fun IzleButton(
     val c = IzleTheme.colors
     val hairline = IzleTheme.sizes.hairline
     val (fill, content, border) = when {
-        !enabled && kind == ButtonKind.Primary -> Triple(c.surfaceMuted, c.textMuted, null)
         !enabled -> Triple(Color.Transparent, c.textMuted, if (kind == ButtonKind.Quiet) null else c.border)
         selected -> Triple(c.accentMuted, c.accent, c.accent)
-        kind == ButtonKind.Primary -> Triple(c.accent, c.onAccent, null)
+        // No fills: the primary action is told by its accent outline and text, as in the mockups.
+        kind == ButtonKind.Primary -> Triple(Color.Transparent, c.accent, c.accent)
         kind == ButtonKind.Secondary -> Triple(Color.Transparent, c.textPrimary, c.border)
         kind == ButtonKind.Danger -> Triple(Color.Transparent, c.danger, c.border)
         else -> Triple(Color.Transparent, c.accent, null)

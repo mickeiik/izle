@@ -36,6 +36,7 @@ import androidx.lifecycle.compose.LifecycleStartEffect
 import io.github.mickeiik.izle.companion.R
 import io.github.mickeiik.izle.companion.tv.timeAgo
 import io.github.mickeiik.izle.companion.ui.design.ButtonKind
+import io.github.mickeiik.izle.companion.ui.design.ButtonRow
 import io.github.mickeiik.izle.companion.ui.design.ButtonSize
 import io.github.mickeiik.izle.companion.ui.design.Caption
 import io.github.mickeiik.izle.companion.ui.design.Card
@@ -108,12 +109,11 @@ internal fun NowContent(
             val now = state.now
             when {
                 now == null -> Unit
-                isPlayingNow(now) && now.nowPlaying != null -> NowCard(now, state.nowAtMs, state.posterUrl)
+                isPlayingNow(now) && now.nowPlaying != null -> Playing(now, state.nowAtMs, state.posterUrl, state.episodeLine)
                 else -> EmptyState(stringResource(R.string.nothing_is_playing))
             }
             Remote(state.now, onRemote)
-            IzleButton(stringResource(R.string.stop_the_tv), onClick = { onRemote("stop", null) }, icon = IzleIcons.Stop, modifier = Modifier.fillMaxWidth())
-            ListenAlongEntry(state, onListen, onStopListening)
+            StopAndListen(state, onStopTv = { onRemote("stop", null) }, onListen, onStopListening)
             Hairline()
             IzleButton(stringResource(R.string.send_message), onClick = onMessage, icon = IzleIcons.Message, modifier = Modifier.fillMaxWidth())
         }
@@ -128,75 +128,90 @@ private fun onlineText(state: CompanionUi.Tv): String {
     return stringResource(R.string.tv_offline_seen, timeAgo(LocalContext.current.resources, at))
 }
 
-/** What plays: the poster, the title, the episode, a progress bar and `12:04 / 30:10 · playing`, moved on from the anchor. */
+/**
+ * What plays, straight on the page (no card): the poster, the title, the episode ("S1 · E3 — The gate"), a progress
+ * bar and `12:04 / 30:10 · playing`, moved on from the anchor.
+ */
 @Composable
-private fun NowCard(now: NowResponse, nowAtMs: Long, posterUrl: String?) {
+private fun Playing(now: NowResponse, nowAtMs: Long, posterUrl: String?, episodeLine: String?) {
     val n = now.nowPlaying ?: return
     val c = IzleTheme.colors
-    Card {
-        Row(horizontalArrangement = Arrangement.spacedBy(IzleTheme.spacing.md), verticalAlignment = Alignment.CenterVertically) {
-            Poster(posterUrl, IzleTheme.sizes.posterNow)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(IzleTheme.spacing.xs)) {
-                Text(n.itemTitle ?: n.itemId, style = IzleTheme.type.heading, color = c.textPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (n.isLive) {
-                    Caption(stringResource(R.string.channel_line, n.state))
-                    return@Column
-                }
-                n.episodeTitle?.takeIf { it != n.itemTitle }?.let {
-                    Text(it, style = IzleTheme.type.body, color = c.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                // Ticks once a second while the TV plays.
-                var clock by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
-                val moving = now.anchor?.playing == true
-                LaunchedEffect(nowAtMs, moving) {
-                    clock = SystemClock.elapsedRealtime()
-                    while (moving) {
-                        delay(1_000)
-                        clock = SystemClock.elapsedRealtime()
-                    }
-                }
-                val position = tvPositionAfter(now, (clock - nowAtMs).coerceAtLeast(0)) ?: 0
-                progressFraction(position, n.durationMs)?.let { ProgressBar(it, Modifier.padding(top = IzleTheme.spacing.xs)) }
-                Caption(progressText(position, n.durationMs, n.state))
+    Row(horizontalArrangement = Arrangement.spacedBy(IzleTheme.spacing.md), verticalAlignment = Alignment.CenterVertically) {
+        Poster(posterUrl, IzleTheme.sizes.posterNow)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(IzleTheme.spacing.xs)) {
+            Text(n.itemTitle ?: n.itemId, style = IzleTheme.type.heading, color = c.textPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (n.isLive) {
+                Caption(stringResource(R.string.channel_line, n.state))
+                return@Column
             }
+            (episodeLine ?: n.episodeTitle?.takeIf { it != n.itemTitle })?.let {
+                Text(it, style = IzleTheme.type.body, color = c.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            // Ticks once a second while the TV plays.
+            var clock by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+            val moving = now.anchor?.playing == true
+            LaunchedEffect(nowAtMs, moving) {
+                clock = SystemClock.elapsedRealtime()
+                while (moving) {
+                    delay(1_000)
+                    clock = SystemClock.elapsedRealtime()
+                }
+            }
+            val position = tvPositionAfter(now, (clock - nowAtMs).coerceAtLeast(0)) ?: 0
+            progressFraction(position, n.durationMs)?.let { ProgressBar(it, Modifier.padding(top = IzleTheme.spacing.xs)) }
+            Caption(progressText(position, n.durationMs, n.state))
         }
     }
 }
 
-/** While this phone listens to this TV: the listening bar (tap: Listen along); else Listen along, or why not. */
+/**
+ * Stop the TV beside Listen along, as in the mockup; while this phone listens, Stop the TV alone and the listening
+ * bar under it; with nothing to listen to, Stop the TV alone and why.
+ */
 @Composable
-private fun ListenAlongEntry(state: CompanionUi.Tv, onListen: () -> Unit, onStop: () -> Unit) {
-    val target = state.session.target
-    if (state.listening && target?.deviceId == state.tvId) {
-        val source = state.options.firstOrNull { it.sourceId == target.sourceId && it.language == target.language }?.label ?: target.sourceId
-        Card(accent = true, onClick = onListen, onClickLabel = stringResource(R.string.listen_along)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(IzleTheme.spacing.md)) {
-                Icon(IzleIcons.Headphones, contentDescription = null, tint = IzleTheme.colors.accent, modifier = Modifier.size(IzleTheme.sizes.icon))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(IzleTheme.spacing.line)) {
-                    Text(
-                        stringResource(R.string.listening_bar, listeningWord(state.session)),
-                        style = IzleTheme.type.heading,
-                        color = IzleTheme.colors.accent,
-                        maxLines = 1,
-                    )
-                    Caption(source, maxLines = 1)
-                }
-                IzleButton(stringResource(R.string.stop), onClick = onStop, size = ButtonSize.Small)
-            }
-        }
-        Caption(stringResource(R.string.listening_bar_hint), modifier = Modifier.fillMaxWidth(), align = TextAlign.Center)
-        return
+private fun StopAndListen(state: CompanionUi.Tv, onStopTv: () -> Unit, onListen: () -> Unit, onStopListening: () -> Unit) {
+    val stop = @Composable { modifier: Modifier ->
+        IzleButton(stringResource(R.string.stop_the_tv), onClick = onStopTv, icon = IzleIcons.Stop, modifier = modifier)
     }
+    val listeningHere = state.listening && state.session.target?.deviceId == state.tvId
     val why = nothingToListenText(state.now, state.displayName)
     when {
-        why != null -> Caption(why)
-        state.now != null -> IzleButton(
-            stringResource(R.string.listen_along),
-            onClick = onListen,
-            icon = IzleIcons.Headphones,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        listeningHere -> {
+            stop(Modifier.fillMaxWidth())
+            ListeningBar(state, onListen, onStopListening)
+        }
+        why != null || state.now == null -> {
+            stop(Modifier.fillMaxWidth())
+            why?.let { Caption(it) }
+        }
+        else -> ButtonRow {
+            stop(Modifier)
+            IzleButton(stringResource(R.string.listen_along), onClick = onListen, icon = IzleIcons.Headphones)
+        }
     }
+}
+
+/** The listening bar: listening and how well in sync, the source, Stop; tapping it opens Listen along. */
+@Composable
+private fun ListeningBar(state: CompanionUi.Tv, onOpen: () -> Unit, onStop: () -> Unit) {
+    val target = state.session.target ?: return
+    val source = state.options.firstOrNull { it.sourceId == target.sourceId && it.language == target.language }?.label ?: target.sourceId
+    Card(accent = true, onClick = onOpen, onClickLabel = stringResource(R.string.listen_along)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(IzleTheme.spacing.md)) {
+            Icon(IzleIcons.Headphones, contentDescription = null, tint = IzleTheme.colors.accent, modifier = Modifier.size(IzleTheme.sizes.icon))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(IzleTheme.spacing.line)) {
+                Text(
+                    stringResource(R.string.listening_bar, listeningWord(state.session)),
+                    style = IzleTheme.type.heading,
+                    color = IzleTheme.colors.accent,
+                    maxLines = 1,
+                )
+                Caption(source, maxLines = 1)
+            }
+            IzleButton(stringResource(R.string.stop), onClick = onStop, size = ButtonSize.Small)
+        }
+    }
+    Caption(stringResource(R.string.listening_bar_hint), modifier = Modifier.fillMaxWidth(), align = TextAlign.Center)
 }
 
 /**

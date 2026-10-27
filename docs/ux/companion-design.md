@@ -68,7 +68,8 @@ Two weights only (Regular, Medium). Sentence case everywhere.
 Every button label is centred, single line, and never pushed to an edge; equal-width groups share the width with
 `weight(1f)`. Icons are Material icons (outlined where available) at 20 dp.
 
-- **`IzleButton(text, onClick, kind, size, icon?)`**: `kind` Primary (accent fill, at most one per screen), Secondary
+- **`IzleButton(text, onClick, kind, size, icon?)`**: `kind` Primary (accent outline and text, no fill: no button is
+  ever filled; at most one per screen), Secondary
   (1 dp `border`, transparent), Quiet (text only, for "Edit", "Cancel"), Danger (danger text, 1 dp border); `size`
   Regular (40 dp) or Small (32 dp). Radius `md`. Full width only when it is the screen's single main action.
 - **`ButtonRow` / `ButtonGrid(columns)`**: equal-width buttons with `sm` gaps (the timing nudges, the speed choice, a
@@ -91,8 +92,8 @@ Every button label is centred, single line, and never pushed to an edge; equal-w
   `danger`. Sheets list actions as rows, never as stacked buttons.
 - **`Disclosure(title, summary, expanded, onToggle) { content }`**: a folded section with a chevron (Timing for this
   source, Sync details).
-- **`RemoteBar`**: one row of 48 dp square-ish buttons (radius `md`), `surfaceMuted` at rest with `textPrimary` icons;
-  Play/Pause is the one filled with `accent`. The seek buttons read "−30" and "+30".
+- **`RemoteBar`**: one row of 48 dp square-ish outlined buttons (radius `md`, 1 dp `border`, `textPrimary` icons);
+  Play/Pause is outlined and drawn in `accent`. The seek buttons read "−30" and "+30".
 - **`IzleSheet`**: `ModalBottomSheet` with `surface`, top radius `lg`, title in `title`, content padded `lg`.
 - **`IzleTopBar(title, onTitleClick?, actions)`** and **`IzleBottomBar`** (64 dp, icon + `label`, active in `accent`,
   no pill indicator fill beyond `accentMuted`); Now's tab icon is a TV, Home's a grid.
@@ -102,10 +103,10 @@ Every button label is centred, single line, and never pushed to an edge; equal-w
 
 The approved mockups are the reference: compact, one primary action per screen, colour only for status.
 
-- **Now**: `StatusLine`; a `Card` with `Poster` (56 × 84) and title / episode / progress (`LinearProgressIndicator`
-  4 dp, `accent` on `surfaceMuted`) and `12:04 / 30:10 · playing` in `caption`; "Nothing is playing" is an
-  `EmptyState` line, not a card; `RemoteBar`; **Stop the TV** (Secondary, full width); then **Listen along**
-  (Secondary, headphones icon, full width), or while listening the listening bar (a `Card` in `accentMuted`:
+- **Now**: `StatusLine`; what plays straight on the page, no card: `Poster` (56 × 84) beside the title, the episode
+  ("S1 · E3 — The gate") and the progress (`LinearProgressIndicator` 4 dp, `accent` on `surfaceMuted`) with
+  `12:04 / 30:10 · playing` in `caption`; "Nothing is playing" is an `EmptyState` line; `RemoteBar`; **Stop the TV**
+  and **Listen along** (headphones icon) side by side; while listening, Stop the TV alone and the listening bar (a `Card` in `accentMuted`:
   headphones icon, "Listening · in sync" in `accent`, the source, **Stop** Small) with "Tap the bar for source and
   timing" centred under it; a hairline; **Send a message to the TV** (Secondary, full width). The message sheet: the
   field with its counter, "Show for" and a `ChoiceGrid(3)`, then **Cancel** and **Send** (Primary) at the right.
