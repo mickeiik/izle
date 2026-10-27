@@ -6,6 +6,10 @@
         <item quantity="one">%d show</item>
         <item quantity="other">%d shows</item>
     </plurals>
+    <plurals name="home_apps">
+        <item quantity="one">%d app</item>
+        <item quantity="other">%d apps</item>
+    </plurals>
     <string name="home_options">Home options</string>
     <string name="home_grid_size">Grid size</string>
     <string name="home_add_show">Add show</string>
@@ -29,6 +33,10 @@
         <item quantity="one">Its %d show moves to No title.</item>
         <item quantity="other">Its %d shows move to No title.</item>
     </plurals>
+    <plurals name="home_delete_cards">
+        <item quantity="one">Its %d card moves to No title.</item>
+        <item quantity="other">Its %d cards move to No title.</item>
+    </plurals>
     <string name="home_delete_empty">It holds no shows.</string>
     <string name="home_empty_section">Empty: not shown on the TV</string>
     <string name="home_new_section">New section</string>
@@ -48,6 +56,9 @@
     <string name="home_ok_nothing">Nothing playable</string>
     <string name="home_ok_new">%s · new</string>
     <string name="home_ok_continues">%1$s · continues at %2$s</string>
+    <string name="home_app">App</string>
+    <string name="home_hidden_not_installed">Hidden: not installed on the TV</string>
+    <string name="home_app_opens">OK opens %1$s on %2$s</string>
     <string name="home_ok_continues_of">%1$s · continues at %2$s of %3$s</string>
     <string name="home_ok_restarts">%s · starts from the beginning</string>
     <string name="home_ok_watched">%s · watched, starts over</string>
@@ -87,6 +98,11 @@
     <string name="home_kind_movie">Films</string>
     <string name="home_kind_series">Series</string>
     <string name="home_kind_live">Channels</string>
+    <string name="home_kind_apps">Apps</string>
+    <string name="home_search_apps">Search the apps</string>
+    <string name="home_apps_never">%s has not listed its apps yet. Its izle app may need an update.</string>
+    <string name="home_apps_none">No apps to add.</string>
+    <string name="home_apps_no_results">No app found that %s does not have on Home already.</string>
     <string name="home_add_to">Add to</string>
     <string name="home_add_to_section">Add to: %s</string>
     <string name="home_no_results">Nothing found that %s does not have on Home already.</string>
@@ -107,6 +123,9 @@
     <string name="home_error_duplicate_item">That show is on Home already.</string>
     <string name="home_error_unknown_item">That show is not in the catalog (any more).</string>
     <string name="home_error_not_playable">Nothing in that show may be played.</string>
+    <string name="home_error_too_many_apps">A Home holds at most 50 apps.</string>
+    <string name="home_error_duplicate_app">That app is on Home already.</string>
+    <string name="home_error_unknown_app">That app is not on the TV (any more).</string>
     <string name="home_error_other">The server did not accept this (%s).</string>
     <string name="home_error_nothing_to_check">Nothing to check: no episode or channel there may be played.</string>
     <string name="home_error_unknown_check">That check is not kept any more: the server restarted, or another check followed it.</string>

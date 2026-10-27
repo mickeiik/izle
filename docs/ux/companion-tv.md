@@ -80,8 +80,8 @@ Full screen over the tabs (back arrow, "Activity"), like a show's page. This TV'
     `playback.ended` "Stopped at 12:04" (or "Watched to the end"); `playback.stalled` "Stalled at 12:04";
     `episode.seen` "Marked seen: S1 · E2".
   - `command.sent` "Sent: play" / "Sent: a message", `command.result` "Couldn't play: …" only when it failed.
-  - `home.changed` "Home changed · +1 show, −1"; `cursor.changed` "Continues from S1 · E3"; `device.updated`
-    "Settings changed: name, audio".
+  - `home.changed` "Home changed · +1 show, +1 app, −1" (the shows and app cards that left counted together);
+    `cursor.changed` "Continues from S1 · E3"; `device.updated` "Settings changed: name, audio".
   - `problem.recorded` "Problem: The source refused (403)" (danger tone); `check.finished` "Home check: 2 fail".
   - `device.online` "Online", `device.offline` "Offline", `device.paired` "Paired", `device.app_version` "App 0.6.0 →
     0.6.1", `phone.connected` "Phone connected: Pixel 8", `catalog.reloaded` "Catalog reloaded · +3 shows".

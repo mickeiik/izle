@@ -3,12 +3,16 @@ package io.github.mickeiik.izle.companion.home
 import androidx.test.core.app.ApplicationProvider
 import android.content.Context
 import io.github.mickeiik.izle.companion.tv.CommandOutcome
+import io.github.mickeiik.izle.data.api.AdminApp
 import io.github.mickeiik.izle.data.api.AdminHomeEntry
 import io.github.mickeiik.izle.data.api.CommandInfo
 import io.github.mickeiik.izle.data.api.CheckSummary
 import io.github.mickeiik.izle.data.api.ContinueInfo
 import io.github.mickeiik.izle.data.api.CatalogHit
+import io.github.mickeiik.izle.data.api.HomeSection
+import io.github.mickeiik.izle.data.api.SectionEntry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -62,5 +66,24 @@ class HomeTextTest {
         assertEquals("Home changed on another screen; this is the current one.", noticeText(res, HomeNotice.Failed(HomeError.Server("not_on_home")), "Salon"))
         assertEquals("A Home holds at most 20 sections.", noticeText(res, HomeNotice.Failed(HomeError.Server("too_many_sections")), "Salon"))
         assertEquals("The server did not accept this (teapot).", noticeText(res, HomeNotice.Failed(HomeError.Server("teapot")), "Salon"))
+    }
+
+    @Test
+    fun appCardsInWords() {
+        val home = listOf(
+            HomeSection(UNTITLED_SECTION, null, "grid", listOf("a")).withCards(listOf(SectionEntry(itemId = "a"), SectionEntry(appId = "w"))),
+            HomeSection("x", "X", "grid", listOf("b")),
+        )
+        assertEquals("Grid 4 × 2 · 2 shows · 1 app", summaryText(res, HomeState(sections = home)))
+        // No "· 0 apps" without app cards.
+        assertEquals("Grid 5 × 3 · 1 show", summaryText(res, HomeState(sections = home.drop(1), columns = 5, rows = 3)))
+        assertEquals("Weather", appName(AdminApp("w", "Weather"), "w"))
+        assertEquals("w", appName(null, "w"))
+        assertTrue(appHidden(AdminApp("w", "Weather", installed = false)))
+        assertTrue(appHidden(null))
+        assertEquals("A Home holds at most 50 apps.", noticeText(res, HomeNotice.Failed(HomeError.Server("too_many_apps")), "Salon"))
+        assertEquals("That app is on Home already.", noticeText(res, HomeNotice.Failed(HomeError.Server("duplicate_app")), "Salon"))
+        assertEquals("That app is not on the TV (any more).", noticeText(res, HomeNotice.Failed(HomeError.Server("unknown_app")), "Salon"))
+        assertEquals("Weather added to Home.", noticeText(res, HomeNotice.Added("Weather", null), "Salon"))
     }
 }
