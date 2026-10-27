@@ -468,13 +468,26 @@ const SCROLL_BAR_END = 22;
 /** @param {{ title: string | null }} s */
 export const sectionName = (s) => s.title ?? "No title";
 
-/** "6 shows", "1 show", "Empty". @param {number} n */
-export const sectionCount = (n) => (n === 0 ? "Empty" : plural(n, "show"));
+/** "24 shows", "24 shows · 3 apps" (app cards counted when there are some). @param {number} shows @param {number} [apps] */
+export const homeCountText = (shows, apps = 0) => (apps > 0 ? `${plural(shows, "show")} · ${plural(apps, "app")}` : plural(shows, "show"));
 
-/** @param {string} title @param {number} n how many shows the section holds */
-export function deleteSectionText(title, n) {
-  if (n === 0) return `Delete ${title}?`;
-  return n === 1 ? `Delete ${title}? Its show moves to No title.` : `Delete ${title}? Its ${n} shows move to No title.`;
+/** "6 shows", "1 show", "2 shows · 1 app", "1 app", "Empty". @param {number} n @param {number} [apps] */
+export const sectionCount = (n, apps = 0) => (n === 0 && apps === 0 ? "Empty" : n === 0 ? plural(apps, "app") : homeCountText(n, apps));
+
+/** What a section's cards are, as one noun: "show", "2 shows", "2 shows and 1 app". @param {number} n @param {number} apps */
+const cardsNoun = (n, apps) => [n === 1 && apps === 0 ? "show" : n > 0 ? plural(n, "show") : null, n === 0 && apps === 1 ? "app" : apps > 0 ? plural(apps, "app") : null]
+  .filter(Boolean).join(" and ");
+
+/** @param {string} title @param {number} n how many shows the section holds @param {number} [apps] and app cards */
+export function deleteSectionText(title, n, apps = 0) {
+  if (n === 0 && apps === 0) return `Delete ${title}?`;
+  return `Delete ${title}? Its ${cardsNoun(n, apps)} ${n + apps === 1 ? "moves" : "move"} to No title.`;
+}
+
+/** The toast once a section is deleted. @param {string} title @param {number} n @param {number} [apps] */
+export function deletedSectionText(title, n, apps = 0) {
+  if (n === 0 && apps === 0) return `${title} deleted.`;
+  return `${title} deleted. Its ${apps === 0 ? "shows" : n === 0 ? "apps" : "shows and apps"} are in No title.`;
 }
 
 /**
@@ -750,6 +763,74 @@ export function cardPlace(section, i, count, columns) {
 
 /** Whether the TV shows an entry (in the catalog, playable). @param {{ missing?: boolean, playable?: boolean }} e */
 export const onTv = (e) => !e.missing && e.playable !== false;
+
+// --- app cards (docs/ux/senior-tv.md#app-cards): cards that open an app installed on the TV -------------------------
+
+/**
+ * A card of a section as the admin page draws it: `key` (the item id, or "app:" and the app id: neither kind of id has
+ * a colon), and its Home entry (`item`) or its app (`app`, as `GET …/devices/:id` lists it).
+ * @typedef {{ key: string, item?: any, app?: any }} HomeCardView
+ */
+
+/** The key of a section's entry (`{"itemId"}` or `{"appId"}`). @param {{ itemId?: string, appId?: string }} entry */
+export const cardKey = (entry) => (entry.appId !== undefined ? `app:${entry.appId}` : /** @type {string} */ (entry.itemId));
+
+/** @param {HomeCardView} card */
+export const cardName = (card) => (card.app ? card.app.label : (card.item.title ?? card.item.itemId));
+
+/**
+ * A Home's cards in Home order: each section's cards the TV shows (an item in the catalog and playable, an app card
+ * whose app the TV has), those it hides, and each card's section.
+ * @template {{ id: string, itemIds: string[], entries?: Array<{ itemId?: string, appId?: string }> }} S
+ * @param {S[]} sections @param {any[]} home the Home's items @param {any[]} apps the TV's apps
+ */
+export function homeCards(sections, home, apps) {
+  const items = new Map(home.map((e) => [e.itemId, e]));
+  const byApp = new Map(apps.map((a) => [a.appId, a]));
+  /** @type {Map<string, HomeCardView[]>} */
+  const shown = new Map();
+  /** @type {HomeCardView[]} */
+  const hidden = [];
+  /** @type {Map<string, S>} */
+  const sectionOf = new Map();
+  for (const s of sections) {
+    /** @type {HomeCardView[]} */
+    const cards = [];
+    /** @type {Array<{ itemId?: string, appId?: string }>} */
+    const list = s.entries ?? s.itemIds.map((itemId) => ({ itemId }));
+    for (const entry of list) {
+      const key = cardKey(entry);
+      /** @type {HomeCardView} */
+      const card = entry.appId !== undefined
+        ? { key, app: byApp.get(entry.appId) ?? { appId: entry.appId, label: entry.appId, imageUrl: null, installed: false, onHome: true } }
+        : { key, item: items.get(/** @type {string} */ (entry.itemId)) };
+      if (!card.app && !card.item) continue;
+      sectionOf.set(key, s);
+      if (card.app ? card.app.installed : onTv(card.item)) cards.push(card);
+      else hidden.push(card);
+    }
+    shown.set(s.id, cards);
+  }
+  return { shown, hidden, sectionOf };
+}
+
+/** What an app card draws as the TV does: no chip on its face; its open panel's chip, "Open" (light grey). */
+export const tvAppCard = () => ({ chip: "Open", tone: "", progress: null, newEpisodes: 0, episode: null });
+
+/**
+ * Why the TV's app cannot be added (null: it can): "On Home", or "Home is full" at `max` app cards.
+ * @param {{ onHome: boolean }} app @param {number} onHome app cards on Home @param {number} max
+ */
+export const appAddBlocked = (app, onHome, max) => (app.onHome ? "On Home" : onHome >= max ? "Home is full" : null);
+
+/**
+ * What "Apps on <TV>" says instead of its list: the TV never listed its apps (an app from before), or listed none.
+ * @param {string} tv the TV's name @param {string | null} reportedAt @param {number} installed apps in its list
+ */
+export function appsNote(tv, reportedAt, installed) {
+  if (reportedAt === null) return `${tv} has not listed its apps yet. Its izle app may need an update.`;
+  return installed === 0 ? "No apps to add." : null;
+}
 
 /**
  * Whether the TV resumes `c` (PlaybackPlan.resumePositionMs): watching, from 30 s on, and not within the credits

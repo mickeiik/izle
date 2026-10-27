@@ -16,6 +16,7 @@ import {
   onTv, tvCard, tvFace, tvGrid, tvPanel, wrapLines,
   SECTION_HEADER, UNTITLED, cardPlace, deleteSectionText, sectionCount, sectionName, tvCardX, tvHomeLayout, tvLineOf, tvMove, tvRowFirst, tvScroll,
   tvScrollBar, tvView,
+  appAddBlocked, appsNote, cardKey, cardName, deletedSectionText, homeCards, homeCountText, tvAppCard,
 } from "../admin/lib.js";
 import { ADMIN_FILES, ADMIN_VENDOR_FILES } from "../src/admin-files.ts";
 import { HOME_COLUMNS as SERVER_COLUMNS, HOME_MAX_ITEMS, HOME_ROWS as SERVER_ROWS } from "../src/home.ts";
@@ -462,6 +463,48 @@ test("admin helpers: Home with sections, laid out as the TV app does", () => {
     [deleteSectionText("Films", 6), "Delete Films? Its 6 shows move to No title."],
     [deleteSectionText("Films", 1), "Delete Films? Its show moves to No title."],
     [deleteSectionText("Films", 0), "Delete Films?"],
+  ]);
+});
+
+test("admin helpers: app cards, counted, drawn and listed as the TV shows them", () => {
+  cases([
+    [[homeCountText(24), homeCountText(24, 3), homeCountText(1, 1), homeCountText(0, 2)], ["24 shows", "24 shows · 3 apps", "1 show · 1 app", "0 shows · 2 apps"]],
+    [[sectionCount(0, 1), sectionCount(0, 2), sectionCount(2, 1), sectionCount(0, 0)], ["1 app", "2 apps", "2 shows · 1 app", "Empty"]],
+    [deleteSectionText("Films", 6, 2), "Delete Films? Its 6 shows and 2 apps move to No title."],
+    [deleteSectionText("Apps", 0, 1), "Delete Apps? Its app moves to No title."],
+    [deleteSectionText("Mixed", 1, 1), "Delete Mixed? Its 1 show and 1 app move to No title."],
+    [deleteSectionText("Apps", 0, 3), "Delete Apps? Its 3 apps move to No title."],
+    [[deletedSectionText("A", 0), deletedSectionText("A", 2), deletedSectionText("A", 0, 1), deletedSectionText("A", 1, 1)],
+      ["A deleted.", "A deleted. Its shows are in No title.", "A deleted. Its apps are in No title.", "A deleted. Its shows and apps are in No title."]],
+    [[cardKey({ itemId: "show" }), cardKey({ appId: "com.example.tv" })], ["show", "app:com.example.tv"]],
+    [tvAppCard(), { chip: "Open", tone: "", progress: null, newEpisodes: 0, episode: null }, "no chip on the face (callers skip tvFace), Open in the panel"],
+    [[appsNote("Salon", null, 0), appsNote("Salon", "2026-10-10T12:00:00Z", 0), appsNote("Salon", "2026-10-10T12:00:00Z", 2)],
+      ["Salon has not listed its apps yet. Its izle app may need an update.", "No apps to add.", null]],
+    [[appAddBlocked({ onHome: true }, 50, 50), appAddBlocked({ onHome: false }, 50, 50), appAddBlocked({ onHome: false }, 3, 50)], ["On Home", "Home is full", null]],
+  ]);
+
+  // The panel of an open app card: its name and the 24 sp "Open" chip, as the TV's panel logic lays out any card.
+  const measure = (text: string, px: number) => text.length * px * 0.5;
+  cases([
+    [tvPanel(tvAppCard(), "Weather", tvGrid(4, 2), measure), { nameLines: 1, news: null, chip: "Open", chipSize: 24, episode: null, progress: null }],
+    [tvPanel(tvAppCard(), "A weather app with a very long name indeed", tvGrid(4, 2), measure).nameLines, 3],
+    [tvPanel(tvAppCard(), "Weather", tvGrid(6, 4), measure).chipSize, 16, "too small for 24 sp under a line of name"],
+  ]);
+
+  // Each section's cards in its order: shown, or hidden (an item missing or unplayable, an app the TV no longer has).
+  const home = [{ itemId: "show", title: "Show" }, { itemId: "gone", title: null, missing: true }, { itemId: "film", title: "Film" }];
+  const apps = [{ appId: "com.a.weather", label: "Weather", installed: true }, { appId: "com.a.old", label: "Old", installed: false }];
+  const sections = [
+    { id: "untitled", itemIds: ["show", "gone"], entries: [{ itemId: "show" }, { appId: "com.a.weather" }, { itemId: "gone" }] },
+    { id: "Abc12345", itemIds: ["film"], entries: [{ appId: "com.a.old" }, { itemId: "film" }, { appId: "com.a.unknown" }] },
+  ];
+  const r = homeCards(sections, home, apps);
+  cases([
+    [[...r.shown].map(([id, cards]) => [id, cards.map((c) => c.key)]), [["untitled", ["show", "app:com.a.weather"]], ["Abc12345", ["film"]]]],
+    [r.hidden.map((c) => [c.key, cardName(c)]), [["gone", "gone"], ["app:com.a.old", "Old"], ["app:com.a.unknown", "com.a.unknown"]], "an app the list lacks reads by its id"],
+    [[r.sectionOf.get("app:com.a.old")?.id, r.sectionOf.get("show")?.id], ["Abc12345", "untitled"]],
+    [cardName(r.shown.get("untitled")![1]!), "Weather"],
+    [[...homeCards([{ id: "untitled", itemIds: ["film"] }], home, []).shown.values()].flat().map((c) => c.key), ["film"], "a section without entries: its items"],
   ]);
 });
 

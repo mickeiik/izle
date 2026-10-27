@@ -1,20 +1,25 @@
 // @ts-check
-// The "Home screen" tab of a TV's page: the TV's Home drawn to scale, its grid, sections, hidden shows, its checks, the
-// selected show's controls and "Add shows". Every edit is one single change on the server (never the whole list), and the screen
-// redraws from the answer. Everything is built once and updated in place, so a refresh never takes the focus away.
+// The "Home screen" tab of a TV's page: the TV's Home drawn to scale, its grid, sections, hidden cards, its checks, the
+// selected card's controls, "Add shows" and the TV's apps. Every edit is one single change on the server (never the
+// whole list), and the screen redraws from the answer. Everything is built once and updated in place, so a refresh never
+// takes the focus away.
 
 import { api, attempt } from "./api.js";
 import { catalogBrowser } from "./catalog-browser.js";
 import { CHECK_NOTE, checkChip, checkRun, setCheckChip, setVerdictChip } from "./checks.js";
 import { actionButton, card, chip, h, keepFocus, keyedRows, loadError, loading, onSubmit, options, progressBar, setOff, setProgress, showRow, toast, uid } from "./dom.js";
 import {
-  HOME_COLUMNS, HOME_MAX, HOME_ROWS, TV_W, UNTITLED, cardPlace, continueText, deleteSectionText, episodeName, episodeStateLabel, episodeStates,
-  formatClock, gridSummary, homeCheckLines, onTv, percent, plural, resumes, sectionCount, sectionName, showMeta, tvCard, tvCardX, tvFace, tvHomeLayout,
-  tvLineOf, tvMove, tvPanel, tvScrollBar, tvView, verdictOf,
+  HOME_COLUMNS, HOME_MAX, HOME_ROWS, TV_W, UNTITLED, appAddBlocked, appsNote, cardKey, cardName, cardPlace, continueText, deleteSectionText,
+  deletedSectionText, episodeName, episodeStateLabel, episodeStates, formatClock, gridSummary, homeCards, homeCheckLines, homeCountText, percent, plural,
+  resumes, sectionCount, sectionName, showMeta, tvAppCard, tvCard, tvCardX, tvFace, tvHomeLayout, tvLineOf, tvMove, tvPanel, tvScrollBar, tvView, verdictOf,
 } from "./lib.js";
 
-/** @typedef {{ id: string, title: string | null, layout: string, itemIds: string[] }} Section */
-/** @typedef {{ home: any[], sections: Section[], sectionsMax?: number }} HomeAnswer the TV's GET and every home change answer this */
+/** @typedef {{ id: string, title: string | null, layout: string, itemIds: string[], entries: Array<{ itemId?: string, appId?: string }> }} Section */
+/**
+ * The TV's GET and every home change answer this; `appsMax`, `appsReportedAt` and `sectionsMax` come with the GET.
+ * @typedef {{ home: any[], sections: Section[], apps: any[], sectionsMax?: number, appsMax?: number, appsReportedAt?: string | null }} HomeAnswer
+ */
+/** @typedef {import("./lib.js").HomeCardView} HomeCardView */
 
 /** @param {HTMLElement} el @param {number} x @param {number} y @param {number | null} [width] @param {number | null} [height] */
 function setBox(el, x, y, width = null, height = null) {
@@ -27,16 +32,25 @@ function setBox(el, x, y, width = null, height = null) {
 /** @param {any} e a home entry */
 const nameOf = (e) => e.title ?? e.itemId;
 
+/** Where a card's single changes go. @param {HomeCardView} c */
+const cardPath = (c) => (c.app ? `/home/apps/${encodeURIComponent(c.app.appId)}` : `/home/items/${encodeURIComponent(c.item.itemId)}`);
+
 /** @param {import("./view-device.js").DeviceContext} ctx */
 export function homeCard(ctx) {
   /** Every entry of the Home list, in Home order (what the TV hides included). @type {any[]} */
   let entries = [];
   let sections = /** @type {Section[]} */ ([]);
   let sectionsMax = 20;
-  /** Each section's cards on the TV, by section id. @type {Map<string, any[]>} */
+  /** The TV's apps (its last report, then the app cards it no longer has), how many may be on Home, and the TV's name. */
+  let apps = /** @type {any[]} */ ([]);
+  let appsMax = 50;
+  let appsReportedAt = /** @type {string | null} */ (null);
+  let tvName = "The TV";
+  /** Each section's cards on the TV, by section id. @type {Map<string, HomeCardView[]>} */
   let shownIn = new Map();
-  /** Each item's section, by item id. @type {Map<string, Section>} */
+  /** Each card's section, by card key. @type {Map<string, Section>} */
   let sectionOf = new Map();
+  /** The selected card's key. */
   let selected = /** @type {string | null} */ (null);
   /** Each scrolling line's first card in view, by section id: it keeps its place when the selection leaves it. */
   /** @type {Record<string, number>} */
@@ -47,7 +61,6 @@ export function homeCard(ctx) {
   let anchor = /** @type {string | null} */ (null);
 
   const counter = h("span", { class: "muted count" });
-  const itemPath = (/** @type {string} */ itemId) => `/home/items/${encodeURIComponent(itemId)}`;
   const sectionPath = (/** @type {string} */ sectionId) => `/home/sections/${encodeURIComponent(sectionId)}`;
   const shownAll = () => sections.flatMap((s) => shownIn.get(s.id) ?? []);
 
@@ -140,9 +153,10 @@ export function homeCard(ctx) {
     /** @type {HTMLElement} */ (bar.firstElementChild).style.width = `${pct ?? 0}%`;
   };
 
-  /** @param {string} itemId */
-  const tile = (itemId) => {
-    // The card as it is closed: the poster (a channel's logo, whole), else the name; its chip, bar and "2 new".
+  /** @param {string} key the card's */
+  const tile = (key) => {
+    // The card as it is closed: the poster (a channel's logo, an app's picture, whole), else the name; its chip, bar
+    // and "2 new" (an app card has none).
     const picture = h("div", { class: "tv-picture" });
     let pictureKey = "";
     const badge = h("span", { class: "tv-chip" });
@@ -162,22 +176,25 @@ export function homeCard(ctx) {
       h("div", { class: "tv-panel-text" }, panelName, h("div", { class: "tv-panel-end" }, news, action, episode, panelBar)));
     const element = h("div", { class: "tv-tile", role: "option", id: uid("tile"), tabindex: "-1", "aria-selected": "false" },
       h("div", { class: "tv-card" }, h("div", { class: "tv-face" }, picture, shade, fresh), panel));
-    element.addEventListener("click", () => select(itemId, true));
+    element.addEventListener("click", () => select(key, true));
     return {
       element,
-      /** @param {any} e @param {boolean} open */
-      update(e, open) {
-        const name = nameOf(e);
+      /** @param {HomeCardView} card @param {boolean} open */
+      update(card, open) {
+        const e = card.item ?? {};
+        const app = card.app ?? null;
+        const name = cardName(card);
         const live = e.kind === "live";
-        const poster = e.posterUrl ?? null;
-        const key = JSON.stringify([poster, live, poster ? "" : name]);
-        if (key !== pictureKey) {
-          pictureKey = key;
-          picture.className = live && poster ? "tv-picture logo" : "tv-picture";
+        const poster = app ? app.imageUrl : (e.posterUrl ?? null);
+        const look = app ? "tv-picture app" : live && poster ? "tv-picture logo" : "tv-picture";
+        const pKey = JSON.stringify([poster, look, poster ? "" : name]);
+        if (pKey !== pictureKey) {
+          pictureKey = pKey;
+          picture.className = look;
           picture.replaceChildren(poster ? h("img", { src: poster, alt: "", loading: "lazy" }) : h("span", null, h("span", null, name)));
         }
-        const c = tvCard(e);
-        const f = tvFace(c, L.grid, measureText);
+        const c = app ? tvAppCard() : tvCard(e);
+        const f = app ? { chip: null, newEpisodes: false } : tvFace(c, L.grid, measureText);
         badge.hidden = f.chip === null;
         badge.textContent = f.chip ?? "";
         badge.className = c.tone ? `tv-chip ${c.tone}` : "tv-chip";
@@ -185,9 +202,9 @@ export function homeCard(ctx) {
         shade.hidden = f.chip === null && c.progress === null;
         fresh.hidden = !f.newEpisodes;
         fresh.textContent = `${c.newEpisodes} new`;
-        element.setAttribute("aria-label", `${name}: ${c.chip}${c.progress !== null ? `, ${c.progress}% watched` : ""}${c.newEpisodes > 0 ? `, ${c.newEpisodes} new` : ""}`);
+        element.setAttribute("aria-label", app ? `${name}: app` : `${name}: ${c.chip}${c.progress !== null ? `, ${c.progress}% watched` : ""}${c.newEpisodes > 0 ? `, ${c.newEpisodes} new` : ""}`);
         if (!open) return;
-        const behind = live ? null : e.backdropUrl ? { src: e.backdropUrl, blur: false } : poster ? { src: poster, blur: true } : null;
+        const behind = live || app ? null : e.backdropUrl ? { src: e.backdropUrl, blur: false } : poster ? { src: poster, blur: true } : null;
         const bKey = JSON.stringify(behind);
         if (bKey !== backdropKey) {
           backdropKey = bKey;
@@ -226,19 +243,19 @@ export function homeCard(ctx) {
   };
 
   /** A card's section index in the layout drawn last and its place among the section's cards. */
-  const locate = (/** @type {string | null} */ itemId) => {
-    const sec = itemId ? sectionOf.get(itemId) : undefined;
+  const locate = (/** @type {string | null} */ key) => {
+    const sec = key ? sectionOf.get(key) : undefined;
     if (!sec) return null;
     const s = L.sections.findIndex((b) => b.id === sec.id);
-    const i = (shownIn.get(sec.id) ?? []).findIndex((e) => e.itemId === itemId);
+    const i = (shownIn.get(sec.id) ?? []).findIndex((c) => c.key === key);
     return s < 0 || i < 0 ? null : { s, i, sec };
   };
 
-  const select = (/** @type {string} */ itemId, /** @type {boolean} */ focus) => {
-    selected = itemId;
+  const select = (/** @type {string} */ key, /** @type {boolean} */ focus) => {
+    selected = key;
     anchor = null;
     draw();
-    if (focus) tiles.get(itemId)?.element.focus({ preventScroll: true });
+    if (focus) tiles.get(key)?.element.focus({ preventScroll: true });
   };
 
   // ← → ↑ ↓ move the selection as the remote moves the focus on the TV; Home and End go to the first and last card.
@@ -246,10 +263,10 @@ export function homeCard(ctx) {
     const at = locate(selected);
     if (!at) return;
     let to = /** @type {string | undefined} */ (undefined);
-    if (ev.key === "Home" || ev.key === "End") to = shownAll().at(ev.key === "Home" ? 0 : -1)?.itemId;
+    if (ev.key === "Home" || ev.key === "End") to = shownAll().at(ev.key === "Home" ? 0 : -1)?.key;
     else if (ev.key.startsWith("Arrow")) {
       const m = tvMove(L, firsts, at.s, at.i, ev.key);
-      to = m ? shownIn.get(L.sections[m.s].id)?.[m.i]?.itemId : undefined;
+      to = m ? shownIn.get(L.sections[m.s].id)?.[m.i]?.key : undefined;
     } else return;
     ev.preventDefault();
     if (to) select(to, true);
@@ -290,17 +307,17 @@ export function homeCard(ctx) {
       v.heading.classList.toggle("on", at?.s === k);
       // A scrolling line's cards are placed from its start; the line itself slides to its first card in view.
       v.cells.style.transform = box.row ? `translate(${L.x0 - (firsts[box.id] ?? 0) * L.pitch}px, ${box.rowTops[0]}px)` : "";
-      (shownIn.get(box.id) ?? []).forEach((e, j) => {
-        let t = tiles.get(e.itemId);
-        if (!t) tiles.set(e.itemId, (t = tile(e.itemId)));
-        t.update(e, j === open);
+      (shownIn.get(box.id) ?? []).forEach((c, j) => {
+        let t = tiles.get(c.key);
+        if (!t) tiles.set(c.key, (t = tile(c.key)));
+        t.update(c, j === open);
         const width = j === open ? grid.openWidth : grid.cardWidth;
         if (box.row) setBox(t.element, tvCardX(L, k, j, 0, open) - L.x0, 0, width);
         else setBox(t.element, tvCardX(L, k, j, 0, open), box.rowTops[Math.floor(j / cols)], width);
         if (v.cells.children[j] !== t.element) v.cells.insertBefore(t.element, v.cells.children[j] ?? null);
       });
     });
-    const shownIds = new Set(shownAll().map((e) => e.itemId));
+    const shownIds = new Set(shownAll().map((c) => c.key));
     for (const [map, keep] of /** @type {const} */ ([[sectionViews, drawn], [tiles, shownIds]])) {
       for (const [id, v] of map) {
         if (keep.has(id)) continue;
@@ -384,31 +401,32 @@ export function homeCard(ctx) {
 
   // --- what the TV hides ------------------------------------------------------------------------------------------
   const hiddenList = h("ul", { class: "list" });
-  const hiddenRow = (/** @type {any} */ first) => {
-    const itemId = first.itemId;
-    let entry = first;
+  const hiddenRow = (/** @type {HomeCardView} */ first) => {
+    let current = first;
     const name = h("strong");
     const why = chip("", "warn");
     const where = h("span", { class: "muted" });
-    const remove = actionButton("Remove", { class: "danger", "data-control": "remove" }, () => save("DELETE", itemPath(itemId), undefined, `${nameOf(entry)} removed.`));
+    const remove = actionButton("Remove", { class: "danger", "data-control": "remove" }, () => save("DELETE", cardPath(current), undefined, `${cardName(current)} removed.`));
     return {
       element: h("li", { class: "row" }, h("div", { class: "grow" }, name, why, where), remove),
-      /** @param {any} e */
-      update(e) {
-        entry = e;
-        name.textContent = nameOf(e);
-        why.textContent = e.missing ? "Missing from the catalog" : "Not playable";
-        const sec = sectionOf.get(itemId);
+      /** @param {HomeCardView} c */
+      update(c) {
+        current = c;
+        name.textContent = cardName(c);
+        why.textContent = c.app ? "Not installed on this TV" : c.item.missing ? "Missing from the catalog" : "Not playable";
+        const sec = sectionOf.get(c.key);
         where.textContent = sec ? ` in ${sectionName(sec)}` : "";
-        remove.setAttribute("aria-label", `Remove ${nameOf(e)}`);
+        remove.setAttribute("aria-label", `Remove ${cardName(c)}`);
       },
     };
   };
-  const hiddenRows = keyedRows(hiddenList, (/** @type {any} */ e) => e.itemId, hiddenRow, () => browser.search);
-  const hiddenBox = h("div", { class: "callout warn hidden-on-tv", hidden: true },
-    h("p", null, h("strong", null, "Hidden on the TV"), " — a catalog reload took these away. They come back if the catalog has them again."), hiddenList);
+  const hiddenRows = keyedRows(hiddenList, (/** @type {HomeCardView} */ c) => c.key, hiddenRow, () => browser.search);
+  const hiddenNote = h("span");
+  const hiddenBox = h("div", { class: "callout warn hidden-on-tv", hidden: true }, h("p", null, h("strong", null, "Hidden on the TV"), hiddenNote), hiddenList);
 
   // --- the sections, in their order on the TV ------------------------------------------------------------------------
+  /** How many app cards a section holds. @param {Section} s */
+  const appsIn = (s) => s.entries.filter((e) => e.appId !== undefined).length;
   const sectionList = h("ol", { class: "list sections", "aria-label": "Sections, in their order on the TV" });
   const sectionRow = (/** @type {Section} */ first) => {
     const id = first.id;
@@ -447,7 +465,7 @@ export function homeCard(ctx) {
     const del = h("button", { type: "button", class: "danger", "data-control": "delete" }, "Delete");
     const question = h("p", { id: uid("delete-q") });
     const confirm = actionButton("Delete", { class: "danger", "data-control": "confirm" }, () =>
-      save("DELETE", sectionPath(id), undefined, s.itemIds.length > 0 ? `${label()} deleted. Its shows are in No title.` : `${label()} deleted.`));
+      save("DELETE", sectionPath(id), undefined, deletedSectionText(label(), s.itemIds.length, appsIn(s))));
     const keep = h("button", { type: "button" }, "Keep");
     const asking = h("div", { class: "confirm", role: "group", "aria-labelledby": question.id, hidden: true }, question, h("div", { class: "buttons" }, confirm, keep));
     const ask = (/** @type {boolean} */ on) => {
@@ -456,7 +474,7 @@ export function homeCard(ctx) {
       (on ? keep : del).focus();
     };
     del.addEventListener("click", () => {
-      question.textContent = deleteSectionText(label(), s.itemIds.length);
+      question.textContent = deleteSectionText(label(), s.itemIds.length, appsIn(s));
       ask(true);
     });
     keep.addEventListener("click", () => ask(false));
@@ -486,7 +504,7 @@ export function homeCard(ctx) {
         if (title && document.activeElement !== title) title.value = next.title ?? "";
         scroll.checked = next.layout === "row";
         scroll.setAttribute("aria-label", `${label()}: one scrolling line`);
-        count.textContent = sectionCount(next.itemIds.length);
+        count.textContent = sectionCount(next.itemIds.length, appsIn(next));
         del.setAttribute("aria-label", `Delete ${label()}`);
       },
     };
@@ -516,16 +534,17 @@ export function homeCard(ctx) {
   const sectionsPanel = h("section", { class: "sections-panel", "aria-labelledby": sectionsHeading.id },
     sectionsHeading, h("p", { class: "muted hint" }, "Top to bottom is their order on the TV."), sectionList, addForm, full);
 
-  // --- the selected card: where it is, what OK plays, Play, Episodes…, moves, its section and Remove ------------------
+  // --- the selected card: where it is, what OK plays (or opens), Play, Episodes…, moves, its section and Remove -----
   const where = h("p", { class: "muted where" });
   const name = h("h3", { tabindex: "-1" });
   const line = h("div", { class: "muted" });
   const progress = /** @type {HTMLElement} */ (progressBar(0, "How far"));
   const checked = checkChip(null);
   const checkedAll = h("span", { class: "muted" });
-  const entryNow = () => (selected ? shownAll().find((e) => e.itemId === selected) : undefined);
+  const checkedLine = h("div", { class: "checked" }, h("span", { class: "muted" }, "Check: "), checked, " ", checkedAll);
+  const cardNow = () => (selected ? shownAll().find((c) => c.key === selected) : undefined);
   const play = actionButton("Play", { class: "primary" }, async () => {
-    const e = entryNow();
+    const e = cardNow()?.item;
     if (e?.kind === "live") await ctx.send({ type: "play", itemId: e.itemId }, "Play");
     else if (e?.continue) await ctx.send({ type: "play", episodeId: e.continue.episodeId }, "Play");
   });
@@ -539,13 +558,16 @@ export function homeCard(ctx) {
     pickerOpen = !pickerOpen;
     showInspector();
   });
-  /** Moves the selected card to where card `j` of its section (of those the TV shows) is. @param {(i: number, n: number) => number} target */
+  /**
+   * Moves the selected card to where card `j` of its section (of those the TV shows) is: its position among all the
+   * section's cards. @param {(i: number, n: number) => number} target
+   */
   const moveTo = (target) => {
     const at = locate(selected);
     const cards = at ? (shownIn.get(at.sec.id) ?? []) : [];
     const j = at ? target(at.i, cards.length) : -1;
     if (!at || j < 0 || j >= cards.length || j === at.i) return Promise.resolve();
-    return save("PATCH", itemPath(cards[at.i].itemId), { position: at.sec.itemIds.indexOf(cards[j].itemId) }, "Order saved.");
+    return save("PATCH", cardPath(cards[at.i]), { position: at.sec.entries.findIndex((e) => cardKey(e) === cards[j].key) }, "Order saved.");
   };
   const cols = () => L.grid.columns;
   const left = actionButton("◀", { class: "icon", "aria-label": "Move left" }, () => moveTo((i) => i - 1));
@@ -553,25 +575,25 @@ export function homeCard(ctx) {
   const up = actionButton("▲", { class: "icon", "aria-label": "Move up a row" }, () => moveTo((i) => i - cols()));
   const down = actionButton("▼", { class: "icon", "aria-label": "Move down a row" }, () => moveTo((i, n) => Math.min(i + cols(), n - 1)));
   const first = actionButton("Move to first", null, async () => {
-    const e = entryNow();
-    if (e) await save("PATCH", itemPath(e.itemId), { position: 0 }, "Order saved.");
+    const c = cardNow();
+    if (c) await save("PATCH", cardPath(c), { position: 0 }, "Order saved.");
   });
   // The card goes to the end of the chosen section and stays selected there.
   const sectionChoice = h("select", { id: uid("section") });
   sectionChoice.addEventListener("change", async () => {
-    const e = entryNow();
+    const c = cardNow();
     const to = sections.find((s) => s.id === sectionChoice.value);
-    if (!e || !to || sectionOf.get(e.itemId)?.id === to.id) return;
-    const r = await save("PATCH", itemPath(e.itemId), { sectionId: to.id }, `${nameOf(e)} moved to ${sectionName(to)}.`);
+    if (!c || !to || sectionOf.get(c.key)?.id === to.id) return;
+    const r = await save("PATCH", cardPath(c), { sectionId: to.id }, `${cardName(c)} moved to ${sectionName(to)}.`);
     if (!r) showInspector();
   });
   // The card that takes its place is selected next (see `update`); with none left, the focus goes to "Add shows".
   const remove = actionButton("Remove from Home", { class: "danger" }, async () => {
-    const e = entryNow();
-    if (e) await keepFocus(() => save("DELETE", itemPath(e.itemId), undefined, `${nameOf(e)} removed.`), browser.search);
+    const c = cardNow();
+    if (c) await keepFocus(() => save("DELETE", cardPath(c), undefined, `${cardName(c)} removed.`), browser.search);
   });
-  const inspector = h("section", { class: "inspector", "aria-label": "Selected show", hidden: true },
-    where, h("div", { class: "row top-align" }, h("div", { class: "grow" }, name, line, progress, h("div", { class: "checked" }, h("span", { class: "muted" }, "Check: "), checked, " ", checkedAll)), h("div", { class: "buttons" }, play, episodes)),
+  const inspector = h("section", { class: "inspector", "aria-label": "Selected card", hidden: true },
+    where, h("div", { class: "row top-align" }, h("div", { class: "grow" }, name, line, progress, checkedLine), h("div", { class: "buttons" }, play, episodes)),
     h("div", { class: "buttons moves", role: "group", "aria-label": "Move the card" }, h("span", { class: "muted" }, "Move"), left, right, up, down, first,
       h("label", { for: sectionChoice.id }, "Section"), sectionChoice, h("span", { class: "grow" }), remove),
     pickerBox);
@@ -594,25 +616,15 @@ export function homeCard(ctx) {
   };
 
   const showInspector = () => {
-    const e = entryNow();
+    const c = cardNow();
     const at = locate(selected);
-    inspector.hidden = !e || !at;
-    if (!e || !at) return setPicker(null);
+    inspector.hidden = !c || !at;
+    if (!c || !at) return setPicker(null);
     const box = L.sections[at.s];
     const n = box.count;
     where.textContent = cardPlace(box, at.i, n, cols());
-    const title = nameOf(e);
+    const title = cardName(c);
     name.textContent = title;
-    const c = e.continue;
-    const live = e.kind === "live";
-    line.replaceChildren(live ? chip("Live", "live") : continueText(c, e.kind), ...(!live && e.newEpisodes > 0 ? [" ", chip(plural(e.newEpisodes, "new episode"), "info")] : []));
-    const pct = !live && resumes(c) ? percent(c.positionMs, c.durationMs) : null;
-    progress.hidden = pct === null;
-    if (pct !== null) setProgress(progress, pct, `${formatClock(c.positionMs)} of ${formatClock(c.durationMs)}`);
-    setCheckChip(checked, e.check ?? null);
-    checkedAll.textContent = homeCheckLines(e)[1] ?? "";
-    play.setAttribute("aria-label", `Play ${title}`);
-    setOff(play, live ? !e.playable : !c);
     const row = tvLineOf(L, at.s, at.i);
     setOff(left, at.i === 0);
     setOff(right, at.i === n - 1);
@@ -622,6 +634,26 @@ export function homeCard(ctx) {
     sectionChoice.value = at.sec.id;
     sectionChoice.setAttribute("aria-label", `Section of ${title}`);
     remove.setAttribute("aria-label", `Remove ${title} from Home`);
+    // An app card: what OK opens, the moves and Remove; no Play, no check.
+    play.hidden = checkedLine.hidden = Boolean(c.app);
+    if (c.app) {
+      line.textContent = `OK opens ${title} on the TV`;
+      progress.hidden = true;
+      episodes.hidden = true;
+      if (pickerFor !== null) setPicker(null);
+      return;
+    }
+    const e = c.item;
+    const cont = e.continue;
+    const live = e.kind === "live";
+    line.replaceChildren(live ? chip("Live", "live") : continueText(cont, e.kind), ...(!live && e.newEpisodes > 0 ? [" ", chip(plural(e.newEpisodes, "new episode"), "info")] : []));
+    const pct = !live && resumes(cont) ? percent(cont.positionMs, cont.durationMs) : null;
+    progress.hidden = pct === null;
+    if (pct !== null) setProgress(progress, pct, `${formatClock(cont.positionMs)} of ${formatClock(cont.durationMs)}`);
+    setCheckChip(checked, e.check ?? null);
+    checkedAll.textContent = homeCheckLines(e)[1] ?? "";
+    play.setAttribute("aria-label", `Play ${title}`);
+    setOff(play, live ? !e.playable : !cont);
     episodes.hidden = e.kind !== "series";
     if (pickerFor !== e.itemId) setPicker(e);
     episodes.setAttribute("aria-expanded", String(pickerOpen));
@@ -630,22 +662,27 @@ export function homeCard(ctx) {
   };
 
   // --- Add shows: the catalog browser, with an Add on each show (or why it cannot be added) --------------------------
-  // "Add to": the section a show is added to, the untitled one unless the owner picks another, kept while the tab is open.
+  // "Add to": the section a show or an app is added to, the untitled one unless the owner picks another, kept while the
+  // tab is open.
   const addTo = h("select", { id: uid("add-to") });
   let addToId = UNTITLED;
   /** The sections the two section selects were last filled with. */
   let sectionsKey = "";
   addTo.addEventListener("change", () => (addToId = addTo.value));
   const addToBox = h("div", { class: "add-to" }, h("label", { for: addTo.id }, "Add to"), addTo);
+  /** The section chosen in "Add to", its id and how the message names it. */
+  const addTarget = () => {
+    const to = sections.find((s) => s.id === addToId);
+    return { sectionId: to?.id ?? UNTITLED, named: to?.title ?? "Home" };
+  };
   const resultRow = (/** @type {any} */ item) => {
     const add = actionButton("Add", { "data-control": "add", "data-focus": `add:${item.id}`, "aria-label": `Add ${item.title}` }, async () => {
       const after = browser.items().map((/** @type {any} */ r) => `add:${r.id}`);
       const at = after.indexOf(`add:${item.id}`);
-      const to = sections.find((s) => s.id === addToId);
-      const body = { itemId: item.id, sectionId: to?.id ?? UNTITLED };
+      const { sectionId, named } = addTarget();
       // The row's Add turns into "On Home": the focus goes to the next show's Add, else to the nearest one above, else
       // to the search box.
-      await keepFocus(() => save("POST", "/home/items", body, `${item.title} added to ${to?.title ?? "Home"}.`), ...after.slice(at + 1), ...after.slice(0, at).reverse(), browser.search);
+      await keepFocus(() => save("POST", "/home/items", { itemId: item.id, sectionId }, `${item.title} added to ${named}.`), ...after.slice(at + 1), ...after.slice(0, at).reverse(), browser.search);
     });
     const reason = chip("");
     return {
@@ -662,30 +699,80 @@ export function homeCard(ctx) {
   };
   const browser = catalogBrowser(ctx.scope, { row: resultRow, label: "Add shows", heading: true, notOnDevice: ctx.id, above: addToBox });
 
-  /** With `device`, also its saved grid (a grid being previewed stays). @param {HomeAnswer} d @param {any} [device] */
+  // --- Apps on <TV>: the apps the TV reported, in its order, each with Add (to "Add to") or "On Home" ---------------
+  const appsHeading = h("h3", { id: uid("apps") });
+  const appsNoteText = h("p", { class: "muted" });
+  const appsList = h("ul", { class: "list apps", "aria-labelledby": appsHeading.id });
+  const appRow = (/** @type {any} */ first) => {
+    const appId = first.appId;
+    let app = first;
+    const picture = h("span", { class: "app-picture" });
+    let pictureUrl = /** @type {string | null | undefined} */ (undefined);
+    const label = h("strong");
+    const add = actionButton("Add", { "data-control": "add", "data-focus": `app:${appId}` }, async () => {
+      const after = installedApps().map((a) => `app:${a.appId}`);
+      const at = after.indexOf(`app:${appId}`);
+      const { sectionId, named } = addTarget();
+      await keepFocus(() => save("POST", "/home/apps", { appId, sectionId }, `${app.label} added to ${named}.`), ...after.slice(at + 1), ...after.slice(0, at).reverse(), browser.search);
+    });
+    const reason = chip("");
+    return {
+      element: h("li", { class: "row" }, picture, h("div", { class: "grow" }, label), add, reason),
+      /** @param {any} next */
+      update(next) {
+        app = next;
+        if (pictureUrl !== next.imageUrl) {
+          pictureUrl = next.imageUrl;
+          picture.replaceChildren(...(next.imageUrl ? [h("img", { src: next.imageUrl, alt: "", loading: "lazy" })] : []));
+        }
+        label.textContent = next.label;
+        add.setAttribute("aria-label", `Add ${next.label}`);
+        const why = appAddBlocked(next, apps.filter((a) => a.onHome).length, appsMax);
+        add.hidden = why !== null;
+        reason.hidden = why === null;
+        reason.textContent = why ?? "";
+      },
+    };
+  };
+  const installedApps = () => apps.filter((a) => a.installed);
+  const appRows = keyedRows(appsList, (/** @type {any} */ a) => a.appId, appRow, () => browser.search);
+  const appsPanel = h("section", { class: "apps-panel", "aria-labelledby": appsHeading.id }, appsHeading, appsNoteText, appsList);
+
+  /** With `device`, also its saved grid (a grid being previewed stays) and its name. @param {HomeAnswer} d @param {any} [device] */
   const update = (d, device) => {
-    // A selected card that went away (removed here or elsewhere, or hidden by a catalog reload) hands the selection
-    // to the card that takes its place in Home order, else the one before it.
-    const was = shownAll().findIndex((e) => e.itemId === selected);
+    // A selected card that went away (removed here or elsewhere, or hidden by a catalog reload or the TV) hands the
+    // selection to the card that takes its place in Home order, else the one before it.
+    const was = shownAll().findIndex((c) => c.key === selected);
     entries = d.home;
     sections = d.sections;
+    apps = d.apps ?? [];
     if (typeof d.sectionsMax === "number") sectionsMax = d.sectionsMax;
-    const byId = new Map(entries.map((e) => [e.itemId, e]));
-    sectionOf = new Map(sections.flatMap((s) => s.itemIds.map((id) => [id, s])));
-    shownIn = new Map(sections.map((s) => [s.id, s.itemIds.map((id) => byId.get(id)).filter((e) => e && onTv(e))]));
+    if (typeof d.appsMax === "number") appsMax = d.appsMax;
+    if (d.appsReportedAt !== undefined) appsReportedAt = d.appsReportedAt;
+    const cards = homeCards(sections, entries, apps);
+    sectionOf = cards.sectionOf;
+    shownIn = cards.shown;
     if (device) {
+      tvName = device.name;
       const before = savedGrid;
       savedGrid = { columns: device.settings.homeColumns, rows: device.settings.homeRows };
       const previewing = before && (chosenGrid().columns !== before.columns || chosenGrid().rows !== before.rows);
       if (!previewing) showGrid(savedGrid);
     }
     const shown = shownAll();
-    counter.textContent = plural(entries.length, "show");
+    const appCards = sections.reduce((n, s) => n + appsIn(s), 0);
+    counter.textContent = homeCountText(entries.length, appCards);
     // With nothing to show the TV says so; a section with nothing in it is in the Sections list.
     tvEmpty.hidden = shown.length > 0;
     view.hidden = shown.length === 0;
-    hiddenRows.set(entries.filter((e) => !onTv(e)));
-    hiddenBox.hidden = shown.length === entries.length;
+    hiddenRows.set(cards.hidden);
+    hiddenBox.hidden = cards.hidden.length === 0;
+    const goneApps = cards.hidden.some((c) => c.app);
+    const goneItems = cards.hidden.some((c) => c.item);
+    hiddenNote.textContent = goneApps && goneItems
+      ? " — a catalog reload took these shows away, and the TV no longer has these apps. They come back when they are there again."
+      : goneApps ? " — the TV no longer has these apps. They come back if it gets them again."
+      : " — a catalog reload took these away. They come back if the catalog has them again.";
     const flagged = entries.filter((e) => verdictOf(e) === "fail" || verdictOf(e) === "warn");
     resultRows.set(flagged);
     resultsBox.hidden = flagged.length === 0;
@@ -700,8 +787,13 @@ export function homeCard(ctx) {
       for (const select of [addTo, sectionChoice]) select.replaceChildren(...options(sections.map((s) => [s.id, sectionName(s)])));
     }
     addTo.value = addToId;
+    appsHeading.textContent = `Apps on ${tvName}`;
+    const note = appsNote(tvName, appsReportedAt, installedApps().length);
+    appsNoteText.hidden = note === null;
+    appsNoteText.textContent = note ?? "";
+    appRows.set(installedApps());
     if (anchor !== null && !sections.some((s) => s.id === anchor)) anchor = null;
-    if (!shown.some((e) => e.itemId === selected)) selected = shown[Math.min(Math.max(was, 0), shown.length - 1)]?.itemId ?? null;
+    if (!shown.some((c) => c.key === selected)) selected = shown[Math.min(Math.max(was, 0), shown.length - 1)]?.key ?? null;
     draw();
     browser.refresh();
   };
@@ -712,7 +804,7 @@ export function homeCard(ctx) {
       intro: "The TV's Home, to scale: its sections one under the other, the cards left to right and row by row; further lines scroll into view. Select a card to play it, move it, choose its episode or remove it.",
     },
     checkMenu, checks.element, gridControls, gridHint, h("div", { class: "home-bench" }, h("div", { class: "tv" }, screen), sectionsPanel), hiddenBox, resultsBox,
-    inspector, browser.element,
+    inspector, h("div", { class: "add-bench" }, browser.element, appsPanel),
   );
   return { element, update };
 }

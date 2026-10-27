@@ -433,9 +433,10 @@ characters); app ids are their own id space, so the field (`appId` or `itemId`) 
   starts, when it comes to the front, and when an app is installed, updated or removed while it runs, each time only
   when the list (with its images) changed since its last accepted report.
 - `PUT /api/v1/tv/apps/images/:sha256` with a PNG body (`Content-Type: image/png`, at most 256 KiB): stores one of
-  the images a report named → `204`. `400 invalid_image` when the body is not a PNG (its signature) or its SHA-256 is
-  not `:sha256`; `404 not_found` when no report of this TV names it. The server serves it at
-  [`/app-images/<sha256>.png`](#static-routes) and deletes an image once no TV's report names it.
+  the images a report named → `204`. `400 invalid_image` when the body is not a PNG (its `Content-Type` or its
+  signature) or its SHA-256 is not `:sha256`; `404 not_found` when no report of this TV names it. The server serves
+  it at [`/app-images/<sha256>.png`](#static-routes) and deletes an image once no TV's report and no
+  [app card](#app-cards) names it (an app card keeps the image of the last report that named its app).
 - A TV that never reported (an app older than this route) has no list: the owner cannot add app cards to it.
 
 ## Play order and the cursor
@@ -1017,7 +1018,7 @@ Errors as for `PUT …/home`, plus `404 not_on_home` and `404 unknown_section`; 
 A `position` counts every card of the section, [app cards](#app-cards) included (in a section without app cards,
 its items alone, as it always did).
 `PUT …/home` takes an optional `expected` (what the caller saw, in the shape of the body: the `itemIds`, or the
-`sections`): `409 home_changed` (with the current `itemIds` and `sections`) when the list is no longer that.
+`sections`, each with `itemIds` or `entries`): `409 home_changed` (with the current `itemIds` and `sections`) when the list is no longer that.
 
 ### Home sections
 
@@ -1056,7 +1057,8 @@ of `home` in the TV's state and on the admin page, of `itemIds` in `home.changed
 - [App cards](#app-cards) are kept by both forms: each stays in its section at its place among the section's cards
   (at the section's end when the section has fewer cards now); those of a deleted section go to the end of the
   untitled section. A section in the `sections` form may give `entries` (`[{"itemId"} | {"appId"}]`) instead of
-  `itemIds`: then it sets the section's cards of both kinds, and an app card no section lists leaves Home.
+  `itemIds`: then it sets the section's cards of both kinds, and an app card no section lists leaves Home. When the
+  untitled section is given with `entries`, the app cards of a deleted section that no section lists leave Home too.
 
 Errors: `400 too_many_sections` (`max`), `404 unknown_section` (`sectionId`, also an `id` in `PUT …/home` that is not
 this Home's), `400 untitled_section` (a title for the untitled section, deleting it, or a `PUT` that does not list it
@@ -1074,7 +1076,8 @@ to or offered by autoplay.
 
 `App` = `{"appId", "label", "imageUrl", "installed", "onHome"}`: in `GET …/devices/:id`, the apps of the TV's last
 report in its order, then the app cards on Home that report does not name (`installed: false`, with the label and
-image of the last report that named them). `imageUrl` is `/app-images/<sha256>.png` or null; `onHome`: an app card
+image of the last report that named them). `imageUrl` is `/app-images/<sha256>.png`, or null while the server does
+not have the image (none, or not uploaded yet); `onHome`: an app card
 for it is on Home. `appsReportedAt`: when the TV's list last changed (null: the TV never reported one).
 
 | Route | Body | Response |

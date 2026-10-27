@@ -139,3 +139,9 @@ entries, and how each feature was built, are in git history.
 - izle as the home screen is a hidden-menu switch on the TV, not an owner setting: Android asks which home app to use
   on the TV itself anyway. A disabled activity alias carries the HOME filter, so an izle that is not chosen never
   makes Android ask.
+- App pictures are kept in the database (`app_images`), not as files: `izle-server backup` then has them, and a TV
+  never uploads a picture again once its report is unchanged, so a restored server could not get them back.
+- An app card keeps its label and picture after the TV drops the app, so the picture stays until no report and no app
+  card names it (the spec said reports only).
+- `PUT …/home {"sections"}`: a deleted section's app cards go to the untitled section only when that is given with
+  `itemIds`; given with `entries`, the caller set its cards exactly, so they leave Home like the section's items.
