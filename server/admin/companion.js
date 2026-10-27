@@ -6,7 +6,7 @@
 import { api, attempt, devicePath, isUnauthorized, readStored, writeStored } from "./api.js";
 import { attach, nativeHlsBroken } from "./companion-player.js";
 import { actionButton, card, h, slot, toast } from "./dom.js";
-import { SYNC, candidateOptions, clockOffset, companionTarget, errorText, formatDrift, formatPosition, isActive, parseCandidate, plural, syncDecision, tvPositionAt } from "./lib.js";
+import { OFFSET_NUDGES_MS, SPEED_PRESETS, SYNC, candidateOptions, clockOffset, companionTarget, errorText, formatDrift, formatOffset, formatPosition, isActive, markOffset, nudgeLabel, parseCandidate, plural, speedPreset, syncDecision, tvPositionAt } from "./lib.js";
 
 const NUDGE_KEY = "izle.companion.nudgeMs";
 const TICK_MS = 250;
@@ -58,6 +58,11 @@ export function companionCard({ deviceId, signal }) {
   let loopTimer = /** @type {ReturnType<typeof setInterval> | undefined} */ (undefined);
   let clockTimer = /** @type {ReturnType<typeof setInterval> | undefined} */ (undefined);
   let poll = /** @type {AbortController | null} */ (null);
+  /** The two-tap mark: the TV and phone positions (ms) at each tap; the offset is set once both exist. */
+  let tvMark = /** @type {number | null} */ (null);
+  let phoneMark = /** @type {number | null} */ (null);
+  /** Whether the speed's "Other" decimal field is open. */
+  let otherSpeed = false;
 
   const audio = /** @type {HTMLAudioElement} */ (h("audio", { preload: "auto", playsinline: true }));
   const select = h("select", { id: "cp-source" });
@@ -81,11 +86,25 @@ export function companionCard({ deviceId, signal }) {
   };
   nudge(0);
 
-  const timing = h("div", { class: "timing" }, h("div", null, h("label", { for: "cp-offset" }, "Offset (seconds)"), offsetInput), h("div", null, h("label", { for: "cp-rate" }, "Speed"), rateInput));
-  const timingHint = h("p", { class: "hint" }, "Offset: where the companion is when the TV is at 0:00 (negative when it starts earlier). Speed: companion seconds per TV second, e.g. 1.0427 for a PAL transfer against a film-rate source. Changes apply while you listen; Save keeps them.");
-  const nudgeRow = h("div", { class: "nudge" }, h("button", { type: "button", onclick: () => nudge(-50) }, "−50 ms"), nudgeText, h("button", { type: "button", onclick: () => nudge(50) }, "+50 ms"), h("span", { class: "hint" }, "for your earphones' delay; remembered on this phone"));
+  const nudgeRow = h("div", { class: "nudge" }, h("strong", null, "Earphone delay"), h("button", { type: "button", onclick: () => nudge(-50) }, "−50 ms"), nudgeText, h("button", { type: "button", onclick: () => nudge(50) }, "+50 ms"), h("span", { class: "hint" }, "kept in this browser"));
   const foundHint = h("p", { class: "hint" }, "A link you found in a browser cannot be played by this page: the companion app plays it on this phone, in sync, and keeps its timing here.");
-  const form = h("div", { class: "companion" }, h("label", { for: "cp-source" }, "Audio on this phone"), select, foundHint, timing, timingHint, h("div", { class: "actions" }, save, applyAll), h("div", { class: "actions" }, listen, startAudio), nudgeRow, status, error, audio);
+
+  const markPending = h("p", { class: "hint", hidden: true });
+  const markTv = h("button", { type: "button", onclick: () => mark("tv") }, "Mark on TV");
+  const markPhone = h("button", { type: "button", onclick: () => mark("phone") }, "Mark on phone");
+  const markHint = h("p", { class: "hint" }, "Tap when you see a moment on the TV, then when you hear it on the phone, in either order.");
+  const offsetText = h("strong", { class: "readout" });
+  const offsetField = h("div", { hidden: true }, h("label", { for: "cp-offset" }, "Offset (seconds)"), offsetInput);
+  const editOffset = h("button", { type: "button", onclick: () => (offsetField.hidden = !offsetField.hidden) }, "Edit");
+  const nudgeButtons = OFFSET_NUDGES_MS.map((ms) => h("button", { type: "button", onclick: () => setOffset(currentTiming().offsetMs + ms) }, nudgeLabel(ms)));
+  const speedButtons = [...SPEED_PRESETS.map((p) => ({ id: p.id, button: h("button", { type: "button", onclick: () => pickSpeed(p.rate) }, p.label) })),
+    { id: "other", button: h("button", { type: "button", onclick: () => ((otherSpeed = true), timingChanged()) }, "Other") }];
+  const rateField = h("div", { hidden: true }, h("label", { for: "cp-rate" }, "Speed (0.5–2)"), rateInput);
+  const timing = h("div", { class: "timing" }, h("h3", null, "Timing for this source"), h("p", null, h("strong", null, "Line it up")), markHint,
+    h("div", { class: "grid2" }, markTv, markPhone), markPending, h("div", { class: "offset-row" }, h("span", { class: "hint" }, "Offset"), offsetText, editOffset), offsetField,
+    h("div", { class: "grid3" }, ...nudgeButtons), h("p", { class: "hint" }, "Moves the phone at once while you listen"),
+    h("p", null, h("strong", null, "Speed")), h("div", { class: "grid2" }, ...speedButtons.map((x) => x.button)), rateField);
+  const form = h("div", { class: "companion" }, h("label", { for: "cp-source" }, "Audio on this phone"), select, foundHint, timing, h("div", { class: "actions" }, save, applyAll), h("div", { class: "actions" }, listen, startAudio), nudgeRow, status, error, audio);
   const element = card({ title: "Listen along", intro: "Hear another source of what the TV is playing, on this phone, in sync with the picture. Plug in earphones first." }, body.element);
 
   const showError = (/** @type {string} */ text) => {
@@ -101,6 +120,8 @@ export function companionCard({ deviceId, signal }) {
     const link = c?.link ?? { offsetMs: 0, rate: 1 };
     offsetInput.value = (link.offsetMs / 1000).toFixed(3);
     rateInput.value = String(link.rate);
+    [tvMark, phoneMark, otherSpeed] = [null, null, false];
+    timingChanged();
   };
 
   /** The timing the inputs show, which the loop uses while listening. */
@@ -109,6 +130,47 @@ export function companionCard({ deviceId, signal }) {
     const rate = Number(rateInput.value);
     if (!Number.isFinite(offsetSec) || !Number.isFinite(rate) || rate < 0.5 || rate > 2) return null;
     return { offsetMs: Math.round(offsetSec * 1000), rate };
+  };
+
+  const currentTiming = () => timingFromInputs() ?? { offsetMs: Math.round((Number(offsetInput.value) || 0) * 1000), rate: 1 };
+
+  /** Redraws the readout, the pending mark and the speed choice from the inputs, and hands the timing to the loop. */
+  const timingChanged = () => {
+    const t = timingFromInputs();
+    offsetText.textContent = formatOffset(currentTiming().offsetMs);
+    const preset = speedPreset(Number(rateInput.value));
+    for (const x of speedButtons) x.button.setAttribute("aria-pressed", String(x.id === (otherSpeed ? "other" : preset)));
+    rateField.hidden = !(otherSpeed || preset === "other");
+    markPending.hidden = tvMark === null && phoneMark === null;
+    if (tvMark !== null) markPending.textContent = `TV marked at ${formatPosition(tvMark)}, now tap when you hear it`;
+    else if (phoneMark !== null) markPending.textContent = `Phone marked at ${formatPosition(phoneMark)}, now tap when you see it on the TV`;
+    if (t && playing) playing.link = t; // applied live, like the other timing edits
+  };
+
+  /** Sets the offset (ms) at once. */
+  const setOffset = (/** @type {number} */ ms) => {
+    offsetInput.value = (ms / 1000).toFixed(3);
+    timingChanged();
+  };
+
+  const pickSpeed = (/** @type {number} */ rate) => {
+    otherSpeed = false;
+    rateInput.value = String(rate);
+    timingChanged();
+  };
+
+  /** One tap of the two-tap mark; when both are there the offset is set and the marks clear. @param {"tv" | "phone"} which */
+  const mark = (which) => {
+    const tvMs = tvPositionAt(anchor, serverNow());
+    if (phase !== "listening" || tvMs === null) return toast("Listen first, then mark.", "error");
+    if (which === "tv") tvMark = tvMs;
+    else phoneMark = audio.currentTime * 1000;
+    if (tvMark !== null && phoneMark !== null) {
+      const offsetMs = markOffset(tvMark, phoneMark, currentTiming().rate);
+      [tvMark, phoneMark] = [null, null];
+      return setOffset(offsetMs);
+    }
+    timingChanged();
   };
 
   const renderCandidates = () => {
@@ -152,12 +214,7 @@ export function companionCard({ deviceId, signal }) {
       if (sourceId !== playing.sourceId || language !== playing.language) void restart();
     }
   });
-  for (const input of [offsetInput, rateInput]) {
-    input.addEventListener("input", () => {
-      const t = timingFromInputs();
-      if (t && playing) playing.link = t;
-    });
-  }
+  for (const input of [offsetInput, rateInput]) input.addEventListener("input", timingChanged);
 
   const saveTiming = async () => {
     const n = candidates?.nowPlaying;
