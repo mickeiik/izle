@@ -1,25 +1,29 @@
-// A TV's Home: the whole list (`PUT …/home`, its items or its sections), single changes to one item (so that two
-// editors do not overwrite each other's lists), and its sections. Each answers the version, the list and the sections.
+// A TV's Home: the whole list (`PUT …/home`, its items or its sections), single changes to one item or app card (so
+// that two editors do not overwrite each other's lists), and its sections. Each answers the version, the list, the
+// sections and the TV's apps.
 
 import type { Context, Hono } from "hono";
+import { isAppId } from "../../apps.ts";
 import type { AppContext } from "../../context.ts";
 import { HttpError } from "../../errors.ts";
 import type { Device } from "../../store.ts";
-import { homeBody, homeItemBody, homeMoveBody, isId, parseBody, sectionCreateBody, sectionPatchBody } from "../../validation.ts";
+import { homeAppBody, homeBody, homeItemBody, homeMoveBody, isId, parseBody, sectionCreateBody, sectionPatchBody } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
 import { requireDevice } from "./admin.ts";
 
 export function registerAdminHome(app: Hono<Env>, ctx: AppContext): void {
-  const { store, home, devices } = ctx;
+  const { store, home, devices, apps } = ctx;
 
-  const answer = (c: Context<Env>, d: Device, version: number, extra: Record<string, unknown> = {}) =>
-    c.json({ version, home: devices.home(d), sections: home.sections(d.id), ...extra });
+  const answer = (c: Context<Env>, d: Device, version: number, extra: Record<string, unknown> = {}) => {
+    const cards = home.cards(d.id);
+    return c.json({ version, home: devices.home(d, cards), sections: home.sections(d.id, undefined, cards), apps: apps.list(d, cards).apps, ...extra });
+  };
 
-  /** The device and the item or section the route names: an id that cannot be on a list is not on it (404 `code`). */
-  const named = (c: Context<Env>, param: "itemId" | "sectionId", code: string) => {
+  /** The device and the item, app or section the route names: an id that cannot be on a list is not on it (404 `code`). */
+  const named = (c: Context<Env>, param: "itemId" | "appId" | "sectionId", code: string) => {
     const d = requireDevice(store, c.req.param("id"));
     const id = c.req.param(param) ?? "";
-    if (!isId(id)) throw new HttpError(404, code);
+    if (!(param === "appId" ? isAppId(id) : isId(id))) throw new HttpError(404, code);
     return { d, id };
   };
 
@@ -46,6 +50,22 @@ export function registerAdminHome(app: Hono<Env>, ctx: AppContext): void {
   app.delete("/api/v1/admin/devices/:id/home/items/:itemId", (c) => {
     const { d, id } = named(c, "itemId", "not_on_home");
     return answer(c, d, home.remove(d.id, id, c.get("actor")));
+  });
+
+  app.post("/api/v1/admin/devices/:id/home/apps", async (c) => {
+    const d = requireDevice(store, c.req.param("id"));
+    const { appId, sectionId, position } = await parseBody(c, homeAppBody);
+    return answer(c, d, home.addApp(d.id, appId, { sectionId, position }, c.get("actor")));
+  });
+
+  app.patch("/api/v1/admin/devices/:id/home/apps/:appId", async (c) => {
+    const { d, id } = named(c, "appId", "not_on_home");
+    return answer(c, d, home.moveApp(d.id, id, await parseBody(c, homeMoveBody), c.get("actor")));
+  });
+
+  app.delete("/api/v1/admin/devices/:id/home/apps/:appId", (c) => {
+    const { d, id } = named(c, "appId", "not_on_home");
+    return answer(c, d, home.removeApp(d.id, id, c.get("actor")));
   });
 
   app.post("/api/v1/admin/devices/:id/home/sections", async (c) => {

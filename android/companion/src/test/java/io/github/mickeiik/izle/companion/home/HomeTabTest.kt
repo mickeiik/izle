@@ -44,6 +44,8 @@ class HomeTabTest {
     private val server = MockWebServer()
     private val moves = CopyOnWriteArrayList<String>()
 
+    @Volatile private var device = DEVICE
+
     @Before
     fun setUp() {
         server.dispatcher = object : Dispatcher() {
@@ -52,7 +54,7 @@ class HomeTabTest {
                     moves += request.body?.utf8().orEmpty()
                     json(200, """{"version":2,"home":[],"sections":$MOVED}""")
                 }
-                "/api/v1/admin/devices/tv-1" -> json(200, DEVICE)
+                "/api/v1/admin/devices/tv-1" -> json(200, device)
                 "/api/v1/admin/events" ->
                     if (request.url.queryParameter("after") == null) json(200, """{"events":[],"last":1}""")
                     else json(200, """{"events":[],"last":1}""").newBuilder().headersDelay(2, TimeUnit.SECONDS).build()
@@ -131,7 +133,52 @@ class HomeTabTest {
         }
     }
 
+    @Test
+    fun appCardsTheirSheetAndTheAppsChip() {
+        device = DEVICE_APPS
+        val api = ApiClient(server.url("/"), "izph_test", OkHttpClient())
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.setContent {
+                    IzleTheme { HomeTab(api, "tv-1", "Salon", onMessage = {}, onRevoked = {}, modifier = Modifier.width(360.dp)) }
+                }
+            }
+            compose.waitUntil(5_000) { compose.onAllNodes(hasText("Grid 5 × 2 · 3 shows · 2 apps")).fetchSemanticsNodes().isNotEmpty() }
+            compose.onNodeWithText("Weather").assertIsDisplayed()
+            compose.onNodeWithText("App").assertIsDisplayed()
+            compose.onNodeWithText("Hidden: not installed on the TV").assertIsDisplayed()
+            compose.onNodeWithText("grid · 3").assertIsDisplayed()
+
+            compose.onNodeWithText("Weather").performClick()
+            compose.onNodeWithText("No title · card 2 of 3").assertIsDisplayed()
+            compose.onNodeWithText("OK opens Weather on Salon").assertIsDisplayed()
+            compose.onNodeWithText("Move to first").assertIsDisplayed()
+            compose.onNodeWithText("Remove from Home").assertIsDisplayed()
+            compose.onNodeWithText("Move to section…").performClick()
+            compose.onNodeWithText("Cancel").performClick()
+
+            compose.onNodeWithText("Add show").performClick()
+            compose.onNodeWithText("Apps").performClick()
+            compose.onNodeWithText("Search the apps").assertIsDisplayed()
+            compose.onNodeWithText("Files").assertIsDisplayed()
+            compose.onAllNodes(hasText("Weather")).fetchSemanticsNodes().let { assertEquals("Weather is on Home already", 1, it.size) }
+        }
+    }
+
     private companion object {
+        val DEVICE_APPS = """{"device":{"id":"tv-1","name":"Salon","online":true,"effective":{"homeColumns":5,"homeRows":2}},
+            "home":[
+              {"itemId":"bunny","title":"Big Buck Bunny","kind":"movie","playable":true,"continue":{"episodeId":"bunny.m","status":"new"}},
+              {"itemId":"gone","missing":true,"playable":false},
+              {"itemId":"sintel","title":"Sintel","kind":"movie","playable":true,"continue":{"episodeId":"sintel.m","status":"new"}}],
+            "sections":[{"id":"untitled","title":null,"layout":"grid","itemIds":["bunny","gone"],
+                "entries":[{"itemId":"bunny"},{"appId":"com.example.weather"},{"itemId":"gone"}]},
+              {"id":"films01","title":"Films","layout":"row","itemIds":["sintel"],"entries":[{"itemId":"sintel"},{"appId":"com.example.radio"}]}],
+            "apps":[{"appId":"com.example.weather","label":"Weather","imageUrl":null,"installed":true,"onHome":true},
+              {"appId":"com.example.files","label":"Files","imageUrl":null,"installed":true,"onHome":false},
+              {"appId":"com.example.radio","label":"Radio","imageUrl":null,"installed":false,"onHome":true}],
+            "appsMax":50,"appsReportedAt":"2026-10-27T09:00:00.000Z"}"""
+
         const val MOVED = """[{"id":"untitled","title":null,"layout":"grid","itemIds":["bunny","sintel","gone"]},
             {"id":"films01","title":"Films","layout":"row","itemIds":[]},{"id":"kids01","title":"Kids","layout":"grid","itemIds":[]}]"""
         val DEVICE = """{"device":{"id":"tv-1","name":"Salon","online":true,"effective":{"homeColumns":5,"homeRows":2}},

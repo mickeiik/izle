@@ -1,6 +1,6 @@
 // What the TV calls: pairing (unauthenticated; the approval is an admin route), then with its device token the
-// home state, item details, resolve, progress, command acknowledgements and results, problem reports, the TV app
-// APK on offer, and the event stream. Also the media proxy, whose token in the path is the only credential.
+// home state, item details, resolve, progress, command acknowledgements and results, problem reports, its installed
+// apps and their pictures, the TV app APK on offer, and the event stream. Also the media proxy, whose token in the path is the only credential.
 
 import type { Context, Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -12,7 +12,7 @@ import { commandEvent, eventId, type ServerEvent } from "../../events.ts";
 import { MAX_PAIR_WAIT_MS, PAIR_CODE } from "../../pairing.ts";
 import { iso } from "../../presenters.ts";
 import { PROXY_TOKEN, type ProxyTarget } from "../../proxy.ts";
-import { commandResultBody, intParam, isId, parseBody, parseWait, problemBody, progressBody, resolveBody } from "../../validation.ts";
+import { appsBody, commandResultBody, intParam, isId, parseBody, parseWait, problemBody, progressBody, resolveBody } from "../../validation.ts";
 import type { Env } from "../middleware.ts";
 
 export function registerTv(app: Hono<Env>, ctx: AppContext, clientKey: (c: Context) => string): void {
@@ -81,6 +81,18 @@ export function registerTv(app: Hono<Env>, ctx: AppContext, clientKey: (c: Conte
   app.post("/api/v1/tv/problems", async (c) => {
     ctx.problems.report(c.get("device"), await parseBody(c, problemBody));
     return c.json({ ok: true }, 202);
+  });
+
+  app.put("/api/v1/tv/apps", async (c) => {
+    const { apps } = await parseBody(c, appsBody);
+    return c.json(ctx.apps.report(c.get("device"), apps));
+  });
+
+  // A picture its list named, as raw PNG bytes (the body limit is the middleware's).
+  app.put("/api/v1/tv/apps/images/:sha256", async (c) => {
+    const png = new Uint8Array(await c.req.arrayBuffer());
+    ctx.apps.storeImage(c.get("device"), c.req.param("sha256"), c.req.header("Content-Type"), png);
+    return c.body(null, 204);
   });
 
   app.get("/api/v1/tv/app", (c) => {

@@ -10,12 +10,19 @@ scaled screen. The rest of the TV's page is in [Companion app](companion.md); wh
 - A top line says the grid and the count: "Grid 4 × 2 · 24 shows"; its ⋮ holds **Grid size** and **Check Home…**. Under it, **Add show**
   and **+ Section**, side by side, equal widths.
 - Each section is a header row in its order on the TV: its title ("No title" for the untitled one), its layout and
-  count ("grid · 6", "row · 5") and a ⋮ menu. A section without shows reads "Empty: not shown on the TV".
+  count of cards ("grid · 6", "row · 5"; app cards count) and a ⋮ menu. A section without cards reads "Empty: not
+  shown on the TV".
 - Each show is a row: poster, title, one line with what OK plays ("S1 · E5 · continues at 12:04 of 30:10", "Film",
   "Live") and "· N new" when the series has new episodes, a chip only when its last check needs attention
   (**Fails**, **Warnings**; the sheet says the verdict in full), and a drag handle.
 - A show the TV hides is greyed with why: "Hidden: not in the catalog" (its id stands in for the title it
   no longer has) or "Hidden: can't play", with **Remove**.
+- An [app card](../spec/server-api-v1.md#app-cards) is a row like a show's: the app's picture (drawn whole in the
+  poster's place, so that the titles line up; the apps icon without one), its name, "App" as its line, and a drag
+  handle; greyed "Hidden: not installed on the TV" with **Remove** when the TV no longer has it.
+  Its sheet: where it is, "OK opens <name> on Salon", **Move to section…**, **Move to first**, **Remove from Home**.
+  It moves (drag, sheet) with `…/home/apps/:appId` as a show does with `…/home/items/:itemId`.
+- The top line counts the app cards too: "Grid 4 × 2 · 24 shows · 3 apps".
 - With nothing on Home: "Nothing on Home yet. Add a show and it appears on the TV."
 
 ## Moving shows
@@ -49,7 +56,8 @@ Tapping a show opens a sheet:
 
 - The ⋮ of a section: **Rename** (a dialog, 1–40 characters; titled sections only), **One scrolling line** (checked
   when the layout is `row`), **Move up**, **Move down**, **Delete** (titled sections only).
-- **Delete** asks: "Delete Films?" "Its 6 shows move to No title." (or "It holds no shows."), **Delete** / **Keep**.
+- **Delete** asks: "Delete Films?" "Its 6 shows move to No title." ("Its 7 cards move to No title." when app cards
+  are among them; "It holds no shows." when empty), **Delete** / **Keep**.
 - **+ Section** asks for a title and adds the section at the end of Home. With 20 sections besides the untitled one,
   the dialog says "A Home holds at most 20 sections." instead.
 
@@ -62,6 +70,12 @@ Tapping a show opens a sheet:
 - **Add** puts the show at the end of the chosen section and takes it off the results: "Sintel added to Films." (or
   "Sintel added to Home." for the untitled section). With nothing found: "Nothing found that Salon does not have on
   Home already."
+- A fourth kind chip, **Apps**, lists instead the apps the TV reported that are not on Home yet (picture, name,
+  **Add**), in the TV's order, those whose name holds the search text (at once, no server search); none chosen lists
+  shows only. **Apps** and the show kinds exclude each other: choosing one lets go of the other. The field reads
+  "Search the apps". **Add** puts an app card at the end of the chosen section: "Weather added to Films." A TV that
+  never reported: "Salon has not listed its apps yet. Its izle app may need an update." With no app left to add: "No
+  apps to add."; with none matching the search: "No app found that Salon does not have on Home already."
 
 ## Checks
 
@@ -98,7 +112,7 @@ changed) and **Cancel**. It is the one `PATCH …/devices/:id` the tab makes.
   `unknown_section`), the tab reads Home anew and says "Home changed on another screen; this is the current one."
   Other refusals are said in words ("A Home holds at most 200 shows.", "The server cannot be reached.").
 - While the tab is shown it follows the server's event log for this TV (`home.changed`, `cursor.changed`,
-  `device.updated`, `catalog.reloaded`, `check.finished`, or a gap) and reads Home anew on each, so edits made
+  `device.updated`, `device.apps`, `catalog.reloaded`, `check.finished`, or a gap) and reads Home anew on each, so edits made
   elsewhere (the admin page, another phone, an agent) show up and are never undone.
 - When Home cannot be read the first time, the tab says so with **Try again**; later failures keep what is shown.
 

@@ -9,7 +9,7 @@ import { MAX_CHECK_WAIT_MS } from "../../checks.ts";
 import { BROWSE_SORTS, ITEM_KINDS, type BrowseQuery, type BrowseSort, type ItemKind } from "../../catalog-browse.ts";
 import type { AppContext } from "../../context.ts";
 import { HttpError } from "../../errors.ts";
-import { HOME_MAX_ITEMS, HOME_MAX_SECTIONS } from "../../home.ts";
+import { HOME_MAX_APPS, HOME_MAX_ITEMS, HOME_MAX_SECTIONS } from "../../home.ts";
 import { requireItem } from "../../lookup.ts";
 import { PAIR_CODE } from "../../pairing.ts";
 import { PROBLEM_LIST_DEFAULT, PROBLEM_LIST_MAX } from "../../problems.ts";
@@ -80,7 +80,12 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
 
   app.get("/api/v1/admin/devices/:id", (c) => {
     const d = device(c);
-    return c.json({ device: devices.view(d), home: devices.home(d), homeMax: HOME_MAX_ITEMS, sections: home.sections(d.id), sectionsMax: HOME_MAX_SECTIONS });
+    const cards = home.cards(d.id);
+    const { apps, appsReportedAt } = ctx.apps.list(d, cards);
+    return c.json({
+      device: devices.view(d), home: devices.home(d, cards), homeMax: HOME_MAX_ITEMS, sections: home.sections(d.id, undefined, cards), sectionsMax: HOME_MAX_SECTIONS,
+      apps, appsMax: HOME_MAX_APPS, appsReportedAt,
+    });
   });
 
   app.patch("/api/v1/admin/devices/:id", async (c) => {

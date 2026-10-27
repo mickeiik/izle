@@ -46,6 +46,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.mickeiik.izle.companion.R
 import io.github.mickeiik.izle.companion.tv.episodeName
+import io.github.mickeiik.izle.companion.ui.design.AppPicture
 import io.github.mickeiik.izle.companion.ui.design.ButtonKind
 import io.github.mickeiik.izle.companion.ui.design.ButtonRow
 import io.github.mickeiik.izle.companion.ui.design.ButtonSize
@@ -67,10 +68,11 @@ import io.github.mickeiik.izle.data.api.AdminHomeEntry
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.HomeSection
 import io.github.mickeiik.izle.data.api.HomeSectionInfo
+import io.github.mickeiik.izle.data.api.SectionEntry
 
 /**
- * The Home tab of a TV's page: the TV's Home as a list of sections and their shows, arranged by drag and drop, a
- * show's sheet (play, continue from, move, remove), the sections' menus, Add show and the grid size
+ * The Home tab of a TV's page: the TV's Home as a list of sections and their cards (shows and app cards), arranged by
+ * drag and drop, a card's sheet (play, continue from, move, remove), the sections' menus, Add show and the grid size
  * (docs/ux/companion-home.md). Messages go to [onMessage] (the host's snackbar); a `401` to [onRevoked] (this phone was
  * disconnected).
  */
@@ -97,7 +99,7 @@ private sealed interface HomeDialog {
     data object NewSection : HomeDialog
     data class Rename(val sectionId: String) : HomeDialog
     data class Delete(val sectionId: String) : HomeDialog
-    data class MoveTo(val itemId: String) : HomeDialog
+    data class MoveTo(val card: SectionEntry) : HomeDialog
     data class Episodes(val itemId: String) : HomeDialog
 }
 
@@ -111,6 +113,7 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
         onDrop = vm::move,
     )
     var dialog by remember { mutableStateOf<HomeDialog?>(null) }
+    // The card whose sheet is open, by its row key (a show's or an app card's).
     var sheetFor by rememberSaveable { mutableStateOf<String?>(null) }
     var adding by rememberSaveable { mutableStateOf(false) }
     val check by vm.checks.run.collectAsStateWithLifecycle()
@@ -130,12 +133,12 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
         }
         check?.let { CheckStrip(it, onStop = vm.checks::stop, onDismiss = vm.checks::dismiss) }
         val sections = drag.preview ?: state.sections
-        val rows = homeRows(sections, state.entries)
+        val rows = homeRows(sections, state.entries, state.apps)
         LazyColumn(state = list, modifier = Modifier.weight(1f).fillMaxWidth().homeDragContainer(drag)) {
             item(key = "top") {
                 TopLine(state, onGrid = { dialog = HomeDialog.Grid }, onCheck = { dialog = HomeDialog.CheckHome })
             }
-            if (state.showCount == 0) {
+            if (state.showCount == 0 && state.appCount == 0) {
                 item(key = "nothing") {
                     EmptyState(stringResource(R.string.home_nothing_yet), Modifier.padding(horizontal = IzleTheme.spacing.lg, vertical = IzleTheme.spacing.sm))
                 }
@@ -154,17 +157,16 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
                         stringResource(R.string.home_empty_section),
                         Modifier.animateItem().fillMaxWidth().padding(horizontal = IzleTheme.spacing.lg, vertical = IzleTheme.spacing.md),
                     )
-                    is HomeRow.Show -> {
-                        val dragged = drag.draggedId == row.itemId
-                        ShowRow(
-                            row,
-                            api,
-                            dragged = dragged,
-                            handle = Modifier.homeDragHandle(drag, row.itemId),
-                            onOpen = { sheetFor = row.itemId },
-                            onRemove = { vm.remove(row.itemId) },
-                            modifier = if (dragged) Modifier.zIndex(1f).graphicsLayer { translationY = drag.draggedOffset } else Modifier.animateItem(),
-                        )
+                    is HomeRow.Card -> {
+                        val dragged = drag.dragged == row.card
+                        val handle = Modifier.homeDragHandle(drag, row.card)
+                        val onOpen = { sheetFor = row.key }
+                        val onRemove = { vm.remove(row.card) }
+                        val modifier = if (dragged) Modifier.zIndex(1f).graphicsLayer { translationY = drag.draggedOffset } else Modifier.animateItem()
+                        when (row) {
+                            is HomeRow.Show -> ShowRow(row, api, dragged, handle, onOpen, onRemove, modifier)
+                            is HomeRow.App -> AppRow(row, api, dragged, handle, onOpen, onRemove, modifier)
+                        }
                     }
                 }
             }
@@ -187,13 +189,16 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
         }
     }
 
-    sheetFor?.let { itemId ->
-        val place = placeOf(state.sections, itemId)
+    sheetFor?.let { key ->
+        val card = cardOfKey(key)
+        val place = card?.let { placeOf(state.sections, it) }
         val section = place?.let { state.section(it.sectionId) }
-        if (place == null || section == null) {
-            // The show left Home (here or elsewhere): its sheet closes.
-            LaunchedEffect(itemId) { sheetFor = null }
-        } else {
+        val itemId = card?.itemId
+        val appId = card?.appId
+        if (card == null || place == null || section == null) {
+            // The card left Home (here or elsewhere): its sheet closes.
+            LaunchedEffect(key) { sheetFor = null }
+        } else if (itemId != null) {
             ShowSheet(
                 entry = state.entries[itemId],
                 itemId = itemId,
@@ -205,17 +210,31 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
                 onDismiss = { sheetFor = null },
                 onPlay = { vm.play(itemId) },
                 onContinue = { vm.loadEpisodes(itemId); dialog = HomeDialog.Episodes(itemId) },
-                onMoveTo = { dialog = HomeDialog.MoveTo(itemId) },
-                onFirst = { vm.move(itemId, HomePlace(section.id, 0)) },
+                onMoveTo = { dialog = HomeDialog.MoveTo(card) },
+                onFirst = { vm.move(card, HomePlace(section.id, 0)) },
                 onCheck = { vm.checks.startShow(itemId) },
-                onRemove = { vm.remove(itemId) },
+                onRemove = { vm.remove(card) },
+            )
+        } else if (appId != null) {
+            AppSheet(
+                app = state.apps[appId],
+                appId = appId,
+                section = section,
+                index = place.position,
+                sectionCount = state.sections.size,
+                tvName = tvName,
+                picture = { RowAppPicture(api, state.apps[appId]?.imageUrl) },
+                onDismiss = { sheetFor = null },
+                onMoveTo = { dialog = HomeDialog.MoveTo(card) },
+                onFirst = { vm.move(card, HomePlace(section.id, 0)) },
+                onRemove = { vm.remove(card) },
             )
         }
     }
 
     if (adding) {
         val search by vm.search.collectAsStateWithLifecycle()
-        AddShowScreen(search, state.sections, api, tvName, vm, onClose = { adding = false })
+        AddShowScreen(search, state, api, tvName, vm, onClose = { adding = false })
     }
 
     when (val d = dialog) {
@@ -247,12 +266,12 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
             DeleteDialog(s, onDelete = { vm.deleteSection(s.id) }, onDismiss = { dialog = null })
         } ?: LaunchedEffect(d) { dialog = null }
         is HomeDialog.MoveTo -> {
-            val from = placeOf(state.sections, d.itemId)
+            val from = placeOf(state.sections, d.card)
             if (from == null) LaunchedEffect(d) { dialog = null }
             else MoveToDialog(state.sections, from.sectionId, onPick = { target ->
                 dialog = null
                 sheetFor = null
-                vm.move(d.itemId, HomePlace(target.id, target.itemIds.size))
+                vm.move(d.card, HomePlace(target.id, target.cards.size))
             }, onDismiss = { dialog = null })
         }
         is HomeDialog.Episodes -> {
@@ -270,14 +289,11 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
     }
 }
 
-/** "6 shows · grid 4 × 2" and the tab's ⋮ (Grid size, Check Home…). */
+/** "Grid 4 × 2 · 6 shows · 2 apps" and the tab's ⋮ (Grid size, Check Home…). */
 @Composable
 private fun TopLine(state: HomeState, onGrid: () -> Unit, onCheck: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(start = IzleTheme.spacing.lg, end = IzleTheme.spacing.xs), verticalAlignment = Alignment.CenterVertically) {
-        Caption(
-            stringResource(R.string.home_summary, state.columns, state.rows, pluralStringResource(R.plurals.home_shows, state.showCount, state.showCount)),
-            Modifier.weight(1f),
-        )
+        Caption(summaryText(resources(), state), Modifier.weight(1f))
         OverflowMenu(stringResource(R.string.home_options), listOf(
                 MenuItem(stringResource(R.string.home_grid_size), onGrid),
                 MenuItem(stringResource(R.string.home_check_home), onCheck),
@@ -335,9 +351,8 @@ private fun ShowRow(
     // A show gone from the catalog has no title any more: its id says which it was.
     val title = entry?.title ?: row.itemId
     val verdict = verdictOf(entry?.check)
-    ListRow(
+    CardListRow(
         title,
-        modifier.background(if (dragged) IzleTheme.colors.surface else IzleTheme.colors.background),
         supporting = when {
             hidden != null -> stringResource(hidden)
             // New episodes join the line: a chip would squeeze the title at phone width.
@@ -345,11 +360,69 @@ private fun ShowRow(
                 (if (entry.newEpisodes > 0) " · " + res.getQuantityString(R.plurals.home_new_episodes, entry.newEpisodes, entry.newEpisodes) else "")
             else -> null
         },
-        supportingTone = if (hidden != null) Tone.Warning else Tone.Neutral,
+        hidden = hidden != null,
+        picture = { RowPoster(api, entry?.posterUrl) },
+        dragged = dragged,
+        handle = handle,
+        onOpen = onOpen,
+        onRemove = onRemove,
+        modifier = modifier,
         badge = if (hidden == null && verdict.worthAChip) ({ VerdictChip(verdict) }) else null,
-        leading = { Box(Modifier.alpha(if (hidden != null) 0.5f else 1f)) { RowPoster(api, entry?.posterUrl) } },
+    )
+}
+
+/** An app card: its picture, its name, "App" (or "Hidden: not installed on the TV" with Remove), and a drag handle. */
+@Composable
+private fun AppRow(
+    row: HomeRow.App,
+    api: ApiClient,
+    dragged: Boolean,
+    handle: Modifier,
+    onOpen: () -> Unit,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val hidden = appHidden(row.app)
+    CardListRow(
+        appName(row.app, row.appId),
+        supporting = stringResource(if (hidden) R.string.home_hidden_not_installed else R.string.home_app),
+        hidden = hidden,
+        picture = { RowAppPicture(api, row.app?.imageUrl) },
+        dragged = dragged,
+        handle = handle,
+        onOpen = onOpen,
+        onRemove = onRemove,
+        modifier = modifier,
+    )
+}
+
+/**
+ * A card's row on Home: [picture], [title] and the [supporting] line (in `warning`, the picture greyed and **Remove**
+ * before the handle when the card is [hidden] on the TV), then the drag handle; raised on `surface` while [dragged].
+ */
+@Composable
+private fun CardListRow(
+    title: String,
+    supporting: String?,
+    hidden: Boolean,
+    picture: @Composable () -> Unit,
+    dragged: Boolean,
+    handle: Modifier,
+    onOpen: () -> Unit,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
+    badge: (@Composable () -> Unit)? = null,
+) {
+    val res = resources()
+    ListRow(
+        title,
+        modifier.background(if (dragged) IzleTheme.colors.surface else IzleTheme.colors.background),
+        supporting = supporting,
+        supportingTone = if (hidden) Tone.Warning else Tone.Neutral,
+        badge = badge,
+        leading = { Box(Modifier.alpha(if (hidden) 0.5f else 1f)) { picture() } },
         trailing = {
-            if (hidden != null) {
+            if (hidden) {
                 IzleButton(stringResource(R.string.home_remove), onClick = onRemove, kind = ButtonKind.Danger, size = ButtonSize.Small)
             }
             Box(
@@ -369,6 +442,13 @@ private fun ShowRow(
 internal fun RowPoster(api: ApiClient, posterUrl: String?) {
     val url = remember(posterUrl) { api.resolve(posterUrl)?.toString() }
     Poster(url, IzleTheme.sizes.posterRow)
+}
+
+/** An app's picture in a row, in a poster's place, resolved against the server as the posters are. */
+@Composable
+internal fun RowAppPicture(api: ApiClient, imageUrl: String?) {
+    val url = remember(imageUrl) { api.resolve(imageUrl)?.toString() }
+    AppPicture(url, IzleTheme.sizes.posterRow)
 }
 
 @Composable
@@ -407,11 +487,13 @@ private fun TitleDialog(
 
 @Composable
 private fun DeleteDialog(section: HomeSection, onDelete: () -> Unit, onDismiss: () -> Unit) {
-    val n = section.itemIds.size
+    val n = section.cards.size
+    // "Its 6 shows move", or, with app cards among them, "Its 7 cards move".
+    val moves = if (section.appCount == 0) R.plurals.home_delete_text else R.plurals.home_delete_cards
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.home_delete_title, section.title.orEmpty())) },
-        text = { Text(if (n == 0) stringResource(R.string.home_delete_empty) else pluralStringResource(R.plurals.home_delete_text, n, n)) },
+        text = { Text(if (n == 0) stringResource(R.string.home_delete_empty) else pluralStringResource(moves, n, n)) },
         confirmButton = { IzleButton(stringResource(R.string.home_delete), onClick = { onDismiss(); onDelete() }, kind = ButtonKind.Danger) },
         dismissButton = { IzleButton(stringResource(R.string.home_keep), onClick = onDismiss, kind = ButtonKind.Quiet) },
     )

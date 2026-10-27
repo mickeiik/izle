@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import io.github.mickeiik.izle.companion.tv.CommandOutcome
 import io.github.mickeiik.izle.companion.tv.episodeName
 import io.github.mickeiik.izle.companion.tv.sendAndAwait
+import io.github.mickeiik.izle.data.api.AdminApp
 import io.github.mickeiik.izle.data.api.AdminEpisode
 import io.github.mickeiik.izle.data.api.AdminHomeEntry
 import io.github.mickeiik.izle.data.api.ApiClient
@@ -13,6 +14,7 @@ import io.github.mickeiik.izle.data.api.CatalogHit
 import io.github.mickeiik.izle.data.api.CheckRun
 import io.github.mickeiik.izle.data.api.HomeChange
 import io.github.mickeiik.izle.data.api.HomeSection
+import io.github.mickeiik.izle.data.api.SectionEntry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -34,7 +36,7 @@ sealed interface HomeError {
     data class Server(val code: String) : HomeError
 }
 
-/** A TV's Home as the tab shows it: the sections in order, the shows by id, the grid size. */
+/** A TV's Home as the tab shows it: the sections in order, the shows by id, the TV's apps, the grid size. */
 data class HomeState(
     val loaded: Boolean = false,
     val loading: Boolean = true,
@@ -46,10 +48,16 @@ data class HomeState(
     val rows: Int = 2,
     val homeMax: Int = 200,
     val sectionsMax: Int = 20,
+    /** The TV's apps by id, in its report's order, then the app cards it no longer reports. */
+    val apps: Map<String, AdminApp> = emptyMap(),
+    /** When the TV's list of apps last changed; null: it never reported one (its app predates app cards). */
+    val appsReportedAt: String? = null,
     /** A change is being saved: drags are ignored, other edits wait their turn. */
     val saving: Boolean = false,
 ) {
     val showCount: Int get() = sections.sumOf { it.itemIds.size }
+
+    val appCount: Int get() = sections.sumOf { it.appCount }
 
     /** Titled sections: the untitled one does not count against [sectionsMax]. */
     val titledCount: Int get() = sections.count { it.id != UNTITLED_SECTION }
@@ -57,11 +65,16 @@ data class HomeState(
     fun section(id: String): HomeSection? = sections.firstOrNull { it.id == id }
 }
 
-/** The Add show screen: a catalog search leaving out what is on this TV, by kind, paged by [PAGE]. */
+/**
+ * The Add show screen: a catalog search leaving out what is on this TV, by kind, paged by [PAGE]; or, with the Apps
+ * chip chosen, the TV's apps not on Home yet ([appChoices]).
+ */
 data class ShowSearch(
     val query: String = "",
     /** `movie`, `series`, `live`; empty: every kind. */
     val kinds: Set<String> = emptySet(),
+    /** The Apps chip: the TV's apps instead of shows (it and the kinds exclude each other). */
+    val apps: Boolean = false,
     val items: List<CatalogHit> = emptyList(),
     val total: Int = 0,
     val loading: Boolean = false,
@@ -70,10 +83,19 @@ data class ShowSearch(
     val next: Int = 0,
     /** The section shows are added to ("No title" unless the owner picks another; kept while the tab lives). */
     val addTo: String = UNTITLED_SECTION,
-    /** The item being added. */
+    /** The item (or app) being added. */
     val adding: String? = null,
 ) {
     val hasMore: Boolean get() = next < total
+}
+
+/**
+ * The Apps chip's list: the TV's [apps] it still has that are not on Home, in its order, whose name holds [query]
+ * (ignoring case; all of them for a blank one).
+ */
+fun appChoices(apps: Collection<AdminApp>, query: String): List<AdminApp> {
+    val q = query.trim()
+    return apps.filter { it.installed && !it.onHome && (q.isEmpty() || (it.label ?: it.appId).contains(q, ignoreCase = true)) }
 }
 
 /** The episodes of a series for Continue from episode… (those that may play), or why they could not be read. */
@@ -177,6 +199,8 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
                     rows = d.device.effective?.homeRows ?: it.rows,
                     homeMax = d.homeMax,
                     sectionsMax = d.sectionsMax,
+                    apps = d.apps.associateBy(AdminApp::appId),
+                    appsReportedAt = d.appsReportedAt,
                 )
             }
         } catch (e: CancellationException) {
@@ -194,14 +218,22 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
 
     // --- single changes ---------------------------------------------------------------------------------------------
 
-    /** Moves a show (drag and drop, Move to section…, Move to first); the list shows the move at once. */
-    fun move(itemId: String, to: HomePlace) {
-        if (placeOf(_state.value.sections, itemId) == to) return
-        change(optimistic = { moveItem(it, itemId, to) }) { api.moveHomeItem(tvId, itemId, to.sectionId, to.position) }
+    /**
+     * Moves a show or an app card (drag and drop, Move to section…, Move to first); the list shows the move at once.
+     * [to]'s position counts every card of the section, as the server does.
+     */
+    fun move(card: SectionEntry, to: HomePlace) {
+        if (placeOf(_state.value.sections, card) == to) return
+        change(optimistic = { moveCard(it, card, to) }) {
+            val appId = card.appId
+            if (appId != null) api.moveHomeApp(tvId, appId, to.sectionId, to.position)
+            else api.moveHomeItem(tvId, card.itemId.orEmpty(), to.sectionId, to.position)
+        }
     }
 
-    fun remove(itemId: String) = change(optimistic = { s -> s.map { it.copy(itemIds = it.itemIds - itemId) } }) {
-        api.removeHomeItem(tvId, itemId)
+    fun remove(card: SectionEntry) = change(optimistic = { removeCard(it, card) }) {
+        val appId = card.appId
+        if (appId != null) api.removeHomeApp(tvId, appId) else api.removeHomeItem(tvId, card.itemId.orEmpty())
     }
 
     fun addSection(title: String) {
@@ -280,7 +312,9 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
     }
 
     private fun apply(c: HomeChange) {
-        _state.update { it.copy(sections = c.sections, entries = c.home.associateBy(AdminHomeEntry::itemId)) }
+        _state.update {
+            it.copy(sections = c.sections, entries = c.home.associateBy(AdminHomeEntry::itemId), apps = c.apps?.associateBy(AdminApp::appId) ?: it.apps)
+        }
     }
 
     // --- playing and the cursor -------------------------------------------------------------------------------------
@@ -346,12 +380,25 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
     fun setQuery(q: String) {
         if (q == _search.value.query) return
         _search.update { it.copy(query = q) }
-        runSearch(debounce = true)
+        // The apps are filtered here as the text changes; the catalog is searched when the Apps chip is let go.
+        if (!_search.value.apps) runSearch(debounce = true)
     }
 
     fun toggleKind(kind: String) {
-        _search.update { it.copy(kinds = if (kind in it.kinds) it.kinds - kind else it.kinds + kind) }
+        _search.update { it.copy(kinds = if (kind in it.kinds) it.kinds - kind else it.kinds + kind, apps = false) }
         runSearch(debounce = false)
+    }
+
+    /** The Apps chip: the TV's apps instead of shows; choosing it lets go of the kinds. */
+    fun toggleApps() {
+        val apps = !_search.value.apps
+        _search.update { it.copy(apps = apps, kinds = emptySet()) }
+        if (apps) {
+            searchJob?.cancel()
+            _search.update { it.copy(loading = false, error = null) }
+        } else {
+            runSearch(debounce = false)
+        }
     }
 
     fun setAddTo(sectionId: String) = _search.update { it.copy(addTo = sectionId) }
@@ -359,7 +406,7 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
     /** The next page, when the list is scrolled to its end. */
     fun loadMore() {
         val s = _search.value
-        if (s.loading || !s.hasMore || s.error != null) return
+        if (s.apps || s.loading || !s.hasMore || s.error != null) return
         searchJob = viewModelScope.launch { fetch(s.next) }
     }
 
@@ -391,19 +438,27 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
     }
 
     /** Adds [hit] to the end of the section chosen in Add to; it leaves the results (it is on this TV now). */
-    fun add(hit: CatalogHit) {
+    fun add(hit: CatalogHit) = addCard(hit.id, hit.title, { sectionId -> api.addHomeItem(tvId, hit.id, sectionId) }) {
+        _search.update { it.copy(items = it.items.filter { h -> h.id != hit.id }, total = (it.total - 1).coerceAtLeast(0), next = (it.next - 1).coerceAtLeast(0)) }
+    }
+
+    /** Puts an app card for [app] at the end of the section chosen in Add to; the answer's apps take it off the choices. */
+    fun addApp(app: AdminApp) = addCard(app.appId, app.label ?: app.appId, { sectionId -> api.addHomeApp(tvId, app.appId, sectionId) }) {}
+
+    /** One add from the Add show screen, one at a time; [added] updates the results once the server took it. */
+    private fun addCard(id: String, title: String, call: suspend (sectionId: String) -> HomeChange, added: () -> Unit) {
         val s = _search.value
         if (s.adding != null) return
         val sectionId = s.addTo.takeIf { _state.value.section(it) != null } ?: UNTITLED_SECTION
-        _search.update { it.copy(adding = hit.id) }
+        _search.update { it.copy(adding = id) }
         viewModelScope.launch {
             changes.withLock {
                 _state.update { it.copy(saving = true) }
                 try {
-                    apply(api.addHomeItem(tvId, hit.id, sectionId))
-                    _search.update { it.copy(items = it.items.filter { h -> h.id != hit.id }, total = (it.total - 1).coerceAtLeast(0), next = (it.next - 1).coerceAtLeast(0)) }
+                    apply(call(sectionId))
+                    added()
                     val section = _state.value.section(sectionId)
-                    _notices.trySend(HomeNotice.Added(hit.title, section?.title.takeIf { sectionId != UNTITLED_SECTION }))
+                    _notices.trySend(HomeNotice.Added(title, section?.title.takeIf { sectionId != UNTITLED_SECTION }))
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -413,6 +468,8 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
                         reload()
                     } else {
                         _notices.trySend(HomeNotice.Failed(error))
+                        // The TV's apps changed since they were read (gone, or put on Home elsewhere): show them as they are.
+                        if (error is HomeError.Server && error.code in APPS_CHANGED) reload()
                     }
                 } finally {
                     _search.update { it.copy(adding = null) }
@@ -431,10 +488,13 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
     private fun titleOf(itemId: String): String = _state.value.entries[itemId]?.title ?: itemId
 
     companion object {
-        val EVENT_TYPES = listOf("home.changed", "cursor.changed", "device.updated", "catalog.reloaded", "check.finished")
+        val EVENT_TYPES = listOf("home.changed", "cursor.changed", "device.updated", "device.apps", "catalog.reloaded", "check.finished")
 
         /** Answers that mean Home is not what this screen showed: reload and say so. */
         val CHANGED_ELSEWHERE = setOf("home_changed", "not_on_home", "unknown_section")
+
+        /** Answers to adding an app that mean the TV's apps are not what this screen showed: said in words, then reloaded. */
+        val APPS_CHANGED = setOf("unknown_app", "duplicate_app")
 
         const val PAGE = 50
         const val SEARCH_DEBOUNCE_MS = 300L

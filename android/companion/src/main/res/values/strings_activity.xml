@@ -64,6 +64,10 @@
         <item quantity="one">+%d show</item>
         <item quantity="other">+%d shows</item>
     </plurals>
+    <plurals name="activity_home_apps_added">
+        <item quantity="one">+%d app</item>
+        <item quantity="other">+%d apps</item>
+    </plurals>
     <string name="activity_home_removed">−%d</string>
     <string name="activity_home_rearranged">Home rearranged</string>
     <string name="activity_continues_from">Continues from %1$s</string>

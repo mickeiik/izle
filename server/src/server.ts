@@ -5,6 +5,7 @@ import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { SERVER, tvActor } from "./actor.ts";
 import { AppUpdateService, FIRST_CHECK_DELAY_MS } from "./app-updates.ts";
+import { AppService } from "./apps.ts";
 import { loadAdminToken } from "./auth.ts";
 import { CatalogService } from "./catalog.ts";
 import { CatalogBrowser } from "./catalog-browse.ts";
@@ -75,6 +76,7 @@ export function createContext(opts: StartOptions, { log, now, store, catalog, re
   const notifier = new Notifier(store, events);
   const eventLog = new EventLog(store, log, now, config.events.retentionDays);
   const home = new HomeService({ store, catalog, eventLog, notifier, now });
+  const apps = new AppService({ store, home, eventLog, log, now });
   const viewings = new ViewingService({ store, catalog, eventLog, now });
   const appUpdates = new AppUpdateService({
     store, eventLog, events, log, now, config, fetch: fetchUpstream, githubApiBase: opts.githubApiBase,
@@ -101,7 +103,7 @@ export function createContext(opts: StartOptions, { log, now, store, catalog, re
   });
   const checker = new SourceChecker({ catalog, resolver, proxy, store, fetch: fetchUpstream, now });
   const browse = new CatalogBrowser({ catalog, store });
-  const modules = { config, store, catalog, browse, events, notifier, eventLog, resolver, sessions, problems, viewings, appUpdates, home, playing, proxy, checker, log, now };
+  const modules = { config, store, catalog, browse, events, notifier, eventLog, resolver, sessions, problems, viewings, appUpdates, home, apps, playing, proxy, checker, log, now };
   return {
     ...modules, checks: new CheckService(modules), tv: new TvService(modules), companion: new CompanionService(modules), pairing: new PairingService(modules, opts.pairing),
     devices: new DeviceService(modules), commands: new CommandService(modules), tokens: new TokenService(store, log, now), phones: new PhoneService(modules),

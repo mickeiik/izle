@@ -128,3 +128,46 @@ entries, and how each feature was built, are in git history.
 - TV app: `:core` took only what moves without a logic edit. `EpisodeNames` stays in `:app` because it calls
   `PlaybackPlan.resumePositionMs`, and `PlaybackPlan` is TV logic (autoplay, countdown, source rotation); it moves
   when a second app needs it.
+
+## App cards and izle as the home screen
+
+- App cards are only in a section's `entries`, beside `itemIds` and outside `home`: a 0.6 TV reads those two and
+  would meet a card it cannot draw. A `position` counts every card of the section, so one list orders both kinds.
+- App cards belong to the TV, not the catalog (no `catalog_id`): the apps are on the TV, whatever bundle is loaded.
+- Pictures are content-addressed and public like `/assets/`: an app's banner is not secret, and the TV uploads each
+  image once for all TVs.
+- izle as the home screen is a hidden-menu switch on the TV, not an owner setting: Android asks which home app to use
+  on the TV itself anyway. A disabled activity carries the HOME filter, so an izle that is not chosen never makes
+  Android ask.
+- App pictures are kept in the database (`app_images`), not as files: `izle-server backup` then has them, and a TV
+  never uploads a picture again once its report is unchanged, so a restored server could not get them back.
+- An app card keeps its label and picture after the TV drops the app, so the picture stays until no report and no app
+  card names it (the spec said reports only).
+- `PUT …/home {"sections"}`: a deleted section's app cards go to the untitled section only when that is given with
+  `itemIds`; given with `entries`, the caller set its cards exactly, so they leave Home like the section's items.
+- TV app: the HOME filter is on `HomeActivity`, a no-display activity without task affinity that hands over to
+  MainActivity, not on an alias of MainActivity: Android starts the home activity in its home task, so a singleTask
+  MainActivity there was a second instance beside the one in front (two view models on one player and repository).
+  HOME reaches MainActivity as `onNewIntent` while it is only paused (in front) or after `onStop` (another app).
+- TV app: on the Android 16 TV emulator (Google's TV home screen), choosing izle as the default home app changes the
+  HOME role but not HOME, which still opens Google's launcher (its HOME filter has a higher priority, which wins over
+  a preferred activity); with that launcher disabled HOME, the app switch and self-updates work as specified, and the
+  launcher comes back on at reboot. The row reports what HOME really opens rather than the role.
+- TV app: after a self-update the system shows the task under izle, not its home screen; `MY_PACKAGE_REPLACED`
+  reopens izle when it is the home screen (a background start Android 10+ allows for the home app).
+- TV app: an unchanged list of apps is sent again once a day: a server that lost its pictures has no way to ask for
+  them, and its answer to a report names them again. A report counts as sent once every missing picture is uploaded.
+- TV app: app cards are keyed `app:<appId>` beside shows' item ids (item ids cannot hold a colon), so focus restore
+  and the lazy keys need no second id space.
+- Companion: an app card's picture is drawn whole in a show's poster place (36 × 54 dp, letterboxed), not cropped or
+  wider: a banner cropped to a poster loses its name, and a wider picture would push the app's title off the shows'.
+- Companion: Add show's **Apps** chip and the show kinds exclude each other (Apps lists the TV's apps, the kinds the
+  catalog; there is no list of both), and the apps are filtered on the phone as the search text changes.
+- Companion: a section entry with neither `itemId` nor `appId` (a later kind of card) is left out of the list and of
+  the positions the phone sends; a Home holding such a card may get a position one off until the phone knows it.
+- App cards are banner tiles, chosen by the owner from emulator prototypes (2026-10-27): a banner letterboxed in a
+  portrait card read as an empty slot among posters. Tiles are two poster columns wide in a section of apps only (the
+  poster's height was too big: two tiles in view) and open-card sized among shows, where a shorter centred tile broke
+  the line's edges. A tile never opens; its focus ring has a dark gap so that it shows on white banners.
+- Admin page: an app's picture is taken for its banner when it is wider than tall: the server keeps one PNG per app
+  (banner, else icon) and does not say which, and the tile draws the two differently.

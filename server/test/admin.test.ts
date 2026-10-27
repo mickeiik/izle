@@ -63,7 +63,7 @@ test("home routes: each answers version, home and sections; bodies and ids are c
   const home = (method: string, route: string, body?: unknown) => s.admin(method, `/devices/${tv.deviceId}/home${route}`, body);
   const shape = (r: Json) => [r.json.version, r.json.home.map((h: Json) => h.itemId), r.json.sections.map((x: Json) => [x.id, x.title, x.layout, x.itemIds])];
   const detail = (await s.admin("GET", `/devices/${tv.deviceId}`)).json;
-  assert.deepEqual([detail.sections, detail.sectionsMax], [[{ id: "untitled", title: null, layout: "grid", itemIds: [] }], 20]);
+  assert.deepEqual([detail.sections, detail.sectionsMax], [[{ id: "untitled", title: null, layout: "grid", itemIds: [], entries: [] }], 20]);
   const v0 = detail.device.stateVersion;
   const after = (await s.admin("GET", "/events")).json.last;
 
@@ -93,7 +93,7 @@ test("home routes: each answers version, home and sections; bodies and ids are c
     [[], []], [[], []],
   ], "every change emits home.changed and says what came and went; a section alone, nothing");
   const current = (await s.admin("GET", `/devices/${tv.deviceId}`)).json;
-  assert.deepEqual(current.sections, [{ id: "untitled", title: null, layout: "grid", itemIds: ["film", "show", "news"] }], "the device page agrees");
+  assert.deepEqual(current.sections, [{ id: "untitled", title: null, layout: "grid", itemIds: ["film", "show", "news"], entries: [{ itemId: "film" }, { itemId: "show" }, { itemId: "news" }] }], "the device page agrees");
 
   const refused: Array<[string, string, unknown, number, string]> = [
     ["POST", "/items", { itemId: "silent", position: -1 }, 400, "invalid_request"],

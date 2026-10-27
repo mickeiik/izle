@@ -95,6 +95,14 @@ class EventTextTest {
             words("""{"id":30,"type":"home.changed",$owner,"data":{"itemIds":["a","c"],"added":["c"],"removed":["b"]}}"""),
         )
         assertEquals("Home rearranged", words("""{"id":31,"type":"home.changed",$owner,"data":{"itemIds":["a"],"added":[],"removed":[]}}""")?.title)
+        // App cards: added on their own, removed together with the shows.
+        assertEquals(
+            "Home changed · +2 apps, −2",
+            words(
+                """{"id":33,"type":"home.changed",$owner,"data":{"itemIds":["a"],"added":[],"removed":["b"],
+                "appIds":["x","y"],"appsAdded":["x","y"],"appsRemoved":["z"]}}""",
+            )?.title,
+        )
         val cursor = """{"id":32,"type":"cursor.changed",$owner,"data":{"itemId":"cam","episodeId":"cam.e3"}}"""
         val catalog = EventContext(episodes = mapOf("cam.e3" to EpisodeRef("Caminandes", 1, 3, title = "Llamigos")))
         assertEquals(EventWords("Continues from S1 · E3", "Caminandes · admin page"), words(cursor, catalog))

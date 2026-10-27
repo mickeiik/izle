@@ -26,7 +26,12 @@ data class HomeGrid(
     /** A row of cards with one open, from the first card's left edge to the last one's right edge. */
     val rowWidth: Float get() = (columns - 1) * (cardWidth + GAP) + openWidth
 
+    /** Grid rows of posters only. */
     fun rowCount(count: Int): Int = (count + columns - 1) / columns
+
+    /** An app card's tile in a section of app cards only: two columns wide, 16:9 (docs/ux/senior-tv.md, "App cards"). */
+    val appTileWidth: Float get() = 2 * cardWidth + GAP
+    val appTileHeight: Float get() = appTileWidth * 9 / 16
 
     companion object {
         const val MIN_COLUMNS = 3
@@ -121,4 +126,21 @@ data class PanelFit(val nameLines: Int, val newEpisodes: Boolean, val largeChip:
             return PanelFit(lines, new, large, episode, withBar)
         }
     }
+}
+
+/**
+ * [text] in at most [maxLines] lines broken between words only (an app's name on its tile), as many words a line as
+ * [fits]; the last line takes the rest, and a word wider than a line is a line of its own (both cut with "…" when drawn).
+ */
+fun wordLines(text: String, maxLines: Int, fits: (String) -> Boolean): List<String> {
+    val words = text.split(' ').filter { it.isNotEmpty() }
+    val lines = ArrayList<String>()
+    var at = 0
+    while (at < words.size && lines.size < maxLines - 1) {
+        var line = words[at++]
+        while (at < words.size && fits(line + " " + words[at])) line += " " + words[at++]
+        lines += line
+    }
+    if (at < words.size) lines += words.subList(at, words.size).joinToString(" ")
+    return lines
 }

@@ -1,6 +1,7 @@
 import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
 import { ID_PATTERN, simplifySchemaErrors, MEDIA_KINDS } from "@izle/contract";
 import type { Context } from "hono";
+import { APP_ID, APP_ID_MAX, APP_LABEL_MAX, APPS_MAX, SHA256_HEX } from "./apps.ts";
 import { COMMAND_RESULTS, MAX_SEEK_DELTA_MS, MESSAGE_DURATION_SEC, MESSAGE_MAX_CHARS, PLAIN_COMMANDS, type CommandBody, type CommandResult } from "./commands.ts";
 import type { CompanionResolveInput, LinkInput } from "./companion.ts";
 import { LANGUAGE_TAG_PATTERN, objectSchema as object } from "./config.ts";
@@ -14,7 +15,7 @@ import { LIVE_REPORT_STATUSES, PROGRESS_REPORT_STATUSES } from "./playback.ts";
 import type { ProgressInput } from "./playing.ts";
 import { TV_PROBLEM_KINDS, type ProblemReportBody } from "./problems.ts";
 import type { ResolveInput } from "./resolve.ts";
-import type { DevicePatch } from "./store.ts";
+import type { DeviceApp, DevicePatch } from "./store.ts";
 import { SCOPES, type Scope } from "./tokens.ts";
 import { VIEWING_TRIGGERS } from "./viewings.ts";
 
@@ -68,10 +69,17 @@ const POSITION = { type: "integer", minimum: 0 };
 
 const SECTION_TITLE = { type: "string", minLength: 1, maxLength: SECTION_TITLE_MAX, pattern: "\\S" };
 const LAYOUT = { enum: SECTION_LAYOUTS };
-/** Up to 100 sections, so that a Home with too many answers `too_many_sections`. */
-const sectionList = (required: string[]) => ({
-  type: "array", maxItems: 100, items: object({ id: ID, title: { anyOf: [SECTION_TITLE, NULL] }, layout: LAYOUT, itemIds: ITEM_IDS }, required),
-});
+const APP_ID_FIELD = { type: "string", maxLength: APP_ID_MAX, pattern: APP_ID.source };
+/** A section's cards: `{"itemId"}` or `{"appId"}` each. */
+const ENTRIES = { type: "array", maxItems: 1000, items: { oneOf: [object({ itemId: ID }, ["itemId"]), object({ appId: APP_ID_FIELD }, ["appId"])] } };
+/** Up to 100 sections, so that a Home with too many answers `too_many_sections`; each gives `itemIds` or `entries`. */
+const sectionList = (required: string[]) => {
+  const fields = { id: ID, title: { anyOf: [SECTION_TITLE, NULL] }, layout: LAYOUT };
+  return {
+    type: "array", maxItems: 100,
+    items: { oneOf: [object({ ...fields, itemIds: ITEM_IDS }, [...required, "itemIds"]), object({ ...fields, entries: ENTRIES }, [...required, "entries"])] },
+  };
+};
 
 /** `PUT …/home`: the items (sections kept) or the whole Home in sections, each with `expected` in its own shape. */
 type HomeBody = { itemIds: string[]; expected?: string[] } | { sections: SectionInput[]; expected?: ExpectedSection[] };
@@ -79,12 +87,29 @@ type HomeBody = { itemIds: string[]; expected?: string[] } | { sections: Section
 export const homeBody = ajv.compile<HomeBody>({
   oneOf: [
     object({ itemIds: ITEM_IDS, expected: ITEM_IDS }, ["itemIds"]),
-    object({ sections: sectionList(["itemIds"]), expected: sectionList(["id", "itemIds"]) }, ["sections"]),
+    object({ sections: sectionList([]), expected: sectionList(["id"]) }, ["sections"]),
   ],
 });
 
 export const homeItemBody = ajv.compile<{ itemId: string; sectionId?: string; position?: number }>(
   object({ itemId: ID, sectionId: ID, position: POSITION }, ["itemId"]),
+);
+
+export const homeAppBody = ajv.compile<{ appId: string; sectionId?: string; position?: number }>(
+  object({ appId: APP_ID_FIELD, sectionId: ID, position: POSITION }, ["appId"]),
+);
+
+/** A TV's list of its apps (labels trimmed by the service). */
+export const appsBody = ajv.compile<{ apps: DeviceApp[] }>(
+  object({
+    apps: {
+      type: "array", maxItems: APPS_MAX,
+      items: object({
+        appId: APP_ID_FIELD, label: { type: "string", minLength: 1, maxLength: APP_LABEL_MAX, pattern: "\\S" },
+        image: { anyOf: [{ type: "string", pattern: SHA256_HEX.source }, NULL] },
+      }, ["appId", "label", "image"]),
+    },
+  }, ["apps"]),
 );
 
 export const homeMoveBody = ajv.compile<ItemMove>({ ...object({ position: POSITION, sectionId: ID }), minProperties: 1 });

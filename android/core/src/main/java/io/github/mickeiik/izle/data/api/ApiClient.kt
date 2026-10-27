@@ -8,8 +8,10 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
@@ -157,6 +159,28 @@ class ApiClient(
         if (raw.status == 410) return PhoneInviteStatus(PhoneInviteStatus.EXPIRED)
         if (raw.status == 404) return PhoneInviteStatus(PhoneInviteStatus.NOT_FOUND)
         return raw.decode(PhoneInviteStatus.serializer())
+    }
+
+    /** Replaces this TV's list of installed apps; `image` is sent as an explicit null when an app has none. */
+    suspend fun reportApps(apps: List<InstalledApp>): AppsReportResult {
+        val body = buildJsonObject {
+            putJsonArray("apps") {
+                for (app in apps) {
+                    addJsonObject {
+                        put("appId", app.appId)
+                        put("label", app.label)
+                        put("image", app.image)
+                    }
+                }
+            }
+        }
+        return exchange(jsonRequest(url("api/v1/tv/apps"), "PUT", body)).decode(AppsReportResult.serializer())
+    }
+
+    /** One of the pictures a report named (`204`); [png] at most 256 KiB. */
+    suspend fun uploadAppImage(sha256: String, png: ByteArray) {
+        val url = url("api/v1/tv/apps/images").newBuilder().addPathSegment(sha256).build()
+        exchange(authorize(Request.Builder().url(url).put(png.toRequestBody(PNG))).build()).requireOk()
     }
 
     suspend fun devices(): DevicesResponse = get(url("api/v1/admin/devices"), DevicesResponse.serializer())
@@ -309,6 +333,31 @@ class ApiClient(
     suspend fun removeHomeItem(deviceId: String, itemId: String): HomeChange =
         homeChange(authorize(Request.Builder().url(homeUrl(deviceId, "items").addPathSegment(itemId).build()).delete()).build())
 
+    /**
+     * Puts an app card for [appId] (an app of the TV's last report) on Home, as [addHomeItem] does a show. `400
+     * unknown_app` / `duplicate_app` / `too_many_apps`.
+     */
+    suspend fun addHomeApp(deviceId: String, appId: String, sectionId: String? = null, position: Int? = null): HomeChange {
+        val body = buildJsonObject {
+            put("appId", appId)
+            sectionId?.let { put("sectionId", it) }
+            position?.let { put("position", it) }
+        }
+        return homeChange(jsonRequest(homeUrl(deviceId, "apps").build(), "POST", body))
+    }
+
+    /** Moves an app card, as [moveHomeItem] does a show: [position] counts every card of the section. */
+    suspend fun moveHomeApp(deviceId: String, appId: String, sectionId: String? = null, position: Int? = null): HomeChange {
+        val body = buildJsonObject {
+            sectionId?.let { put("sectionId", it) }
+            position?.let { put("position", it) }
+        }
+        return homeChange(jsonRequest(homeUrl(deviceId, "apps").addPathSegment(appId).build(), "PATCH", body))
+    }
+
+    suspend fun removeHomeApp(deviceId: String, appId: String): HomeChange =
+        homeChange(authorize(Request.Builder().url(homeUrl(deviceId, "apps").addPathSegment(appId).build()).delete()).build())
+
     suspend fun addSection(deviceId: String, title: String, layout: String? = null, position: Int? = null): HomeChange {
         val body = buildJsonObject {
             put("title", title)
@@ -327,7 +376,7 @@ class ApiClient(
         return homeChange(jsonRequest(homeUrl(deviceId, "sections").addPathSegment(sectionId).build(), "PATCH", body))
     }
 
-    /** The section's shows move to the end of the untitled one. */
+    /** The section's cards move to the end of the untitled one. */
     suspend fun deleteSection(deviceId: String, sectionId: String): HomeChange =
         homeChange(authorize(Request.Builder().url(homeUrl(deviceId, "sections").addPathSegment(sectionId).build()).delete()).build())
 
@@ -547,6 +596,7 @@ class ApiClient(
 
     private companion object {
         val JSON = "application/json".toMediaType()
+        val PNG = "image/png".toMediaType()
         val EMPTY_BODY: RequestBody = ByteArray(0).toRequestBody(null)
         val SHA256 = Regex("^[0-9a-fA-F]{64}$")
         const val SLOW_CALL_MIN = 5L

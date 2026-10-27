@@ -9,8 +9,11 @@ How the owner arranges one TV's Home on the admin page (a TV's **Home screen** t
   same cards, chips, progress bars, section titles, lines and scrolling lines, scrolling as on the TV. The selected
   card is drawn open, as the TV draws the focused one.
 - Columns and rows sit above the screen; a new size is previewed before **Save grid** (or **Undo**).
-- What the TV hides (missing from the catalog, not playable) is listed under the screen, each with its section and
-  **Remove**. A section the TV does not show because nothing in it can play is drawn as its title over an empty dashed
+- What the TV hides (missing from the catalog, not playable, an [app card](#apps) whose app the TV no longer has:
+  "Not installed on this TV") is listed under the screen, each with its section and **Remove**.
+- App cards are drawn as the TV draws them ([App cards](senior-tv.md#app-cards): banner tiles, two poster columns wide
+  in a section of apps only, open-card sized among shows, never opened), from the picture the TV reported (its name in
+  its place without one); the selected tile gets the TV's focus ring. A section the TV does not show because nothing in it can play is drawn as its title over an empty dashed
   band, "Empty: not shown on the TV".
 
 ## The selected card
@@ -24,6 +27,8 @@ How the owner arranges one TV's Home on the admin page (a TV's **Home screen** t
 - **Move**: ◀ and ▶ along its section; ▲ and ▼ a row within a grid section (off at its first and last row); **Move to
   first** of its section; **Section**: the sections by title ("No title" for the untitled one), moving the card to the
   end of the chosen one. The card stays selected wherever it goes.
+- An app card's panel: where it is, "OK opens <name> on the TV", the moves and **Remove from Home** (no Play, no
+  check).
 
 ## Checks
 
@@ -56,6 +61,15 @@ A **Sections** list next to the screen (under it on a narrow page) holds the sec
   the owner picks another; the choice stays while the tab is open). The message names it: "Sintel added to Films." (or
   "added to Home." for the untitled section).
 - A show already on Home reads "On Home", whatever its section; the selected card's **Section** moves it.
+
+## Apps
+
+- **Apps on <TV>**, beside the catalog browser, lists the apps the TV reported, in its order: picture, name, and
+  **Add** (to the end of the section chosen in **Add to**, as for shows: "Weather added to Home.") or "On Home". It
+  follows the TV's reports (`device.apps`).
+- A TV that never reported: "<TV> has not listed its apps yet. Its izle app may need an update." With nothing
+  reported: "No apps to add."
+- The count next to **Check Home…** adds the app cards: "24 shows · 3 apps".
 
 ## Saving
 

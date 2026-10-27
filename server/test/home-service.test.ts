@@ -104,7 +104,7 @@ test("PUT {itemIds} keeps the sections: an item stays in its section, a new one 
   // Reordered, "film" left out, "silent" and "filler-01" new: each section follows the body's order.
   home.set(device.id, ["silent", "news", "show", "filler-01"], OWNER, ["film", "news", "show"]);
   assert.deepEqual(shape(home.sections(device.id)), [[top, "Top", "grid", ["news"]], ["untitled", null, "grid", ["silent", "show", "filler-01"]], [empty, "Empty", "row", []]]);
-  assert.deepEqual(events("home.changed").at(-1), { itemIds: ["news", "silent", "show", "filler-01"], added: ["silent", "filler-01"], removed: ["film"] });
+  assert.deepEqual(events("home.changed").at(-1), { itemIds: ["news", "silent", "show", "filler-01"], added: ["silent", "filler-01"], removed: ["film"], appIds: [], appsAdded: [], appsRemoved: [] });
   assert.throws(
     () => home.set(device.id, [], OWNER, ["silent", "news", "show", "filler-01"]),
     (err: Json) => err.status === 409 && err.code === "home_changed" && err.extra.itemIds.join() === "news,silent,show,filler-01" && err.extra.sections.length === 3,
@@ -132,11 +132,11 @@ test("PUT {sections} replaces the whole Home: new, kept and left-out sections, e
   assert.deepEqual(shape(after), [[fresh, "New", "grid", ["news"]], [a, "A2", "row", ["film"]], ["untitled", null, "row", ["show"]]],
     "a new section is grid by default, a kept one keeps its layout, B is deleted");
   assert.match(fresh, /^[A-Za-z0-9]{8}$/);
-  assert.deepEqual(events("home.changed").at(-1), { itemIds: ["news", "film", "show"], added: ["news"], removed: [] });
+  assert.deepEqual(events("home.changed").at(-1), { itemIds: ["news", "film", "show"], added: ["news"], removed: [], appIds: [], appsAdded: [], appsRemoved: [] });
 
   // A section left out takes its items off Home unless another lists them.
   home.setSections(device.id, [{ id: "untitled", title: null, itemIds: ["show", "film"] }, { id: fresh, title: "New", itemIds: [] }], OWNER);
-  assert.deepEqual(events("home.changed").at(-1), { itemIds: ["show", "film"], added: [], removed: ["news"] });
+  assert.deepEqual(events("home.changed").at(-1), { itemIds: ["show", "film"], added: [], removed: ["news"], appIds: [], appsAdded: [], appsRemoved: [] });
   const now = home.sections(device.id);
 
   const stale = (expected: object[]) => refuses(() => home.setSections(device.id, [{ id: "untitled", itemIds: [] }], OWNER, expected as never), 409, "home_changed");

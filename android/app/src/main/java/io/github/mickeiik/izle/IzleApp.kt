@@ -10,6 +10,9 @@ import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import io.github.mickeiik.izle.apps.AppsReporter
+import io.github.mickeiik.izle.apps.HomeScreenSwitch
+import io.github.mickeiik.izle.apps.TvApps
 import io.github.mickeiik.izle.data.CommandResultReporter
 import io.github.mickeiik.izle.data.ProblemReporter
 import io.github.mickeiik.izle.data.ServerRepository
@@ -24,7 +27,9 @@ import io.github.mickeiik.izle.update.AppUpdater
 import io.github.mickeiik.izle.update.PackageInstallerAppInstaller
 import io.github.mickeiik.izle.update.UpdateCapabilities
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -52,6 +57,12 @@ class AppGraph(val context: Context) {
 
     val problems = ProblemReporter(appScope, { repository.api }, SystemClock::elapsedRealtime)
     val commandResults = CommandResultReporter(appScope) { api, id, result -> api.reportCommandResult(id, result) }
+
+    val tvApps = TvApps(context)
+    val homeScreen = HomeScreenSwitch(context)
+
+    /** The installed apps, for the owner's app cards; their pictures are drawn off the main thread. */
+    val appsReporter = AppsReporter(appScope, deviceStore, { repository.api }, apps = { withContext(Dispatchers.Default) { tvApps.report() } })
 
     /** The tests put a fake here before the view model starts, and replace [mediaEngine]. */
     var installer: AppInstaller = PackageInstallerAppInstaller(context)

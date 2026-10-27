@@ -33,6 +33,8 @@ export interface Device {
   updateCapability: UpdateCapability | null;
   /** When the TV first reported the version it has now. */
   appReportedAt: number | null;
+  /** When the TV's list of installed apps last changed; null: it never sent one. */
+  appsReportedAt: number | null;
 }
 
 /** Whether the TV installs an update by itself (Android 12+) or needs the viewer. */
@@ -48,8 +50,28 @@ export interface HomeSectionRow {
   layout: string;
 }
 
+/** A card on a TV's Home: an item of the catalog, or an app card (an app of the TV, whatever catalog is loaded). */
+export type HomeCard = { itemId: string } | { appId: string };
+
 export interface HomeSectionWrite extends HomeSectionRow {
-  itemIds: string[];
+  entries: HomeCard[];
+}
+
+/** A card as stored: an item of the loaded catalog (`itemId`), or an app card (`appId`, with its last known label and picture). */
+export interface StoredHomeCard {
+  itemId: string | null;
+  appId: string | null;
+  appLabel: string | null;
+  appImage: string | null;
+  addedAt: number;
+  sectionId: string;
+}
+
+/** An app a TV can open, as its last report named it (`image`: the sha256 of its picture). */
+export interface DeviceApp {
+  appId: string;
+  label: string;
+  image: string | null;
 }
 
 export interface TvAppInfo {
@@ -511,8 +533,13 @@ export class Store {
     return this.getDevice(id);
   }
 
+  /** Deletes the device with everything stored for it, and the pictures of its apps that no other TV names. */
   deleteDevice(id: string): boolean {
-    return this.run("DELETE FROM devices WHERE id = ?", id) > 0;
+    return this.transaction(() => {
+      const deleted = this.run("DELETE FROM devices WHERE id = ?", id) > 0;
+      if (deleted) this.purgeAppImages();
+      return deleted;
+    });
   }
 
   touchDevice(id: string, now: number): void {
@@ -602,14 +629,19 @@ export class Store {
 
   // --- home ----------------------------------------------------------------------------------------------------
 
-  /** The device's home list in Home order (its sections in order, each with its items in order). */
-  getHomeEntries(deviceId: string, catalogId: string): Array<{ itemId: string; addedAt: number; sectionId: string }> {
+  /** The device's Home in Home order (its sections in order, each with its cards in order): the catalog's items and the app cards. */
+  getHomeCards(deviceId: string, catalogId: string): StoredHomeCard[] {
     return this.many(
-      `SELECT e.item_id, e.added_at, e.section_id FROM home_entries e
+      `SELECT e.item_id, e.app_id, e.app_label, e.app_image, e.added_at, e.section_id FROM home_entries e
          JOIN home_sections s ON s.device_id = e.device_id AND s.section_id = e.section_id
-       WHERE e.device_id = ? AND e.catalog_id = ? ORDER BY s.position, e.position`,
+       WHERE e.device_id = ? AND (e.catalog_id = ? OR e.app_id IS NOT NULL) ORDER BY s.position, e.position`,
       [deviceId, catalogId],
     );
+  }
+
+  /** The device's home list in Home order, its items alone. */
+  getHomeEntries(deviceId: string, catalogId: string): Array<{ itemId: string; addedAt: number; sectionId: string }> {
+    return this.getHomeCards(deviceId, catalogId).flatMap(({ itemId, addedAt, sectionId }) => (itemId === null ? [] : [{ itemId, addedAt, sectionId }]));
   }
 
   /** The sections in display order, always with the untitled one (a new TV has no row until its first write). */
@@ -619,22 +651,95 @@ export class Store {
   }
 
   /**
-   * Replaces the device's Home. Items already on it keep the date they were put there (a reorder or a move to another
+   * Replaces the device's Home. Cards already on it keep the date they were put there (a reorder or a move to another
    * section changes nothing); new ones get `now`, so episodes added before an item went on the list are not new to it.
+   * An app card keeps its label and picture; a new one takes them from the TV's last report (else its id and none).
    */
   setHome(deviceId: string, catalogId: string, sections: HomeSectionWrite[], now: number): void {
     this.transaction(() => {
-      const addedAt = new Map(this.getHomeEntries(deviceId, catalogId).map((e) => [e.itemId, e.addedAt]));
+      const before = this.getHomeCards(deviceId, catalogId);
+      const keyOf = (c: { itemId?: string | null; appId?: string | null }) => (c.itemId ? `item:${c.itemId}` : `app:${c.appId}`);
+      const addedAt = new Map(before.map((c) => [keyOf(c), c.addedAt]));
+      const known = new Map<string, { label: string; image: string | null }>(this.getDeviceApps(deviceId).map((a) => [a.appId, a]));
+      for (const c of before) if (c.appId !== null) known.set(c.appId, { label: c.appLabel ?? c.appId, image: c.appImage });
       this.run("DELETE FROM home_entries WHERE device_id = ?", deviceId);
       this.run("DELETE FROM home_sections WHERE device_id = ?", deviceId);
       const section = this.db.prepare("INSERT INTO home_sections (device_id, section_id, position, title, layout) VALUES (?, ?, ?, ?, ?)");
-      const entry = this.db.prepare("INSERT INTO home_entries (device_id, position, catalog_id, item_id, added_at, section_id) VALUES (?, ?, ?, ?, ?, ?)");
+      const entry = this.db.prepare(
+        "INSERT INTO home_entries (device_id, position, catalog_id, item_id, app_id, app_label, app_image, added_at, section_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      );
       let position = 0;
+      const images = new Set<string>();
       sections.forEach((s, i) => {
         section.run(deviceId, s.id, i, s.title, s.layout);
-        for (const itemId of s.itemIds) entry.run(deviceId, position++, catalogId, itemId, addedAt.get(itemId) ?? now, s.id);
+        for (const card of s.entries) {
+          const added = addedAt.get(keyOf(card)) ?? now;
+          if ("itemId" in card) entry.run(deviceId, position++, catalogId, card.itemId, null, null, null, added, s.id);
+          else {
+            const app = known.get(card.appId);
+            if (app?.image) images.add(app.image);
+            entry.run(deviceId, position++, null, null, card.appId, app?.label ?? card.appId, app?.image ?? null, added, s.id);
+          }
+        }
       });
+      // Only a picture an app card no longer names may have to go: most writes touch the items alone.
+      if (before.some((c) => c.appImage !== null && !images.has(c.appImage))) this.purgeAppImages();
     });
+  }
+
+  // --- installed apps ------------------------------------------------------------------------------------------
+
+  /** The apps of the TV's last report, in its order. */
+  getDeviceApps(deviceId: string): DeviceApp[] {
+    return this.many("SELECT app_id, label, image FROM device_apps WHERE device_id = ? ORDER BY position", [deviceId]);
+  }
+
+  /**
+   * Replaces the TV's list of apps and stamps it; the app cards of the apps it names take their label and picture.
+   * The pictures that no list and no app card names any more are deleted.
+   */
+  setDeviceApps(deviceId: string, apps: DeviceApp[], now: number): void {
+    this.transaction(() => {
+      this.run("DELETE FROM device_apps WHERE device_id = ?", deviceId);
+      const row = this.db.prepare("INSERT INTO device_apps (device_id, position, app_id, label, image) VALUES (?, ?, ?, ?, ?)");
+      const card = this.db.prepare("UPDATE home_entries SET app_label = ?, app_image = ? WHERE device_id = ? AND app_id = ?");
+      apps.forEach((a, i) => {
+        row.run(deviceId, i, a.appId, a.label, a.image);
+        card.run(a.label, a.image, deviceId, a.appId);
+      });
+      this.run("UPDATE devices SET apps_reported_at = ? WHERE id = ?", now, deviceId);
+      this.purgeAppImages();
+    });
+  }
+
+  /** Whether the TV's last report names the picture. */
+  deviceNamesAppImage(deviceId: string, sha256: string): boolean {
+    return this.get("SELECT 1 AS yes FROM device_apps WHERE device_id = ? AND image = ? LIMIT 1", deviceId, sha256) !== undefined;
+  }
+
+  /** Of these pictures, those stored. */
+  storedAppImages(sha256s: readonly string[]): Set<string> {
+    if (sha256s.length === 0) return new Set();
+    const rows = this.db.prepare(`SELECT sha256 FROM app_images WHERE sha256 IN (${sha256s.map(() => "?").join(", ")})`).all(...sha256s);
+    return new Set(rows.map((r) => String(r.sha256)));
+  }
+
+  /** Stores a picture (once: it is content-addressed). */
+  insertAppImage(sha256: string, png: Uint8Array, now: number): void {
+    this.run("INSERT INTO app_images (sha256, png, stored_at) VALUES (?, ?, ?) ON CONFLICT (sha256) DO NOTHING", sha256, png, now);
+  }
+
+  getAppImage(sha256: string): Uint8Array | null {
+    const png = this.get("SELECT png FROM app_images WHERE sha256 = ?", sha256)?.png;
+    return png instanceof Uint8Array ? png : null;
+  }
+
+  /** Deletes the pictures that no TV's list and no app card names. */
+  purgeAppImages(): number {
+    return this.run(
+      `DELETE FROM app_images WHERE sha256 NOT IN (SELECT image FROM device_apps WHERE image IS NOT NULL)
+         AND sha256 NOT IN (SELECT app_image FROM home_entries WHERE app_image IS NOT NULL)`,
+    );
   }
 
   // --- progress & cursor ---------------------------------------------------------------------------------------

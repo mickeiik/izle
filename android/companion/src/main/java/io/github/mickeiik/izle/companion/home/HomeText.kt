@@ -9,6 +9,7 @@ import io.github.mickeiik.izle.companion.tv.apiErrorText
 import io.github.mickeiik.izle.companion.tv.episodeName
 import io.github.mickeiik.izle.companion.tv.formatClock
 import io.github.mickeiik.izle.companion.tv.playResultText
+import io.github.mickeiik.izle.data.api.AdminApp
 import io.github.mickeiik.izle.data.api.AdminHomeEntry
 import io.github.mickeiik.izle.data.api.CatalogHit
 import io.github.mickeiik.izle.data.api.ContinueInfo
@@ -23,6 +24,19 @@ fun hiddenReason(entry: AdminHomeEntry?): Int? = when {
     entry == null || entry.missing -> R.string.home_hidden_missing
     !entry.playable -> R.string.home_hidden_unplayable
     else -> null
+}
+
+/** An app card is hidden on the TV when the TV no longer has the app (or the server names no such app). */
+fun appHidden(app: AdminApp?): Boolean = app == null || !app.installed
+
+/** What an app is called: its label, else its id. */
+fun appName(app: AdminApp?, appId: String): String = app?.label ?: appId
+
+/** The top line: "Grid 4 × 2 · 24 shows", and "· 3 apps" when Home has app cards. */
+fun summaryText(res: Resources, state: HomeState): String {
+    val shows = res.getQuantityString(R.plurals.home_shows, state.showCount, state.showCount)
+    val counts = if (state.appCount > 0) "$shows · ${res.getQuantityString(R.plurals.home_apps, state.appCount, state.appCount)}" else shows
+    return res.getString(R.string.home_summary, state.columns, state.rows, counts)
 }
 
 /** What OK does on the TV for [entry]: "Live", "Film", "S1 · E5 · continues at 12:04 of 30:10", …. */
@@ -67,6 +81,9 @@ fun errorText(res: Resources, error: HomeError, sectionsMax: Int = HomeState().s
         "duplicate_item" -> res.getString(R.string.home_error_duplicate_item)
         "unknown_item" -> res.getString(R.string.home_error_unknown_item)
         "not_playable" -> res.getString(R.string.home_error_not_playable)
+        "too_many_apps" -> res.getString(R.string.home_error_too_many_apps)
+        "duplicate_app" -> res.getString(R.string.home_error_duplicate_app)
+        "unknown_app" -> res.getString(R.string.home_error_unknown_app)
         "nothing_to_check" -> res.getString(R.string.home_error_nothing_to_check)
         "unknown_check" -> res.getString(R.string.home_error_unknown_check)
         in HomeViewModel.CHANGED_ELSEWHERE -> res.getString(R.string.home_changed_elsewhere)
