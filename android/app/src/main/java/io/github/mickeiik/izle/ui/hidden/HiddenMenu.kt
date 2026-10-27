@@ -32,6 +32,7 @@ import androidx.tv.material3.ListItemDefaults
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import io.github.mickeiik.izle.R
+import io.github.mickeiik.izle.apps.HomeScreenState
 import io.github.mickeiik.izle.data.api.EpisodeDetails
 import io.github.mickeiik.izle.domain.EpisodeNames
 import io.github.mickeiik.izle.player.TrackOption
@@ -72,6 +73,7 @@ fun HiddenMenu(
     menu: MenuUi,
     uiLanguage: String,
     uiLanguageOverride: String?,
+    homeScreen: HomeScreenState,
     about: AboutInfo,
     actions: MenuActions,
 ) {
@@ -103,11 +105,20 @@ fun HiddenMenu(
                     MenuPage.Settings -> {
                         val language = uiLanguageOverride?.let { languageLabel(it) }
                             ?: stringResource(R.string.settings_language_auto, languageLabel(uiLanguage))
+                        val homeScreenValue = stringResource(
+                            when (homeScreen) {
+                                HomeScreenState.Izle -> R.string.home_screen_izle
+                                HomeScreenState.TvOwn -> R.string.home_screen_tv_own
+                                HomeScreenState.NotChosen -> R.string.home_screen_not_chosen
+                            },
+                        )
                         val rows = listOfNotNull(
                             Triple(SettingsEntry.ServerAddress, R.string.settings_server, about.server),
                             Triple(SettingsEntry.Language, R.string.settings_language, language),
                             Triple(SettingsEntry.PairAgain, R.string.settings_pair_again, null),
                             Triple(SettingsEntry.ConnectPhone, R.string.settings_connect_phone, null),
+                            Triple(SettingsEntry.HomeScreen, R.string.settings_home_screen, homeScreenValue),
+                            Triple(SettingsEntry.TvSettings, R.string.settings_tv_settings, null),
                             // Last, so the focus never starts on it.
                             MenuPlan.installUpdateVersion(about.updateVersion, menu.fromPlayer)
                                 ?.let { Triple(SettingsEntry.InstallUpdate, R.string.settings_install_update, it) },

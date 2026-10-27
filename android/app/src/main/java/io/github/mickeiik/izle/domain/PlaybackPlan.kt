@@ -86,7 +86,10 @@ object PlaybackPlan {
 object AutoplayPlan {
     const val COUNTDOWN_SEC = 10
 
-    /** The show played last if it is still on Home, else the first tile; null when the owner has it off. */
+    /**
+     * The show played last if it is still on Home, else the first show or channel tile; null when the owner has it
+     * off. Never an app card: those are not in `home`.
+     */
     fun offer(state: TvState, lastPlayedItemId: String?): HomeEntry? {
         if (!state.device.autoplayOnStart) return null
         return state.home.firstOrNull { it.item.id == lastPlayedItemId } ?: state.home.firstOrNull()

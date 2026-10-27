@@ -22,6 +22,9 @@ data class DeviceSettings(
     val updateSilentRefused: Boolean = false,
     /** Wall clock. */
     val lastUpdateFailureAt: Long? = null,
+    /** The installed apps the server last accepted ([io.github.mickeiik.izle.apps.AppsReport.hash]), and when (wall clock). */
+    val appsReportHash: String? = null,
+    val appsReportedAt: Long? = null,
 ) {
     val isPaired: Boolean get() = serverUrl != null && deviceToken != null
 }
@@ -36,6 +39,8 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
             lastPlayedItemId = p[LAST_PLAYED_ITEM],
             updateSilentRefused = p[UPDATE_SILENT_REFUSED] ?: false,
             lastUpdateFailureAt = p[LAST_UPDATE_FAILURE],
+            appsReportHash = p[APPS_REPORT_HASH],
+            appsReportedAt = p[APPS_REPORTED_AT],
         )
     }
 
@@ -54,6 +59,9 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
             p[DEVICE_ID] = deviceId
             p[DEVICE_TOKEN] = token
             p.remove(CACHED_STATE)
+            // A new device has no list of apps on the server yet.
+            p.remove(APPS_REPORT_HASH)
+            p.remove(APPS_REPORTED_AT)
         }
     }
 
@@ -66,6 +74,8 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
         remove(DEVICE_TOKEN)
         remove(CACHED_STATE)
         remove(LAST_PLAYED_ITEM)
+        remove(APPS_REPORT_HASH)
+        remove(APPS_REPORTED_AT)
     }
 
     suspend fun setLastPlayedItem(itemId: String) {
@@ -84,6 +94,13 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { p -> if (at == null) p.remove(LAST_UPDATE_FAILURE) else p[LAST_UPDATE_FAILURE] = at }
     }
 
+    suspend fun setAppsReport(hash: String, at: Long) {
+        dataStore.edit { p ->
+            p[APPS_REPORT_HASH] = hash
+            p[APPS_REPORTED_AT] = at
+        }
+    }
+
     suspend fun cachedState(): String? = dataStore.data.first()[CACHED_STATE]
 
     suspend fun saveCachedState(json: String) {
@@ -99,5 +116,7 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
         val LAST_PLAYED_ITEM = stringPreferencesKey("last_played_item")
         val UPDATE_SILENT_REFUSED = booleanPreferencesKey("update_silent_refused")
         val LAST_UPDATE_FAILURE = longPreferencesKey("last_update_failure_at")
+        val APPS_REPORT_HASH = stringPreferencesKey("apps_report_hash")
+        val APPS_REPORTED_AT = longPreferencesKey("apps_reported_at")
     }
 }

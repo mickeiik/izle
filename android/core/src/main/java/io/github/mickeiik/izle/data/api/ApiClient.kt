@@ -8,8 +8,10 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.addJsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
@@ -157,6 +159,28 @@ class ApiClient(
         if (raw.status == 410) return PhoneInviteStatus(PhoneInviteStatus.EXPIRED)
         if (raw.status == 404) return PhoneInviteStatus(PhoneInviteStatus.NOT_FOUND)
         return raw.decode(PhoneInviteStatus.serializer())
+    }
+
+    /** Replaces this TV's list of installed apps; `image` is sent as an explicit null when an app has none. */
+    suspend fun reportApps(apps: List<InstalledApp>): AppsReportResult {
+        val body = buildJsonObject {
+            putJsonArray("apps") {
+                for (app in apps) {
+                    addJsonObject {
+                        put("appId", app.appId)
+                        put("label", app.label)
+                        put("image", app.image)
+                    }
+                }
+            }
+        }
+        return exchange(jsonRequest(url("api/v1/tv/apps"), "PUT", body)).decode(AppsReportResult.serializer())
+    }
+
+    /** One of the pictures a report named (`204`); [png] at most 256 KiB. */
+    suspend fun uploadAppImage(sha256: String, png: ByteArray) {
+        val url = url("api/v1/tv/apps/images").newBuilder().addPathSegment(sha256).build()
+        exchange(authorize(Request.Builder().url(url).put(png.toRequestBody(PNG))).build()).requireOk()
     }
 
     suspend fun devices(): DevicesResponse = get(url("api/v1/admin/devices"), DevicesResponse.serializer())
@@ -547,6 +571,7 @@ class ApiClient(
 
     private companion object {
         val JSON = "application/json".toMediaType()
+        val PNG = "image/png".toMediaType()
         val EMPTY_BODY: RequestBody = ByteArray(0).toRequestBody(null)
         val SHA256 = Regex("^[0-9a-fA-F]{64}$")
         const val SLOW_CALL_MIN = 5L

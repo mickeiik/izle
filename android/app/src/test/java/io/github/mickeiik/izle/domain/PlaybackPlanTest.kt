@@ -4,8 +4,10 @@ import io.github.mickeiik.izle.data.api.CatalogInfo
 import io.github.mickeiik.izle.data.api.ContinueInfo
 import io.github.mickeiik.izle.data.api.DeviceInfo
 import io.github.mickeiik.izle.data.api.HomeEntry
+import io.github.mickeiik.izle.data.api.HomeSectionInfo
 import io.github.mickeiik.izle.data.api.ItemCard
 import io.github.mickeiik.izle.data.api.ProgressStatus
+import io.github.mickeiik.izle.data.api.SectionEntry
 import io.github.mickeiik.izle.data.api.TvState
 import io.github.mickeiik.izle.domain.PlaybackPlan.Recovery
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -81,6 +83,17 @@ class AutoplayPlanTest {
         assertEquals("tears", AutoplayPlan.offer(home, "tears")?.item?.id)
         assertEquals("caminandes", AutoplayPlan.offer(home, null)?.item?.id)
         assertEquals("caminandes", AutoplayPlan.offer(home, "removed-by-the-owner")?.item?.id)
+    }
+
+    @Test
+    fun neverAnAppCard() {
+        val weather = SectionEntry(appId = "com.example.weather")
+        val first = state(autoplay = true, "sintel").copy(
+            homeSections = listOf(HomeSectionInfo("untitled", null, "grid", listOf("sintel"), listOf(weather, SectionEntry(itemId = "sintel")))),
+        )
+        assertEquals("sintel", AutoplayPlan.offer(first, null)?.item?.id)
+        val appsOnly = state(autoplay = true).copy(homeSections = listOf(HomeSectionInfo("untitled", null, "grid", emptyList(), listOf(weather))))
+        assertNull(AutoplayPlan.offer(appsOnly, null))
     }
 
     @Test

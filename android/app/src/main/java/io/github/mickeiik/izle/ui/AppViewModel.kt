@@ -2,10 +2,13 @@ package io.github.mickeiik.izle.ui
 
 import android.content.Intent
 import android.os.SystemClock
+import android.provider.Settings
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.mickeiik.izle.AppGraph
 import io.github.mickeiik.izle.BuildConfig
+import io.github.mickeiik.izle.apps.AppPicture
+import io.github.mickeiik.izle.apps.HomeScreenState
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.AvailableUpdate
 import io.github.mickeiik.izle.data.api.CommandResult
@@ -18,6 +21,7 @@ import io.github.mickeiik.izle.data.api.TvState
 import io.github.mickeiik.izle.data.api.orNullOnFailure
 import io.github.mickeiik.izle.domain.AutoplayPlan
 import io.github.mickeiik.izle.domain.ChannelZap
+import io.github.mickeiik.izle.domain.HomeTile
 import io.github.mickeiik.izle.domain.PlayableRef
 import io.github.mickeiik.izle.domain.PlaybackOrigin
 import io.github.mickeiik.izle.domain.Problems
@@ -73,7 +77,14 @@ enum class SetupError { Invalid, Unreachable }
 
 data class SetupUi(val address: String = "", val busy: Boolean = false, val error: SetupError? = null)
 
-enum class HomeMessage { NoConnection }
+/** A short, large message over Home for 5 s: OK while offline, or an app card whose app would not open. */
+sealed interface HomeMessage {
+    data object NoConnection : HomeMessage
+    data class CannotOpen(val name: String) : HomeMessage
+}
+
+/** Something the activity starts over the app; the first of [intents] that starts wins, none: [onFailed]. */
+class Launch(val intents: List<Intent>, val onFailed: () -> Unit = {})
 
 data class AboutInfo(
     val appVersion: String,
@@ -139,8 +150,11 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         onPlaybackStarted = { item -> graph.appScope.launch { store.setLastPlayedItem(item.id) } },
     )
 
-    /** The tile that should take focus when Home appears (the last one played, else the last focused). */
-    var homeFocusItemId: String? = null
+    /**
+     * The tile that should take focus when Home appears (the last one played or opened, else the last focused), by
+     * its [HomeTile.key].
+     */
+    var homeFocusKey: String? = null
         private set
 
     private var serverUrl: HttpUrl? = null
@@ -157,6 +171,9 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     /** Armed on coming to the front on Home: the first state fetched then decides; anything the viewer does disarms it. */
     private var autoplayArmed = false
+
+    /** An app card opened its app: coming back from it never offers autoplay. */
+    private var openedApp = false
 
     /** Key presses so far, to notice one that happens while autoplay reads the last played show. */
     private var keyPresses = 0L
@@ -176,10 +193,18 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     private var confirming = false
     private var autoUpdateJob: Job? = null
 
-    private val _launchIntents = Channel<Intent>(Channel.BUFFERED)
+    private val _launches = Channel<Launch>(Channel.BUFFERED)
 
-    /** The system's Install dialog of a guided update, for the activity to start. */
-    val launchIntents: Flow<Intent> = _launchIntents.receiveAsFlow()
+    /** The system's Install dialog of a guided update, an app a card opens, TV settings: for the activity to start. */
+    val launches: Flow<Launch> = _launches.receiveAsFlow()
+
+    private val _homeScreen = MutableStateFlow(HomeScreenState.TvOwn)
+
+    /** Hidden menu → Settings → Home screen, read anew when the app comes to the front and when the row is used. */
+    val homeScreen: StateFlow<HomeScreenState> = _homeScreen.asStateFlow()
+
+    /** Changes when an app is installed, updated or removed: Home's app cards are looked up again. */
+    val appsVersion: StateFlow<Int> = graph.tvApps.changes
 
     /** An update and whom to tell what became of it; [committing]: the result went out, no backing out. */
     private class UpdateRequest(val update: AvailableUpdate, val commandId: Long?, val api: ApiClient?, val report: (CommandResult) -> Unit) {
@@ -216,14 +241,25 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         // The "install unknown apps" grant may have changed while the app was away.
         updater.refreshCapability()
         startAutoUpdates()
-        // Not when back from the system's Install dialog.
-        autoplayArmed = !confirming && (_screen.value == Screen.Home || _screen.value == Screen.Starting)
+        // Not when back from the system's Install dialog, nor from an app a card opened.
+        autoplayArmed = !confirming && !openedApp && (_screen.value == Screen.Home || _screen.value == Screen.Starting)
+        openedApp = false
+        refreshHomeScreen()
+        graph.appsReporter.reportSoon()
         when (_screen.value) {
             // On the server address screen too: Back from there returns to a live Home.
             Screen.Home, Screen.Player, is Screen.Setup, is Screen.Update, is Screen.ConnectPhone -> repository.start()
             Screen.Pairing -> if (pairingJob?.isActive != true) startPairing()
             Screen.Starting -> Unit
         }
+    }
+
+    /**
+     * In front again, [onForeground] first when the app had stopped. An app a card opened that only covered izle in
+     * part (TV settings is a side panel) never stopped it: its mark goes here.
+     */
+    fun onResumed() {
+        openedApp = false
     }
 
     /** HOME or standby: the player is released, the app comes back on Home (but "Updating…" waits for the Install dialog). */
@@ -273,7 +309,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             player.showInfo()
             return CommandResult.ignored(CommandResult.NO_CHANNEL)
         }
-        homeFocusItemId = next.item.id
+        homeFocusKey = next.item.id
         player.play(PlayableRef.Channel(next.item.id), origin, hint = next.item)
         return CommandResult.Done
     }
@@ -337,10 +373,12 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         enter(url, store.current().deviceToken)
     }
 
-    /** With this device's token for [url]: its Home; without one: a pairing code. */
+    /** With this device's token for [url]: its Home (and its apps reported); without one: a pairing code. */
     private suspend fun enter(url: HttpUrl, token: String?) {
         repository.use(token?.let { graph.apiClient(url, it) })
-        if (token != null) showHome() else showPairing()
+        if (token == null) return showPairing()
+        showHome()
+        graph.appsReporter.reportSoon()
     }
 
     private fun showSetup(canGoBack: Boolean) {
@@ -372,7 +410,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         pairingJob = viewModelScope.launch {
             PairingLoop.run(api, _pairing) { deviceId, deviceToken ->
                 store.savePairing(deviceId, deviceToken)
-                homeFocusItemId = null
+                homeFocusKey = null
                 enter(url, deviceToken)
             }
         }
@@ -387,11 +425,61 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         showPairing()
     }
 
-    fun onTileFocused(itemId: String) {
-        homeFocusItemId = itemId
+    /** [key]: the tile's [HomeTile.key]. */
+    fun onTileFocused(key: String) {
+        homeFocusKey = key
     }
 
     fun onTileClicked(entry: HomeEntry) = playTile(entry, PlaybackOrigin.Viewer)
+
+    /** OK on an app card: its app, offline too; when it will not open, "Can't open <name>" and Home stays. */
+    fun onAppClicked(app: HomeTile.App) {
+        homeFocusKey = app.key
+        clearAutoplay()
+        val cannotOpen = { homeMessages.show(HomeMessage.CannotOpen(app.label), forMs = 5_000) }
+        val intent = graph.tvApps.launchIntent(app.appId) ?: return cannotOpen()
+        openedApp = true
+        _launches.trySend(
+            Launch(listOf(intent)) {
+                openedApp = false
+                cannotOpen()
+            },
+        )
+    }
+
+    /** An app card's app as this TV has it now (name and launch entry), or null: the card is left out. */
+    fun appCard(appId: String): HomeTile.App? = graph.tvApps.card(appId)
+
+    fun appPicture(appId: String): AppPicture? = graph.tvApps.picture(appId)
+
+    /** An app was installed, updated or removed while izle runs (Home asks [io.github.mickeiik.izle.apps.TvApps] again by itself). */
+    fun onPackagesChanged() = graph.appsReporter.reportSoon()
+
+    /** TV settings, on the address screen and in the hidden menu: Android's settings app, in its own task. */
+    fun openTvSettings() {
+        _launches.trySend(Launch(listOf(Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))))
+    }
+
+    fun refreshHomeScreen() {
+        _homeScreen.value = graph.homeScreen.state()
+    }
+
+    /**
+     * HOME while izle is the TV's home screen and in front: Back towards Home, all the way (docs/ux/senior-tv.md,
+     * "Home screen"). Coming from the background it finds Home already ([onBackground]), and leaves autoplay on start
+     * armed.
+     */
+    fun onHomeButton() {
+        if (_autoplay.value != null) cancelAutoplay()
+        closeMenu(resume = false)
+        when (_screen.value) {
+            Screen.Player -> player.exit()
+            // The system's Install dialog answers for itself; an install under way goes on (endUpdateScreen).
+            is Screen.Update -> if (!confirming) leaveUpdateScreen()
+            is Screen.ConnectPhone -> leaveConnectPhone()
+            Screen.Home, Screen.Starting, Screen.Pairing, is Screen.Setup -> Unit
+        }
+    }
 
     /** OK on a tile, or autoplay on start: the show's `continue` episode, or the channel at its live edge. */
     private fun playTile(entry: HomeEntry, origin: PlaybackOrigin) {
@@ -401,13 +489,18 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             return
         }
         val ref = PlayableRef.of(entry) ?: return
-        homeFocusItemId = entry.item.id
+        homeFocusKey = entry.item.id
         startPlayback(ref, origin, startAtMs = null, hint = entry.item)
     }
 
     private fun homeEntry(itemId: String?): HomeEntry? = state.value?.home?.firstOrNull { it.item.id == itemId }
 
-    private fun focusedEntry(): HomeEntry? = homeEntry(homeFocusItemId) ?: state.value?.home?.firstOrNull()
+    /** The show the focus is on; none on an app card, whose hidden menu has only the entries shown always. */
+    private fun focusedEntry(): HomeEntry? {
+        val key = homeFocusKey
+        if (key != null && HomeTile.isAppKey(key)) return null
+        return homeEntry(key) ?: state.value?.home?.firstOrNull()
+    }
 
     /** A state fetched from the server (never the offline cache): the first one after coming to the front decides. */
     private fun onFreshState(state: TvState) {
@@ -428,7 +521,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     private fun startAutoplay(offered: HomeEntry) {
         val itemId = offered.item.id
-        homeFocusItemId = itemId
+        homeFocusKey = itemId
         autoplayJob?.cancel()
         autoplayJob = viewModelScope.launch {
             countDown(AutoplayPlan.COUNTDOWN_SEC) { left ->
@@ -448,7 +541,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     /** Back, "Not now" or any other key: the viewer stays on Home, with the focus on the offered show. */
     fun cancelAutoplay() {
-        homeFocusItemId = endAutoplay() ?: return
+        homeFocusKey = endAutoplay() ?: return
     }
 
     /** Takes the countdown away: the offered show's id, or null when none shows. */
@@ -490,7 +583,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         for (action in actions) {
             when (action) {
                 is CommandPlan.Action.Play -> with(action.command) {
-                    itemId?.let { homeFocusItemId = it }
+                    itemId?.let { homeFocusKey = it }
                     startPlayback(ref, origin, positionMs, homeEntry(itemId)?.item, playCommand = true)
                 }
                 CommandPlan.Action.Exit -> player.exit()
@@ -699,7 +792,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         // Any later answer means the dialog is gone (or never came).
         confirming = status is InstallStatus.NeedsConfirmation
         when (status) {
-            is InstallStatus.NeedsConfirmation -> _launchIntents.trySend(status.intent)
+            is InstallStatus.NeedsConfirmation -> _launches.trySend(Launch(listOf(status.intent), ::onLaunchFailed))
             InstallStatus.SilentRefused, InstallStatus.Succeeded -> if (showing != null) showHome()
             is InstallStatus.Failed -> if (showing != null) {
                 if (status.aborted) showHome() else showUpdateFailed(showing.versionName)
@@ -708,7 +801,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     }
 
     /** The system's Install dialog could not be opened. */
-    fun onLaunchFailed() {
+    private fun onLaunchFailed() {
         confirming = false
         (_screen.value as? Screen.Update)?.let { showUpdateFailed(it.ui.versionName) }
     }
@@ -765,7 +858,10 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             }
             RootEntry.Audio -> push(MenuPage.Audio(player.audioTracks()))
             RootEntry.Subtitles -> push(MenuPage.Subtitles(player.textTracks()))
-            RootEntry.Settings -> push(MenuPage.Settings)
+            RootEntry.Settings -> {
+                refreshHomeScreen()
+                push(MenuPage.Settings)
+            }
             RootEntry.About -> push(MenuPage.About)
         }
     }
@@ -773,7 +869,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     fun onEpisodeChosen(episode: EpisodeDetails) {
         val menu = _menu.value ?: return
         if (!episode.playbackAllowed) return
-        menu.item?.let { homeFocusItemId = it.id }
+        menu.item?.let { homeFocusKey = it.id }
         startPlayback(PlayableRef.Episode(episode.id), PlaybackOrigin.Viewer, startAtMs = null, hint = menu.item)
     }
 
@@ -805,6 +901,17 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             }
             SettingsEntry.PairAgain -> viewModelScope.launch { pairAgain() }
             SettingsEntry.ConnectPhone -> showConnectPhone()
+            SettingsEntry.HomeScreen -> {
+                refreshHomeScreen()
+                if (_homeScreen.value == HomeScreenState.TvOwn) {
+                    val intents = graph.homeScreen.turnOn()
+                    if (intents.isNotEmpty()) _launches.trySend(Launch(intents))
+                } else {
+                    graph.homeScreen.turnOff()
+                }
+                refreshHomeScreen()
+            }
+            SettingsEntry.TvSettings -> openTvSettings()
             SettingsEntry.InstallUpdate -> {
                 // Never over the player (the row is not offered there): the video goes on.
                 if (_screen.value == Screen.Player || player.inUse) return closeMenu(resume = true)

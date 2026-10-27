@@ -23,19 +23,27 @@ data class TvState(
     val homeSections: List<HomeSectionInfo> = emptyList(),
 )
 
-/** [layout] `grid` or `row` (any other value is a grid); [itemIds]: entries of `home`, in order. */
+/**
+ * [layout] `grid` or `row` (any other value is a grid); [itemIds]: entries of `home`, in order; [entries]: all of its
+ * cards in order, app cards included (empty from a server without app cards).
+ */
 @Serializable
 data class HomeSectionInfo(
     val id: String,
     val title: String? = null,
     val layout: String = LAYOUT_GRID,
     val itemIds: List<String> = emptyList(),
+    val entries: List<SectionEntry> = emptyList(),
 ) {
     companion object {
         const val LAYOUT_GRID = "grid"
         const val LAYOUT_ROW = "row"
     }
 }
+
+/** A card of a section: an entry of `home` ([itemId]) or an app card ([appId]); neither: a later kind, skipped. */
+@Serializable
+data class SectionEntry(val itemId: String? = null, val appId: String? = null)
 
 /** `homeColumns` × `homeRows`: the cards one screen of Home shows, clamped by [io.github.mickeiik.izle.ui.home.HomeGrid]. */
 @Serializable
@@ -294,6 +302,14 @@ data class PairWait(val status: String, val deviceId: String? = null, val device
 /** The TV app version the server offers (`GET /tv/app`). [auto]: the owner lets TVs install it by themselves. */
 @Serializable
 data class AvailableUpdate(val versionName: String, val versionCode: Long, val sha256: String, val size: Long, val auto: Boolean = true)
+
+/** An app of `PUT /tv/apps` (an app id is a package name); [image]: the lowercase hex SHA-256 of its picture's PNG, or null. */
+@Serializable
+data class InstalledApp(val appId: String, val label: String, val image: String?)
+
+/** `PUT /tv/apps`: the pictures the server does not have yet, for `PUT /tv/apps/images/:sha256`. */
+@Serializable
+data class AppsReportResult(val missingImages: List<String> = emptyList())
 
 /**
  * `GET /admin/devices`: one TV; `status` `pending` or `active`. [settings]: the stored values (null = default),
