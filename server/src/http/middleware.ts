@@ -63,6 +63,7 @@ function requiredScope(method: string, route: string): Required {
 const ADMIN_AUTH_MAX_FAILURES = 10;
 const ADMIN_AUTH_WINDOW_MS = 10 * 60_000;
 const API_BODY_LIMIT = 64 * 1024;
+const DRAIN_MAX_BYTES = 1024 * 1024;
 /** The APK upload streams and caps its own body. */
 const LARGE_BODY_ROUTE = "/api/v1/admin/app/apk";
 /** An app's picture is a PNG of its own size limit. */
@@ -107,7 +108,23 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
     await next();
     if (!c.res.headers.has("Cache-Control")) c.header("Cache-Control", "no-store");
   });
-  const tooLarge = (c: Context) => c.json({ error: "body_too_large" }, 413);
+  // A body refused by its Content-Length is read and dropped (up to 1 MiB) before the answer: closing the connection
+  // on a client still sending makes it fail with a reset instead of reading the 413.
+  const tooLarge = async (c: Context) => {
+    const body = c.req.raw.body;
+    if (body && !body.locked) {
+      const reader = body.getReader();
+      try {
+        for (let read = 0; read <= DRAIN_MAX_BYTES; ) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          read += value.byteLength;
+        }
+      } catch { /* the client went away */ }
+      void reader.cancel().catch(() => {});
+    }
+    return c.json({ error: "body_too_large" }, 413);
+  };
   const apiBodyLimit = bodyLimit({ maxSize: API_BODY_LIMIT, onError: tooLarge });
   const imageBodyLimit = bodyLimit({ maxSize: APP_IMAGE_MAX_BYTES, onError: tooLarge });
   app.use("/api/*", (c, next) => {

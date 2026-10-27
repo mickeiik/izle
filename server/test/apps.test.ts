@@ -130,6 +130,7 @@ test("pictures: a PNG a report of this TV names, checked and stored once, served
     [w, images.weather, "application/octet-stream", 400, "invalid_image"],
     [w, new Uint8Array(0), undefined, 400, "invalid_image"],
     [w, Buffer.concat([PNG_SIGNATURE, Buffer.alloc(APP_IMAGE_MAX_BYTES)]), undefined, 413, "body_too_large"],
+    [w, Buffer.alloc(4 * APP_IMAGE_MAX_BYTES), undefined, 413, "body_too_large"],
     [w.toUpperCase(), images.weather, undefined, 404, "not_found"],
     ["..%2F..%2Fizle.db", images.weather, undefined, 404, "not_found"],
   ];
