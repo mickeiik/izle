@@ -2,9 +2,11 @@ package io.github.mickeiik.izle.data.api
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
-// The admin routes of a TV's page in the companion app (docs/spec/server-api-v1.md, "Devices", "Home list changes",
-// "Home sections", "Catalog", "Events"). Same rules as Models.kt: unknown keys ignored, a default for what can be absent.
+// The admin routes of a TV's page in the companion app (docs/spec/server-api-v1.md, "Pairing", "Devices", "Problem
+// reports", "Home list changes", "Home sections", "Catalog", "Status", "Events"). Same rules as Models.kt: unknown
+// keys ignored, a default for what can be absent.
 
 /** `effective` of an admin device: the settings the TV runs with (the server's defaults and the catalog's hints applied). */
 @Serializable
@@ -20,6 +22,127 @@ data class DeviceEffective(
 /** `problems` of an admin device: how many reports came in recently, and when the last one did. */
 @Serializable
 data class DeviceProblems(val recent: Int = 0, val lastAt: String? = null)
+
+/** `settings` of an admin device: the values stored for this TV, null where it follows the default ([DeviceEffective] has the result). */
+@Serializable
+data class DeviceSettings(
+    val uiLanguage: String? = null,
+    val preferredAudioLanguage: String? = null,
+    val subtitlesLanguage: String? = null,
+    val autoplayOnStart: Boolean? = null,
+    val homeColumns: Int? = null,
+    val homeRows: Int? = null,
+)
+
+/**
+ * `app` of an admin device, as the TV's User-Agent last reported it (each null until it does): [capability] `silent` or
+ * `guided`; [update] `unknown`, `up_to_date`, `pending` (it installs by itself) or `needs_install_now` (send `update`).
+ */
+@Serializable
+data class DeviceApp(
+    val version: String? = null,
+    val versionCode: Long? = null,
+    val androidSdk: Int? = null,
+    val capability: String? = null,
+    val reportedAt: String? = null,
+    val update: String = UPDATE_UNKNOWN,
+) {
+    companion object {
+        const val CAPABILITY_SILENT = "silent"
+        const val CAPABILITY_GUIDED = "guided"
+        const val UPDATE_UNKNOWN = "unknown"
+        const val UPDATE_UP_TO_DATE = "up_to_date"
+        const val UPDATE_PENDING = "pending"
+        const val UPDATE_NEEDS_INSTALL_NOW = "needs_install_now"
+    }
+}
+
+/**
+ * A change to a TV's settings (`PATCH admin/devices/:id`): null fields stay as they are and are not sent. The language
+ * settings take a [SetTo], whose null value resets them (default UI language, the server's audio, subtitles off).
+ */
+data class DeviceChange(
+    val name: String? = null,
+    val uiLanguage: SetTo<String?>? = null,
+    val preferredAudioLanguage: SetTo<String?>? = null,
+    val subtitlesLanguage: SetTo<String?>? = null,
+    val autoplayOnStart: Boolean? = null,
+    val homeColumns: Int? = null,
+    val homeRows: Int? = null,
+)
+
+/** The new value of a setting that may be set to null. */
+data class SetTo<out T>(val value: T)
+
+/**
+ * A problem of a TV (the spec's `Problem`): [origin] `tv` or `server`; [kind] `playback`, `resolve`, `proxy`, `network`
+ * or `other`; [at] when it happened. Titles come from the current catalog; [missing] (and null titles) when the episode,
+ * or a channel's item, is not in it (any more).
+ */
+@Serializable
+data class Problem(
+    val id: Long,
+    val at: String? = null,
+    val origin: String = ORIGIN_TV,
+    val kind: String = "",
+    val code: String = "",
+    val itemId: String? = null,
+    val itemTitle: String? = null,
+    val itemKind: String? = null,
+    val episodeId: String? = null,
+    val episodeTitle: String? = null,
+    val season: Int? = null,
+    val number: Int? = null,
+    val sourceId: String? = null,
+    val positionMs: Long? = null,
+    val httpStatus: Int? = null,
+    val detail: String? = null,
+    val appVersion: String? = null,
+    val missing: Boolean = false,
+) {
+    companion object {
+        const val ORIGIN_TV = "tv"
+        const val ORIGIN_SERVER = "server"
+    }
+}
+
+/** An open pairing code (`GET admin/pair/pending`); [approved]: approved, the TV has not collected its token yet. */
+@Serializable
+data class PendingCode(val code: String, val createdAt: String? = null, val expiresAt: String? = null, val approved: Boolean = false)
+
+/** `POST admin/pair/approve`: the device the code pairs (the replaced one's id and name with `replaces`). */
+@Serializable
+data class ApprovedPairing(val deviceId: String, val name: String)
+
+/**
+ * `GET admin/status`: every active TV in one call; [lastEventId] was read first, so the events after it miss nothing.
+ * A device's [StatusDevice.nowPlaying] is set while its viewing runs.
+ */
+@Serializable
+data class AdminStatus(
+    val serverNowMs: Long = 0,
+    val server: ServerInfo? = null,
+    val catalog: StatusCatalog? = null,
+    val pairing: StatusPairing = StatusPairing(),
+    val devices: List<StatusDevice> = emptyList(),
+    val lastEventId: Long = 0,
+)
+
+@Serializable
+data class StatusCatalog(val id: String, val buildId: String)
+
+/** [pending]: open pairing codes. */
+@Serializable
+data class StatusPairing(val pending: Int = 0)
+
+@Serializable
+data class StatusDevice(
+    val id: String,
+    val name: String,
+    val online: Boolean = false,
+    val lastSeenAt: String? = null,
+    val nowPlaying: NowPlaying? = null,
+)
 
 /** A Home section; [id] is `untitled` for the one without a title (always there). [layout] `grid` or `row`. */
 @Serializable
@@ -422,9 +545,37 @@ data class PlayableReport(
     val sources: List<SourceReport> = emptyList(),
 )
 
-/** An event of the admin log (`home.changed`, `cursor.changed`, …); the app only reacts to its [type]. */
+/** An event of the admin log (`home.changed`, `cursor.changed`, …): who caused it ([actor]) and its type's [data]. */
 @Serializable
-data class AdminEvent(val id: Long, val type: String, val at: String? = null, val deviceId: String? = null)
+data class AdminEvent(
+    val id: Long,
+    val type: String,
+    val at: String? = null,
+    val deviceId: String? = null,
+    val actor: EventActor? = null,
+    val data: JsonObject = JsonObject(emptyMap()),
+)
+
+/**
+ * Who caused an event: [type] `owner`, `phone` ([phoneId], [name] at that moment), `token` ([tokenId], [name]), `tv`
+ * ([deviceId]) or `server`; a type the app does not know is kept as it came.
+ */
+@Serializable
+data class EventActor(
+    val type: String = "",
+    val phoneId: String? = null,
+    val tokenId: String? = null,
+    val name: String? = null,
+    val deviceId: String? = null,
+) {
+    companion object {
+        const val OWNER = "owner"
+        const val PHONE = "phone"
+        const val TOKEN = "token"
+        const val TV = "tv"
+        const val SERVER = "server"
+    }
+}
 
 /** `GET admin/events`: oldest first; [last] is where to follow on from; [gap]: events were lost, reload. */
 @Serializable
@@ -484,6 +635,12 @@ data class CheckRun(
 
 @Serializable
 internal data class DeviceUpdated(val device: AdminDevice)
+
+@Serializable
+internal data class ProblemsResponse(val problems: List<Problem> = emptyList())
+
+@Serializable
+internal data class PendingCodesResponse(val codes: List<PendingCode> = emptyList())
 
 @Serializable
 internal data class CommandResponse(val command: CommandInfo)

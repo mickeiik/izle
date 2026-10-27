@@ -3,6 +3,7 @@ package io.github.mickeiik.izle.data.api
 import io.github.mickeiik.izle.json
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonArray
 import mockwebserver3.MockWebServer
 import mockwebserver3.RecordedRequest
 import okhttp3.OkHttpClient
@@ -360,8 +361,21 @@ class AdminApiTest {
         assertEquals("tv-1,tv-2", request.url.queryParameter("devices"))
         assertEquals(812L, page.last)
         assertTrue(page.gap)
-        assertEquals(AdminEvent(811, "home.changed", "2026-10-27T10:00:00.000Z", "tv-1"), page.events[0])
-        assertNull(page.events[1].deviceId)
+        val home = page.events[0]
+        assertEquals(811L, home.id)
+        assertEquals("home.changed", home.type)
+        assertEquals("2026-10-27T10:00:00.000Z", home.at)
+        assertEquals("tv-1", home.deviceId)
+        assertEquals(EventActor(EventActor.PHONE, phoneId = "ph-1", name = "Pixel"), home.actor)
+        assertEquals(JsonPrimitive("film-1"), home.data["added"]?.jsonArray?.single())
+        val reload = page.events[1]
+        assertNull(reload.deviceId)
+        assertEquals(EventActor(EventActor.SERVER), reload.actor)
+        assertTrue(reload.data.isEmpty())
+        // A type the app does not know is kept; an event without actor or data still decodes.
+        assertEquals(EventActor("robot"), page.events[2].actor)
+        assertNull(page.events[3].actor)
+        assertTrue(page.events[3].data.isEmpty())
 
         // Without a cursor: where to follow from. No filters, no `after`.
         val start = client().adminEvents(after = null)
@@ -369,6 +383,7 @@ class AdminApiTest {
         assertNull(first.queryParameter("after"))
         assertNull(first.queryParameter("types"))
         assertNull(first.queryParameter("devices"))
+        assertNull(first.queryParameter("limit"))
         assertEquals("0", first.queryParameter("wait"))
         assertEquals(812L, start.last)
         assertFalse(start.gap)
@@ -399,8 +414,11 @@ class AdminApiTest {
             "total":120,"offset":50}"""
 
         const val EVENTS = """{"events":[
-            {"id":811,"at":"2026-10-27T10:00:00.000Z","type":"home.changed","deviceId":"tv-1","actor":{"kind":"phone"},"data":{"version":7}},
-            {"id":812,"at":"2026-10-27T10:00:01.000Z","type":"catalog.reloaded","deviceId":null,"actor":{"kind":"system"},"data":{}}],
+            {"id":811,"at":"2026-10-27T10:00:00.000Z","type":"home.changed","deviceId":"tv-1","actor":{"type":"phone","phoneId":"ph-1","name":"Pixel"},
+             "data":{"itemIds":["film-1"],"added":["film-1"],"removed":[]}},
+            {"id":812,"at":"2026-10-27T10:00:01.000Z","type":"catalog.reloaded","deviceId":null,"actor":{"type":"server"},"data":{}},
+            {"id":813,"at":"2026-10-27T10:00:02.000Z","type":"device.online","deviceId":"tv-1","actor":{"type":"robot","arm":2},"data":{}},
+            {"id":814,"type":"future.thing"}],
             "last":812,"gap":true}"""
     }
 }
