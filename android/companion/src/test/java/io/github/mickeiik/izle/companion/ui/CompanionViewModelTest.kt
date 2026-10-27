@@ -707,6 +707,14 @@ class CompanionViewModelTest {
 
         vm.selectTab(TvTab.Home)
         assertEquals(TvTab.Home, (vm.ui.value as CompanionUi.Tv).tab)
+        // A show's page over the Catalog tab: its title is read for the bar; Back closes it.
+        vm.selectTab(TvTab.Catalog)
+        vm.openShow("show")
+        assertEquals("show", (vm.ui.value as CompanionUi.Tv).openShow)
+        waitUntil("the show's title") { (vm.ui.value as CompanionUi.Tv).openShowTitle == "Show" }
+        vm.closeShow()
+        assertEquals(null, (vm.ui.value as CompanionUi.Tv).openShow)
+        assertEquals(TvTab.Catalog, (vm.ui.value as CompanionUi.Tv).tab)
         vm.selectTab(TvTab.Now)
         settle()
         val gets = count(COMPANION)

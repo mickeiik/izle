@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The Catalog tab of a TV's page (docs/ux/companion-catalog.md) -->
+    <string name="tab_catalog">Catalog</string>
+    <string name="clear">Clear</string>
+    <string name="catalog_search">Search the catalog</string>
+    <string name="catalog_filter_new">New</string>
+    <string name="catalog_filter_not_on_home">Not on Home</string>
+    <string name="catalog_options">Catalog options</string>
+    <string name="catalog_sort">Sort</string>
+    <string name="catalog_sort_title">Title</string>
+    <string name="catalog_sort_newest">Newest</string>
+    <string name="catalog_sort_year">Year</string>
+    <plurals name="catalog_shows">
+        <item quantity="one">%d show</item>
+        <item quantity="other">%d shows</item>
+    </plurals>
+    <plurals name="catalog_episodes">
+        <item quantity="one">%d episode</item>
+        <item quantity="other">%d episodes</item>
+    </plurals>
+    <plurals name="catalog_films">
+        <item quantity="one">%d film</item>
+        <item quantity="other">%d films</item>
+    </plurals>
+    <plurals name="catalog_channels">
+        <item quantity="one">%d channel</item>
+        <item quantity="other">%d channels</item>
+    </plurals>
+    <plurals name="catalog_sources">
+        <item quantity="one">%d source</item>
+        <item quantity="other">%d sources</item>
+    </plurals>
+    <plurals name="catalog_new">
+        <item quantity="one">%d new</item>
+        <item quantity="other">%d new</item>
+    </plurals>
+    <string name="catalog_kind_film">Film</string>
+    <string name="catalog_kind_series">Series</string>
+    <string name="catalog_kind_channel">Channel</string>
+    <string name="catalog_on_home">On Home</string>
+    <string name="catalog_nothing_matches">Nothing matches.</string>
+    <string name="catalog_all_on_home">Everything that matches is on Home already.</string>
+    <string name="catalog_load_failed">The catalog could not be searched: %s</string>
+
+    <!-- Reload and About -->
+    <string name="catalog_reload">Reload catalog</string>
+    <string name="catalog_reloading">Reloading the catalog on the server…</string>
+    <string name="catalog_reloaded">Catalog reloaded: build %s. Every TV refreshes its Home.</string>
+    <plurals name="catalog_reload_refused">
+        <item quantity="one">The catalog has %d problem; the one loaded before stays.</item>
+        <item quantity="other">The catalog has %d problems; the one loaded before stays.</item>
+    </plurals>
+    <string name="catalog_reload_refused_none">The catalog on the server is invalid; the one loaded before stays.</string>
+    <string name="catalog_about">About the catalog</string>
+    <string name="catalog_about_name">Name</string>
+    <string name="catalog_about_id">Catalog id</string>
+    <string name="catalog_about_build">Build</string>
+    <string name="catalog_about_built">Built</string>
+    <string name="catalog_about_loaded">Loaded</string>
+    <string name="catalog_about_contents">Contents</string>
+    <string name="catalog_about_resolver">Resolver</string>
+    <string name="catalog_about_server">Server</string>
+    <string name="catalog_about_warnings">Warnings</string>
+    <string name="catalog_contents">%1$s (%2$s, %3$d series, %4$s) · %5$s, %6$d playable · %7$s</string>
+    <string name="catalog_resolver_provides">provides %s</string>
+    <string name="catalog_resolver_nothing">provides nothing</string>
+    <string name="catalog_resolver_none">none configured</string>
+    <string name="catalog_server_version">izle-server %s</string>
+    <string name="catalog_unknown">unknown</string>
+    <string name="catalog_no_warnings">none</string>
+    <string name="ok">OK</string>
+
+    <!-- What's new -->
+    <string name="whats_new">What\'s new</string>
+    <string name="whats_new_refresh">Refresh</string>
+    <string name="whats_new_first_loaded">First loaded</string>
+    <string name="whats_new_nothing_added">nothing added</string>
+    <string name="whats_new_build">Build %1$s · loaded %2$s</string>
+    <string name="whats_new_unchanged">This build changed nothing.</string>
+    <string name="whats_new_new_shows">New shows</string>
+    <string name="whats_new_new_episodes">New episodes</string>
+    <string name="whats_new_gone">Gone</string>
+    <string name="whats_new_failed">What this build changed could not be read: %s</string>
+</resources>
