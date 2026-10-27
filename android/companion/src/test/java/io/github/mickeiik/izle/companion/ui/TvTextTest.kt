@@ -20,6 +20,7 @@ class TvTextTest {
     @Test
     fun commandResultsAreSaidOnlyWhenWorthSaying() {
         assertEquals("Salon is offline. It gets this if it connects in the next 2 minutes.", offlineText("Salon"))
+        assertEquals("Salon hasn't answered. It may be off or asleep.", noAnswerText("Salon"))
         assertNull("done", commandResultText("Salon", result("next", "done")))
         assertNull("no result yet", commandResultText("Salon", result("next", null)))
         assertEquals("Shown on Salon", commandResultText("Salon", result("message", "done")))

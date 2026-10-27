@@ -36,6 +36,9 @@ fun commandResultText(tvName: String, command: CommandInfo): String? {
     }
 }
 
+/** A command the TV did not report on within the wait: it is online by the 60 s rule but not answering. */
+fun noAnswerText(tvName: String): String = "$tvName hasn't answered. It may be off or asleep."
+
 /** lib.js's REASONS, for the reasons without a sentence of their own. */
 private val REASONS = mapOf(
     "unknown_type" to "it does not know this command",

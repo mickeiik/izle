@@ -643,7 +643,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 c
             }
-            result?.let { commandResultText(name, it) }?.let { _snackbar.value = it }
+            if (result == null) _snackbar.value = noAnswerText(name)
+            else commandResultText(name, result)?.let { _snackbar.value = it }
         }
     }
 
