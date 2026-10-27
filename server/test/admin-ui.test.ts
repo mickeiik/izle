@@ -14,9 +14,9 @@ import {
   checkSummaryText, homeCheckLines, runProgressText, runTitle, skippedText, stepText, verdictChip, verdictOf,
   titleLine, titleStatusLabel, tokenFromHash, triggerLabel, tvPositionAt, viewingEnd, viewingSpan,
   onTv, tvCard, tvFace, tvGrid, tvPanel, wrapLines,
-  SECTION_HEADER, UNTITLED, cardPlace, deleteSectionText, sectionCount, sectionName, tvCardX, tvHomeLayout, tvLineOf, tvMove, tvRowFirst, tvScroll,
-  tvScrollBar, tvView,
-  appAddBlocked, appsNote, cardKey, cardName, deletedSectionText, homeCards, homeCountText, tvAppCard,
+  SECTION_HEADER, UNTITLED, cardPlace, deleteSectionText, sectionCount, sectionName, tvCardX, tvHomeLayout, tvLineOf, tvMove, tvRowScroll, tvScroll,
+  tvScrollBar, tvSlide, tvTile, tvTileFace, tvView, tvWrap,
+  appAddBlocked, appsNote, cardKey, cardName, deletedSectionText, homeCards, homeCountText,
 } from "../admin/lib.js";
 import { ADMIN_FILES, ADMIN_VENDOR_FILES } from "../src/admin-files.ts";
 import { HOME_COLUMNS as SERVER_COLUMNS, HOME_MAX_ITEMS, HOME_ROWS as SERVER_ROWS } from "../src/home.ts";
@@ -367,7 +367,7 @@ test("admin helpers: Home with sections, laid out as the TV app does", () => {
   const [f, u, c] = L.sections;
   cases([
     [L.grid, tvGrid(4, 2, 486 - SECTION_HEADER), "a titled section: the cards from the safe area less one title"],
-    [[L.titled, L.viewport.height, L.x0, L.contentWidth, L.pitch, L.lines], [true, L.grid.viewportHeight + 44, 79, 802, 151, 4]],
+    [[L.titled, L.viewport.height, L.x0, L.contentWidth, L.lines], [true, L.grid.viewportHeight + 44, 79, 802, 4]],
     [[f.titleTop, f.rowTops, f.cellBottom, f.lineY, f.top], [0, [58, 58 + step], 471, null, 0], "title at 0, cards at 44 + 14"],
     // The boundary takes exactly one row step: the untitled cards are where a third Films row would be.
     [u.rowTops[0] - f.rowTops[1], step, "a boundary is one row step"],
@@ -395,8 +395,9 @@ test("admin helpers: Home with sections, laid out as the TV app does", () => {
 
   // A scrolling line moves only once the focus reaches the edge of what is in view, and never past its ends.
   cases([
-    [tvRowFirst(0, 3, 4, 6), 0], [tvRowFirst(0, 4, 4, 6), 1], [tvRowFirst(0, 5, 4, 6), 2], [tvRowFirst(2, 3, 4, 6), 2, "in view: stays"],
-    [tvRowFirst(2, 1, 4, 6), 1, "back the same way"], [tvRowFirst(4, 2, 4, 3), 0, "fewer cards than columns"], [tvRowFirst(9, 5, 4, 6), 2],
+    [tvSlide(L, 2, 0, 3), 0], [tvSlide(L, 2, 0, 4), 1], [tvSlide(L, 2, 0, 5), 2], [tvSlide(L, 2, 2, 3), 2, "in view: stays"],
+    [tvSlide(L, 2, 2, 1), 1, "back the same way"], [tvSlide(L, 2, 9, 5), 2], [[c.scrollMax, c.end], [2 * 151, 2]],
+    [tvSlide(tvHomeLayout(4, 2, [section("r", null, 3, "row")]), 0, 4, 2), 0, "fewer cards than columns"],
   ]);
   // The open card (131 dp, 349 dp open) pushes the cards after it in its line right by 218 dp.
   cases([
@@ -455,9 +456,9 @@ test("admin helpers: Home with sections, laid out as the TV app does", () => {
   ]);
 
   cases([
-    [cardPlace({ title: "Films", row: false }, 2, 6, 4), "Films · card 3 of 6 · row 1, column 3"],
-    [cardPlace({ title: "Channels", row: true }, 4, 6, 4), "Channels · card 5 of 6"],
-    [cardPlace({ title: null, row: false }, 5, 6, 4), "No title · card 6 of 6 · row 2, column 2"],
+    [cardPlace(f, 2), "Films · card 3 of 6 · row 1, column 3"],
+    [cardPlace(c, 4), "Channels · card 5 of 6"],
+    [cardPlace({ ...f, title: null }, 5), "No title · card 6 of 6 · row 2, column 2"],
     [[sectionName({ title: null }), sectionName({ title: "Films" })], ["No title", "Films"]],
     [[sectionCount(0), sectionCount(1), sectionCount(6)], ["Empty", "1 show", "6 shows"]],
     [deleteSectionText("Films", 6), "Delete Films? Its 6 shows move to No title."],
@@ -477,18 +478,83 @@ test("admin helpers: app cards, counted, drawn and listed as the TV shows them",
     [[deletedSectionText("A", 0), deletedSectionText("A", 2), deletedSectionText("A", 0, 1), deletedSectionText("A", 1, 1)],
       ["A deleted.", "A deleted. Its shows are in No title.", "A deleted. Its apps are in No title.", "A deleted. Its shows and apps are in No title."]],
     [[cardKey({ itemId: "show" }), cardKey({ appId: "com.example.tv" })], ["show", "app:com.example.tv"]],
-    [tvAppCard(), { chip: "Open", tone: "", progress: null, newEpisodes: 0, episode: null }, "no chip on the face (callers skip tvFace), Open in the panel"],
     [[appsNote("Salon", null, 0), appsNote("Salon", "2026-10-10T12:00:00Z", 0), appsNote("Salon", "2026-10-10T12:00:00Z", 2)],
       ["Salon has not listed its apps yet. Its izle app may need an update.", "No apps to add.", null]],
     [[appAddBlocked({ onHome: true }, 50, 50), appAddBlocked({ onHome: false }, 50, 50), appAddBlocked({ onHome: false }, 3, 50)], ["On Home", "Home is full", null]],
   ]);
 
-  // The panel of an open app card: its name and the 24 sp "Open" chip, as the TV's panel logic lays out any card.
-  const measure = (text: string, px: number) => text.length * px * 0.5;
+  // App cards are tiles: two poster columns wide and 9/16 of that tall in a section of apps only, an open card's size
+  // among shows; a grid row takes cards while they fit with one card open (app tiles alone: N / 2 columns).
+  const g = tvGrid(4, 2);
   cases([
-    [tvPanel(tvAppCard(), "Weather", tvGrid(4, 2), measure), { nameLines: 1, news: null, chip: "Open", chipSize: 24, episode: null, progress: null }],
-    [tvPanel(tvAppCard(), "A weather app with a very long name indeed", tvGrid(4, 2), measure).nameLines, 3],
-    [tvPanel(tvAppCard(), "Weather", tvGrid(6, 4), measure).chipSize, 16, "too small for 24 sp under a line of name"],
+    [[tvTile(g, true), tvTile(g, false)], [{ width: 292, height: 164.25 }, { width: 362, height: 204 }]],
+    [tvWrap([136, 136, 136, 136, 136, 136], g), [{ first: 0, count: 4 }, { first: 4, count: 2 }], "posters: the owner's columns"],
+    [tvWrap([136, 362, 136, 136], g), [{ first: 0, count: 2 }, { first: 2, count: 2 }], "a tile among posters: fewer cards in its row"],
+    [tvWrap([362], g), [{ first: 0, count: 1 }]],
+  ]);
+  for (const n of HOME_COLUMNS) {
+    const grid = tvGrid(n, 2);
+    assert.equal(tvWrap(Array(n + 1).fill(grid.cardWidth), grid)[0]!.count, n, `${n} posters a row`);
+    assert.equal(tvWrap(Array(n + 1).fill(tvTile(grid, true).width), grid)[0]!.count, Math.max(1, Math.floor(n / 2)), `${n} columns: N / 2 tiles a row`);
+  }
+
+  // A grid of shows and apps, a grid of apps, a scrolling line of apps and one of shows and apps.
+  const withApps = (id: string, apps: boolean[], layout = "grid") => ({ id, title: null, layout, count: apps.length, apps });
+  const T = tvHomeLayout(4, 2, [
+    withApps(UNTITLED, [false, true, false]), withApps("apps", [true, true, true, true, true]),
+    withApps("line", [true, true, true, true, true], "row"), withApps("mix", [false, true, false, true, true, false], "row"),
+  ]);
+  const [m, a, line, x] = T.sections;
+  cases([
+    [[m.appsOnly, m.widths, m.fixed, m.cardHeight, m.lines, m.rowTops], [false, [136, 362, 136], [false, true, false], 204, [{ first: 0, count: 2 }, { first: 2, count: 1 }], [14, 238]]],
+    [[a.appsOnly, a.cardHeight, a.lines.map((l) => l.count), a.rowTops], [true, 164.25, [2, 2, 1], [462, 646.25, 830.5]], "lower lines, one row step after the section above"],
+    [[line.rowTops, line.cellBottom, line.scrollMax, line.end], [[1014.75], 1179, 3 * 312, 3], "a line of tiles slides by whole tiles: 2 in view"],
+    [[x.rowTops, x.scrollMax, x.end], [[1199], 136 * 3 + 362 * 3 + 5 * 20 + 226 - 830, 4], "a mixed line: until its last card shows, open if it opens"],
+    [T.lines, 7],
+    [[tvLineOf(T, 0, 2), tvLineOf(T, 1, 4), tvLineOf(T, 3, 5)], [1, 2, 0]],
+    [cardPlace(a, 3), "No title · card 4 of 5 · row 2, column 2"],
+    [tvScroll(T, 1, 2, 0), 830.5 + 164.25 + 14 - T.viewport.height, "a line of tiles is shown whole at its height"],
+  ]);
+  cases([
+    [[tvCardX(T, 0, 1, 0), tvCardX(T, 0, 2, 0)], [65 + 156, 65]],
+    [tvCardX(T, 0, 1, 0, 0), 65 + 156 + 226, "an open poster pushes the tile after it"],
+    [tvCardX(T, 3, 2, 0, 1), 65 + 156 + 382, "a tile never opens: nothing moves"],
+    [tvCardX(T, 3, 2, 0, 0), 65 + 156 + 382 + 226],
+    [[tvRowScroll(T, 3, 1), tvRowScroll(T, 3, 4), tvRowScroll(T, 2, 9)], [156, x.scrollMax, line.scrollMax], "never past its end"],
+    [tvCardX(T, 3, 5, 4), 65 + 1076 + 362 + 20 - x.scrollMax],
+  ]);
+  // A scrolling line slides by one card whatever its width, as far as shows the focused card whole.
+  cases([
+    [[tvSlide(T, 3, 0, 1), tvSlide(T, 3, 0, 2), tvSlide(T, 3, 1, 3), tvSlide(T, 3, 2, 5)], [0, 1, 2, 4]],
+    [tvSlide(T, 3, 4, 4), 4, "at its end, the focus moving back within view: it stays"],
+    [tvSlide(T, 3, 4, 2), 2, "back past its first card in view"],
+    [[tvSlide(T, 2, 0, 1), tvSlide(T, 2, 0, 2), tvSlide(T, 2, 0, 4)], [0, 1, 3]],
+    [tvView(T, { mix: 9, line: 9 }, null, -1, 0).firsts, { line: 3, mix: 4 }],
+  ]);
+  // ↑ ↓ go to the next line's card whose left edge is nearest; ← → stay in a grid row.
+  cases([
+    [tvMove(T, {}, 0, 0, "ArrowDown"), { s: 0, i: 2 }],
+    [tvMove(T, {}, 0, 1, "ArrowDown"), { s: 0, i: 2 }, "the next row of its section"],
+    [tvMove(T, {}, 0, 2, "ArrowDown"), { s: 1, i: 0 }],
+    [tvMove(T, {}, 1, 1, "ArrowUp"), { s: 0, i: 2 }],
+    [tvMove(T, {}, 1, 3, "ArrowDown"), { s: 1, i: 4 }],
+    [tvMove(T, {}, 1, 1, "ArrowDown"), { s: 1, i: 3 }],
+    [tvMove(T, {}, 1, 4, "ArrowDown"), { s: 2, i: 0 }],
+    [tvMove(T, { line: 2 }, 2, 3, "ArrowDown"), { s: 3, i: 1 }, "tile 2 in view (312 dp in) → the tile at 156 dp, not the poster at 538"],
+    [tvMove(T, { mix: 1 }, 3, 2, "ArrowUp"), { s: 2, i: 1 }, "the poster 382 dp in → the tile at 312 dp"],
+    [[tvMove(T, {}, 0, 1, "ArrowRight"), tvMove(T, {}, 1, 2, "ArrowLeft"), tvMove(T, {}, 1, 2, "ArrowRight")], [null, null, { s: 1, i: 3 }]],
+  ]);
+
+  // A tile without a banner: its icon (55 % of the tile's height) and its name in up to 3 lines broken between words.
+  const measure = (text: string, px: number) => text.length * px * 0.5;
+  const face = tvTileFace("izle companion", 292, 164.25, true, measure);
+  cases([
+    [[face.icon, face.room, face.lines], [164.25 * 0.55, 292 - 20 - 164.25 * 0.55 - 16 - 12, ["izle", "companion"]]],
+    [tvTileFace("Google Play Movies and TV", 292, 164.25, true, measure).lines, ["Google Play", "Movies and", "TV"]],
+    [tvTileFace("Google Play Movies and TV Extra", 292, 164.25, true, measure).lines, ["Google Play", "Movies and", "TV Extra"], "the last line takes the rest"],
+    [tvTileFace("Supercalifragilistic app", 292, 164.25, true, measure).lines, ["Supercalifragilistic", "app"], "a word too long has its line (cut with …)"],
+    [tvTileFace("izle companion", 292, 164.25, false, measure).lines, ["izle companion"], "no icon: the whole width"],
+    [tvTileFace("", 292, 164.25, false, measure).lines, []],
   ]);
 
   // Each section's cards in its order: shown, or hidden (an item missing or unplayable, an app the TV no longer has).

@@ -11,8 +11,39 @@ import { actionButton, card, chip, h, keepFocus, keyedRows, loadError, loading, 
 import {
   HOME_COLUMNS, HOME_MAX, HOME_ROWS, TV_W, UNTITLED, appAddBlocked, appsNote, cardKey, cardName, cardPlace, continueText, deleteSectionText,
   deletedSectionText, episodeName, episodeStateLabel, episodeStates, formatClock, gridSummary, homeCards, homeCheckLines, homeCountText, percent, plural,
-  resumes, sectionCount, sectionName, showMeta, tvAppCard, tvCard, tvCardX, tvFace, tvHomeLayout, tvLineOf, tvMove, tvPanel, tvScrollBar, tvView, verdictOf,
+  resumes, sectionCount, sectionName, showMeta, tvCard, tvCardX, tvFace, tvHomeLayout, tvLineOf, tvMove, tvPanel, tvRowScroll, tvScrollBar, tvTileFace, tvView,
+  verdictOf,
 } from "./lib.js";
+
+/**
+ * Whether an app's picture is its banner (wider than tall) or its icon, by URL ("none": it did not load); a picture
+ * not looked at yet is loaded once, and the screens redraw when it is known.
+ * @type {Map<string, "banner" | "icon" | "none">}
+ */
+const pictureKinds = new Map();
+/** @type {Map<string, Set<() => void>>} */
+const pictureWaits = new Map();
+/** @param {string} url @param {() => void} known */
+function pictureKind(url, known) {
+  const kind = pictureKinds.get(url);
+  if (kind) return kind;
+  let waits = pictureWaits.get(url);
+  if (!waits) {
+    const done = /** @type {Set<() => void>} */ (new Set());
+    pictureWaits.set(url, (waits = done));
+    const img = new Image();
+    const settle = (/** @type {"banner" | "icon" | "none"} */ k) => {
+      pictureKinds.set(url, k);
+      pictureWaits.delete(url);
+      for (const f of done) f();
+    };
+    img.addEventListener("load", () => settle(img.naturalWidth > img.naturalHeight ? "banner" : "icon"));
+    img.addEventListener("error", () => settle("none"));
+    img.src = url;
+  }
+  waits.add(known);
+  return null;
+}
 
 /** @typedef {{ id: string, title: string | null, layout: string, itemIds: string[], entries: Array<{ itemId?: string, appId?: string }> }} Section */
 /**
@@ -155,8 +186,8 @@ export function homeCard(ctx) {
 
   /** @param {string} key the card's */
   const tile = (key) => {
-    // The card as it is closed: the poster (a channel's logo, an app's picture, whole), else the name; its chip, bar
-    // and "2 new" (an app card has none).
+    // The card as it is closed: the poster (a channel's logo, whole), else the name; its chip, bar and "2 new". An app
+    // card is a tile that never opens: its banner edge to edge, else its icon and name.
     const picture = h("div", { class: "tv-picture" });
     let pictureKey = "";
     const badge = h("span", { class: "tv-chip" });
@@ -177,24 +208,47 @@ export function homeCard(ctx) {
     const element = h("div", { class: "tv-tile", role: "option", id: uid("tile"), tabindex: "-1", "aria-selected": "false" },
       h("div", { class: "tv-card" }, h("div", { class: "tv-face" }, picture, shade, fresh), panel));
     element.addEventListener("click", () => select(key, true));
+    /** An app tile: its banner, else its icon (none when its picture did not load) and its name in up to 3 lines. */
+    const drawApp = (/** @type {any} */ app, /** @type {string} */ name, /** @type {number} */ width, /** @type {number} */ height) => {
+      const url = /** @type {string | null} */ (app.imageUrl ?? null);
+      const kind = url ? pictureKind(url, draw) : "none";
+      const face = kind === null || kind === "banner" ? null : tvTileFace(name, width, height, kind === "icon", measureText);
+      const pKey = JSON.stringify([url, kind, face]);
+      if (pKey === pictureKey) return;
+      pictureKey = pKey;
+      picture.className = face ? "tv-picture tile-face" : "tv-picture banner";
+      if (!face) return picture.replaceChildren(...(kind === "banner" && url ? [h("img", { src: url, alt: "" })] : []));
+      const icon = face.icon > 0 && url ? h("img", { src: url, alt: "" }) : null;
+      if (icon) icon.style.width = icon.style.height = `${face.icon}px`;
+      picture.replaceChildren(...(icon ? [icon] : []), h("div", { class: "tv-tile-name" }, face.lines.map((l) => h("span", null, l))));
+    };
     return {
       element,
-      /** @param {HomeCardView} card @param {boolean} open */
-      update(card, open) {
+      /**
+       * @param {HomeCardView} card @param {boolean} open @param {number} width @param {number} height the card's, closed
+       */
+      update(card, open, width, height) {
         const e = card.item ?? {};
         const app = card.app ?? null;
         const name = cardName(card);
+        element.classList.toggle("tile", app !== null);
+        if (app) {
+          drawApp(app, name, width, height);
+          shade.hidden = fresh.hidden = true;
+          element.setAttribute("aria-label", `${name}: app`);
+          return;
+        }
         const live = e.kind === "live";
-        const poster = app ? app.imageUrl : (e.posterUrl ?? null);
-        const look = app ? "tv-picture app" : live && poster ? "tv-picture logo" : "tv-picture";
+        const poster = e.posterUrl ?? null;
+        const look = live && poster ? "tv-picture logo" : "tv-picture";
         const pKey = JSON.stringify([poster, look, poster ? "" : name]);
         if (pKey !== pictureKey) {
           pictureKey = pKey;
           picture.className = look;
           picture.replaceChildren(poster ? h("img", { src: poster, alt: "", loading: "lazy" }) : h("span", null, h("span", null, name)));
         }
-        const c = app ? tvAppCard() : tvCard(e);
-        const f = app ? { chip: null, newEpisodes: false } : tvFace(c, L.grid, measureText);
+        const c = tvCard(e);
+        const f = tvFace(c, L.grid, measureText);
         badge.hidden = f.chip === null;
         badge.textContent = f.chip ?? "";
         badge.className = c.tone ? `tv-chip ${c.tone}` : "tv-chip";
@@ -202,9 +256,9 @@ export function homeCard(ctx) {
         shade.hidden = f.chip === null && c.progress === null;
         fresh.hidden = !f.newEpisodes;
         fresh.textContent = `${c.newEpisodes} new`;
-        element.setAttribute("aria-label", app ? `${name}: app` : `${name}: ${c.chip}${c.progress !== null ? `, ${c.progress}% watched` : ""}${c.newEpisodes > 0 ? `, ${c.newEpisodes} new` : ""}`);
+        element.setAttribute("aria-label", `${name}: ${c.chip}${c.progress !== null ? `, ${c.progress}% watched` : ""}${c.newEpisodes > 0 ? `, ${c.newEpisodes} new` : ""}`);
         if (!open) return;
-        const behind = live || app ? null : e.backdropUrl ? { src: e.backdropUrl, blur: false } : poster ? { src: poster, blur: true } : null;
+        const behind = live ? null : e.backdropUrl ? { src: e.backdropUrl, blur: false } : poster ? { src: poster, blur: true } : null;
         const bKey = JSON.stringify(behind);
         if (bKey !== backdropKey) {
           backdropKey = bKey;
@@ -275,7 +329,10 @@ export function homeCard(ctx) {
   const draw = () => {
     const hadFocus = view.contains(document.activeElement);
     const g = chosenGrid();
-    L = tvHomeLayout(g.columns, g.rows, sections.map((s) => ({ id: s.id, title: s.title, layout: s.layout, count: (shownIn.get(s.id) ?? []).length })));
+    L = tvHomeLayout(g.columns, g.rows, sections.map((s) => {
+      const cards = shownIn.get(s.id) ?? [];
+      return { id: s.id, title: s.title, layout: s.layout, count: cards.length, apps: cards.map((c) => c.app !== undefined) };
+    }));
     const { grid, viewport } = L;
     const cols = grid.columns;
     view.style.top = `${viewport.y}px`;
@@ -291,7 +348,8 @@ export function homeCard(ctx) {
     content.style.transform = `translateY(${-offset}px)`;
     const drawn = new Set(L.sections.map((b) => b.id));
     L.sections.forEach((box, k) => {
-      const open = at?.s === k ? at.i : -1;
+      // An app tile never opens.
+      const open = at?.s === k && !box.fixed[at.i] ? at.i : -1;
       const v = sectionView(box.id);
       if (content.children[k] !== v.group) content.insertBefore(v.group, content.children[k] ?? null);
       v.group.setAttribute("aria-label", box.empty ? `${sectionName(box)}, empty: not shown on the TV` : sectionName(box));
@@ -306,14 +364,16 @@ export function homeCard(ctx) {
       if (box.empty) setBox(v.band, L.x0, box.rowTops[0], L.contentWidth, grid.cardHeight);
       v.heading.classList.toggle("on", at?.s === k);
       // A scrolling line's cards are placed from its start; the line itself slides to its first card in view.
-      v.cells.style.transform = box.row ? `translate(${L.x0 - (firsts[box.id] ?? 0) * L.pitch}px, ${box.rowTops[0]}px)` : "";
+      v.cells.style.transform = box.row ? `translate(${L.x0 - tvRowScroll(L, k, firsts[box.id] ?? 0)}px, ${box.rowTops[0]}px)` : "";
       (shownIn.get(box.id) ?? []).forEach((c, j) => {
         let t = tiles.get(c.key);
         if (!t) tiles.set(c.key, (t = tile(c.key)));
-        t.update(c, j === open);
-        const width = j === open ? grid.openWidth : grid.cardWidth;
-        if (box.row) setBox(t.element, tvCardX(L, k, j, 0, open) - L.x0, 0, width);
-        else setBox(t.element, tvCardX(L, k, j, 0, open), box.rowTops[Math.floor(j / cols)], width);
+        t.update(c, j === open, box.widths[j], box.cardHeight);
+        // A tile grows when selected in a section of app cards only.
+        t.element.classList.toggle("grow", box.appsOnly);
+        const width = j === open ? grid.openWidth : box.widths[j];
+        if (box.row) setBox(t.element, tvCardX(L, k, j, 0, open) - L.x0, 0, width, box.cardHeight);
+        else setBox(t.element, tvCardX(L, k, j, 0, open), box.rowTops[tvLineOf(L, k, j)], width, box.cardHeight);
         if (v.cells.children[j] !== t.element) v.cells.insertBefore(t.element, v.cells.children[j] ?? null);
       });
     });
@@ -569,11 +629,16 @@ export function homeCard(ctx) {
     if (!at || j < 0 || j >= cards.length || j === at.i) return Promise.resolve();
     return save("PATCH", cardPath(cards[at.i]), { position: at.sec.entries.findIndex((e) => cardKey(e) === cards[j].key) }, "Order saved.");
   };
-  const cols = () => L.grid.columns;
+  /** To the place of the card ↑ or ↓ would go to in the row above or below, in its section. @param {string} key */
+  const rowMove = (key) => moveTo((i) => {
+    const at = locate(selected);
+    const m = at ? tvMove(L, firsts, at.s, i, key) : null;
+    return m && m.s === at?.s ? m.i : -1;
+  });
   const left = actionButton("◀", { class: "icon", "aria-label": "Move left" }, () => moveTo((i) => i - 1));
   const right = actionButton("▶", { class: "icon", "aria-label": "Move right" }, () => moveTo((i) => i + 1));
-  const up = actionButton("▲", { class: "icon", "aria-label": "Move up a row" }, () => moveTo((i) => i - cols()));
-  const down = actionButton("▼", { class: "icon", "aria-label": "Move down a row" }, () => moveTo((i, n) => Math.min(i + cols(), n - 1)));
+  const up = actionButton("▲", { class: "icon", "aria-label": "Move up a row" }, () => rowMove("ArrowUp"));
+  const down = actionButton("▼", { class: "icon", "aria-label": "Move down a row" }, () => rowMove("ArrowDown"));
   const first = actionButton("Move to first", null, async () => {
     const c = cardNow();
     if (c) await save("PATCH", cardPath(c), { position: 0 }, "Order saved.");
@@ -622,7 +687,7 @@ export function homeCard(ctx) {
     if (!c || !at) return setPicker(null);
     const box = L.sections[at.s];
     const n = box.count;
-    where.textContent = cardPlace(box, at.i, n, cols());
+    where.textContent = cardPlace(box, at.i);
     const title = cardName(c);
     name.textContent = title;
     const row = tvLineOf(L, at.s, at.i);

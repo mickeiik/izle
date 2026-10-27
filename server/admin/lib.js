@@ -491,30 +491,81 @@ export function deletedSectionText(title, n, apps = 0) {
 }
 
 /**
- * `count`: the cards the TV shows in the section (none: it leaves the section out).
- * @typedef {{ id: string, title: string | null, layout: string, count: number }} SectionInput
+ * `count`: the cards the TV shows in the section (none: it leaves the section out); `apps`: which of them are app
+ * cards (missing: none).
+ * @typedef {{ id: string, title: string | null, layout: string, count: number, apps?: boolean[] }} SectionInput
+ */
+/**
+ * A line of a section: its first card and how many it holds.
+ * @typedef {{ first: number, count: number }} CardLine
  */
 /**
  * A section as drawn, y = 0 at the viewport's top. `row`: one scrolling line; `empty`: a titled section the TV does
  * not show (one dashed band); `top`: where its view starts (its title, else its cards less PADDING); `rowTops`: each
  * line's card top; `cellBottom`: the bottom of its last line's cards; `lineY`: the centre of the line above it.
+ * `appsOnly`: it holds only app cards (lower lines of wider tiles); `widths`: each card's width, closed; `fixed`: each
+ * card that never opens (an app tile); `cardHeight`: its cards' height; `lines`: its lines' cards; a scrolling line's
+ * `scrollMax` (how far it slides, in dp) and `end` (the first card in view once it slid that far).
  * @typedef {{ id: string, title: string | null, row: boolean, empty: boolean, count: number, top: number,
- *   titleTop: number | null, rowTops: number[], cellBottom: number, lineY: number | null }} SectionBox
+ *   titleTop: number | null, rowTops: number[], cellBottom: number, lineY: number | null, appsOnly: boolean,
+ *   widths: number[], fixed: boolean[], cardHeight: number, lines: CardLine[], scrollMax: number, end: number }} SectionBox
  */
 /**
- * `pitch`: from a closed card's left edge to the next; `viewport`: where the cards scroll, on the screen; `x0`: the
- * first column's left edge on the screen; `contentWidth`: a row with one card open; `lines`: the rows and scrolling
- * lines of all sections.
- * @typedef {{ grid: ReturnType<typeof tvGrid>, titled: boolean, pitch: number, viewport: { x: number, y: number,
+ * `viewport`: where the cards scroll, on the screen; `x0`: the first column's left edge on the screen;
+ * `contentWidth`: a row with one card open; `lines`: the rows and scrolling lines of all sections.
+ * @typedef {{ grid: ReturnType<typeof tvGrid>, titled: boolean, viewport: { x: number, y: number,
  *   width: number, height: number }, x0: number, contentWidth: number, contentHeight: number, lines: number,
  *   sections: SectionBox[] }} HomeLayout
  */
 
 /**
+ * An app card's tile (docs/ux/senior-tv.md#app-cards): in a section of app cards only, two poster columns wide
+ * (`2·w + G`) and 9/16 of that tall; among shows, an open card's size.
+ * @param {ReturnType<typeof tvGrid>} grid @param {boolean} appsOnly
+ */
+export function tvTile(grid, appsOnly) {
+  if (!appsOnly) return { width: grid.openWidth, height: grid.cardHeight };
+  const width = 2 * grid.cardWidth + grid.gap;
+  return { width, height: (width * 9) / 16 };
+}
+
+/**
+ * A grid section's rows: each takes cards in order while they fit a row with one card open (`rowWidth`) together
+ * with an open card's extra width, at least one; posters alone make rows of the owner's columns.
+ * @param {number[]} widths the cards' widths, closed @param {ReturnType<typeof tvGrid>} grid @returns {CardLine[]}
+ */
+export function tvWrap(widths, grid) {
+  const extra = grid.openWidth - grid.cardWidth;
+  /** @type {CardLine[]} */
+  const lines = [];
+  for (let at = 0; at < widths.length;) {
+    let n = 1;
+    let used = widths[at];
+    while (at + n < widths.length && used + grid.gap + widths[at + n] + extra <= grid.rowWidth) used += grid.gap + widths[at + n++];
+    lines.push({ first: at, count: n });
+    at += n;
+  }
+  return lines;
+}
+
+/**
+ * From card `from`'s left edge to card `to`'s in a section, all closed (negative before it).
+ * @param {SectionBox} box @param {number} from @param {number} to @param {number} gap
+ * @returns {number}
+ */
+const span = (box, from, to, gap) => {
+  if (to < from) return -span(box, to, from, gap);
+  let x = 0;
+  for (let k = from; k < to; k++) x += box.widths[k] + gap;
+  return x;
+};
+
+/**
  * Home with sections as the TV app draws it: one card size for all of Home; each section starts where a next row of
  * the previous one would, a titled one with its title; a 2 dp line between two sections, in the middle of the gap
  * above the next. A row with one card open is centred in the safe area. Sections without a card on the TV are left
- * out, except a titled one: the admin page draws it as one row, its dashed band.
+ * out, except a titled one: the admin page draws it as one row, its dashed band. App cards are tiles (`tvTile`), and
+ * a grid's rows wrap by width (`tvWrap`).
  * @param {number} columns @param {number} rows @param {SectionInput[]} sections in Home order
  * @returns {HomeLayout}
  */
@@ -523,6 +574,7 @@ export function tvHomeLayout(columns, rows, sections) {
   const reserve = titled ? SECTION_HEADER : 0;
   const grid = tvGrid(columns, rows, TV_H - 2 * TV_SAFE_Y - reserve);
   const { cardWidth, cardHeight, gap, padding, rowWidth } = grid;
+  const extra = grid.openWidth - cardWidth;
   const x0 = TV_SAFE_X + (TV_W - 2 * TV_SAFE_X - rowWidth) / 2;
   const height = grid.viewportHeight + reserve;
   const viewport = { x: x0 - padding, y: (TV_H - height) / 2, width: grid.viewportWidth, height };
@@ -535,45 +587,99 @@ export function tvHomeLayout(columns, rows, sections) {
     const empty = count === 0;
     if (empty && s.title === null) continue;
     const row = !empty && s.layout === "row";
-    const nRows = row || empty ? 1 : Math.ceil(count / grid.columns);
+    const fixed = Array.from({ length: count }, (_, j) => s.apps?.[j] === true);
+    const appsOnly = !empty && fixed.every(Boolean);
+    const tile = tvTile(grid, appsOnly);
+    const widths = fixed.map((app) => (app ? tile.width : cardWidth));
+    const height = appsOnly ? tile.height : cardHeight;
+    /** @type {CardLine[]} */
+    const cardLines = row || empty ? [{ first: 0, count }] : tvWrap(widths, grid);
     const first = out.length === 0;
     const nextTop = first ? 0 : cellBottom + gap;
     const lineY = first ? null : Math.round((cellBottom + nextTop) / 2);
     const titleTop = s.title !== null ? nextTop : null;
     // The cards: under the title block and PADDING; untitled, PADDING under Home's top, or right where a row would be.
     const cardsTop = titleTop !== null ? nextTop + SECTION_HEADER + padding : first ? padding : nextTop;
-    const rowTops = Array.from({ length: nRows }, (_, r) => cardsTop + r * (cardHeight + gap));
-    cellBottom = cardsTop + (nRows - 1) * (cardHeight + gap) + cardHeight;
-    lines += nRows;
-    out.push({ id: s.id, title: s.title, row, empty, count, top: titleTop ?? cardsTop - padding, titleTop, rowTops, cellBottom, lineY });
+    const rowTops = cardLines.map((_, r) => cardsTop + r * (height + gap));
+    cellBottom = cardsTop + (cardLines.length - 1) * (height + gap) + height;
+    lines += cardLines.length;
+    /** @type {SectionBox} */
+    const box = {
+      id: s.id, title: s.title, row, empty, count, top: titleTop ?? cardsTop - padding, titleTop, rowTops, cellBottom, lineY,
+      appsOnly, widths, fixed, cardHeight: height, lines: cardLines, scrollMax: 0, end: 0,
+    };
+    if (row) {
+      // As far as shows the last card at the line's end, open if it opens; app tiles alone: by whole tiles.
+      const inView = Math.max(1, Math.floor((rowWidth + gap) / (tile.width + gap)));
+      box.scrollMax = Math.max(0, appsOnly ? (count - inView) * (tile.width + gap) : span(box, 0, count, gap) - gap + extra - rowWidth);
+      while (box.end < count - 1 && span(box, 0, box.end, gap) < box.scrollMax) box.end++;
+    }
+    out.push(box);
   }
   return {
-    grid, titled, pitch: cardWidth + gap, viewport, x0, contentWidth: rowWidth,
+    grid, titled, viewport, x0, contentWidth: rowWidth,
     contentHeight: out.length ? cellBottom + padding : 0, lines, sections: out,
   };
 }
 
 /**
- * A scrolling line's first card in view once the focus is on its card `focus` of `n`: it moves only when the focus
- * reaches the edge of what is in view, and never past its ends.
- * @param {number} first @param {number} focus @param {number} columns @param {number} n
+ * How far a scrolling line has slid (dp) with card `first` asked to be the first in view: never past its end.
+ * @param {HomeLayout} L @param {number} s @param {number} first
  */
-export const tvRowFirst = (first, focus, columns, n) => Math.max(0, Math.min(Math.max(first, focus - columns + 1), focus, Math.max(0, n - columns)));
+export function tvRowScroll(L, s, first) {
+  const box = /** @type {SectionBox} */ (L.sections[s]);
+  return Math.min(span(box, 0, Math.min(first, box.count), L.grid.gap), box.scrollMax);
+}
+
+/** The first card a scrolling line shows (whole or in part) once slid to `first`. @param {HomeLayout} L @param {number} s @param {number} first */
+const firstInView = (L, s, first) => {
+  const box = /** @type {SectionBox} */ (L.sections[s]);
+  const x = tvRowScroll(L, s, first);
+  let f = 0;
+  while (f + 1 < box.count && span(box, 0, f + 1, L.grid.gap) <= x) f++;
+  return f;
+};
 
 /**
- * The left edge of card `i` of section `s` on the screen; `first`: a scrolling line's first card in view; `open`: the
- * section's open card (-1: none), which pushes the cards after it in its line right by what it grew.
+ * A scrolling line's first card asked in view once the focus moved to its card `focus`: it slides one card at a time,
+ * only as far as shows the focused card whole (open, if it opens), back as soon as the focus passes its first card in
+ * view, and never past its end; it stays (`first`) while the focused card is in view.
+ * @param {HomeLayout} L @param {number} s @param {number} first @param {number} focus
+ */
+export function tvSlide(L, s, first, focus) {
+  const box = /** @type {SectionBox} */ (L.sections[s]);
+  const { gap, rowWidth } = L.grid;
+  const now = firstInView(L, s, first);
+  let f = now;
+  if (focus < f) f = focus;
+  else {
+    const open = box.fixed[focus] ? 0 : L.grid.openWidth - L.grid.cardWidth;
+    while (f < focus && span(box, f, focus, gap) + box.widths[focus] + open > rowWidth) f++;
+  }
+  return Math.max(0, Math.min(f === now ? first : f, box.end));
+}
+
+/** The line (0-based) of card `i` in section `s`. @param {HomeLayout} L @param {number} s @param {number} i */
+export const tvLineOf = (L, s, i) => {
+  const box = L.sections[s];
+  if (!box || box.row) return 0;
+  const r = box.lines.findIndex((l) => i < l.first + l.count);
+  return r < 0 ? box.lines.length - 1 : r;
+};
+
+/**
+ * The left edge of card `i` of section `s` on the screen; `first`: a scrolling line's first card asked in view;
+ * `open`: the section's open card (-1: none; a tile never opens), which pushes the cards after it in its line right
+ * by what it grew.
  * @param {HomeLayout} L @param {number} s @param {number} i @param {number} first @param {number} [open]
  */
 export function tvCardX(L, s, i, first, open = -1) {
   const box = /** @type {SectionBox} */ (L.sections[s]);
-  const cols = L.grid.columns;
-  const pushed = open >= 0 && open < i && (box.row || Math.floor(open / cols) === Math.floor(i / cols));
-  return L.x0 + (box.row ? i - first : i % cols) * L.pitch + (pushed ? L.grid.openWidth - L.grid.cardWidth : 0);
+  const line = /** @type {CardLine} */ (box.lines[tvLineOf(L, s, i)]);
+  const pushed = open >= 0 && open < i && open >= line.first && !box.fixed[open];
+  const x = box.row ? span(box, 0, i, L.grid.gap) - tvRowScroll(L, s, first) : span(box, line.first, i, L.grid.gap);
+  return L.x0 + x + (pushed ? L.grid.openWidth - L.grid.cardWidth : 0);
 }
-
-/** The line (0-based) of card `i` in section `s`. @param {HomeLayout} L @param {number} s @param {number} i */
-export const tvLineOf = (L, s, i) => (L.sections[s]?.row ? 0 : Math.floor(i / L.grid.columns));
 
 /**
  * The scroll that shows line `r` of section `s` whole, moving as little as possible from `offset`: with the section's
@@ -586,7 +692,7 @@ export function tvScroll(L, s, r, offset) {
   if (!box || rowTop === undefined || (s === 0 && r === 0)) return 0;
   const p = L.grid.padding;
   const top = r === 0 ? box.top : rowTop - p;
-  const to = Math.min(Math.max(offset, rowTop + L.grid.cardHeight + p - L.viewport.height), top);
+  const to = Math.min(Math.max(offset, rowTop + box.cardHeight + p - L.viewport.height), top);
   return Math.max(0, Math.min(to, L.contentHeight - L.viewport.height));
 }
 
@@ -598,12 +704,11 @@ export function tvScroll(L, s, r, offset) {
  * @param {number} chosen @param {number} offset
  */
 export function tvView(L, firsts, at, chosen, offset) {
-  const cols = L.grid.columns;
   /** @type {Record<string, number>} */
   const next = {};
-  for (const box of L.sections) if (box.row) next[box.id] = Math.min(firsts[box.id] ?? 0, Math.max(0, box.count - cols));
+  for (const box of L.sections) if (box.row) next[box.id] = Math.min(firsts[box.id] ?? 0, box.end);
   const box = at ? L.sections[at.s] : undefined;
-  if (at && box?.row) next[box.id] = tvRowFirst(next[box.id] ?? 0, at.i, cols, box.count);
+  if (at && box?.row) next[box.id] = tvSlide(L, at.s, next[box.id] ?? 0, at.i);
   if (chosen >= 0 && chosen < L.sections.length) return { firsts: next, offset: tvScroll(L, chosen, 0, offset) };
   if (at && box) return { firsts: next, offset: tvScroll(L, at.s, tvLineOf(L, at.s, at.i), offset) };
   return { firsts: next, offset: Math.max(0, Math.min(offset, L.contentHeight - L.viewport.height)) };
@@ -611,36 +716,41 @@ export function tvView(L, firsts, at, chosen, offset) {
 
 /**
  * Where the focus goes from card `i` of section `s` with an arrow key, as on the TV: ← → along the line, stopping at
- * its ends; ↑ ↓ to the previous or next line, across sections (an empty one has no card), onto the card in the
- * nearest column (a grid's column, or the place among the cards in view of a scrolling line). Null: it stays.
+ * its ends; ↑ ↓ to the previous or next line, across sections (an empty one has no card), onto its card whose left
+ * edge is nearest (among the cards in view of a scrolling line; the first of two as near). Null: it stays.
  * @param {HomeLayout} L @param {Record<string, number>} firsts @param {number} s @param {number} i @param {string} key
  * @returns {{ s: number, i: number } | null}
  */
 export function tvMove(L, firsts, s, i, key) {
   const box = L.sections[s];
   if (!box || box.empty) return null;
-  const cols = L.grid.columns;
-  if (key === "ArrowLeft") return (box.row ? i > 0 : i % cols > 0) ? { s, i: i - 1 } : null;
-  if (key === "ArrowRight") return i + 1 < box.count && (box.row || i % cols < cols - 1) ? { s, i: i + 1 } : null;
+  const line = /** @type {CardLine} */ (box.lines[tvLineOf(L, s, i)]);
+  if (key === "ArrowLeft") return i > line.first ? { s, i: i - 1 } : null;
+  if (key === "ArrowRight") return i + 1 < line.first + line.count ? { s, i: i + 1 } : null;
   if (key !== "ArrowUp" && key !== "ArrowDown") return null;
   const dir = key === "ArrowDown" ? 1 : -1;
   const firstOf = (/** @type {number} */ k) => firsts[L.sections[k]?.id ?? ""] ?? 0;
-  const column = (/** @type {number} */ k, /** @type {number} */ j) => (L.sections[k]?.row ? j - firstOf(k) : j % cols);
+  /** A card's left edge from its line's first column, closed: on the screen for a scrolling line. */
+  const edge = (/** @type {number} */ k, /** @type {number} */ j) => tvCardX(L, k, j, firstOf(k)) - L.x0;
   let ts = s;
   let tr = tvLineOf(L, s, i) + dir;
-  if (tr < 0 || tr >= box.rowTops.length) {
+  if (tr < 0 || tr >= box.lines.length) {
     do ts += dir;
     while (L.sections[ts]?.empty);
     const t = L.sections[ts];
     if (!t) return null;
-    tr = dir > 0 ? 0 : t.rowTops.length - 1;
+    tr = dir > 0 ? 0 : t.lines.length - 1;
   }
   const t = /** @type {SectionBox} */ (L.sections[ts]);
-  const from = t.row ? Math.min(firstOf(ts), Math.max(0, t.count - 1)) : tr * cols;
-  const col = column(s, i);
-  const distance = (/** @type {number} */ j) => Math.abs(column(ts, j) - col);
+  const to = /** @type {CardLine} */ (t.lines[tr]);
+  const from = t.row ? firstInView(L, ts, firstOf(ts)) : to.first;
+  const x = edge(s, i);
   let best = from;
-  for (let j = from + 1; j < Math.min(t.count, from + cols); j++) if (distance(j) < distance(best)) best = j;
+  for (let j = from + 1; j < to.first + to.count; j++) {
+    const at = edge(ts, j);
+    if (t.row && at >= L.grid.rowWidth) break;
+    if (Math.abs(at - x) < Math.abs(edge(ts, best) - x)) best = j;
+  }
   return { s: ts, i: best };
 }
 
@@ -753,12 +863,15 @@ export function tvPanel(c, name, grid, measure) {
 }
 
 /**
- * "Films · card 3 of 6 · row 1, column 3"; "Channels · card 5 of 6" in a scrolling line.
- * @param {{ title: string | null, row: boolean }} section @param {number} i @param {number} count @param {number} columns
+ * "Films · card 3 of 6 · row 1, column 3"; "Channels · card 5 of 6" in a scrolling line. The column is the card's place
+ * in its row (a row with app tiles holds fewer cards).
+ * @param {{ title: string | null, row: boolean, count: number, lines: CardLine[] }} section @param {number} i
  */
-export function cardPlace(section, i, count, columns) {
-  const where = `${sectionName(section)} · card ${i + 1} of ${count}`;
-  return section.row ? where : `${where} · row ${Math.floor(i / columns) + 1}, column ${(i % columns) + 1}`;
+export function cardPlace(section, i) {
+  const where = `${sectionName(section)} · card ${i + 1} of ${section.count}`;
+  if (section.row) return where;
+  const r = Math.max(0, section.lines.findIndex((l) => i < l.first + l.count));
+  return `${where} · row ${r + 1}, column ${i - (section.lines[r]?.first ?? 0) + 1}`;
 }
 
 /** Whether the TV shows an entry (in the catalog, playable). @param {{ missing?: boolean, playable?: boolean }} e */
@@ -814,8 +927,36 @@ export function homeCards(sections, home, apps) {
   return { shown, hidden, sectionOf };
 }
 
-/** What an app card draws as the TV does: no chip on its face; its open panel's chip, "Open" (light grey). */
-export const tvAppCard = () => ({ chip: "Open", tone: "", progress: null, newEpisodes: 0, episode: null });
+/** An app tile without a banner, in dp: its icon's start, its share of the tile's height, the space after it, the end. */
+const TILE_START = 20;
+const TILE_ICON = 0.55;
+const TILE_SPACE = 16;
+const TILE_END = 12;
+/** The name's lines at most. */
+const TILE_LINES = 3;
+
+/**
+ * What an app tile without a banner draws, as the TV does: its icon (`icon` dp square, 0: none) at the left, centred
+ * in height, and its name (26 sp bold) at the right of it in up to 3 lines broken between words, greedily; the last
+ * line takes what is left, and a line too long for its width is cut with "…" where it is drawn.
+ * @param {string} name @param {number} width @param {number} height the tile's @param {boolean} hasIcon
+ * @param {MeasureText} measure
+ */
+export function tvTileFace(name, width, height, hasIcon, measure) {
+  const icon = hasIcon ? height * TILE_ICON : 0;
+  const room = width - TILE_START - (hasIcon ? icon + TILE_SPACE : 0) - TILE_END;
+  const words = name.split(" ").filter(Boolean);
+  /** @type {string[]} */
+  const lines = [];
+  let i = 0;
+  while (i < words.length && lines.length < TILE_LINES - 1) {
+    let line = words[i++];
+    while (i < words.length && measure(`${line} ${words[i]}`, 26) <= room) line += ` ${words[i++]}`;
+    lines.push(line);
+  }
+  if (i < words.length) lines.push(words.slice(i).join(" "));
+  return { icon, start: TILE_START, space: TILE_SPACE, end: TILE_END, room, lines };
+}
 
 /**
  * Why the TV's app cannot be added (null: it can): "On Home", or "Home is full" at `max` app cards.

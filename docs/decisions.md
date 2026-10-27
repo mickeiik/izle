@@ -169,3 +169,5 @@ entries, and how each feature was built, are in git history.
   portrait card read as an empty slot among posters. Tiles are two poster columns wide in a section of apps only (the
   poster's height was too big: two tiles in view) and open-card sized among shows, where a shorter centred tile broke
   the line's edges. A tile never opens; its focus ring has a dark gap so that it shows on white banners.
+- Admin page: an app's picture is taken for its banner when it is wider than tall: the server keeps one PNG per app
+  (banner, else icon) and does not say which, and the tile draws the two differently.
