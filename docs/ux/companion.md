@@ -1,7 +1,8 @@
 # izle companion: a TV's page on the phone
 
 How the owner's phone app (`android/companion`) shows one TV: what it plays, a remote, a message, and Listen along.
-Its Home tab is in [The companion's Home tab](companion-home.md); the routes are in the
+Its Home tab is in [The companion's Home tab](companion-home.md), the Catalog tab in [companion-catalog.md](companion-catalog.md), the TV
+tab, Activity and pairing in [companion-tv.md](companion-tv.md); the routes are in the
 [server API](../spec/server-api-v1.md). The TV itself never changes for the phone: what the viewer sees is in
 [Senior TV experience](senior-tv.md).
 

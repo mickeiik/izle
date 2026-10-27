@@ -81,7 +81,7 @@ fun Hairline(modifier: Modifier = Modifier) {
 
 /**
  * A list row, at least 56 dp: [leading] (a [Poster], an icon), the title (`heading`-sized, Regular) and one
- * `caption` [supporting] line in [supportingTone] (both ellipsised) followed by [badge] (a [StatusChip]), then [trailing]; a hairline under it when
+ * `caption` [supporting] line in [supportingTone] (both ellipsised; the title in [titleTone]'s colour when not Neutral) followed by [badge] (a [StatusChip]), then [trailing]; a hairline under it when
  * [divider]. With [selected] non-null it is a radio row (the radio drawn as leading); else [onClick] makes it tappable.
  */
 @Composable
@@ -90,6 +90,7 @@ fun ListRow(
     modifier: Modifier = Modifier,
     supporting: String? = null,
     supportingTone: Tone = Tone.Neutral,
+    titleTone: Tone = Tone.Neutral,
     badge: (@Composable () -> Unit)? = null,
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null,
@@ -113,7 +114,13 @@ fun ListRow(
             if (selected != null) RadioButton(selected = selected, onClick = null)
             leading?.invoke()
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(s.line)) {
-                Text(title, style = IzleTheme.type.rowTitle, color = IzleTheme.colors.textPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    title,
+                    style = IzleTheme.type.rowTitle,
+                    color = if (titleTone == Tone.Neutral) IzleTheme.colors.textPrimary else toneColor(titleTone),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
                 if (supporting != null || badge != null) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(s.sm)) {
                         if (supporting != null) {

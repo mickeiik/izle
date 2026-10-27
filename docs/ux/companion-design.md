@@ -60,6 +60,7 @@ the launcher icon only.
 | `label` | 14 / 20 sp | Medium | buttons, tabs, chips |
 | `caption` | 13 / 18 sp | Regular | supporting lines, meta, hints (`textSecondary`) |
 | `mono` | 12 / 16 sp | Regular, monospace | Sync details only |
+| `digits` | 20 / 26 sp | Medium, tabular figures | a pairing code, the timing offset |
 
 Two weights only (Regular, Medium). Sentence case everywhere.
 
@@ -79,7 +80,8 @@ Every button label is centred, single line, and never pushed to an edge; equal-w
 - **`Card`**: `surface`, 1 dp `border`, radius `md`, padding `lg`. No elevation, no shadow, anywhere.
 - **`ListRow(title, supporting?, badge?, leading?, trailing?, onClick?)`**: min 56 dp, `heading`-sized title
   (Regular weight for rows), one `caption` supporting line (ellipsised) with an optional `badge` (a `StatusChip`)
-  after it, divider hairline between rows, padding `lg` horizontally.
+  after it, divider hairline between rows, padding `lg` horizontally; `titleTone` colours the title for a status
+  (Activity's problems in `danger`).
 - **`SectionHeader(title, meta?, trailing?)`**: `surfaceMuted` band, `heading` title on the left, the `caption` meta
   ("grid · 6") and an overflow icon button at the right edge.
 - **`StatusChip(text, tone)`**: tone Success / Warning / Danger / Neutral, `*Muted` fill with the tone's colour as
@@ -96,7 +98,9 @@ Every button label is centred, single line, and never pushed to an edge; equal-w
   Play/Pause is outlined and drawn in `accent`. The seek buttons read "−30" and "+30".
 - **`IzleSheet`**: `ModalBottomSheet` with `surface`, top radius `lg`, title in `title`, content padded `lg`.
 - **`IzleTopBar(title, onTitleClick?, actions)`** and **`IzleBottomBar`** (64 dp, icon + `label`, active in `accent`,
-  no pill indicator fill beyond `accentMuted`); Now's tab icon is a TV, Home's a grid, Catalog's a stack of books.
+  no pill indicator fill beyond `accentMuted`); Now's tab icon is a TV, Home's a grid, Catalog's a stack of books, the
+  TV tab's sliders (`IzleIcons.Tune`). A `TabItem`'s `dot` draws an 8 dp `danger` dot at its icon's top end (the TV has
+  problems).
 - **`SearchField(value, onValueChange, placeholder)`** (`Filters.kt`): an outlined field, radius `md`, on `surface`, a
   search icon, the placeholder in `textMuted`, one line, a clear button while it holds text.
 - **`FilterChip(text, selected)`** in a **`ChipRow`**: 32 dp, radius `sm`, `label`; at rest a 1 dp `border` and
@@ -105,6 +109,11 @@ Every button label is centred, single line, and never pushed to an edge; equal-w
 - **`QuietSelect(text, items)`**: a choice inside a line of text (a list's sort): the current choice in `label`,
   `textSecondary`, a chevron, and a menu with the current item ticked.
 - **`EmptyState(text)`**: `caption`-coloured body text, no card around it.
+- **`IzleSwitch(checked)`** (`Controls.kt`): an on/off switch in a row's trailing slot, the row taking the tap; on, an
+  `accent` track with a `surface` thumb; off, `surfaceMuted` with a 1 dp `border` and a `textMuted` thumb.
+- **`Chevron`**: a row that opens something ends with it (20 dp, `textMuted`).
+- **`FactRow(label, value, mono?)`**: one fact of a sheet: the label in `caption`/`textSecondary` in a 72 dp column,
+  the value in `body` (or `mono`) beside it, wrapping, padded `lg`.
 
 ## Screens
 
@@ -130,8 +139,8 @@ The approved mockups are the reference: compact, one primary action per screen, 
   `ListRow`s, the kind as a Neutral chip, the found link's row with **Find** (Small) at its end; **Listen** (Primary,
   headphones icon, full width, the one primary of the screen; Stop is Danger); Earphone delay as a `ListRow` ("kept
   on this phone") ending with **−**, the value and **+**; `Disclosure`s for
-  Timing and Sync details; inside Timing: `ButtonRow` (Mark on TV, Mark on phone), the offset readout (`title`,
-  monospace digits) with **Edit** (Quiet), `ButtonGrid(3)` nudges, `ChoiceGrid(2)` speed, `ButtonRow` (Save timing and
+  Timing and Sync details; inside Timing: `ButtonRow` (Mark on TV, Mark on phone), the offset readout (`digits`)
+  with **Edit** (Quiet), `ButtonGrid(3)` nudges, `ChoiceGrid(2)` speed, `ButtonRow` (Save timing and
   Apply to all episodes, both Secondary: Listen is the screen's primary).
 - **Catalog**: the `SearchField`, the filters as one `ChipRow`, then the list: the What's new `ListRow` (the sparkle
   icon in `accent`, "25 Oct · 3 shows, 12 episodes", a chevron), the count line ("142 shows" in `caption`, the sort
@@ -139,4 +148,15 @@ The approved mockups are the reference: compact, one primary action per screen, 
   3 episodes", "On Home" in `caption`/`textMuted` as trailing). **What's new** (top bar: back arrow, "What's new", a
   refresh icon): the builds as a `ChipRow`, the build's `caption` summary, then `SectionHeader`s; new shows end with
   **Add** (Small, Secondary) or "On Home"; gone shows in `textSecondary`.
+- **TV** (the fourth tab, [companion-tv.md](companion-tv.md)): one scrolling page, no card anywhere. **Problems** as a
+  `SectionHeader` ("3 today" as meta, **Clear** Quiet Small at its right), the newest five as `ListRow`s (the title in
+  words, "Caminandes · S1 · E2 — Gran Dillama · 2 h ago", the kind as a Neutral `StatusChip` badge), "All 12 problems"
+  with a `Chevron`, or "No problems recorded." as an `EmptyState`; the **Activity** row ("What happened on Salon, live",
+  a `Chevron`); **TV app** (`SectionHeader`): "izle 0.6.1 · Android 12" with the update state's chip as trailing
+  (Success, Neutral, Warning; none when unknown), how it installs updates in `caption` under it, **Update now**
+  (Secondary, Small); **Settings** (`SectionHeader`): `ListRow`s with the value as supporting text, Play on start with
+  an `IzleSwitch`; **Forget this TV** as a Danger `ActionRow` at the end. Choices open an `IzleSheet` of radio
+  `ListRow`s; Name, Clear and Forget are dialogs (the confirm Danger or Primary, Cancel Quiet). A problem's sheet: the
+  title, its `caption` ("Today 14:05 · reported by the server") and the code in `mono`, a hairline, `FactRow`s, the
+  check's `StatusLine`s once it answers, a hairline, then `ActionRow`s.
 - **TV list, Phones, Connect, link finder**: `ListRow`s and the same buttons; Connect's **Connect** is its Primary.

@@ -12,8 +12,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -39,6 +37,7 @@ import io.github.mickeiik.izle.companion.home.errorText
 import io.github.mickeiik.izle.companion.home.resources
 import io.github.mickeiik.izle.companion.ui.design.ButtonKind
 import io.github.mickeiik.izle.companion.ui.design.Caption
+import io.github.mickeiik.izle.companion.ui.design.Chevron
 import io.github.mickeiik.izle.companion.ui.design.ChipRow
 import io.github.mickeiik.izle.companion.ui.design.EmptyState
 import io.github.mickeiik.izle.companion.ui.design.FilterChip
@@ -243,15 +242,6 @@ internal fun OnHome() {
     Text(stringResource(R.string.catalog_on_home), style = IzleTheme.type.caption, color = IzleTheme.colors.textMuted, maxLines = 1)
 }
 
-@Composable
-internal fun Chevron() {
-    Icon(
-        Icons.AutoMirrored.Filled.KeyboardArrowRight,
-        contentDescription = null,
-        tint = IzleTheme.colors.textMuted,
-        modifier = Modifier.size(IzleTheme.sizes.icon),
-    )
-}
 
 private val KINDS = listOf("movie" to R.string.home_kind_movie, "series" to R.string.home_kind_series, "live" to R.string.home_kind_live)
 private val SORTS = listOf(CatalogSearch.SORT_TITLE, CatalogSearch.SORT_NEWEST, CatalogSearch.SORT_YEAR)

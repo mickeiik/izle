@@ -15,6 +15,11 @@
     <string name="show">Show</string>
     <string name="hide">Hide</string>
     <string name="just_now">just now</string>
+    <string name="ago_min">%d min ago</string>
+    <string name="ago_h">%d h ago</string>
+    <string name="ago_d">%d d ago</string>
+    <string name="today">Today</string>
+    <string name="yesterday">Yesterday</string>
 
     <!-- Connecting this phone -->
     <string name="connect_title">Connect to your TV</string>
@@ -52,7 +57,6 @@
     <string name="pick_tv_server">On %1$s</string>
     <string name="pick_tv_empty">No TV is paired with this server yet.</string>
     <string name="tv_online">Online</string>
-    <string name="tv_last_seen">Last seen %1$s</string>
     <string name="tv_never_seen">Not seen yet</string>
     <string name="try_again">Try again</string>
 

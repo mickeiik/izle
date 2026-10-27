@@ -210,13 +210,65 @@ class ApiClient(
     /** The TV with its Home list and sections (`GET admin/devices/:id`). */
     suspend fun device(deviceId: String): DeviceDetail = get(deviceUrl(deviceId).build(), DeviceDetail.serializer())
 
-    /** `PATCH`: only the fields given are sent (the name and language settings are not the companion's to change). */
-    suspend fun updateDevice(deviceId: String, homeColumns: Int? = null, homeRows: Int? = null): AdminDevice {
+    /** `PATCH` of the Home grid: only the fields given are sent. */
+    suspend fun updateDevice(deviceId: String, homeColumns: Int? = null, homeRows: Int? = null): AdminDevice =
+        updateDevice(deviceId, DeviceChange(homeColumns = homeColumns, homeRows = homeRows))
+
+    /** `PATCH`: only the fields [change] sets are sent, a [SetTo] of null as an explicit `null`. */
+    suspend fun updateDevice(deviceId: String, change: DeviceChange): AdminDevice {
         val body = buildJsonObject {
-            homeColumns?.let { put("homeColumns", it) }
-            homeRows?.let { put("homeRows", it) }
+            change.name?.let { put("name", it) }
+            change.uiLanguage?.let { put("uiLanguage", it.value) }
+            change.preferredAudioLanguage?.let { put("preferredAudioLanguage", it.value) }
+            change.subtitlesLanguage?.let { put("subtitlesLanguage", it.value) }
+            change.autoplayOnStart?.let { put("autoplayOnStart", it) }
+            change.homeColumns?.let { put("homeColumns", it) }
+            change.homeRows?.let { put("homeRows", it) }
         }
         return exchange(jsonRequest(deviceUrl(deviceId).build(), "PATCH", body)).decode(DeviceUpdated.serializer()).device
+    }
+
+    /** `DELETE` (`204`): the TV must pair again. */
+    suspend fun forgetDevice(deviceId: String) {
+        exchange(authorize(Request.Builder().url(deviceUrl(deviceId).build()).delete()).build()).requireOk()
+    }
+
+    /** The TV's problems, newest first ([limit] at most 100). */
+    suspend fun problems(deviceId: String, limit: Int = 50): List<Problem> {
+        val url = deviceUrl(deviceId).addPathSegment("problems").addQueryParameter("limit", limit.toString()).build()
+        return get(url, ProblemsResponse.serializer()).problems
+    }
+
+    /** Forgets the TV's problems (`204`). */
+    suspend fun clearProblems(deviceId: String) {
+        exchange(authorize(Request.Builder().url(deviceUrl(deviceId).addPathSegment("problems").build()).delete()).build()).requireOk()
+    }
+
+    /** Every active TV with what it plays, the open pairing codes and where the event log stands. */
+    suspend fun status(): AdminStatus = get(url("api/v1/admin/status"), AdminStatus.serializer())
+
+    // Pairing: the codes TVs show, approved (or cleared) by the owner.
+
+    /** Open codes: unexpired and not collected by their TV yet. */
+    suspend fun pendingPairings(): List<PendingCode> = get(url("api/v1/admin/pair/pending"), PendingCodesResponse.serializer()).codes
+
+    /**
+     * Approves [code] as a new TV called [name] (the server names it `TV`, `TV 2`, … without one), or as the TV
+     * [replaces] (which keeps its name). `404 unknown_code`, `409 already_approved`, `404 unknown_device`.
+     */
+    suspend fun approvePairing(code: String, name: String? = null, replaces: String? = null): ApprovedPairing {
+        val body = buildJsonObject {
+            put("code", code)
+            name?.let { put("name", it) }
+            replaces?.let { put("replaces", it) }
+        }
+        return exchange(jsonRequest(url("api/v1/admin/pair/approve"), "POST", body)).decode(ApprovedPairing.serializer())
+    }
+
+    /** Clears an open code (`204`): it expires now, and a TV showing it asks for a new one. `404 unknown_code`. */
+    suspend fun cancelPairing(code: String) {
+        val url = url("api/v1/admin/pair/pending").newBuilder().addPathSegment(code).build()
+        exchange(authorize(Request.Builder().url(url).delete()).build()).requireOk()
     }
 
     /** `POST …/commands` (`202`): [fields] go next to `type` (`itemId`, `deltaMs`, `text`, …). */
@@ -342,12 +394,20 @@ class ApiClient(
 
     /**
      * The event log after [after] (null: the answer is empty and its `last` is where to follow from). [waitSec] > 0 is a
-     * long-poll (on longPollHttp). [types] may end in `.` (a prefix); events without a device pass [devices].
+     * long-poll (on longPollHttp). [types] may end in `.` (a prefix); events without a device pass [devices]. [limit]
+     * at most 500 (the server's default 100).
      */
-    suspend fun adminEvents(after: Long?, waitSec: Int = 0, types: List<String> = emptyList(), devices: List<String> = emptyList()): EventsPage {
+    suspend fun adminEvents(
+        after: Long?,
+        waitSec: Int = 0,
+        types: List<String> = emptyList(),
+        devices: List<String> = emptyList(),
+        limit: Int? = null,
+    ): EventsPage {
         val url = url("api/v1/admin/events").newBuilder().apply {
             after?.let { addQueryParameter("after", it.toString()) }
             addQueryParameter("wait", waitSec.toString())
+            limit?.let { addQueryParameter("limit", it.toString()) }
             if (types.isNotEmpty()) addQueryParameter("types", types.joinToString(","))
             if (devices.isNotEmpty()) addQueryParameter("devices", devices.joinToString(","))
         }.build()

@@ -24,6 +24,7 @@ import io.github.mickeiik.izle.companion.R
 import io.github.mickeiik.izle.companion.home.RowPoster
 import io.github.mickeiik.izle.companion.home.errorText
 import io.github.mickeiik.izle.companion.home.resources
+import io.github.mickeiik.izle.companion.ui.design.Chevron
 import io.github.mickeiik.izle.companion.ui.design.ButtonSize
 import io.github.mickeiik.izle.companion.ui.design.Caption
 import io.github.mickeiik.izle.companion.ui.design.ChipRow

@@ -8,6 +8,13 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 
 ### Added
 
+- **izle companion: a TV's problems, settings and activity, and pairing from the phone.** A fourth tab, **TV**, with
+  a red dot while the TV had problems in the last day: its problems in words (show, episode, source, when; a problem's
+  sheet has the details, **Check this episode now** and **Open the show**), **Clear**; its app version with **Update
+  now**; its settings (name, menu language, audio, subtitles, play on start), saved as they change; **Forget this
+  TV**. **Activity** is the TV's event log in words, live, by day, with who did what and a filter. The TV list says
+  what each TV plays and whether it has problems, shows a TV waiting to pair with its code (**Approve…** as a new TV
+  or one that replaces another, **Not mine**), and pairs a TV by its code.
 - **izle companion: the catalog, from a TV's page.** A third tab, **Catalog**: search with **Films**, **Series**,
   **Channels**, **New** and **Not on Home**, sorted by title, newest or year, "On Home" on what this TV has; **What's
   new** lists each catalog build with the shows and episodes it added (with **Add**) and removed; the tab's menu has

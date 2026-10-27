@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The TV tab (docs/ux/companion-tv.md) -->
+    <string name="tab_tv">TV</string>
+    <string name="activity">Activity</string>
+    <string name="device_load_failed">The TV could not be read.</string>
+
+    <!-- Problems -->
+    <string name="device_problems">Problems</string>
+    <string name="device_problems_today">%d today</string>
+    <string name="device_clear">Clear</string>
+    <string name="device_clear_title">Forget this TV\'s problems?</string>
+    <string name="device_clear_text">The list starts empty again.</string>
+    <string name="device_no_problems">No problems recorded.</string>
+    <plurals name="device_all_problems">
+        <item quantity="one">All %d problem</item>
+        <item quantity="other">All %d problems</item>
+    </plurals>
+    <string name="device_problems_cleared">Problems cleared.</string>
+
+    <!-- A problem's kind, as its badge -->
+    <string name="problem_kind_playback">Playback</string>
+    <string name="problem_kind_resolve">Resolve</string>
+    <string name="problem_kind_proxy">Proxy</string>
+    <string name="problem_kind_network">Network</string>
+    <string name="problem_kind_other">Other</string>
+
+    <!-- A problem in words, by its code -->
+    <string name="problem_no_playable_source">Nothing could play</string>
+    <string name="problem_source_failed">A source failed, another played</string>
+    <string name="problem_upstream_refused">The source refused (%s)</string>
+    <string name="problem_upstream_error">The source broke off</string>
+    <string name="problem_upstream_unreachable">The source did not answer</string>
+    <string name="problem_unplayable">The source sent something unplayable</string>
+    <string name="problem_egress_denied">The server refused the source\'s address</string>
+    <string name="problem_player_error">Player error: %s</string>
+    <string name="problem_network">The TV lost the server</string>
+    <string name="problem_missing">no longer in the catalog</string>
+
+    <!-- A problem's sheet -->
+    <string name="problem_by_tv">reported by the TV</string>
+    <string name="problem_by_server">reported by the server</string>
+    <string name="problem_show">Show</string>
+    <string name="problem_episode">Episode</string>
+    <string name="problem_source">Source</string>
+    <string name="problem_at">At</string>
+    <string name="problem_http">HTTP</string>
+    <string name="problem_app">App</string>
+    <string name="problem_detail">Detail</string>
+    <string name="problem_check_now">Check this episode now</string>
+    <string name="problem_check_channel">Check this channel now</string>
+    <string name="problem_open_show">Open the show</string>
+
+    <!-- Activity -->
+    <string name="device_activity_line">What happened on %s, live</string>
+
+    <!-- The TV app -->
+    <string name="device_tv_app">TV app</string>
+    <string name="device_app_version">izle %s</string>
+    <string name="device_app_unknown">Version unknown</string>
+    <string name="device_android">Android %s</string>
+    <string name="device_api">API %d</string>
+    <string name="device_up_to_date">Up to date</string>
+    <string name="device_update_available">Update available</string>
+    <string name="device_needs_update">Needs an update</string>
+    <string name="device_installs_silent">Installs updates by itself while nobody watches.</string>
+    <string name="device_installs_guided">Needs someone at the TV to press OK.</string>
+    <string name="device_update_now">Update now</string>
+    <string name="device_update_sent">%s got the update.</string>
+    <string name="device_no_apk">The server has no TV app to offer.</string>
+
+    <!-- Settings -->
+    <string name="device_settings">Settings</string>
+    <string name="device_name">Name</string>
+    <string name="device_menu_language">Menu language</string>
+    <string name="device_audio">Audio</string>
+    <string name="device_subtitles">Subtitles</string>
+    <string name="device_play_on_start">Play on start</string>
+    <string name="device_server_default">Server default</string>
+    <string name="device_server_default_is">Server default · %s</string>
+    <string name="device_subtitles_off">Off</string>
+    <string name="device_on">On</string>
+    <string name="device_off">Off</string>
+    <string name="device_name_hint">1 to 60 characters</string>
+    <string name="device_save">Save</string>
+    <string name="device_not_saved">%1$s %2$s stays %3$s.</string>
+
+    <!-- Forget -->
+    <string name="device_forget">Forget this TV</string>
+    <string name="device_forget_title">Forget %s?</string>
+    <string name="device_forget_text">It has to pair again to play. Its history stays.</string>
+    <string name="device_forget_confirm">Forget</string>
+</resources>

@@ -295,7 +295,10 @@ data class PairWait(val status: String, val deviceId: String? = null, val device
 @Serializable
 data class AvailableUpdate(val versionName: String, val versionCode: Long, val sha256: String, val size: Long, val auto: Boolean = true)
 
-/** `GET /admin/devices`: one TV; `status` `pending` or `active`. */
+/**
+ * `GET /admin/devices`: one TV; `status` `pending` or `active`. [settings]: the stored values (null = default),
+ * [effective] what the TV runs with; [app] what the TV's User-Agent last reported.
+ */
 @Serializable
 data class AdminDevice(
     val id: String,
@@ -306,6 +309,9 @@ data class AdminDevice(
     val effective: DeviceEffective? = null,
     val problems: DeviceProblems? = null,
     val homeCount: Int? = null,
+    val createdAt: String? = null,
+    val settings: DeviceSettings? = null,
+    val app: DeviceApp? = null,
 )
 
 @Serializable

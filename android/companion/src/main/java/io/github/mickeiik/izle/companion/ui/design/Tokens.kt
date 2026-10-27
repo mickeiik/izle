@@ -102,6 +102,8 @@ data class IzleSizes(
     val hairline: Dp = 1.dp,
     val progress: Dp = 4.dp,
     val statusDot: Dp = 8.dp,
+    /** A [FactRow]'s label column. */
+    val factLabel: Dp = 72.dp,
     /** The active tab's indicator behind its icon. */
     val tabIndicator: DpSize = DpSize(56.dp, 28.dp),
 )
@@ -117,6 +119,8 @@ data class IzleType(
     val label: TextStyle = style(14, 20, FontWeight.Medium),
     val caption: TextStyle = style(13, 18, FontWeight.Normal),
     val mono: TextStyle = style(12, 16, FontWeight.Normal).copy(fontFamily = FontFamily.Monospace),
+    /** Numbers read at a glance (a pairing code, the timing offset): `title` with digits of equal width. */
+    val digits: TextStyle = style(20, 26, FontWeight.Medium).copy(fontFeatureSettings = "tnum"),
     /** A [StatusChip]'s text: `label` at 12 sp. */
     val chip: TextStyle = style(12, 16, FontWeight.Medium),
 )
