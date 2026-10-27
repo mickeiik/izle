@@ -10,7 +10,7 @@ import {
   continueText, episodeHistoryLine, episodeName, episodeStateLabel, episodeStates, errorText, formatClock, formatCode,
   formatCountdown, formatDrift, formatDuration, formatPosition, formatRelative, gridSummary, groupEpisodeChanges, isActive, issueLine,
   languageLabel, liveViewingLine, mediaKindLabel, nowPlayingLine, parseCandidate, parseSse, percent, playbackState, plural,
-  problemContext, resumes, sameLanguage, scopeLabel, serverAddress, shortId, showMeta, sourceReport, syncDecision,
+  phoneLine, problemContext, resumes, sameLanguage, scopeLabel, serverAddress, shortId, showMeta, sourceReport, syncDecision,
   checkSummaryText, homeCheckLines, runProgressText, runTitle, skippedText, stepText, verdictChip, verdictOf,
   titleLine, titleStatusLabel, tokenFromHash, triggerLabel, tvPositionAt, viewingEnd, viewingSpan,
   onTv, tvCard, tvFace, tvGrid, tvPanel, wrapLines,
@@ -584,7 +584,19 @@ test("admin helpers: the event stream, durations, viewings, titles, episodes, co
     [commandResultText({ type: "play", result: "done", reason: null }), "Play: done"],
     [commandResultText({ type: "pause", result: "ignored", reason: "not_in_player" }), "Pause: ignored (nothing is playing)"],
     [commandResultText({ type: "play", result: "failed", reason: "odd_reason" }), "Play: failed (odd reason)", "a reason the page does not know"],
-    [scopeLabel("manage"), "Manage"], [scopeLabel("companion"), "Listen along"], [scopeLabel("x"), "x"],
+    [scopeLabel("manage"), "Manage"], [scopeLabel("companion"), "companion"], [scopeLabel("x"), "x"],
+  ]);
+});
+
+test("admin helpers: phones, the TV they connected through, and their events", () => {
+  const tvs = [{ id: "tv0000000001", name: "Salon" }];
+  const phone = { deviceId: "tv0000000001", createdAt: ago(2 * 86400_000), lastUsedAt: ago(10_000) };
+  const pixel = { type: "phone", phoneId: "ph0000000001", name: "Pixel 8" };
+  cases([
+    [actorLabel(pixel), "phone “Pixel 8”"],
+    [phoneLine(phone, tvs, NOW), "connected through Salon · created 2 days ago · last used just now"],
+    [phoneLine({ ...phone, deviceId: null, lastUsedAt: null }, tvs, NOW), "connected through a deleted TV · created 2 days ago · last used never"],
+    [phoneLine({ ...phone, deviceId: "gone00000000" }, tvs, NOW), "connected through a deleted TV · created 2 days ago · last used just now", "a TV the list no longer has"],
   ]);
 });
 

@@ -283,4 +283,43 @@ export const MIGRATIONS: string[] = [
   DROP TABLE access_tokens;
   ALTER TABLE access_tokens_new RENAME TO access_tokens;
 `,
+  `
+  -- Phones connected from a TV replace the companion scope, which never shipped in a release: its tokens go, and the
+  -- table is rebuilt with the CHECK it had before.
+  DELETE FROM access_tokens WHERE scope NOT IN ('read', 'control', 'manage');
+  CREATE TABLE access_tokens_old (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    scope TEXT NOT NULL CHECK (scope IN ('read', 'control', 'manage')),
+    secret_hash TEXT NOT NULL UNIQUE,       -- sha256 of the secret; the secret itself is shown once and never kept
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER                    -- written at most once a minute
+  );
+  INSERT INTO access_tokens_old (id, name, scope, secret_hash, created_at, last_used_at)
+    SELECT id, name, scope, secret_hash, created_at, last_used_at FROM access_tokens;
+  DROP TABLE access_tokens;
+  ALTER TABLE access_tokens_old RENAME TO access_tokens;
+
+  -- The owner's phones, each with its own secret at owner level; they outlive the TV they connected through.
+  CREATE TABLE phones (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    secret_hash TEXT NOT NULL UNIQUE,       -- sha256 of the izph_ secret; the secret itself is shown once and never kept
+    device_id TEXT REFERENCES devices(id) ON DELETE SET NULL,  -- the TV it connected through
+    created_at INTEGER NOT NULL,
+    last_used_at INTEGER                    -- written at most once a minute
+  );
+  -- The invite a TV shows to connect a phone: one per TV, a new one replaces it.
+  CREATE TABLE phone_invites (
+    device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+    code TEXT NOT NULL,                     -- 6 digits, unique among the invites not expired
+    invite_hash TEXT NOT NULL UNIQUE,       -- sha256 of the invite in the QR code
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    claimed_at INTEGER,
+    phone_id TEXT,                          -- the phone that claimed it, and its name then (no foreign key)
+    phone_name TEXT
+  );
+  CREATE INDEX phone_invites_by_code ON phone_invites (code);
+`,
 ];

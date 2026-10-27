@@ -119,6 +119,21 @@ test("hostile fixture: nothing secret survives a log line", () => {
   });
 });
 
+test("hostile fixture (phones): phone secrets, invites and the /connect link never survive", () => {
+  const { lines, log } = capture();
+  const secret = `izph_${DEVICE_TOKEN}`;
+  log.warn(`claim with ${secret} from https://izle.example.test/connect#${DEVICE_TOKEN}`, {
+    invite: DEVICE_TOKEN, inviteCode: "483920", phoneSecret: secret, secrets: [secret], Invites: [DEVICE_TOKEN],
+    note: `phone ${secret} via ${DEVICE_TOKEN}`, code: secret, phoneId: "Ab12Cd34Ef56", list: [secret],
+  });
+  const line = lines[0]!;
+  for (const leak of [DEVICE_TOKEN, "izph_", "483920", "izle.example.test/connect"]) assert.ok(!line.includes(leak), `leaked ${leak}: ${line}`);
+  const { msg, note, code, list, phoneId } = JSON.parse(line);
+  assert.deepEqual({ msg, note, code, list, phoneId }, {
+    msg: "claim with <token> from <url izle.example.test>", note: "phone <token> via <token>", code: "<token>", list: ["<token>"], phoneId: "Ab12Cd34Ef56",
+  });
+});
+
 test("hostile fixture (resolver audit shapes): protocol-relative URLs, playlist text and odd error names", () => {
   const { lines, log } = capture();
   const named = Object.assign(new Error("boom"), { code: "E_X" });

@@ -55,6 +55,9 @@ sealed interface Screen {
     data object Home : Screen
     data object Player : Screen
     data class Update(val ui: UpdateUi) : Screen
+
+    /** Hidden menu → Settings → Connect a phone. */
+    data class ConnectPhone(val ui: PhoneConnectUi) : Screen
 }
 
 /** The update screen (docs/ux/senior-tv.md, "Update"): the guided "press OK" counting down to Home, "Updating…", or its failure. */
@@ -146,6 +149,10 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     private var pendingLaunchServer: String? = null
     private var pairingJob: Job? = null
     private var autoplayJob: Job? = null
+    private var phoneJob: Job? = null
+
+    /** The calls of the "Connect a phone" screen shown, to cancel its invite when the TV leaves it. */
+    private var phoneApi: PhoneInviteApi? = null
     private var resumeAfterMenu = false
 
     /** Armed on coming to the front on Home: the first state fetched then decides; anything the viewer does disarms it. */
@@ -213,7 +220,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         autoplayArmed = !confirming && (_screen.value == Screen.Home || _screen.value == Screen.Starting)
         when (_screen.value) {
             // On the server address screen too: Back from there returns to a live Home.
-            Screen.Home, Screen.Player, is Screen.Setup, is Screen.Update -> repository.start()
+            Screen.Home, Screen.Player, is Screen.Setup, is Screen.Update, is Screen.ConnectPhone -> repository.start()
             Screen.Pairing -> if (pairingJob?.isActive != true) startPairing()
             Screen.Starting -> Unit
         }
@@ -224,6 +231,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         foreground = false
         autoUpdateJob?.cancel()
         if (!confirming) leaveUpdateScreen()
+        leaveConnectPhone()
         clearAutoplay()
         banners.clear()
         if (_screen.value == Screen.Player || player.inUse) {
@@ -284,6 +292,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             }
             is Screen.Setup -> if (screen.canGoBack) showHome()
             is Screen.Update -> leaveUpdateScreen()
+            is Screen.ConnectPhone -> leaveConnectPhone()
             Screen.Home, Screen.Starting -> Unit
         }
     }
@@ -320,6 +329,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     private suspend fun useServer(url: HttpUrl) {
         player.stop()
         clearAutoplay()
+        phoneJob?.cancel()
         _menu.value = null
         store.setServer(url.toString())
         serverUrl = url
@@ -335,6 +345,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     private fun showSetup(canGoBack: Boolean) {
         clearAutoplay()
+        phoneJob?.cancel()
         _setup.update { it.copy(busy = false, error = null) }
         _screen.value = Screen.Setup(canGoBack)
     }
@@ -347,6 +358,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     private fun showPairing() {
         clearAutoplay()
+        phoneJob?.cancel()
         endUpdateScreen()
         _screen.value = Screen.Pairing
         _pairing.value = PairingUi(adminUrl = serverUrl?.let(ServerUrls::adminPage).orEmpty())
@@ -792,6 +804,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
                 store.setUiLanguageOverride(next)
             }
             SettingsEntry.PairAgain -> viewModelScope.launch { pairAgain() }
+            SettingsEntry.ConnectPhone -> showConnectPhone()
             SettingsEntry.InstallUpdate -> {
                 // Never over the player (the row is not offered there): the video goes on.
                 if (_screen.value == Screen.Player || player.inUse) return closeMenu(resume = true)
@@ -799,6 +812,36 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
                 onUpdate(versionCode = null, commandId = null, api = repository.api, report = {})
             }
         }
+    }
+
+    /**
+     * "Connect a phone": like the address screen, it replaces what played. The invite and its long poll live as long as
+     * the screen ([PhoneConnectLoop]); then Home.
+     */
+    private fun showConnectPhone() {
+        closeMenu(resume = false)
+        player.stop()
+        clearAutoplay()
+        phoneJob?.cancel()
+        val api = repository.api?.phoneInviteApi()
+        phoneApi = api
+        val server = serverUrl
+        _screen.value = Screen.ConnectPhone(PhoneConnectUi.Starting)
+        phoneJob = viewModelScope.launch {
+            PhoneConnectLoop.run(api, server) { ui -> if (_screen.value is Screen.ConnectPhone) _screen.value = Screen.ConnectPhone(ui) }
+            if (_screen.value is Screen.ConnectPhone) showHome()
+        }
+    }
+
+    /**
+     * Back or the background on "Connect a phone": the long poll stops, the invite is cancelled on the server (so the
+     * code seen on screen no longer connects; unreachable, it expires there), Home.
+     */
+    private fun leaveConnectPhone() {
+        phoneJob?.cancel()
+        if (_screen.value !is Screen.ConnectPhone) return
+        phoneApi?.let { api -> viewModelScope.launch { orNullOnFailure { api.cancel() } } }
+        showHome()
     }
 
     fun aboutInfo(): AboutInfo = state.value.let { s ->

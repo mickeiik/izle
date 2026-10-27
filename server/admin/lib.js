@@ -1062,6 +1062,7 @@ export function formatDuration(ms) {
 export function actorLabel(actor) {
   if (!actor) return "";
   if (actor.type === "token") return `token “${actor.name}”`;
+  if (actor.type === "phone") return `phone “${actor.name}”`;
   return new Map([["owner", "the owner"], ["tv", "the TV"], ["server", "the server"]]).get(actor.type) ?? actor.type;
 }
 
@@ -1204,11 +1205,21 @@ export const SCOPES = /** @type {const} */ ([
   ["read", "Read", "sees the TVs, the catalog, the history and the events"],
   ["control", "Control", "read, and sends commands to the TVs (play, pause, a message)"],
   ["manage", "Manage", "control, and changes home screens, settings and the history's marks"],
-  ["companion", "Listen along", "read, and Listen along from the companion app: what the TV plays, resolves and links"],
 ]);
 
-/** `Read`, `Control`, `Manage`, `Listen along`; the scope itself when unknown. @param {string} scope */
+/** `Read`, `Control`, `Manage`; the scope itself when unknown. @param {string} scope */
 export const scopeLabel = (scope) => SCOPES.find(([s]) => s === scope)?.[1] ?? scope;
+
+/**
+ * What the Phones card says under a phone's name: the TV it connected through (a deleted one too), and its dates.
+ * @param {{ deviceId: string | null, createdAt: string, lastUsedAt: string | null }} phone
+ * @param {Array<{ id: string, name: string }>} devices @param {number} [now]
+ */
+export function phoneLine(phone, devices, now = Date.now()) {
+  const tv = phone.deviceId === null ? undefined : devices.find((d) => d.id === phone.deviceId);
+  const via = tv ? `connected through ${tv.name}` : "connected through a deleted TV";
+  return `${via} · created ${formatRelative(phone.createdAt, now)} · last used ${formatRelative(phone.lastUsedAt, now)}`;
+}
 
 // --- TV app updates ----------------------------------------------------------------------------------------------
 

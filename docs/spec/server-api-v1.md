@@ -2,21 +2,20 @@
 
 Status: **stable** (API version 1). Within v1 only additive changes are allowed, recorded in the
 [changelog](#changelog): new optional request fields, new response fields, new routes, new error codes, and new values
-where this text says clients ignore unknown ones (TV and admin event types, command types, actor types, a home
-section's `layout`, a [Listen along](#listen-along) candidate's `type`, an [access token](#access-tokens)'s `scope`).
-Clients MUST ignore unknown response fields and handle an unknown error code by its HTTP status. Anything else (a
-removed or renamed field, a changed meaning, a new required request field, a new value anywhere else) needs a new API
-version under `/api/v2`. Up to and including izle 0.6.0, the first deployment, v1 changed in place, marked
-**breaking (pre-release)** in the changelog; since then it does not.
+where this text says clients ignore unknown ones (TV and admin event types, command types, actor types, a home section's
+`layout`, a [Listen along](#listen-along) candidate's `type`). Clients MUST ignore unknown response fields and handle an
+unknown error code by its HTTP status. Anything else (a removed or renamed field, a changed meaning, a new required
+request field, a new value anywhere else) needs a new API version under `/api/v2`. Up to and including izle 0.6.0, the
+first deployment, v1 changed in place, marked **breaking (pre-release)** in the changelog; since then it does not.
 
 ## Conventions
 
 - Base path `/api/v1`. JSON request and response bodies, requests ≤ 64 KiB (except the APK upload,
   [`PUT /admin/app/apk`](#tv-app), which streams up to 64 MiB).
 - **TV routes** (`/api/v1/tv/*`) need `Authorization: Bearer <deviceToken>`, **admin routes** (`/api/v1/admin/*`) the
-  admin token or an [access token](#access-tokens); neither works on the other's routes. A missing or wrong token
-  answers `401 unauthorized` with `WWW-Authenticate: Bearer` (on admin routes `429` after repeated failures, see
-  [Authentication model](#authentication-model)).
+  admin token, a [phone](#phones)'s secret or an [access token](#access-tokens); neither works on the other's routes. A
+  missing or wrong token answers `401 unauthorized` with `WWW-Authenticate: Bearer` (on admin routes `429` after
+  repeated failures, see [Authentication model](#authentication-model)).
 - Errors: `{"error": "<code>", "message"?, …details}` with an HTTP status; codes are listed per route. Anywhere:
   `400 invalid_json`, `400 invalid_request` (with `details: [{path, message}]`; also for unknown request fields, which
   every route refuses), `404 not_found` (no such route), `413 body_too_large`, `500 internal`.
@@ -39,14 +38,18 @@ version under `/api/v2`. Up to and including izle 0.6.0, the first deployment, v
 | Admin token | `IZLE_ADMIN_TOKEN`, else `admin.tokenFile` (created with 32 random bytes, mode 0600, on first start). Shorter than 24 characters → the server refuses to start. `izle-server admin-token [--rotate]` prints / replaces it (`--rotate` is refused while `IZLE_ADMIN_TOKEN` is set, and the server warns at startup when the variable shadows a token file); `--link` prints a sign-in link for the admin page (`<base>/admin/#token=<token>`, the token in the URL fragment, which browsers never send) and its QR code. | the file (owner's responsibility) |
 | Pair token | `POST /pair/start`, 32 random bytes base64url | sha256 |
 | Device token | handed out once by `GET /pair/wait` after approval, 32 random bytes base64url | sha256 |
+| Access token | `POST /admin/tokens`, `izat_` + 32 random bytes base64url, shown once ([Access tokens](#access-tokens)) | sha256 |
+| Phone invite | `POST /tv/phones/invite`, 32 random bytes base64url, in the QR code the TV shows; 5 minutes, single use ([Phones](#phones)) | sha256 |
+| Phone secret | handed out once by `POST /phones/claim`, `izph_` + 32 random bytes base64url; the **owner** level on every admin route, like the admin token ([Phones](#phones)) | sha256 |
 
-The admin and pair tokens are compared in constant time; device and access tokens are looked up by their hash.
+The admin and pair tokens are compared in constant time; device and access tokens, phone invites and phone secrets
+are looked up by their hash.
 No token is ever logged ([Logging](#logging)).
 
-Failed admin authentications (a wrong or revoked token on `/api/v1/admin/*`) are counted per client address
-([`trustedProxies`](#configuration); an IPv6 address by its /64): after 10 within 10 minutes of the first, every admin
-request from that address, even with the right token, answers `429 too_many_attempts` with `Retry-After` until those
-10 minutes are over. Successes and requests without a token are never counted (so tokenless requests that another
+Failed admin authentications (a wrong or revoked token or phone secret on `/api/v1/admin/*`) are counted per client
+address ([`trustedProxies`](#configuration); an IPv6 address by its /64): after 10 within 10 minutes of the first, every
+admin request from that address, even with the right token, answers `429 too_many_attempts` with `Retry-After` until
+those 10 minutes are over. Successes and requests without a token are never counted (so tokenless requests that another
 site's page sends from the owner's browser cannot lock the owner out). Each failure is logged as a warning with the
 client address and the route template. TV routes and pairing are not affected.
 
@@ -391,6 +394,23 @@ report for an item or episode the catalog does not have is stored all the same.
   letters, digits, `_` and `-` become `<token>` unless they read as an identifier (`SCREAMING_SNAKE`, `snake_case`,
   `CamelCase` without digits, such as player error names).
 
+### Connecting a phone
+
+The TV's hidden menu (Settings → Connect a phone) connects the owner's phone ([Phones](#phones)).
+
+- `POST /api/v1/tv/phones/invite` (no body) → `{"code": "483920", "invite": "<secret>", "expiresAt"}`. The `invite` is
+  32 random bytes base64url; the TV shows it as a QR code of `<server>/connect#<invite>`, and the `code` (6 digits,
+  unique among the invites not expired) in large digits. An invite lives 5 minutes and is used once. A TV has at most
+  one: a new one replaces the TV's previous invite, which stops working. `429 rate_limited` with `Retry-After` beyond
+  10 invites per TV in 10 minutes.
+- `GET /api/v1/tv/phones/invite?wait=<0..25>` (default 25) long-polls the TV's latest invite: `200 {"status": "open",
+  "code", "expiresAt"}` while it is not claimed (when `wait` elapses); `200 {"status": "claimed", "phone": {"id",
+  "name"}}` once a phone claimed it (at once, until the invite's expiry time); `410 {"error": "expired", "status":
+  "expired"}` once it expired; `404 not_found` when the TV has no invite; `400 invalid_request` for a bad `wait`.
+- `DELETE /api/v1/tv/phones/invite` → `204`: the TV left its "Connect a phone" screen (Back, the background), so its
+  invite stops working at once instead of at its expiry; a waiting long-poll answers `404`. An invite a phone already
+  claimed stays (its long-poll keeps answering `claimed`); without an invite it is `204` as well.
+
 ## Play order and the cursor
 
 Each device has, per item, a **cursor**: the episode OK plays. The server maintains it from progress reports and the
@@ -653,7 +673,7 @@ Nothing changes on the TV.
 `link` = `{"offsetMs", "rate", "language", "updatedAt"}` (`updatedAt` null = defaults, nothing stored). Errors:
 `404 unknown_episode`, `404 unknown_source` (also a resolve of `pasted`), `403 not_allowed`, `400 unsupported_media`
 (a kind the request's `kinds` does not list: DASH and MPEG-TS without `kinds`), `404 no_link` (copy without a stored link), `502 no_playable_source`. The resolve and link routes
-need the `companion` [scope](#access-tokens) or the owner token.
+need the owner level: the admin token or a connected [phone](#phones) (the companion app).
 
 ### TV app
 
@@ -710,14 +730,13 @@ scope, and revokes them at any time:
 |---|---|
 | `read` | every `GET` admin route except `GET /admin/tokens`: devices, catalog, problems, Listen along candidates, the pending pairing codes, [status](#status), [events](#events) and [history](#viewing-history) |
 | `control` | `read`, plus [`POST …/commands`](#commands) (`update` included) |
-| `companion` | `read`, plus [Listen along](#listen-along)'s `POST …/companion/resolve`, `PUT /admin/companion/links/…` and `POST …/copy-to-item`: the companion app's token, with no `control` or `manage` route |
 | `manage` | `control`, plus the home list (`PUT …/home`, the [single changes](#home-list-changes) and the [sections](#home-sections)), `PUT …/cursor`, `PATCH /admin/devices/:id`, [history marks](#viewing-history), `DELETE …/problems`, `POST /admin/catalog/reload` and the [TV app](#tv-app) (`PUT`/`DELETE /admin/app/apk`, `POST /admin/app/check`) |
 
-`control` and `manage` do not include the Listen along resolve and link routes (they need `companion` or the owner
-token). Every other route needs the owner token: pairing approval and clearing a code, deleting a TV, deleting and
-adopting history, [checks](#checks) (`POST`/`DELETE`; reading them is `read`) and the access tokens themselves (every
-method). A token that does not cover the route gets `403 insufficient_scope` with `required` (the scope it needs, or
-`owner`); it does not count as a failed sign-in.
+Every other route needs the owner level, the owner token or a [phone](#phones): pairing approval and clearing a
+code, deleting a TV, deleting and adopting history, [checks](#checks) (`POST`/`DELETE`; reading them is `read`),
+[Listen along](#listen-along) resolves and links, the access tokens themselves and the phones (every method). A token
+that does not cover the route gets `403 insufficient_scope` with `required` (the scope it needs, or `owner`); it does
+not count as a failed sign-in.
 
 | Route | Body | Response |
 |---|---|---|
@@ -726,17 +745,52 @@ method). A token that does not cover the route gets `403 insufficient_scope` wit
 | `DELETE /api/v1/admin/tokens/:id` | | `204`; requests with that token answer `401` from now on, and an [event stream](#events) it has open ends at once (a long-poll answers `401`) |
 
 `AccessToken` = `{"id", "name", "scope", "createdAt", "lastUsedAt"}` (`id`: 12 alphanumeric characters;
-`lastUsedAt` is written at most once a minute; clients show an unknown `scope` as it is). The secret is `izat_` and 32 random bytes base64url (the prefix lets
+`lastUsedAt` is written at most once a minute). The secret is `izat_` and 32 random bytes base64url (the prefix lets
 secret scanners recognize it, and the server tell it from the owner token); the server keeps its sha256. The admin
 sign-in throttle ([Authentication model](#authentication-model)) counts a wrong or revoked one like a wrong owner
 token, so an app that keeps sending a revoked token locks its address out for 10 minutes: stop the app before
 revoking. Errors: `409 duplicate_name`, `404 unknown_token`. `izle-server token create <name> --scope <scope>`
 (prints the secret once), `token list` and `token revoke <id>` call these routes on the running server.
 
-`Actor` (who caused a change or an event) = `{"type": "owner"}`, `{"type": "token", "tokenId", "name"}` (the name at
-that moment), `{"type": "tv", "deviceId"}` (the viewer, with the remote; also what the TV reports and its
+`Actor` (who caused a change or an event) = `{"type": "owner"}`, `{"type": "phone", "phoneId", "name"}` (one of the
+owner's [phones](#phones), the name at that moment), `{"type": "token", "tokenId", "name"}` (the name at that moment),
+`{"type": "tv", "deviceId"}` (the viewer, with the remote; also what the TV reports and its
 connections) or `{"type": "server"}` (a catalog reload by `SIGHUP`, a viewing that timed out, housekeeping, the
 start). Consumers MUST ignore unknown actor types.
+
+### Phones
+
+The owner's phone (the izle companion app) is an admin client at the **owner** level, like the admin page. A phone
+connects **from a TV**: the TV's hidden menu (Settings → Connect a phone) creates an invite
+([`POST /tv/phones/invite`](#connecting-a-phone)) and shows it as a QR code of `<server>/connect#<invite>` (the
+[`/connect`](#static-routes) page hands it to the app) and as its 6-digit code; the phone claims it and gets its own
+secret. Being in front of the TV is the security, since the owner approved that TV at pairing: there is no
+confirmation, setting or approval step. A phone is revoked by disconnecting it.
+
+| Route | Auth | Body | Response |
+|---|---|---|---|
+| `POST /api/v1/phones/claim` | none | `{"invite"}` or `{"code"}` (exactly one), and `"name"` (the phone's name: 1–60 characters after trimming) | `201 {"phone": Phone, "secret": "izph_…", "deviceId"}` (`deviceId`: the inviting TV); the secret is shown only here |
+| `GET /api/v1/admin/phones` | owner level | | `{"phones": [Phone]}`, oldest first |
+| `DELETE /api/v1/admin/phones/:id` | owner level | | `204`; requests with that phone's secret answer `401` from now on, and an [event stream](#events) or long-poll it has open ends, as for a revoked access token. A phone may disconnect itself. `404 not_found` for an unknown id |
+
+`Phone` = `{"id", "name", "createdAt", "lastUsedAt", "deviceId"}`: `id` 12 alphanumeric characters; `deviceId` the
+TV it connected through, null once that TV is deleted (deleting a TV keeps its phones); `lastUsedAt` null until the
+first use, then written at most once a minute. The secret is `izph_` and 32 random bytes base64url (the prefix lets
+secret scanners recognize it, and the server tell it from the other secrets); the server keeps its sha256 and never
+logs it. It works on every `/api/v1/admin/*` route at the owner level; a wrong one counts as a failed admin
+authentication ([Authentication model](#authentication-model)). Access tokens get `403 insufficient_scope`
+(`required: "owner"`) on both admin routes.
+
+A claim is answered `404 not_found` for an unknown, used, replaced or expired invite or code alike; `400
+invalid_request` for a body that is not one of the two forms or a name out of bounds (a refused body is not a failed
+claim); `429 rate_limited` with `Retry-After` from the 11th failed claim from one client address
+([`trustedProxies`](#configuration); an IPv6 address by its /64) within 10 minutes of the first, until those 10 minutes
+are over, even with a valid invite (successes are not counted). Failed claims by code are also counted for all
+addresses together: from the 101st within 10 minutes, every claim by code answers `429 rate_limited` with
+`Retry-After` until those 10 minutes are over, so guessing the 6 digits does not scale with the guesser's addresses;
+claims by invite (the QR code) are not affected. A claim emits `phone.connected`, a disconnection
+`phone.disconnected` ([Events](#events)). `izle-server phone list` and `phone disconnect <id>` call the admin routes on
+the running server, so a lost phone can be cut off from the server's shell.
 
 ### Status
 
@@ -765,8 +819,8 @@ Events carry no URLs, headers, refs, tokens, message texts or problem details.
   20 s. The token goes in the `Authorization` header, never in the query string (the admin page reads the stream
   with `fetch`, since `EventSource` cannot set it). A replay sends at most the newest 500 events; when more were
   stored after `after`, it starts with `event: gap`. A client that stops reading while events keep coming is
-  disconnected (it reconnects with `Last-Event-ID`). At most 10 streams are open at once per access token, and per
-  client address for the owner token; one more answers `429 too_many_streams` (`Retry-After`).
+  disconnected (it reconnects with `Last-Event-ID`). At most 10 streams are open at once per access token or phone,
+  and per client address for the owner token; one more answers `429 too_many_streams` (`Retry-After`).
 - **Long-poll:** `GET /api/v1/admin/events?after=&wait=&limit=&devices=&types=` → `{"events": [Event], "last",
   "gap"}`, oldest first (`limit` ≤ 500, default 100); with no event after `after` it waits up to `wait` seconds (0–25,
   default 0), for clients that cannot keep a stream open (MCP tools, scripts). `last` is the id of the last event
@@ -788,6 +842,8 @@ Events carry no URLs, headers, refs, tokens, message texts or problem details.
 | `app.removed` / `app.check_failed` | `{"versionName"}` / `{"reason"}` (a GitHub check failed; the server is the actor of a scheduled check) |
 | `pairing.pending` | `{"code", "expiresAt"}`: a TV shows a new pairing code; the server is the actor (the TV has no id yet) |
 | `pairing.cancelled` | `{"code"}`: the owner cleared a waiting code ([`DELETE …/pair/pending/:code`](#delete-apiv1adminpairpendingcode)) |
+| `phone.connected` | `{"phoneId", "name", "deviceId"}`: a phone claimed a TV's invite ([Phones](#phones)); the event's `deviceId` is that TV, the actor the new phone |
+| `phone.disconnected` | `{"phoneId", "name"}`: a phone was disconnected; the event's `deviceId` is the TV it connected through (null once deleted), the actor who disconnected it (the phone itself, another phone or the owner) |
 | `playback.started` | `{"viewingId", "itemId", "itemKind", "itemTitle", "episodeId", "episodeTitle", "season", "number", "sourceId", "positionMs", "trigger"}`: a [viewing](#viewing-history) starts (its first resolve; the re-resolves that continue it send nothing); `positionMs` is where it will start |
 | `playback.paused` / `playback.resumed` | `{"viewingId", "positionMs"}`: a `paused` report / a `playing` report after one; never for a channel |
 | `playback.seeked` | `{"viewingId", "fromMs", "toMs"}`: a report's position is more than 10 s from where playback should be (see [`coveredFraction`](#viewing-history)); never for a channel |
@@ -993,27 +1049,29 @@ Viewings of a deleted TV keep its id and name; `POST /api/v1/admin/devices/:id/h
 | `GET /healthz` | `{"ok": true}` |
 | `GET /assets/<sha256>.<jpg\|png\|webp>` | catalog posters, `Cache-Control: public, max-age=31536000, immutable` |
 | `GET /admin/` | the admin UI (`/` and `/admin` redirect here): `index.html` plus the allow-lists `ADMIN_FILES` and `ADMIN_VENDOR_FILES` in `server/src/admin-files.ts` (the ES modules flat in `server/admin/`, entry `app.js`; `style.css`, `icon.svg`, and the pinned hls.js build `vendor/hls.min.js`, see `server/admin/vendor/README.md`); anything else under `/admin/` is `404`; `Cache-Control: no-cache`, `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; …` |
+| `GET /connect` | the page a phone opens from the QR code a TV shows (`<server>/connect#<invite>`, see [Phones](#phones)), no token: `index.html` plus the allow-list `CONNECT_FILES` in `server/src/admin-files.ts` (`connect/connect.js`, `connect/link.js`, `connect/connect.css`, from `server/connect/`), under the admin UI's `Cache-Control` and `Content-Security-Policy`. The page reads the invite from the fragment (which browsers never send) and sends it nowhere: its **Open izle companion** button is `intent://connect?server=<server>&invite=<invite>#Intent;scheme=izle-companion;package=io.github.mickeiik.izle.companion;end` (`server`: the page's origin plus the path before `/connect`, URL-encoded); without an invite it says to scan the QR code from the TV |
 | `GET /p/<token>/…` | [media proxy](#media-proxy) |
 
 ## Logging
 
 One JSON object per line on stdout: `time`, `level`, `msg` and fields. Every line passes through one redaction step:
 fields whose name contains a word like `url`, `uri`, `href`, `header(s)`, `authorization`, `cookie`, `token`, `ref`,
-`config`, `playlist`, `password`, `secret` or `body` are dropped; a string starting with `#EXTM3U` becomes `<playlist>`;
-`scheme://…` and protocol-relative `//host…` in strings become `<url host>`; runs of 20 or more base64url characters
-become `<token>`, except a whole value of at most 120 characters in a top-level `catalogId`, `buildId`, `itemId`,
-`episodeId`, `sourceId` or `adapterId` field (or each string of an `adapters` list) made of words joined by `-`, `.`,
-`_` or `~`, each a lowercase, capitalized or CamelCase word or a run of at most 16 letters and digits of one case
-(`20261023-78ece5b2deea`, `BigBuckBunny-2008.S01E01`), and not containing a UUID, or in `code` an identifier like
-`ERROR_CODE_IO_BAD_HTTP_STATUS`, which is written as given; errors are reduced to their class name (an identifier of at
-most 60 characters, else `Error`) and a short `code`, written as given when it is such an identifier. The access log
-records the **route template** (e.g. `/api/v1/tv/items/:itemId`), status, duration and device id, never the raw path or
-query; health checks and successful proxy requests at `debug` level only, proxy errors at `info`. Commands are logged
-with their type and ids (never a message's text), problem reports with their kind and code (never their detail), a
-request made with an [access token](#access-tokens) with the token's id (field `actorId`, since a key containing `token`
-would be dropped), never the secret. The TV app APK is logged with its version, size, source and the first 12 hex digits
-of its sha256 (`sha256Prefix`), never the whole digest, a file path or a download URL; a failed GitHub check with its
-`reason` and `repo`.
+`config`, `playlist`, `password`, `secret(s)`, `invite(s)` or `body` are dropped; a string starting with `#EXTM3U`
+becomes `<playlist>`; `scheme://…` and protocol-relative `//host…` in strings become `<url host>`; runs of 20 or more
+base64url characters become `<token>`, except a whole value of at most 120 characters in a top-level `catalogId`,
+`buildId`, `itemId`, `episodeId`, `sourceId` or `adapterId` field (or each string of an `adapters` list) made of words
+joined by `-`, `.`, `_` or `~`, each a lowercase, capitalized or CamelCase word or a run of at most 16 letters and
+digits of one case (`20261023-78ece5b2deea`, `BigBuckBunny-2008.S01E01`), and not containing a UUID, or in `code` an
+identifier like `ERROR_CODE_IO_BAD_HTTP_STATUS`, which is written as given; errors are reduced to their class name (an
+identifier of at most 60 characters, else `Error`) and a short `code`, written as given when it is such an identifier.
+The access log records the **route template** (e.g. `/api/v1/tv/items/:itemId`), status, duration and device id, never
+the raw path or query; health checks and successful proxy requests at `debug` level only, proxy errors at `info`.
+Commands are logged with their type and ids (never a message's text), problem reports with their kind and code (never
+their detail), a request made with an [access token](#access-tokens) or by a [phone](#phones) with the token's or the
+phone's id (field `actorId`, since a key containing `token` would be dropped), never the secret; phone invites and their
+codes are never logged (a failed claim is logged with the client address only). The TV app APK is logged with its
+version, size, source and the first 12 hex digits of its sha256 (`sha256Prefix`), never the whole digest, a file path or
+a download URL; a failed GitHub check with its `reason` and `repo`.
 
 ## Configuration
 
@@ -1084,12 +1142,16 @@ The example's values are the defaults, except the samples for `publicUrl`, `trus
   are media (or subtitles) through as media, instead of answering `502 not_a_playlist`; one that is neither answers
   `502 not_media`, a new [problem](#problem-reports) code, and its read ahead has 20 s (additive: a tolerance, an
   error code and a problem code).
-- **v1 (2026-10-26)** — [Listen along](#listen-along) for the companion app: the [access token](#access-tokens) scope
-  `companion` (`read` plus the resolve and link routes, which needed the owner token until now); the reserved link
-  source id `pasted` (`PUT …/links/:episodeId/pasted` and `copy-to-item` for any episode, and its candidate in
-  `GET …/companion` with the new candidate `type` `"pasted"`, which clients skip when they do not know it); and
-  `nowPlaying.durationMs` in `GET …/companion` (additive: a scope value, which clients show as it is, a link key, a
-  candidate type and a response field).
+- **v1 (2026-10-26)** — [Listen along](#listen-along) for the companion app: the reserved link source id `pasted`
+  (`PUT …/links/:episodeId/pasted` and `copy-to-item` for any episode, and its candidate in `GET …/companion` with the
+  new candidate `type` `"pasted"`, which clients skip when they do not know it); and `nowPlaying.durationMs` in
+  `GET …/companion` (additive: a link key, a candidate type and a response field).
 - **v1 (2026-10-26)** — [Listen along](#listen-along): `POST …/companion/resolve` takes `kinds`, the media kinds the
   client plays (absent: `["hls", "mp4"]`, the refusals as before); a client that lists them gets MPEG-TS through the
   proxy and DASH direct instead of `400 unsupported_media` (additive: an optional request field).
+- **v1 (2026-10-26)** — [phones](#phones): a TV connects the owner's phone (`POST`/`GET /tv/phones/invite`,
+  `POST /phones/claim`), whose `izph_` secret has the owner level on every admin route; `GET /admin/phones`,
+  `DELETE /admin/phones/:id`, the events `phone.connected` and `phone.disconnected`, the actor type `phone`, and the
+  [`/connect`](#static-routes) page (additive: new routes, a new secret, event types and an actor type, which clients
+  ignore when they do not know them). `DELETE /tv/phones/invite` cancels a TV's open invite, and failed claims by code
+  are also limited for all addresses together (additive: a new route and a rate limit on a new route).

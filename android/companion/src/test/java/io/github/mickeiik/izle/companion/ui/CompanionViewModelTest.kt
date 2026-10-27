@@ -5,6 +5,9 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import io.github.mickeiik.izle.companion.CompanionApp
+import io.github.mickeiik.izle.companion.connect.ConnectLink
+import io.github.mickeiik.izle.companion.settings.CompanionSettings
+import io.github.mickeiik.izle.data.api.ApiException
 import io.github.mickeiik.izle.companion.finder.FoundLink
 import io.github.mickeiik.izle.companion.finder.LinkFinderState
 import io.github.mickeiik.izle.companion.sync.ApiClientCompanionApi
@@ -57,9 +60,13 @@ class CompanionViewModelTest {
 
     @Volatile private var devicesAnswer: () -> MockResponse = { json(200, DEVICES) }
     @Volatile private var companionAnswer: () -> MockResponse = { json(200, EPISODE) }
+    @Volatile private var claimAnswer: () -> MockResponse = { json(201, CLAIM) }
+    @Volatile private var phonesAnswer: () -> MockResponse = { json(200, PHONES) }
+    @Volatile private var deletePhoneAnswer: () -> MockResponse = { MockResponse.Builder().code(204).build() }
 
     @Before
     fun setUp() {
+        app.graph.phoneName = { "Test phone" }
         app.graph.mediaEngine = { FakeMediaEngine() }
         app.graph.newSession = { _, scope -> ListenSession(NeverAnswers, FakeMediaEngine(), scope, { it }) }
         server.dispatcher = object : Dispatcher() {
@@ -67,6 +74,9 @@ class CompanionViewModelTest {
                 requests += request
                 val path = request.url.encodedPath
                 return when {
+                    path == "/api/v1/phones/claim" && request.method == "POST" -> claimAnswer()
+                    path == "/api/v1/admin/phones" && request.method == "GET" -> phonesAnswer()
+                    path.startsWith("/api/v1/admin/phones/") && request.method == "DELETE" -> deletePhoneAnswer()
                     path == "/api/v1/admin/devices" -> devicesAnswer()
                     path == "/api/v1/admin/devices/tv-1/companion" -> companionAnswer()
                     // For a session on this server: the TV at 60 s; a long-poll answers after a second.
@@ -94,12 +104,71 @@ class CompanionViewModelTest {
         server.close()
     }
 
+    // --- connecting by code ----------------------------------------------------------------------------------------
+
     @Test
-    fun anInvalidAddressIsSaidWithoutARequest() {
+    fun theCodeClaimsWithoutACredentialStoresTheSecretAndOpensTheInvitingTv() {
         val vm = startUnpaired()
-        vm.connect("http://bad host", "izat_x")
-        assertEquals(ConnectError.InvalidAddress, (vm.ui.value as CompanionUi.Pairing).error)
+        vm.connect(server.url("/").toString().trimEnd('/'), " 483 920 ")
+        assertTrue((vm.ui.value as CompanionUi.Connect).busy)
+        waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Listen)?.let { it.loaded && it.tvName != null } == true }
+        assertEquals("tv-1", (vm.ui.value as CompanionUi.Listen).tvId)
+        assertEquals("Living room", (vm.ui.value as CompanionUi.Listen).tvName)
+        val claim = requests.first()
+        assertEquals("/api/v1/phones/claim", claim.url.encodedPath)
+        assertNull(claim.headers["Authorization"])
+        assertEquals("""{"code":"483920","name":"Test phone"}""", claim.body?.utf8())
+        assertTrue("then the phone's secret", requests.drop(1).all { it.headers["Authorization"] == "Bearer izph_secret" })
+        runBlocking {
+            val stored = app.graph.store.current()
+            assertEquals(server.url("/").toString(), stored.serverUrl)
+            assertEquals("izph_secret", stored.token)
+            assertEquals(THIS_PHONE, stored.phoneId)
+            assertEquals("tv-1", stored.tvId)
+        }
+    }
+
+    @Test
+    fun aClaimWithoutItsTvListsTheTvs() {
+        claimAnswer = { json(201, CLAIM.replace(""""deviceId":"tv-1"}""", """"deviceId":null}""")) }
+        val vm = startUnpaired()
+        vm.connect(server.url("/").toString(), "483920")
+        waitUntil("the TV list") { (vm.ui.value as? CompanionUi.PickTv)?.loading == false }
+        assertEquals(listOf("tv-1", "tv-2"), (vm.ui.value as CompanionUi.PickTv).devices.map { it.id })
+        runBlocking { assertNull(app.graph.store.current().tvId) }
+    }
+
+    @Test
+    fun aCodeThatIsNotSixDigitsAndAnInvalidAddressSendNothing() {
+        val vm = startUnpaired()
+        vm.connect(server.url("/").toString(), "12345")
+        vm.connect(server.url("/").toString(), "1234567")
+        vm.connect(server.url("/").toString(), "48392a")
+        assertNull((vm.ui.value as CompanionUi.Connect).error)
+        vm.connect("http://bad host", "483920")
+        assertEquals(ConnectError.InvalidAddress, (vm.ui.value as CompanionUi.Connect).error)
+        settle()
         assertEquals(0, requests.size)
+        assertEquals("483920", CompanionViewModel.normalizeCode("483 920"))
+        assertNull(CompanionViewModel.normalizeCode("４８３９２０")) // other scripts' digits are not the TV's
+    }
+
+    @Test
+    fun claimErrors() {
+        val vm = startUnpaired()
+        claimAnswer = { json(404, """{"error":"not_found"}""") }
+        vm.connect(server.url("/").toString(), "483920")
+        waitUntil("not accepted") { (vm.ui.value as? CompanionUi.Connect)?.error == ConnectError.CodeNotAccepted }
+        assertFalse((vm.ui.value as CompanionUi.Connect).busy)
+
+        claimAnswer = { MockResponse.Builder().code(429).addHeader("Retry-After", "300").body("""{"error":"rate_limited"}""").build() }
+        vm.connect(server.url("/").toString(), "483920")
+        waitUntil("too many tries") { (vm.ui.value as? CompanionUi.Connect)?.error == ConnectError.TooManyTries }
+
+        claimAnswer = { json(400, """{"error":"invalid_request"}""") }
+        vm.connect(server.url("/").toString(), "483920")
+        waitUntil("by its code") { (vm.ui.value as? CompanionUi.Connect)?.error == ConnectError.Server("invalid_request") }
+        runBlocking { assertFalse(app.graph.store.current().isPaired) }
     }
 
     @Test
@@ -108,40 +177,95 @@ class CompanionViewModelTest {
         val url = closed.url("/").toString()
         closed.close()
         val vm = startUnpaired()
-        vm.connect(url, "izat_x")
-        waitUntil("the error") { (vm.ui.value as? CompanionUi.Pairing)?.error == ConnectError.Unreachable }
-        assertFalse((vm.ui.value as CompanionUi.Pairing).busy)
+        vm.connect(url, "483920")
+        waitUntil("the error") { (vm.ui.value as? CompanionUi.Connect)?.error == ConnectError.Unreachable }
+        assertFalse((vm.ui.value as CompanionUi.Connect).busy)
         runBlocking { assertFalse(app.graph.store.current().isPaired) }
     }
+
+    // --- connecting by the QR code's link --------------------------------------------------------------------------
+
+    @Test
+    fun theLinkClaimsItsInviteAtOnce() {
+        val vm = startUnpaired()
+        vm.connectWithLink(ConnectLink(server.url("/").toString(), "inv-abc_123"))
+        waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Listen)?.loaded == true }
+        assertEquals("""{"invite":"inv-abc_123","name":"Test phone"}""", requests.first().body?.utf8())
+        assertNull(requests.first().headers["Authorization"])
+        runBlocking { assertEquals(THIS_PHONE, app.graph.store.current().phoneId) }
+    }
+
+    @Test
+    fun aLinkThatFailsSaysSoOnTheConnectScreen() {
+        claimAnswer = { json(404, """{"error":"not_found"}""") }
+        val vm = startUnpaired()
+        vm.connectWithLink(ConnectLink(server.url("/").toString(), "inv-used"))
+        waitUntil("the error") { (vm.ui.value as? CompanionUi.Connect)?.error == ConnectError.CodeNotAccepted }
+        val connect = vm.ui.value as CompanionUi.Connect
+        assertFalse(connect.busy)
+        assertEquals("the link's server fills the address", server.url("/").toString().trimEnd('/'), connect.initialUrl)
+    }
+
+    @Test
+    fun aLinkThatFailsWhileConnectedKeepsTheTvAndSaysWhyInASnackbar() {
+        val vm = startListening()
+        claimAnswer = { json(404, """{"error":"not_found"}""") }
+        vm.connectWithLink(ConnectLink(server.url("/").toString(), "inv-used"))
+        waitUntil("the snackbar") { vm.snackbar.value == "That code is not valid any more. Open Connect a phone on the TV again." }
+        waitUntil("Listen along again") { (vm.ui.value as? CompanionUi.Listen)?.loaded == true }
+        runBlocking { assertEquals("izat_test", app.graph.store.current().token) }
+    }
+
+    @Test
+    fun aLinkWhileConnectedReplacesThePairingAndDeletesThePreviousPhone() {
+        val vm = startListening(phoneId = "ph-old000000")
+        vm.connectWithLink(ConnectLink(server.url("/").toString(), "inv-abc_123"))
+        waitUntil("the new pairing") { runBlocking { app.graph.store.current().phoneId } == THIS_PHONE }
+        waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Listen)?.loaded == true }
+        runBlocking { assertEquals("izph_secret", app.graph.store.current().token) }
+        waitUntil("the previous phone deleted") { requests.any { it.method == "DELETE" } }
+        val delete = requests.single { it.method == "DELETE" }
+        assertEquals("/api/v1/admin/phones/ph-old000000", delete.url.encodedPath)
+        assertEquals("with its own secret", "Bearer izat_test", delete.headers["Authorization"])
+    }
+
+    @Test
+    fun aLinkToAnotherServerWhileConnectedIsRefused() {
+        val vm = startListening()
+        val before = requests.size
+        vm.connectWithLink(ConnectLink("https://elsewhere.example", "inv-abc_123"))
+        val connectedTo = server.url("/").toString().trimEnd('/')
+        waitUntil("the snackbar") {
+            vm.snackbar.value == "This phone is connected to $connectedTo. To connect it to another server, disconnect this phone first."
+        }
+        settle()
+        assertTrue("nothing claimed", requests.drop(before).none { it.url.encodedPath == "/api/v1/phones/claim" })
+        assertTrue(vm.ui.value is CompanionUi.Listen)
+        runBlocking { assertEquals(server.url("/").toString(), app.graph.store.current().serverUrl) }
+    }
+
+    // --- debug builds: a token instead of a code -------------------------------------------------------------------
 
     @Test
     fun aTokenTheServerDoesNotAccept() {
         devicesAnswer = { json(401, """{"error":"unauthorized"}""") }
         val vm = startUnpaired()
-        vm.connect(server.url("/").toString(), "izat_wrong")
-        waitUntil("the error") { (vm.ui.value as? CompanionUi.Pairing)?.error == ConnectError.TokenNotAccepted }
-    }
-
-    @Test
-    fun aTokenWithoutTheCompanionScope() {
-        devicesAnswer = { json(403, """{"error":"insufficient_scope","required":"companion"}""") }
-        val vm = startUnpaired()
-        vm.connect(server.url("/").toString(), "izat_read")
-        waitUntil("the error") { (vm.ui.value as? CompanionUi.Pairing)?.error == ConnectError.NeedsCompanionScope }
+        vm.connectWithToken(server.url("/").toString(), "izat_wrong")
+        waitUntil("the error") { (vm.ui.value as? CompanionUi.Connect)?.error == ConnectError.TokenNotAccepted }
     }
 
     @Test
     fun anotherErrorIsShownByItsCode() {
-        devicesAnswer = { json(503, """{"error":"busy"}""") }
+        devicesAnswer = { json(403, """{"error":"insufficient_scope","required":"owner"}""") }
         val vm = startUnpaired()
-        vm.connect(server.url("/").toString(), "izat_x")
-        waitUntil("the error") { (vm.ui.value as? CompanionUi.Pairing)?.error == ConnectError.Server("busy") }
+        vm.connectWithToken(server.url("/").toString(), "izat_read")
+        waitUntil("the error") { (vm.ui.value as? CompanionUi.Connect)?.error == ConnectError.Server("insufficient_scope") }
     }
 
     @Test
-    fun connectingListsTheActiveTvsAndPickingOneOpensListenAlong() {
+    fun aTokenListsTheActiveTvsAndPickingOneOpensListenAlong() {
         val vm = startUnpaired()
-        vm.connect(server.url("/").toString(), " izat_test ")
+        vm.connectWithToken(server.url("/").toString(), " izat_test ")
         waitUntil("the TV list") { vm.ui.value is CompanionUi.PickTv }
         val picker = vm.ui.value as CompanionUi.PickTv
         assertEquals(listOf("tv-1", "tv-2"), picker.devices.map { it.id })
@@ -151,6 +275,7 @@ class CompanionViewModelTest {
             val stored = app.graph.store.current()
             assertEquals(server.url("/").toString(), stored.serverUrl)
             assertEquals("izat_test", stored.token)
+            assertNull(stored.phoneId)
             assertNull(stored.tvId)
         }
         vm.pickTv("tv-1")
@@ -163,20 +288,118 @@ class CompanionViewModelTest {
     fun oneTvGoesStraightToListenAlong() {
         devicesAnswer = { json(200, """{"devices":[{"id":"tv-1","name":"Living room","status":"active","online":true}]}""") }
         val vm = startUnpaired()
-        vm.connect(server.url("/").toString(), "izat_test")
+        vm.connectWithToken(server.url("/").toString(), "izat_test")
         waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Listen)?.loaded == true }
         assertEquals("tv-1", (vm.ui.value as CompanionUi.Listen).tvId)
         runBlocking { assertEquals("tv-1", app.graph.store.current().tvId) }
     }
 
+    // --- disconnecting ---------------------------------------------------------------------------------------------
+
     @Test
-    fun changeServerForgetsThePairing() {
+    fun disconnectThisPhoneDeletesItThenForgetsThePairing() {
         val vm = startListening()
         vm.forgetPairing()
-        waitUntil("the pairing screen") { vm.ui.value is CompanionUi.Pairing }
-        assertEquals(server.url("/").toString().trimEnd('/'), (vm.ui.value as CompanionUi.Pairing).initialUrl)
-        runBlocking { assertFalse(app.graph.store.current().isPaired) }
+        waitUntil("the connect screen") { vm.ui.value is CompanionUi.Connect }
+        val delete = requests.single { it.method == "DELETE" }
+        assertEquals("/api/v1/admin/phones/$THIS_PHONE", delete.url.encodedPath)
+        assertEquals("Bearer izat_test", delete.headers["Authorization"])
+        assertEquals(server.url("/").toString().trimEnd('/'), (vm.ui.value as CompanionUi.Connect).initialUrl)
+        assertNull((vm.ui.value as CompanionUi.Connect).error)
+        runBlocking { assertEquals(CompanionSettings(), app.graph.store.current()) }
         assertNull(app.graph.currentSession)
+    }
+
+    @Test
+    fun disconnectingIsBestEffortAndATypedTokenDeletesNothing() {
+        deletePhoneAnswer = { json(503, """{"error":"busy"}""") }
+        val vm = startListening()
+        vm.forgetPairing()
+        waitUntil("the connect screen") { vm.ui.value is CompanionUi.Connect }
+        runBlocking { assertFalse(app.graph.store.current().isPaired) }
+
+        requests.clear()
+        viewModels.clear() // a new view model reads the store again
+        val again = startListening(phoneId = null)
+        again.forgetPairing()
+        waitUntil("the connect screen") { again.ui.value is CompanionUi.Connect }
+        assertTrue(requests.none { it.method == "DELETE" })
+    }
+
+    @Test
+    fun aDisconnectedPhoneIsToldOnTheConnectScreen() {
+        val vm = startListening()
+        companionAnswer = { json(401, """{"error":"unauthorized"}""") }
+        vm.refresh()
+        waitUntil("the connect screen") { vm.ui.value is CompanionUi.Connect }
+        assertEquals(ConnectError.Disconnected, (vm.ui.value as CompanionUi.Connect).error)
+        assertNull("said once, on the screen", vm.snackbar.value)
+        assertTrue("its secret is dead: nothing to delete", requests.none { it.method == "DELETE" })
+        runBlocking { assertFalse(app.graph.store.current().isPaired) }
+    }
+
+    @Test
+    fun anOlderInstallsCompanionTokenIsTreatedAsDisconnected() {
+        companionAnswer = { json(403, """{"error":"insufficient_scope","required":"owner"}""") }
+        runBlocking {
+            app.graph.store.savePairing(server.url("/").toString(), "izat_companion")
+            app.graph.store.setTv("tv-1")
+        }
+        val vm = viewModel()
+        waitUntil("the connect screen") { (vm.ui.value as? CompanionUi.Connect)?.error == ConnectError.Disconnected }
+    }
+
+    // --- the phones ------------------------------------------------------------------------------------------------
+
+    @Test
+    fun thePhonesListMarksThisOneAndBackReturnsToTheTv() {
+        val vm = startListening()
+        vm.openPhones()
+        waitUntil("the phones") { (vm.ui.value as? CompanionUi.Phones)?.loading == false }
+        val phones = vm.ui.value as CompanionUi.Phones
+        assertEquals(listOf(THIS_PHONE, OTHER_PHONE), phones.phones.map { it.id })
+        assertEquals(THIS_PHONE, phones.thisPhoneId)
+        assertNull(phones.error)
+        assertEquals("Bearer izat_test", requests.last { it.url.encodedPath == "/api/v1/admin/phones" }.headers["Authorization"])
+
+        val gets = count(COMPANION)
+        vm.closePhones()
+        assertEquals("tv-1", (vm.ui.value as CompanionUi.Listen).tvId)
+        waitUntil("read again") { count(COMPANION) > gets && !(vm.ui.value as CompanionUi.Listen).refreshing }
+    }
+
+    @Test
+    fun disconnectingAnotherPhoneReadsTheListAgain() {
+        val vm = startListening()
+        vm.openPhones()
+        waitUntil("the phones") { (vm.ui.value as? CompanionUi.Phones)?.loading == false }
+        val lists = count(PHONES_PATH)
+        vm.disconnectPhone(OTHER_PHONE)
+        waitUntil("the list again") { count(PHONES_PATH) > lists && (vm.ui.value as? CompanionUi.Phones)?.loading == false }
+        assertEquals("/api/v1/admin/phones/$OTHER_PHONE", requests.single { it.method == "DELETE" }.url.encodedPath)
+        runBlocking { assertTrue("still connected", app.graph.store.current().isPaired) }
+    }
+
+    @Test
+    fun disconnectingThisPhoneFromTheListForgetsThePairing() {
+        val vm = startListening()
+        vm.openPhones()
+        waitUntil("the phones") { (vm.ui.value as? CompanionUi.Phones)?.loading == false }
+        vm.disconnectPhone(THIS_PHONE)
+        waitUntil("the connect screen") { vm.ui.value is CompanionUi.Connect }
+        assertEquals("/api/v1/admin/phones/$THIS_PHONE", requests.single { it.method == "DELETE" }.url.encodedPath)
+        runBlocking { assertFalse(app.graph.store.current().isPaired) }
+    }
+
+    @Test
+    fun thePhonesListErrorsAndA401() {
+        phonesAnswer = { json(503, """{"error":"busy"}""") }
+        val vm = startListening()
+        vm.openPhones()
+        waitUntil("the error") { (vm.ui.value as? CompanionUi.Phones)?.error == ConnectError.Server("busy") }
+        phonesAnswer = { json(401, """{"error":"unauthorized"}""") }
+        vm.reloadPhones()
+        waitUntil("the connect screen") { (vm.ui.value as? CompanionUi.Connect)?.error == ConnectError.Disconnected }
     }
 
     @Test
@@ -316,12 +539,12 @@ class CompanionViewModelTest {
     }
 
     @Test
-    fun aRevokedTokenForgetsThePairing() {
+    fun aSessionRefusedWhileListeningEndsOnTheConnectScreen() {
+        app.graph.newSession = { _, scope -> ListenSession(Refused, FakeMediaEngine(), scope, { it }) }
         val vm = startListening()
-        companionAnswer = { json(401, """{"error":"unauthorized"}""") }
-        vm.refresh()
-        waitUntil("the pairing screen") { vm.ui.value is CompanionUi.Pairing }
-        assertEquals("The token was not accepted; pair again.", vm.snackbar.value)
+        vm.listen()
+        waitUntil("the connect screen") { (vm.ui.value as? CompanionUi.Connect)?.error == ConnectError.Disconnected }
+        assertNull("said once, on the screen", vm.snackbar.value)
         runBlocking { assertFalse(app.graph.store.current().isPaired) }
     }
 
@@ -470,13 +693,13 @@ class CompanionViewModelTest {
     }
 
     private fun startUnpaired(): CompanionViewModel = viewModel().also { vm ->
-        waitUntil("the pairing screen") { vm.ui.value is CompanionUi.Pairing }
+        waitUntil("the connect screen") { vm.ui.value is CompanionUi.Connect }
     }
 
-    /** Paired with a TV: the Listen along screen with its first answer. */
-    private fun startListening(): CompanionViewModel {
+    /** Paired with a TV: the Listen along screen with its first answer. [phoneId] null: a typed token (or an older install). */
+    private fun startListening(phoneId: String? = THIS_PHONE): CompanionViewModel {
         runBlocking {
-            app.graph.store.savePairing(server.url("/").toString(), "izat_test")
+            app.graph.store.savePairing(server.url("/").toString(), "izat_test", phoneId)
             app.graph.store.setTv("tv-1")
         }
         return viewModel().also { vm ->
@@ -514,8 +737,26 @@ class CompanionViewModelTest {
         override suspend fun companion(deviceId: String): CompanionResponse = awaitCancellation()
     }
 
+    /** The session's server, after this phone was disconnected. */
+    private object Refused : CompanionApi {
+        override suspend fun now(deviceId: String, seq: Long?, waitSec: Int): NowResponse = throw ApiException(401, "unauthorized")
+        override suspend fun resolve(deviceId: String, request: CompanionResolveRequest): CompanionResolveResponse =
+            throw ApiException(401, "unauthorized")
+        override suspend fun companion(deviceId: String): CompanionResponse = throw ApiException(401, "unauthorized")
+    }
+
     private companion object {
         const val COMPANION = "/api/v1/admin/devices/tv-1/companion"
+        const val PHONES_PATH = "/api/v1/admin/phones"
+        const val THIS_PHONE = "ph0123456789"
+        const val OTHER_PHONE = "ph9876543210"
+
+        val CLAIM = """{"phone":{"id":"$THIS_PHONE","name":"Test phone","createdAt":"2026-10-26T10:00:00.000Z","lastUsedAt":null,
+            "deviceId":"tv-1"},"secret":"izph_secret","deviceId":"tv-1"}"""
+
+        val PHONES = """{"phones":[
+            {"id":"$THIS_PHONE","name":"Test phone","createdAt":"2026-10-26T10:00:00.000Z","lastUsedAt":"2026-10-26T10:01:00.000Z","deviceId":"tv-1"},
+            {"id":"$OTHER_PHONE","name":"Tablet","createdAt":"2026-10-26T11:00:00.000Z","lastUsedAt":null,"deviceId":null}]}"""
 
         val DEVICES = """{"devices":[
             {"id":"tv-1","name":"Living room","status":"active","online":true,"lastSeenAt":"2026-10-26T09:00:00.000Z","homeCount":3},

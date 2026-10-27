@@ -15,6 +15,7 @@ import io.github.mickeiik.izle.ui.common.MessageBannerOverlay
 import io.github.mickeiik.izle.ui.hidden.*
 import io.github.mickeiik.izle.ui.home.AutoplayOverlay
 import io.github.mickeiik.izle.ui.home.HomeScreen
+import io.github.mickeiik.izle.ui.phone.ConnectPhoneScreen
 import io.github.mickeiik.izle.ui.player.PlayerScreen
 import io.github.mickeiik.izle.ui.setup.*
 import io.github.mickeiik.izle.ui.theme.IzleColors
@@ -67,6 +68,7 @@ fun IzleRoot(vm: AppViewModel) {
                         PlayerScreen(ui, player, onPlayNext = vm.player::playNextNow, onHome = vm.player::exit, onRetry = vm.player::retry)
                     }
                     is Screen.Update -> UpdateScreen((screen as Screen.Update).ui, onInstall = vm::onUpdateInstall, onHome = vm::onUpdateHome)
+                    is Screen.ConnectPhone -> ConnectPhoneScreen((screen as Screen.ConnectPhone).ui)
                 }
                 menu?.let { m ->
                     val override by vm.uiLanguageOverride.collectAsStateWithLifecycle()

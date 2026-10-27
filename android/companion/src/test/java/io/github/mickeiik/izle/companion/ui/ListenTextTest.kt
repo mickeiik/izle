@@ -106,7 +106,7 @@ class ListenTextTest {
         assertEquals("The TV switched to a channel; listening ended.", endedText(EndReason.TvSwitchedToChannel, null))
         assertEquals("The next episode has no such source; listening ended.", endedText(EndReason.NoSuchSourceOnNextEpisode, null))
         assertEquals("The companion stream keeps failing; listening ended.", endedText(EndReason.StreamKeepsFailing, null))
-        assertEquals("The token was not accepted; pair again.", endedText(EndReason.Unauthorized, null))
+        assertEquals("This phone was disconnected. Connect it again from the TV.", endedText(EndReason.Unauthorized, null))
         assertEquals(
             "The phone's audio was interrupted (earphones unplugged, or another app took over); listening ended.",
             endedText(EndReason.Interrupted, null),

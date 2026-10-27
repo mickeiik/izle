@@ -33,9 +33,9 @@ inline fun <T> orNullOnFailure(block: () -> T): T? = try {
 
 /**
  * The server API: the TV routes, and the admin routes the companion app uses. Network failures surface as
- * [IOException], error answers as [ApiException]. [token] is a device token on a TV and an access token (`izat_…`)
- * in the companion app, sent as the same bearer header. It and [userAgent] (read anew: it changes with the update
- * capability) are attached per request, never through an interceptor, so they cannot leak to media hosts that share
+ * [IOException], error answers as [ApiException]. [token] is a device token on a TV and a phone secret (`izph_…`)
+ * in the companion app (or the admin token in a debug build), sent as the same bearer header. It and [userAgent]
+ * (read anew: it changes with the update capability) are attached per request, never through an interceptor, so they cannot leak to media hosts that share
  * the OkHttp connection pool.
  */
 class ApiClient(
@@ -119,6 +119,24 @@ class ApiClient(
     /** Streamed by [io.github.mickeiik.izle.update.ApkDownloader]. */
     fun apkRequest(): Request = authorize(Request.Builder().url(url("api/v1/tv/app/apk"))).build()
 
+    /** "Connect a phone": a new invite for this TV (the previous one stops working). */
+    suspend fun phoneInvite(): PhoneInvite =
+        exchange(authorize(Request.Builder().url(url("api/v1/tv/phones/invite")).post(EMPTY_BODY)).build()).decode(PhoneInvite.serializer())
+
+    /** This TV left "Connect a phone": its open invite stops working (`204`). */
+    suspend fun cancelPhoneInvite() {
+        exchange(authorize(Request.Builder().url(url("api/v1/tv/phones/invite")).delete()).build()).requireOk()
+    }
+
+    /** Long-polls this TV's latest invite (on longPollHttp): `open`, `claimed`, `expired` (410) or `not_found` (404). */
+    suspend fun phoneInviteWait(waitSec: Int = 25): PhoneInviteStatus {
+        val url = url("api/v1/tv/phones/invite").newBuilder().addQueryParameter("wait", waitSec.toString()).build()
+        val raw = exchange(authorize(Request.Builder().url(url)).build(), longPollHttp)
+        if (raw.status == 410) return PhoneInviteStatus(PhoneInviteStatus.EXPIRED)
+        if (raw.status == 404) return PhoneInviteStatus(PhoneInviteStatus.NOT_FOUND)
+        return raw.decode(PhoneInviteStatus.serializer())
+    }
+
     suspend fun devices(): DevicesResponse = get(url("api/v1/admin/devices"), DevicesResponse.serializer())
 
     suspend fun companion(deviceId: String): CompanionResponse =
@@ -147,6 +165,22 @@ class ApiClient(
     suspend fun copyLinkToItem(episodeId: String, sourceId: String): CopyToItemResponse {
         val url = link(episodeId, sourceId).addPathSegment("copy-to-item").build()
         return exchange(authorize(Request.Builder().url(url).post(EMPTY_BODY)).build()).decode(CopyToItemResponse.serializer())
+    }
+
+    // Phones: a phone claims an invite the TV shows and gets its own owner-level secret (`izph_…`).
+
+    /** Without an Authorization header: the invite (or the code) is the credential. */
+    suspend fun claimPhone(request: PhoneClaimRequest): PhoneClaim {
+        val body = ApiJson.encodeToString(PhoneClaimRequest.serializer(), request).toRequestBody(JSON)
+        return exchange(Request.Builder().url(url("api/v1/phones/claim")).post(body).build()).decode(PhoneClaim.serializer())
+    }
+
+    suspend fun phones(): PhonesResponse = get(url("api/v1/admin/phones"), PhonesResponse.serializer())
+
+    /** `204`; a phone may delete itself (its secret answers `401` from then on). */
+    suspend fun deletePhone(phoneId: String) {
+        val url = url("api/v1/admin/phones").newBuilder().addPathSegment(phoneId).build()
+        exchange(authorize(Request.Builder().url(url).delete()).build()).requireOk()
     }
 
     /** `api/v1/admin/devices/:id`; ids are path segments, never concatenated (they may contain anything). */

@@ -6,8 +6,8 @@ import io.github.mickeiik.izle.player.TrackOption
 
 enum class RootEntry { Episodes, StartOver, Audio, Subtitles, Settings, About }
 
-/** [InstallUpdate]: only while the server offers a newer version of the app. */
-enum class SettingsEntry { ServerAddress, Language, PairAgain, InstallUpdate }
+/** [ConnectPhone]: a QR code and a code for izle companion (owner access); [InstallUpdate]: only while the server offers a newer version of the app. */
+enum class SettingsEntry { ServerAddress, Language, PairAgain, ConnectPhone, InstallUpdate }
 
 sealed interface MenuPage {
     /** [focused]: the entry that opened the page above, so Back returns to it. */

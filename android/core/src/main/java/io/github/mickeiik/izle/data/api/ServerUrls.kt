@@ -24,12 +24,16 @@ object ServerUrls {
         return base.resolve(ref)
     }
 
-    /** For screens: scheme, host, port (unless the default) and path, without the trailing slash. */
+    /**
+     * For screens and links: scheme, host (an IPv6 one in brackets), port (unless the default) and path, without the
+     * trailing slash.
+     */
     fun display(url: HttpUrl): String {
         val defaultPort = HttpUrl.defaultPort(url.scheme)
         val port = if (url.port == defaultPort) "" else ":${url.port}"
         val path = url.encodedPath.trimEnd('/')
-        return "${url.scheme}://${url.host}$port$path"
+        val host = if (':' in url.host) "[${url.host}]" else url.host
+        return "${url.scheme}://$host$port$path"
     }
 
     /** As the owner would type it on a phone (the server redirects to the trailing slash). */

@@ -190,12 +190,18 @@ Guessing is throttled: 10 wrong tokens from one address within 10 minutes lock t
 those 10 minutes, even with the right token; each is logged as "admin auth failed" with the address.
 
 **Access tokens** keep the admin token out of scripts: an app, a home-automation hook or an AI agent gets its own,
-scoped `read`, `control` (plus commands), `manage` (plus home screens, settings and history marks) or `companion`
-(`read` plus Listen along, for the companion app), under **Access** on the admin page or with `izle-server token
-create "Home assistant" --scope control --config /etc/izle/izle.json` (the secret, `izat_…`, is printed once);
-`token list` and `token revoke <id>`. A revoked token counts as a wrong one for the throttle, so stop the app before
-revoking it. What each scope can call:
+scoped `read`, `control` (plus commands) or `manage` (plus home screens, settings and history marks), under
+**Access** on the admin page or with `izle-server token create "Home assistant" --scope control --config
+/etc/izle/izle.json` (the secret, `izat_…`, is printed once); `token list` and `token revoke <id>`. A revoked token
+counts as a wrong one for the throttle, so stop the app before revoking it. What each scope can call:
 [server API § Remote management](../spec/server-api-v1.md#remote-management).
+
+**Phones** with the izle companion app connect from a TV: its hidden menu, Settings → **Connect a phone**, shows a QR
+code (which opens the server's `/connect` page at the address the TV uses, then the app) and a 6-digit code to type in the app with the
+server's address. A connected phone has owner access, like the admin page; the TV it came through was approved by
+you at pairing, so there is no other step. The phones are listed under **Access** on the admin page, each with
+**Disconnect**; from the shell, `izle-server phone list` and `izle-server phone disconnect <id> --config
+/etc/izle/izle.json` cut a lost phone off.
 
 ## 6. HTTPS with Caddy
 

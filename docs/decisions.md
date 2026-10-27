@@ -22,6 +22,10 @@ entries, and how each feature was built, are in git history.
 - A replacement needs no new column: the pair code names the device it replaces, and collecting it tells a takeover
   by the device already having a token. The purge deletes only devices without one.
 - The replaced TV's streams close like a disconnect, not a deletion, so the device stays online without a flap.
+- A TV connects a phone with owner access and nothing else: being in front of the TV is the security (the owner
+  approved that TV at pairing), so there is no confirmation, per-TV switch or approval step. Do not add one.
+- The unreleased `companion` scope is dropped by a migration (its tokens deleted, the CHECK restored) rather than by
+  editing the migration that added it, so development databases that ran it open as they are.
 
 ## Command results on the TV
 

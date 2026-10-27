@@ -84,6 +84,9 @@ class AppViewModelTest {
     private val pairWaits = ConcurrentLinkedQueue<MockResponse>()
     private val resolveAnswers = ConcurrentLinkedQueue<MockResponse>()
 
+    /** Scripted answers to the long poll of "Connect a phone"; when empty, `open`. */
+    private val phoneWaits = ConcurrentLinkedQueue<MockResponse>()
+
     /** `pair/start` drops the connection (an unreachable server) while set. */
     @Volatile private var pairStartDown = false
 
@@ -110,6 +113,13 @@ class AppViewModelTest {
                         json(200, """{"status":"pending"}""")
                     }
                     path == "/api/v1/tv/resolve" && resolveAnswers.isNotEmpty() -> resolveAnswers.remove()
+                    path == "/api/v1/tv/phones/invite" && request.method == "DELETE" -> MockResponse.Builder().code(204).build()
+                    path == "/api/v1/tv/phones/invite" && request.method == "POST" ->
+                        json(200, """{"code":"483920","invite":"inv-1","expiresAt":"2026-10-26T10:05:00.000Z"}""")
+                    path == "/api/v1/tv/phones/invite" -> phoneWaits.poll() ?: run {
+                        Thread.sleep(20) // a long poll, shortened
+                        json(200, """{"status":"open","code":"483920","expiresAt":"2026-10-26T10:05:00.000Z"}""")
+                    }
                     path == "/api/v1/tv/progress" -> json(200, """{"ok":true}""")
                     path.endsWith("/ack") || path.endsWith("/result") -> json(200, """{"ok":true}""")
                     path == "/api/v1/tv/app" -> apk?.let { bytes ->
@@ -186,6 +196,53 @@ class AppViewModelTest {
         awaitPairingCode(vm)
         assertNull(vm.menu.value)
         runBlocking { assertNull(app.graph.deviceStore.current().deviceToken) }
+    }
+
+    @Test
+    fun connectAPhoneShowsTheInviteThenWhichPhoneConnectedAndGoesHomeAfterThreeSeconds() {
+        val vm = startTvOnHome()
+        val showing = openConnectAPhone(vm)
+        assertNull(vm.menu.value)
+        assertEquals("483920", showing.code)
+        assertEquals(server.url("/").toString().trimEnd('/') + "/connect#inv-1", showing.link)
+        val post = requests.first { it.url.encodedPath == "/api/v1/tv/phones/invite" }
+        assertEquals("POST", post.method)
+        assertEquals("Bearer device-token", post.headers["Authorization"])
+        waitUntil("the long poll") { count("/api/v1/tv/phones/invite") > 1 }
+        assertEquals("wait=25", requests.last { it.url.encodedPath == "/api/v1/tv/phones/invite" }.url.encodedQuery)
+        // An owner command meanwhile is not for this screen.
+        val id = command("message", """{"text":"Hello","durationSec":10}""")
+        assertEquals(ignored("not_ready"), awaitResult(id))
+        phoneWaits += json(200, """{"status":"claimed","phone":{"id":"abcdefabcdef","name":"Pixel 8"}}""")
+        waitUntil("the phone's name") { vm.screen.value == Screen.ConnectPhone(PhoneConnectUi.Connected("Pixel 8")) }
+        advance(PhoneConnectLoop.CONNECTED_MS - 100)
+        assertEquals(Screen.ConnectPhone(PhoneConnectUi.Connected("Pixel 8")), vm.screen.value)
+        advance(100)
+        assertEquals(Screen.Home, vm.screen.value)
+    }
+
+    @Test
+    fun anExpiredInviteGoesHome() {
+        val vm = startTvOnHome()
+        openConnectAPhone(vm)
+        phoneWaits += json(410, """{"error":"expired","status":"expired"}""")
+        waitUntil("Home") { vm.screen.value == Screen.Home }
+    }
+
+    @Test
+    fun backOnConnectAPhoneGoesHomeStopsTheLongPollAndCancelsTheInvite() {
+        val vm = startTvOnHome()
+        openConnectAPhone(vm)
+        vm.onBack()
+        assertEquals(Screen.Home, vm.screen.value)
+        waitUntil("the cancellation") { requests.any { it.url.encodedPath == "/api/v1/tv/phones/invite" && it.method == "DELETE" } }
+        assertEquals("Bearer device-token", requests.last { it.method == "DELETE" }.headers["Authorization"])
+        settle()
+        val polls = count("/api/v1/tv/phones/invite")
+        settle()
+        advance(60_000)
+        settle()
+        assertEquals(polls, count("/api/v1/tv/phones/invite"))
     }
 
     @Test
@@ -857,6 +914,15 @@ class AppViewModelTest {
 
     private fun awaitPairingCode(vm: AppViewModel) =
         waitUntil("the pairing code") { vm.screen.value == Screen.Pairing && vm.pairing.value.code == "999999" }
+
+    /** Hidden menu → Settings → Connect a phone, until the invite shows. */
+    private fun openConnectAPhone(vm: AppViewModel): PhoneConnectUi.Showing {
+        vm.openMenu()
+        vm.onRootEntry(RootEntry.Settings)
+        vm.onSettingsEntry(SettingsEntry.ConnectPhone)
+        waitUntil("the invite") { (vm.screen.value as? Screen.ConnectPhone)?.ui is PhoneConnectUi.Showing }
+        return (vm.screen.value as Screen.ConnectPhone).ui as PhoneConnectUi.Showing
+    }
 
     private fun count(path: String) = requests.count { it.url.encodedPath == path }
 

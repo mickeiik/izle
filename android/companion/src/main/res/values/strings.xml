@@ -4,24 +4,46 @@
 
     <!-- The app bar -->
     <string name="change_tv">Change TV</string>
-    <string name="change_server">Change server</string>
     <string name="more_options">More options</string>
+    <string name="phones">Phones</string>
+    <string name="disconnect_this_phone">Disconnect this phone</string>
     <string name="clear_browser_data">Clear browser cookies</string>
     <string name="browser_data_cleared">Browser cookies cleared.</string>
+    <string name="back">Back</string>
 
-    <!-- Pairing -->
-    <string name="pairing_title">Connect to your izle server</string>
-    <string name="pairing_intro">Use an access token with the companion scope: create one on the admin page (Access tokens), or with izle-server token create &lt;name&gt; --scope companion.</string>
+    <!-- Connecting this phone -->
+    <string name="connect_title">Connect to your TV</string>
+    <string name="connect_intro">On the TV, hold OK, then Settings → Connect a phone. Scan the code on the TV with this phone\'s camera, or enter the server address and the 6-digit code here.</string>
     <string name="server_address">Server address</string>
+    <string name="connect_code">6-digit code</string>
+    <string name="use_token">Use a token instead</string>
+    <string name="use_code">Use the code instead</string>
     <string name="access_token">Access token</string>
     <string name="show_token">Show</string>
     <string name="hide_token">Hide</string>
     <string name="connect">Connect</string>
     <string name="error_invalid_address">That is not a valid server address.</string>
     <string name="error_unreachable">The server cannot be reached. Check the address, and that this phone can reach it.</string>
+    <string name="error_code_not_accepted">That code is not valid any more. Open Connect a phone on the TV again.</string>
+    <string name="error_too_many_tries">Too many tries. Wait a few minutes and try again.</string>
     <string name="error_token_not_accepted">The server did not accept that token.</string>
-    <string name="error_needs_companion_scope">That token cannot be used for Listen along: it needs the companion scope.</string>
+    <string name="error_other_server">This phone is connected to %1$s. To connect it to another server, disconnect this phone first.</string>
+    <string name="error_disconnected">This phone was disconnected. Connect it again from the TV.</string>
     <string name="error_server">The server answered: %1$s.</string>
+
+    <!-- The phones -->
+    <string name="phones_title">Phones</string>
+    <string name="phones_hint">Each phone was connected from a TV. To connect another one, on the TV hold OK, then Settings → Connect a phone.</string>
+    <string name="this_phone">This phone</string>
+    <string name="phone_last_used">Last used %1$s</string>
+    <string name="phone_never_used">Not used yet</string>
+    <string name="phone_used_just_now">Last used just now</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="cancel">Cancel</string>
+    <string name="disconnect_title">Disconnect %1$s?</string>
+    <string name="disconnect_this_phone_title">Disconnect this phone?</string>
+    <string name="disconnect_other_text">It will need to be connected again from a TV.</string>
+    <string name="disconnect_self_text">This phone will need to be connected again from a TV.</string>
 
     <!-- The TV picker -->
     <string name="pick_tv_title">Choose the TV</string>

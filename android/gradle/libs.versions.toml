@@ -19,6 +19,7 @@ datastore = "1.2.1"
 media3 = "1.11.1"
 okhttp = "5.5.0"
 coil = "3.6.3"
+qrcodegen = "1.8.0"
 junit = "4.13.2"
 robolectric = "4.17"
 # Robolectric's SDK 36 framework jar, as Robolectric 4.17 names it (DefaultSdkProvider): bump together with robolectric.
@@ -48,6 +49,7 @@ okhttp-sse = { module = "com.squareup.okhttp3:okhttp-sse", version.ref = "okhttp
 okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver3", version.ref = "okhttp" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 coil-network-okhttp = { module = "io.coil-kt.coil3:coil-network-okhttp", version.ref = "coil" }
+qrcodegen = { module = "io.nayuki:qrcodegen", version.ref = "qrcodegen" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }

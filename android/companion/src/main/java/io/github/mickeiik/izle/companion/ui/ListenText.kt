@@ -126,7 +126,7 @@ fun endedText(reason: EndReason?, error: String?): String? = when (reason) {
     EndReason.TvSwitchedToChannel -> "The TV switched to a channel; listening ended."
     EndReason.NoSuchSourceOnNextEpisode -> "The next episode has no such source; listening ended."
     EndReason.StreamKeepsFailing -> "The companion stream keeps failing; listening ended."
-    EndReason.Unauthorized -> "The token was not accepted; pair again."
+    EndReason.Unauthorized -> "This phone was disconnected. Connect it again from the TV."
     EndReason.Interrupted -> "The phone's audio was interrupted (earphones unplugged, or another app took over); listening ended."
     EndReason.Failed -> "Could not start: ${error?.let { ERRORS[it] ?: it } ?: "something went wrong."}"
     EndReason.LinkExpired ->
@@ -147,8 +147,8 @@ fun errorText(e: Throwable): String = when (e) {
 }
 
 private val ERRORS = mapOf(
-    "unauthorized" to "The token was not accepted.",
-    "insufficient_scope" to "This token may not do that; it needs the companion scope.",
+    "unauthorized" to "This phone was disconnected.",
+    "insufficient_scope" to "This connection may not do that.",
     "not_allowed" to "Playback of that episode is not allowed by the catalog.",
     "unknown_episode" to "That episode is not in the catalog (any more).",
     "unknown_device" to "That TV does not exist any more.",
