@@ -74,13 +74,24 @@ import io.github.mickeiik.izle.data.api.HomeSection
  * The host draws the top bar (back arrow and title); messages go to [onMessage].
  */
 @Composable
-fun ShowScreen(api: ApiClient, tvId: String, tvName: String, itemId: String, onMessage: (String) -> Unit, modifier: Modifier = Modifier) {
+fun ShowScreen(
+    api: ApiClient,
+    tvId: String,
+    tvName: String,
+    itemId: String,
+    onMessage: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    onTitle: (String) -> Unit = {},
+) {
     val vm: ShowViewModel = viewModel(key = "show-$tvId-$itemId-${System.identityHashCode(api)}") { ShowViewModel(api, tvId, itemId) }
     val res = resources()
     val message by rememberUpdatedState(onMessage)
+    val title by rememberUpdatedState(onTitle)
     val name by rememberUpdatedState(tvName)
+    LaunchedEffect(vm) { vm.shown() }
     LaunchedEffect(vm) { vm.notices.collect { message(noticeText(res, it, name)) } }
     val state by vm.state.collectAsStateWithLifecycle()
+    LaunchedEffect(state.item?.title) { state.item?.title?.let(title) }
     val run by vm.checks.run.collectAsStateWithLifecycle()
     val sheet by vm.sheet.collectAsStateWithLifecycle()
     var sheetFor by rememberSaveable { mutableStateOf<String?>(null) }
@@ -109,7 +120,8 @@ fun ShowScreen(api: ApiClient, tvId: String, tvName: String, itemId: String, onM
 
     val episode = state.item?.episodes?.firstOrNull { it.id == sheetFor }
     // Back from the page (or a rotation) reopens the sheet with its sources read anew.
-    LaunchedEffect(episode?.id) { if (episode != null && sheet?.episodeId != episode.id) vm.openEpisode(episode) }
+    // The view model's value, not the collected one: that lags a frame behind a tap's openEpisode.
+    LaunchedEffect(episode?.id) { if (episode != null && vm.sheet.value?.episodeId != episode.id) vm.openEpisode(episode) }
     if (episode != null) {
         EpisodeSheet(
             episode,

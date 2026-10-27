@@ -128,19 +128,22 @@ class CatalogViewModel(private val api: ApiClient, val tvId: String) : ViewModel
 
     private suspend fun readHome() {
         try {
-            val home = api.device(tvId).home.map(AdminHomeEntry::itemId).toSet()
-            _state.update { s ->
-                // With Not on Home, a show added since (from its page) leaves the results.
-                if (!s.notOnHome) s.copy(onHome = home)
-                else {
-                    val gone = s.items.count { it.id in home }
-                    s.copy(onHome = home, items = s.items.filter { it.id !in home }, total = (s.total - gone).coerceAtLeast(0), next = (s.next - gone).coerceAtLeast(0))
-                }
-            }
+            setHome(api.device(tvId).home.map(AdminHomeEntry::itemId).toSet())
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             // Without it the rows just don't say "On Home".
+        }
+    }
+
+    private fun setHome(home: Set<String>) {
+        _state.update { s ->
+            // With Not on Home, a show added since (from its page or What's new) leaves the results.
+            if (!s.notOnHome) s.copy(onHome = home)
+            else {
+                val gone = s.items.count { it.id in home }
+                s.copy(onHome = home, items = s.items.filter { it.id !in home }, total = (s.total - gone).coerceAtLeast(0), next = (s.next - gone).coerceAtLeast(0))
+            }
         }
     }
 
@@ -283,7 +286,7 @@ class CatalogViewModel(private val api: ApiClient, val tvId: String) : ViewModel
     private suspend fun loadBuild(buildId: String, build: CatalogBuild?, catalog: AdminCatalog?) {
         try {
             val newest = catalog?.builds?.firstOrNull { !it.baseline }
-            val changes = if (newest?.buildId == buildId && catalog.changes != null) catalog.changes!! else api.catalogBuild(buildId).changes
+            val changes = catalog?.changes?.takeIf { newest?.buildId == buildId } ?: api.catalogBuild(buildId).changes
             _whatsNew.update { if (it?.buildId == buildId) it.copy(changes = changes, loading = false, error = null) else it }
             // The new shows' posters and lines: a search for what was first seen since that build, kept to its shows.
             val added = changes.items.added.mapTo(HashSet()) { it.id }
@@ -308,7 +311,7 @@ class CatalogViewModel(private val api: ApiClient, val tvId: String) : ViewModel
         viewModelScope.launch {
             try {
                 val change = api.addHomeItem(tvId, itemId, UNTITLED_SECTION)
-                _state.update { it.copy(onHome = change.home.map(AdminHomeEntry::itemId).toSet()) }
+                setHome(change.home.map(AdminHomeEntry::itemId).toSet())
                 _notices.trySend(CatalogNotice.Added(title))
             } catch (e: CancellationException) {
                 throw e

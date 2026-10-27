@@ -25,10 +25,13 @@ fun sourceKindText(source: AdminSource): String = listOfNotNull(
 fun sourceFindingsText(source: AdminSource?, report: SourceReport?): String {
     val audio = (report?.stream?.languages?.audio ?: source?.languages?.audio)?.takeIf { it.isNotEmpty() }?.let { "audio ${it.joinToString(", ")}" }
     if (report == null) return listOfNotNull(audio, "not checked").joinToString(" · ")
-    if (report.verdict == "fail") return failureText(report)
-    val parts = listOfNotNull(audio, resolutionText(report)) + report.warnings.map { WARNINGS[it] ?: it.replace('_', ' ') }
-    // With nothing else to say, how the stream reaches the TV (the chip beside the line already says it works).
-    val line = parts.ifEmpty { listOfNotNull(DELIVERY[report.stream?.delivery]) }.joinToString(" · ")
+    val line = if (report.verdict == "fail") {
+        failureText(report)
+    } else {
+        val parts = listOfNotNull(audio, resolutionText(report)) + report.warnings.map { WARNINGS[it] ?: it.replace('_', ' ') }
+        // With nothing else to say, how the stream reaches the TV (the chip beside the line already says it works).
+        parts.ifEmpty { listOfNotNull(DELIVERY[report.stream?.delivery]) }.joinToString(" · ")
+    }
     return if (report.stale) "$line · source changed since" else line
 }
 

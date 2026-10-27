@@ -76,6 +76,8 @@ class SourceReportTextTest {
         val stale = report("ok", stale = true)
         assertEquals("audio en, tr · source changed since", sourceFindingsText(hls, stale))
         assertEquals(Verdict.Stale, reportVerdict(stale))
+        // A failure the source changed since says so too.
+        assertEquals("cancelled · source changed since", sourceFindingsText(hls, report("fail", ok = false, code = "abort", stale = true)))
     }
 
     @Test

@@ -152,12 +152,23 @@ class ShowViewModel(private val api: ApiClient, val tvId: String, val itemId: St
         val item = s.item ?: return
         if (!s.listsEpisodes) {
             val episodeId = if (item.kind == ShowState.KIND_LIVE) null else item.episodes.firstOrNull()?.id
-            if (s.direct?.checking != true) _state.update { it.copy(direct = readSources(episodeId)) }
+            if (s.direct?.checking != true) {
+                val read = readSources(episodeId)
+                // A check started meanwhile owns `direct` until it answers.
+                _state.update { if (it.direct?.checking == true) it else it.copy(direct = read) }
+            }
         }
     }
 
     fun retry() {
         viewModelScope.launch { load() }
+    }
+
+    private var shownBefore = false
+
+    /** The page is shown; the view model outlives it, so a show opened again is read anew (init reads it the first time). */
+    fun shown() {
+        if (shownBefore) retry() else shownBefore = true
     }
 
     // --- Home -------------------------------------------------------------------------------------------------------

@@ -556,16 +556,10 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectTab(tab: TvTab) = updateTv { it.copy(tab = tab, listenOpen = false, openShow = null, openShowTitle = null) }
 
-    /** A show's page, full screen over the tabs; its title (for the bar) is read from the catalog. */
-    fun openShow(itemId: String) {
-        if (_ui.value !is CompanionUi.Tv) return
-        updateTv { it.copy(openShow = itemId, openShowTitle = null) }
-        val client = api ?: return
-        viewModelScope.launch {
-            val title = runCatching { client.catalogItem(itemId).title }.getOrNull() ?: return@launch
-            updateTv { if (it.openShow == itemId) it.copy(openShowTitle = title) else it }
-        }
-    }
+    /** A show's page, full screen over the tabs; the page hands its title (for the bar) to [showTitle] once read. */
+    fun openShow(itemId: String) = updateTv { it.copy(openShow = itemId, openShowTitle = null) }
+
+    fun showTitle(itemId: String, title: String) = updateTv { if (it.openShow == itemId) it.copy(openShowTitle = title) else it }
 
     fun closeShow() = updateTv { it.copy(openShow = null, openShowTitle = null) }
 

@@ -707,11 +707,14 @@ class CompanionViewModelTest {
 
         vm.selectTab(TvTab.Home)
         assertEquals(TvTab.Home, (vm.ui.value as CompanionUi.Tv).tab)
-        // A show's page over the Catalog tab: its title is read for the bar; Back closes it.
+        // A show's page over the Catalog tab: the page hands its title to the bar (not another show's); Back closes it.
         vm.selectTab(TvTab.Catalog)
         vm.openShow("show")
         assertEquals("show", (vm.ui.value as CompanionUi.Tv).openShow)
-        waitUntil("the show's title") { (vm.ui.value as CompanionUi.Tv).openShowTitle == "Show" }
+        vm.showTitle("other", "Other")
+        assertEquals(null, (vm.ui.value as CompanionUi.Tv).openShowTitle)
+        vm.showTitle("show", "Show")
+        assertEquals("Show", (vm.ui.value as CompanionUi.Tv).openShowTitle)
         vm.closeShow()
         assertEquals(null, (vm.ui.value as CompanionUi.Tv).openShow)
         assertEquals(TvTab.Catalog, (vm.ui.value as CompanionUi.Tv).tab)

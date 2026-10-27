@@ -127,7 +127,16 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
                     LinkFinderScreen(vm.linkFinder, initialUrl = null, onListenToThis = vm::useFoundLink, onClose = vm::closeFinder, modifier = modifier)
                 screen.listenOpen -> ListenScreen(screen, vm, modifier = modifier)
                 screen.openShow != null -> vm.apiClient?.let { api ->
-                    ShowScreen(api, tvId = screen.tvId, tvName = screen.displayName, itemId = screen.openShow, onMessage = vm::say, modifier = modifier)
+                    val itemId = screen.openShow
+                    ShowScreen(
+                        api,
+                        tvId = screen.tvId,
+                        tvName = screen.displayName,
+                        itemId = itemId,
+                        onMessage = vm::say,
+                        modifier = modifier,
+                        onTitle = { vm.showTitle(itemId, it) },
+                    )
                 }
                 screen.tab == TvTab.Now -> NowTab(screen, vm, modifier = modifier)
                 screen.tab == TvTab.Catalog -> vm.apiClient?.let { api ->

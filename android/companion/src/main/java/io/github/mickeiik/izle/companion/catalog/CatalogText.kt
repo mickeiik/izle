@@ -136,6 +136,7 @@ fun contentsText(res: Resources, s: CatalogStats): String = res.getString(
 /** About the catalog: its facts as label and value, in order. */
 fun aboutFacts(res: Resources, c: AdminCatalog, zone: TimeZone = TimeZone.getDefault()): List<Pair<String, String>> {
     val unknown = res.getString(R.string.catalog_unknown)
+    val resolver = c.resolver
     return listOf(
         res.getString(R.string.catalog_about_name) to c.name.ifEmpty { unknown },
         res.getString(R.string.catalog_about_id) to c.id,
@@ -144,9 +145,9 @@ fun aboutFacts(res: Resources, c: AdminCatalog, zone: TimeZone = TimeZone.getDef
         res.getString(R.string.catalog_about_loaded) to (dateTime(c.loadedAt, zone) ?: unknown),
         res.getString(R.string.catalog_about_contents) to contentsText(res, c.stats),
         res.getString(R.string.catalog_about_resolver) to when {
-            c.resolver == null -> res.getString(R.string.catalog_resolver_none)
-            c.resolver!!.adapters.isEmpty() -> res.getString(R.string.catalog_resolver_nothing)
-            else -> res.getString(R.string.catalog_resolver_provides, c.resolver!!.adapters.joinToString(", "))
+            resolver == null -> res.getString(R.string.catalog_resolver_none)
+            resolver.adapters.isEmpty() -> res.getString(R.string.catalog_resolver_nothing)
+            else -> res.getString(R.string.catalog_resolver_provides, resolver.adapters.joinToString(", "))
         },
         res.getString(R.string.catalog_about_server) to (c.server?.version?.let { res.getString(R.string.catalog_server_version, it) } ?: unknown),
     )
