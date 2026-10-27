@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.List
@@ -28,7 +29,7 @@ import io.github.mickeiik.izle.data.api.HomeSection
 
 /**
  * A show's sheet: where it is ("Films · card 1 of 6"), what OK plays and its check, then Play on <TV> now, Continue
- * from episode… (a series), Move to section…, Move to first and Remove from Home. A show hidden on the TV offers only
+ * from episode… (a series), Check this show, Move to section…, Move to first and Remove from Home. A show hidden on the TV offers only
  * the moves and Remove.
  */
 @Composable
@@ -45,6 +46,7 @@ internal fun ShowSheet(
     onContinue: () -> Unit,
     onMoveTo: () -> Unit,
     onFirst: () -> Unit,
+    onCheck: () -> Unit,
     onRemove: () -> Unit,
 ) {
     val res = resources()
@@ -80,6 +82,7 @@ internal fun ShowSheet(
             if (entry?.kind == "series") {
                 ActionRow(stringResource(R.string.home_continue_from), IzleIcons.SkipNext, act(onContinue))
             }
+            ActionRow(stringResource(R.string.home_check_show), Icons.Outlined.CheckCircle, act(onCheck))
         }
         if (sectionCount > 1) ActionRow(stringResource(R.string.home_move_to_section), Icons.Outlined.List, act(onMoveTo))
         if (index > 0) ActionRow(stringResource(R.string.home_move_first), Icons.Outlined.KeyboardArrowUp, act(onFirst))

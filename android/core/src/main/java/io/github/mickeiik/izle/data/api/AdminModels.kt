@@ -155,6 +155,56 @@ data class AdminEvent(val id: Long, val type: String, val at: String? = null, va
 @Serializable
 data class EventsPage(val events: List<AdminEvent> = emptyList(), val last: Long = 0, val gap: Boolean = false)
 
+/** What a check [CheckRun] covers: a show or channel ([itemId]) or a TV's Home ([deviceId], [mode] `quick` or `full`). */
+@Serializable
+data class CheckTarget(val itemId: String? = null, val deviceId: String? = null, val mode: String? = null)
+
+/** A Home entry a run left out: [reason] `missing` (gone from the catalog) or `not_playable`. [title] null for a missing one. */
+@Serializable
+data class CheckSkipped(val itemId: String, val title: String? = null, val reason: String = "missing")
+
+/** One episode or channel a run checked, in the order they finished; [label] names a series' episode (`S1 E2 · Pilot`). */
+@Serializable
+data class CheckResult(
+    val playableId: String,
+    val itemId: String,
+    val episodeId: String? = null,
+    val title: String? = null,
+    val label: String? = null,
+    val verdict: String? = null,
+)
+
+/**
+ * A batch check (`Run` of the spec's "Checks"): [state] `running`, `done` or `cancelled`; [seq] grows with every change
+ * (a long-poll waits past it); [title] is the show's or channel's title, or the TV's name for a Home.
+ */
+@Serializable
+data class CheckRun(
+    val id: String,
+    val target: CheckTarget = CheckTarget(),
+    val title: String = "",
+    val state: String = STATE_RUNNING,
+    val seq: Long = 0,
+    val total: Int = 0,
+    val done: Int = 0,
+    val failed: Int = 0,
+    val warned: Int = 0,
+    val startedAt: String? = null,
+    val finishedAt: String? = null,
+    val skipped: List<CheckSkipped> = emptyList(),
+    val results: List<CheckResult> = emptyList(),
+) {
+    val running: Boolean get() = state == STATE_RUNNING
+
+    companion object {
+        const val STATE_RUNNING = "running"
+        const val STATE_DONE = "done"
+        const val STATE_CANCELLED = "cancelled"
+        const val MODE_QUICK = "quick"
+        const val MODE_FULL = "full"
+    }
+}
+
 // Wrappers of single objects.
 
 @Serializable
@@ -165,3 +215,10 @@ internal data class CommandResponse(val command: CommandInfo)
 
 @Serializable
 internal data class ItemResponse(val item: AdminItem)
+
+@Serializable
+internal data class RunResponse(val run: CheckRun)
+
+/** `GET admin/checks/current`: null when no run was started since the server started. */
+@Serializable
+internal data class CurrentRunResponse(val run: CheckRun? = null)

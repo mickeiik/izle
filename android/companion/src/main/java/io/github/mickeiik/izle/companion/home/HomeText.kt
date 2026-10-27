@@ -66,6 +66,8 @@ fun errorText(res: Resources, error: HomeError): String = when (error) {
         "duplicate_item" -> res.getString(R.string.home_error_duplicate_item)
         "unknown_item" -> res.getString(R.string.home_error_unknown_item)
         "not_playable" -> res.getString(R.string.home_error_not_playable)
+        "nothing_to_check" -> res.getString(R.string.home_error_nothing_to_check)
+        "unknown_check" -> res.getString(R.string.home_error_unknown_check)
         in HomeViewModel.CHANGED_ELSEWHERE -> res.getString(R.string.home_changed_elsewhere)
         else -> apiErrorText(error.code) ?: res.getString(R.string.home_error_other, error.code)
     }
@@ -79,6 +81,7 @@ fun noticeText(res: Resources, notice: HomeNotice, tvName: String): String = whe
         notice.sectionTitle?.let { res.getString(R.string.home_added_to, notice.title, it) } ?: res.getString(R.string.home_added_home, notice.title)
     is HomeNotice.Continues -> res.getString(R.string.home_continues, tvName, notice.title, notice.episode)
     is HomeNotice.Played -> playResultText(tvName, notice.title, notice.outcome)
+    is HomeNotice.CheckRunning -> res.getString(R.string.home_check_already_running, runTitle(res, notice.run))
 }
 
 @Composable
