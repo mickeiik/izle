@@ -101,13 +101,26 @@ owner's order. They change how the cards are laid out, never what OK does.
 
 #### App cards
 
-The owner may put [app cards](../spec/server-api-v1.md#app-cards) on Home, in any section among the shows: OK opens an
-app installed on this TV.
+The owner may put [app cards](../spec/server-api-v1.md#app-cards) on Home, in any section, among the shows or in a
+section of their own: OK opens an app installed on this TV. They look like the stock launcher's app banners.
 
-- **The picture:** the app's banner (16:9) whole, across the card's width less 12 dp on each side, centred; an app
-  without a banner: its icon whole, centred, at most the card's width less 24 dp wide; on the card's colour. No chip.
-  The open card: the picture stays at its left, and the panel (plain, as a channel's) holds the app's name (26 sp
-  bold, up to 3 lines) and at the bottom a light grey **Open** chip (24 sp).
+- **An app card is a tile, never a poster:** the app's banner (16:9) fills it edge to edge, with the corners of the
+  cards; an app without a banner: the tile in the card's colour, its icon whole at the left (55 % of the tile's
+  height, centred in height) and its name at the right of it (26 sp bold, up to 3 lines, broken between words; a word
+  or a rest that does not fit is cut with "…"). No chip, no panel: it never opens.
+- **Its size:** in a section that holds only app cards, `2·w + G` wide (two poster columns) and 9/16 of that tall, so
+  such a line is lower than a line of posters; in a section that also holds shows, as tall as the posters (`h`) and
+  as wide as an open card (`floor(8·w / 3)`), so the line keeps straight edges and every app reads as an open card.
+  `w`, `h` and `G` are the cards' numbers under Home's **Size**.
+- **Focus:** the focused tile gets a 4 dp gap in Home's background colour and the 4 dp white border around it
+  (outside the tile, so the banner shows whole, white banners included); in a section of app cards only it also grows
+  to 1.05 (0.15 s). The other tiles are dimmed under a dark veil of 55 %, more than the posters' since a white banner
+  barely dims, so that dimmed tiles and posters look alike.
+- **Lines:** a grid row takes cards in order while they fit the safe area together with one open card's extra width
+  (a poster that opens), then wraps; so a grid row with app cards holds fewer cards (in a section of app cards only,
+  `floor(N / 2)` columns, at least 1). A scrolling line slides by one card at its edge, whatever its width. ↑ and ↓
+  go to the card of the next line whose left edge is nearest. The boundary between two sections stays one row step
+  of the section below.
 - **OK** opens the app (its TV launch entry, else its launch entry), offline too. When it cannot be opened (removed
   meanwhile, refused), "Can't open <name>" shows for 5 s in large type as "No connection · Trying again…" does, and
   Home stays.

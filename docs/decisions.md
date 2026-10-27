@@ -165,3 +165,7 @@ entries, and how each feature was built, are in git history.
   catalog; there is no list of both), and the apps are filtered on the phone as the search text changes.
 - Companion: a section entry with neither `itemId` nor `appId` (a later kind of card) is left out of the list and of
   the positions the phone sends; a Home holding such a card may get a position one off until the phone knows it.
+- App cards are banner tiles, chosen by the owner from emulator prototypes (2026-10-27): a banner letterboxed in a
+  portrait card read as an empty slot among posters. Tiles are two poster columns wide in a section of apps only (the
+  poster's height was too big: two tiles in view) and open-card sized among shows, where a shorter centred tile broke
+  the line's edges. A tile never opens; its focus ring has a dark gap so that it shows on white banners.

@@ -11,7 +11,9 @@ How the owner arranges one TV's Home on the admin page (a TV's **Home screen** t
 - Columns and rows sit above the screen; a new size is previewed before **Save grid** (or **Undo**).
 - What the TV hides (missing from the catalog, not playable, an [app card](#apps) whose app the TV no longer has:
   "Not installed on this TV") is listed under the screen, each with its section and **Remove**.
-- App cards are drawn as the TV draws them, from the picture the TV reported (its name in its place without one). A section the TV does not show because nothing in it can play is drawn as its title over an empty dashed
+- App cards are drawn as the TV draws them ([App cards](senior-tv.md#app-cards): banner tiles, two poster columns wide
+  in a section of apps only, open-card sized among shows, never opened), from the picture the TV reported (its name in
+  its place without one); the selected tile gets the TV's focus ring. A section the TV does not show because nothing in it can play is drawn as its title over an empty dashed
   band, "Empty: not shown on the TV".
 
 ## The selected card
