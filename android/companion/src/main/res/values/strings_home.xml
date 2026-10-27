@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- The Home tab of a TV's page (docs/ux/companion-home.md) -->
-    <string name="home_summary">Grid %1$d × %2$d · %3$s</string>
+    <string name="home_summary">%3$s · grid %1$d × %2$d</string>
     <plurals name="home_shows">
         <item quantity="one">%d show</item>
         <item quantity="other">%d shows</item>
@@ -40,8 +40,8 @@
 
     <!-- A show -->
     <string name="home_drag">Drag %s to move it</string>
-    <string name="home_hidden_missing">Hidden on the TV: not in the catalog</string>
-    <string name="home_hidden_unplayable">Hidden on the TV: can\'t play</string>
+    <string name="home_hidden_missing">Hidden: not in the catalog</string>
+    <string name="home_hidden_unplayable">Hidden: can\'t play</string>
     <string name="home_remove">Remove</string>
     <string name="home_film">Film</string>
     <string name="home_ok_live">Live</string>
@@ -60,6 +60,7 @@
     <string name="home_check_fail">Fails</string>
     <string name="home_check_stale">Source changed</string>
     <string name="home_check_none">Not checked</string>
+    <string name="home_chip_warn">Warnings</string>
 
     <!-- A show's sheet -->
     <string name="home_place">%1$s · card %2$d of %3$d</string>

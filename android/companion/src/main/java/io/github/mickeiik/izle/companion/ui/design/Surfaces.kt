@@ -132,16 +132,18 @@ fun SectionHeader(title: String, modifier: Modifier = Modifier, meta: String? = 
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(s.sm),
     ) {
-        Text(
-            title,
-            style = IzleTheme.type.heading,
-            color = IzleTheme.colors.textPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
-        )
-        if (meta != null) Text(meta, style = IzleTheme.type.caption, color = IzleTheme.colors.textSecondary, maxLines = 1)
-        Spacer(Modifier.weight(1f, fill = true))
+        // Title and meta take what is left, so the trailing menu sits at the right edge on every header.
+        Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(s.sm)) {
+            Text(
+                title,
+                style = IzleTheme.type.heading,
+                color = IzleTheme.colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            if (meta != null) Text(meta, style = IzleTheme.type.caption, color = IzleTheme.colors.textSecondary, maxLines = 1)
+        }
         trailing?.invoke(this)
     }
 }

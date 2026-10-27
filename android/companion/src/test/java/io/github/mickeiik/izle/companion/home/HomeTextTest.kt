@@ -44,8 +44,8 @@ class HomeTextTest {
         assertEquals(Verdict.Fails, verdictOf(CheckSummary("fail")))
         assertEquals(Verdict.Stale, verdictOf(CheckSummary("fail", stale = true)))
         assertEquals("Works, with warnings", verdictText(res, Verdict.Warns))
-        assertEquals("Hidden on the TV: not in the catalog", res.getString(hiddenReason(AdminHomeEntry("g", missing = true, playable = false))!!))
-        assertEquals("Hidden on the TV: can't play", res.getString(hiddenReason(AdminHomeEntry("g", "G", "series", playable = false))!!))
+        assertEquals("Hidden: not in the catalog", res.getString(hiddenReason(AdminHomeEntry("g", missing = true, playable = false))!!))
+        assertEquals("Hidden: can't play", res.getString(hiddenReason(AdminHomeEntry("g", "G", "series", playable = false))!!))
         assertEquals(null, hiddenReason(AdminHomeEntry("g", "G", "series")))
     }
 

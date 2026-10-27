@@ -4,6 +4,7 @@ import android.content.res.Resources
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import io.github.mickeiik.izle.companion.R
+import androidx.compose.ui.res.stringResource
 import io.github.mickeiik.izle.companion.ui.design.StatusChip
 import io.github.mickeiik.izle.companion.ui.design.StatusLine
 import io.github.mickeiik.izle.companion.ui.design.Tone
@@ -48,7 +49,9 @@ val Verdict.worthAChip: Boolean get() = this == Verdict.Fails || this == Verdict
 /** The verdict as a [StatusChip]. */
 @Composable
 fun VerdictChip(verdict: Verdict, modifier: Modifier = Modifier) {
-    StatusChip(verdictText(resources(), verdict), verdict.tone, modifier)
+    // One short word on a row; the sheet says it in full.
+    val text = if (verdict == Verdict.Warns) stringResource(R.string.home_chip_warn) else verdictText(resources(), verdict)
+    StatusChip(text, verdict.tone, modifier)
 }
 
 /** The verdict as a [StatusLine] (a show's sheet). */

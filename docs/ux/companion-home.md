@@ -11,11 +11,11 @@ scaled screen. The rest of the TV's page is in [Companion app](companion.md); wh
   and **+ Section**, side by side, equal widths.
 - Each section is a header row in its order on the TV: its title ("No title" for the untitled one), its layout and
   count ("grid · 6", "row · 5") and a ⋮ menu. A section without shows reads "Empty: not shown on the TV".
-- Each show is a row: poster, title, what OK plays ("S1 · E5 · continues at 12:04 of 30:10", "Film", "Live"), its
-  last check as a small chip (Works, Works, with warnings, Fails, Source changed, Not checked), "N new" when the
-  series has new episodes, and a drag handle.
-- A show the TV hides is greyed with why: "Hidden on the TV: not in the catalog" (its id stands in for the title it
-  no longer has) or "Hidden on the TV: can't play", with **Remove**.
+- Each show is a row: poster, title, one line with what OK plays ("S1 · E5 · continues at 12:04 of 30:10", "Film",
+  "Live") and "· N new" when the series has new episodes, a chip only when its last check needs attention
+  (**Fails**, **Warnings**; the sheet says the verdict in full), and a drag handle.
+- A show the TV hides is greyed with why: "Hidden: not in the catalog" (its id stands in for the title it
+  no longer has) or "Hidden: can't play", with **Remove**.
 - With nothing on Home: "Nothing on Home yet. Add a show and it appears on the TV."
 
 ## Moving shows

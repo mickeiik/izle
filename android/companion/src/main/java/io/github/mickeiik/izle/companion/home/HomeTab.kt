@@ -4,15 +4,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,23 +18,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -53,20 +37,31 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.mickeiik.izle.companion.R
 import io.github.mickeiik.izle.companion.tv.episodeName
+import io.github.mickeiik.izle.companion.ui.design.ButtonKind
+import io.github.mickeiik.izle.companion.ui.design.ButtonRow
+import io.github.mickeiik.izle.companion.ui.design.ButtonSize
+import io.github.mickeiik.izle.companion.ui.design.Caption
+import io.github.mickeiik.izle.companion.ui.design.EmptyState
+import io.github.mickeiik.izle.companion.ui.design.Hairline
+import io.github.mickeiik.izle.companion.ui.design.IzleButton
+import io.github.mickeiik.izle.companion.ui.design.IzleIcons
 import io.github.mickeiik.izle.companion.ui.design.IzleTheme
+import io.github.mickeiik.izle.companion.ui.design.ListRow
+import io.github.mickeiik.izle.companion.ui.design.MenuItem
+import io.github.mickeiik.izle.companion.ui.design.OverflowMenu
 import io.github.mickeiik.izle.companion.ui.design.Poster
+import io.github.mickeiik.izle.companion.ui.design.ProgressBar
+import io.github.mickeiik.izle.companion.ui.design.SectionHeader
+import io.github.mickeiik.izle.companion.ui.design.Tone
 import io.github.mickeiik.izle.data.api.AdminEpisode
 import io.github.mickeiik.izle.data.api.AdminHomeEntry
 import io.github.mickeiik.izle.data.api.ApiClient
@@ -112,15 +107,16 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
     var dialog by remember { mutableStateOf<HomeDialog?>(null) }
     var sheetFor by rememberSaveable { mutableStateOf<String?>(null) }
     var adding by rememberSaveable { mutableStateOf(false) }
+    val res = resources()
 
     Column(modifier = modifier.fillMaxSize()) {
-        if (state.loading || state.saving) LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) else HorizontalDivider()
+        if (state.loading || state.saving) ProgressBar(null) else Hairline()
         if (!state.loaded) {
             state.loadError?.let { error ->
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(R.string.home_load_failed), style = MaterialTheme.typography.bodyLarge)
-                    Text(errorText(resources(), error), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-                    OutlinedButton(onClick = vm::retry, enabled = !state.loading) { Label(stringResource(R.string.try_again)) }
+                Column(Modifier.padding(IzleTheme.spacing.lg), verticalArrangement = Arrangement.spacedBy(IzleTheme.spacing.sm)) {
+                    Text(stringResource(R.string.home_load_failed), style = IzleTheme.type.body)
+                    Caption(errorText(res, error), tone = Tone.Danger)
+                    IzleButton(stringResource(R.string.try_again), onClick = vm::retry, enabled = !state.loading)
                 }
             }
             return@Column
@@ -132,31 +128,30 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
                 TopLine(state, onGrid = { dialog = HomeDialog.Grid })
             }
             item(key = "actions") {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = { vm.openSearch(); adding = true }, modifier = Modifier.weight(1f)) {
-                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Label(stringResource(R.string.home_add_show))
-                    }
-                    OutlinedButton(onClick = { dialog = HomeDialog.NewSection }, modifier = Modifier.weight(1f)) {
-                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Label(stringResource(R.string.home_new_section_button))
-                    }
+                ButtonRow(Modifier.padding(horizontal = IzleTheme.spacing.lg).padding(bottom = IzleTheme.spacing.md)) {
+                    IzleButton(
+                        stringResource(R.string.home_add_show),
+                        onClick = { vm.openSearch(); adding = true },
+                        kind = ButtonKind.Primary,
+                        size = ButtonSize.Small,
+                        icon = Icons.Filled.Add,
+                    )
+                    IzleButton(
+                        stringResource(R.string.home_new_section_button),
+                        onClick = { dialog = HomeDialog.NewSection },
+                        size = ButtonSize.Small,
+                        icon = Icons.Filled.Add,
+                    )
                 }
             }
             if (state.showCount == 0) {
                 item(key = "nothing") {
-                    Text(
-                        stringResource(R.string.home_nothing_yet),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    )
+                    EmptyState(stringResource(R.string.home_nothing_yet), Modifier.padding(horizontal = IzleTheme.spacing.lg, vertical = IzleTheme.spacing.sm))
                 }
             }
             items(rows, key = { it.key }) { row ->
                 when (row) {
-                    is HomeRow.Header -> SectionHeader(
+                    is HomeRow.Header -> HomeSectionHeader(
                         row,
                         onRename = { dialog = HomeDialog.Rename(row.section.id) },
                         onLayout = { vm.setLayout(row.section.id, it) },
@@ -164,11 +159,9 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
                         onDelete = { dialog = HomeDialog.Delete(row.section.id) },
                         modifier = Modifier.animateItem(),
                     )
-                    is HomeRow.Empty -> Text(
+                    is HomeRow.Empty -> Caption(
                         stringResource(R.string.home_empty_section),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.animateItem().fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                        Modifier.animateItem().fillMaxWidth().padding(horizontal = IzleTheme.spacing.lg, vertical = IzleTheme.spacing.md),
                     )
                     is HomeRow.Show -> {
                         val dragged = drag.draggedId == row.itemId
@@ -184,7 +177,7 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
                     }
                 }
             }
-            item(key = "bottom") { Spacer(Modifier.height(24.dp)) }
+            item(key = "bottom") { Spacer(Modifier.height(IzleTheme.spacing.xl)) }
         }
     }
 
@@ -268,27 +261,20 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
     }
 }
 
-/** "Grid 4 × 2 · 24 shows" and the tab's ⋮ (Grid size). */
+/** "6 shows · grid 4 × 2" and the tab's ⋮ (Grid size). */
 @Composable
 private fun TopLine(state: HomeState, onGrid: () -> Unit) {
-    var menu by remember { mutableStateOf(false) }
-    Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(
+    Row(Modifier.fillMaxWidth().padding(start = IzleTheme.spacing.lg, end = IzleTheme.spacing.xs), verticalAlignment = Alignment.CenterVertically) {
+        Caption(
             stringResource(R.string.home_summary, state.columns, state.rows, pluralStringResource(R.plurals.home_shows, state.showCount, state.showCount)),
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.weight(1f),
+            Modifier.weight(1f),
         )
-        Box {
-            IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.home_options)) }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                DropdownMenuItem(text = { Text(stringResource(R.string.home_grid_size)) }, onClick = { menu = false; onGrid() })
-            }
-        }
+        OverflowMenu(stringResource(R.string.home_options), listOf(MenuItem(stringResource(R.string.home_grid_size), onGrid)))
     }
 }
 
 @Composable
-private fun SectionHeader(
+private fun HomeSectionHeader(
     row: HomeRow.Header,
     onRename: () -> Unit,
     onLayout: (String) -> Unit,
@@ -298,48 +284,27 @@ private fun SectionHeader(
 ) {
     val s = row.section
     val title = sectionTitle(resources(), s.title)
-    var menu by remember { mutableStateOf(false) }
     val oneLine = s.layout == HomeSectionInfo.LAYOUT_ROW
-    Row(
-        modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer).padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                stringResource(if (oneLine) R.string.home_section_row else R.string.home_section_grid, row.count),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-        Box {
-            IconButton(onClick = { menu = true }) {
-                Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.home_section_options, title))
-            }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                if (s.title != null) {
-                    DropdownMenuItem(text = { Text(stringResource(R.string.home_rename)) }, onClick = { menu = false; onRename() })
-                }
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.home_one_line)) },
-                    leadingIcon = { if (oneLine) Icon(Icons.Filled.Check, contentDescription = null) else Spacer(Modifier.size(24.dp)) },
-                    onClick = {
-                        menu = false
-                        onLayout(if (oneLine) HomeSectionInfo.LAYOUT_GRID else HomeSectionInfo.LAYOUT_ROW)
-                    },
-                )
-                DropdownMenuItem(text = { Text(stringResource(R.string.home_move_up)) }, enabled = row.index > 0, onClick = { menu = false; onMove(-1) })
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.home_move_down)) },
-                    enabled = row.index < row.sectionCount - 1,
-                    onClick = { menu = false; onMove(1) },
-                )
-                if (s.title != null) {
-                    DropdownMenuItem(text = { Text(stringResource(R.string.home_delete)) }, onClick = { menu = false; onDelete() })
-                }
-            }
-        }
+    val titled = s.title != null
+    val items = buildList {
+        if (titled) add(MenuItem(stringResource(R.string.home_rename), onRename))
+        add(
+            MenuItem(
+                stringResource(R.string.home_one_line),
+                { onLayout(if (oneLine) HomeSectionInfo.LAYOUT_GRID else HomeSectionInfo.LAYOUT_ROW) },
+                checked = oneLine,
+            ),
+        )
+        add(MenuItem(stringResource(R.string.home_move_up), { onMove(-1) }, enabled = row.index > 0))
+        add(MenuItem(stringResource(R.string.home_move_down), { onMove(1) }, enabled = row.index < row.sectionCount - 1))
+        if (titled) add(MenuItem(stringResource(R.string.home_delete), onDelete))
     }
+    SectionHeader(
+        title,
+        modifier,
+        meta = stringResource(if (oneLine) R.string.home_section_row else R.string.home_section_grid, row.count),
+        trailing = { OverflowMenu(stringResource(R.string.home_section_options, title), items) },
+    )
 }
 
 @Composable
@@ -357,54 +322,35 @@ private fun ShowRow(
     val hidden = hiddenReason(entry)
     // A show gone from the catalog has no title any more: its id says which it was.
     val title = entry?.title ?: row.itemId
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        tonalElevation = if (dragged) 6.dp else 0.dp,
-        shadowElevation = if (dragged) 6.dp else 0.dp,
-    ) {
-        Row(
-            Modifier.fillMaxWidth().clickable(onClick = onOpen).heightIn(min = 72.dp).padding(start = 16.dp, top = 6.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(Modifier.weight(1f).alpha(if (hidden != null) 0.5f else 1f), verticalAlignment = Alignment.CenterVertically) {
-                RowPoster(api, entry?.posterUrl)
-                Spacer(Modifier.width(12.dp))
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Text(title, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (hidden != null) {
-                        Text(stringResource(hidden), style = MaterialTheme.typography.bodySmall, maxLines = 2, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else if (entry != null) {
-                        Text(
-                            okPlaysText(res, entry),
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            VerdictChip(verdictOf(entry.check))
-                            if (entry.newEpisodes > 0) {
-                                Text(
-                                    pluralStringResource(R.plurals.home_new_episodes, entry.newEpisodes, entry.newEpisodes),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.secondary,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
+    val verdict = verdictOf(entry?.check)
+    ListRow(
+        title,
+        modifier.background(if (dragged) IzleTheme.colors.surface else IzleTheme.colors.background),
+        supporting = when {
+            hidden != null -> stringResource(hidden)
+            // New episodes join the line: a chip would squeeze the title at phone width.
+            entry != null -> okPlaysText(res, entry) +
+                (if (entry.newEpisodes > 0) " · " + res.getQuantityString(R.plurals.home_new_episodes, entry.newEpisodes, entry.newEpisodes) else "")
+            else -> null
+        },
+        supportingTone = if (hidden != null) Tone.Warning else Tone.Neutral,
+        leading = { Box(Modifier.alpha(if (hidden != null) 0.5f else 1f)) { RowPoster(api, entry?.posterUrl) } },
+        trailing = {
             if (hidden != null) {
-                TextButton(onClick = onRemove) { Label(stringResource(R.string.home_remove)) }
+                IzleButton(stringResource(R.string.home_remove), onClick = onRemove, kind = ButtonKind.Danger, size = ButtonSize.Small)
+            } else if (verdict.worthAChip) {
+                VerdictChip(verdict)
             }
             Box(
-                handle.size(48.dp).semantics { contentDescription = res.getString(R.string.home_drag, title) },
+                handle.size(IzleTheme.sizes.remoteButton).semantics { contentDescription = res.getString(R.string.home_drag, title) },
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Filled.Menu, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Icon(IzleIcons.DragHandle, contentDescription = null, tint = IzleTheme.colors.textMuted, modifier = Modifier.size(IzleTheme.sizes.icon))
             }
-        }
-    }
+        },
+        onClick = onOpen,
+        divider = !dragged,
+    )
 }
 
 /** A show's poster in a row, resolved against the server. */
@@ -412,18 +358,6 @@ private fun ShowRow(
 internal fun RowPoster(api: ApiClient, posterUrl: String?) {
     val url = remember(posterUrl) { api.resolve(posterUrl)?.toString() }
     Poster(url, IzleTheme.sizes.posterRow)
-}
-
-/** A button's label: one line, centred. */
-@Composable
-internal fun RowScope.Label(text: String) {
-    Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-}
-
-/** A full-width button's label: one line, centred across the whole button. */
-@Composable
-internal fun RowScope.WideLabel(text: String) {
-    Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.weight(1f))
 }
 
 @Composable
@@ -442,8 +376,8 @@ private fun TitleDialog(
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                note?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+            Column(verticalArrangement = Arrangement.spacedBy(IzleTheme.spacing.sm)) {
+                note?.let { Text(it) }
                 if (enabled) {
                     OutlinedTextField(
                         value = text,
@@ -455,10 +389,8 @@ private fun TitleDialog(
                 }
             }
         },
-        confirmButton = {
-            TextButton(onClick = { onDismiss(); onConfirm(text) }, enabled = ok) { Label(confirm) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Label(stringResource(R.string.cancel)) } },
+        confirmButton = { IzleButton(confirm, onClick = { onDismiss(); onConfirm(text) }, kind = ButtonKind.Primary, enabled = ok) },
+        dismissButton = { IzleButton(stringResource(R.string.cancel), onClick = onDismiss, kind = ButtonKind.Quiet) },
     )
 }
 
@@ -469,8 +401,8 @@ private fun DeleteDialog(section: HomeSection, onDelete: () -> Unit, onDismiss: 
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.home_delete_title, section.title.orEmpty())) },
         text = { Text(if (n == 0) stringResource(R.string.home_delete_empty) else pluralStringResource(R.plurals.home_delete_text, n, n)) },
-        confirmButton = { TextButton(onClick = { onDismiss(); onDelete() }) { Label(stringResource(R.string.home_delete)) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Label(stringResource(R.string.home_keep)) } },
+        confirmButton = { IzleButton(stringResource(R.string.home_delete), onClick = { onDismiss(); onDelete() }, kind = ButtonKind.Danger) },
+        dismissButton = { IzleButton(stringResource(R.string.home_keep), onClick = onDismiss, kind = ButtonKind.Quiet) },
     )
 }
 
@@ -485,19 +417,12 @@ private fun MoveToDialog(sections: List<HomeSection>, current: String, onPick: (
                 items(sections, key = { it.id }) { s ->
                     val name = sectionTitle(res, s.title)
                     val here = s.id == current
-                    Text(
-                        if (here) stringResource(R.string.home_current_section, name) else name,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = if (here) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.fillMaxWidth().clickable(enabled = !here) { onPick(s) }.padding(vertical = 12.dp),
-                    )
+                    PickRow(if (here) stringResource(R.string.home_current_section, name) else name, enabled = !here, emphasised = false) { onPick(s) }
                 }
             }
         },
         confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Label(stringResource(R.string.cancel)) } },
+        dismissButton = { IzleButton(stringResource(R.string.cancel), onClick = onDismiss, kind = ButtonKind.Quiet) },
     )
 }
 
@@ -509,25 +434,33 @@ private fun EpisodesDialog(pick: EpisodePick?, entry: AdminHomeEntry?, onPick: (
         title = { Text(stringResource(R.string.home_continue_title, title), maxLines = 2, overflow = TextOverflow.Ellipsis) },
         text = {
             when {
-                pick == null || pick.loading -> LinearProgressIndicator(Modifier.fillMaxWidth())
-                pick.error != null -> Text(errorText(resources(), pick.error), color = MaterialTheme.colorScheme.error)
+                pick == null || pick.loading -> ProgressBar(null)
+                pick.error != null -> Caption(errorText(resources(), pick.error), tone = Tone.Danger)
                 pick.episodes.isEmpty() -> Text(stringResource(R.string.home_no_episodes))
                 else -> LazyColumn {
                     items(pick.episodes, key = { it.id }) { e ->
                         val name = episodeName(e)
                         val now = e.id == entry?.continueAt?.episodeId
-                        Text(
-                            if (now) stringResource(R.string.home_now_marker, name) else name,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = if (now) FontWeight.SemiBold else null,
-                            modifier = Modifier.fillMaxWidth().clickable { onPick(e) }.padding(vertical = 12.dp),
-                        )
+                        PickRow(if (now) stringResource(R.string.home_now_marker, name) else name, enabled = true, emphasised = now) { onPick(e) }
                     }
                 }
             }
         },
         confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Label(stringResource(R.string.cancel)) } },
+        dismissButton = { IzleButton(stringResource(R.string.cancel), onClick = onDismiss, kind = ButtonKind.Quiet) },
+    )
+}
+
+/** One choice of a picking dialog: a line of text, [emphasised] for the current one, muted when it cannot be chosen. */
+@Composable
+private fun PickRow(text: String, enabled: Boolean, emphasised: Boolean, onClick: () -> Unit) {
+    Text(
+        text,
+        style = if (emphasised) IzleTheme.type.heading else IzleTheme.type.rowTitle,
+        color = if (enabled) IzleTheme.colors.textPrimary else IzleTheme.colors.textMuted,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).padding(vertical = IzleTheme.spacing.md),
     )
 }
 
@@ -539,16 +472,16 @@ private fun GridDialog(columns: Int, rows: Int, onSave: (Int, Int) -> Unit, onDi
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.home_grid_size)) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(stringResource(R.string.home_grid_hint), style = MaterialTheme.typography.bodyMedium)
+            Column(verticalArrangement = Arrangement.spacedBy(IzleTheme.spacing.sm)) {
+                Caption(stringResource(R.string.home_grid_hint))
                 Stepper(stringResource(R.string.home_columns), c, 3..10) { c = it }
                 Stepper(stringResource(R.string.home_rows), r, 1..4) { r = it }
             }
         },
         confirmButton = {
-            TextButton(onClick = { onDismiss(); onSave(c, r) }, enabled = c != columns || r != rows) { Label(stringResource(R.string.home_save)) }
+            IzleButton(stringResource(R.string.home_save), onClick = { onDismiss(); onSave(c, r) }, kind = ButtonKind.Primary, enabled = c != columns || r != rows)
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Label(stringResource(R.string.cancel)) } },
+        dismissButton = { IzleButton(stringResource(R.string.cancel), onClick = onDismiss, kind = ButtonKind.Quiet) },
     )
 }
 
@@ -557,23 +490,21 @@ private fun Stepper(label: String, value: Int, range: IntRange, onChange: (Int) 
     val fewer = stringResource(R.string.home_fewer, label.lowercase())
     val more = stringResource(R.string.home_more, label.lowercase())
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+        Text(label, style = IzleTheme.type.rowTitle, modifier = Modifier.weight(1f))
         StepButton("−", fewer, enabled = value > range.first) { onChange(value - 1) }
-        Text(value.toString(), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, modifier = Modifier.width(40.dp))
+        Text(value.toString(), style = IzleTheme.type.heading, textAlign = TextAlign.Center, modifier = Modifier.width(IzleTheme.sizes.remoteButton))
         StepButton("+", more, enabled = value < range.last) { onChange(value + 1) }
     }
 }
 
 @Composable
 private fun StepButton(sign: String, description: String, enabled: Boolean, onClick: () -> Unit) {
-    OutlinedButton(
+    IzleButton(
+        sign,
         onClick = onClick,
         enabled = enabled,
-        contentPadding = PaddingValues(0.dp),
-        modifier = Modifier.size(48.dp).semantics(mergeDescendants = true) { contentDescription = description },
-    ) {
-        Text(sign, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center, modifier = Modifier.clearAndSetSemantics {})
-    }
+        modifier = Modifier.width(IzleTheme.sizes.remoteButton).semantics { contentDescription = description },
+    )
 }
 
 private const val TITLE_MAX = 40

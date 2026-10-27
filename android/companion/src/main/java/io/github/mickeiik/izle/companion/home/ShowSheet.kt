@@ -2,24 +2,22 @@ package io.github.mickeiik.izle.companion.home
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Text
-import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.List
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import io.github.mickeiik.izle.companion.R
+import io.github.mickeiik.izle.companion.ui.design.ActionRow
+import io.github.mickeiik.izle.companion.ui.design.Caption
+import io.github.mickeiik.izle.companion.ui.design.IzleIcons
+import io.github.mickeiik.izle.companion.ui.design.IzleSheet
+import io.github.mickeiik.izle.companion.ui.design.IzleTheme
+import io.github.mickeiik.izle.companion.ui.design.Tone
 import io.github.mickeiik.izle.data.api.AdminHomeEntry
 import io.github.mickeiik.izle.data.api.HomeSection
 
@@ -28,7 +26,6 @@ import io.github.mickeiik.izle.data.api.HomeSection
  * from episode… (a series), Move to section…, Move to first and Remove from Home. A show hidden on the TV offers only
  * the moves and Remove.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ShowSheet(
     entry: AdminHomeEntry?,
@@ -45,47 +42,27 @@ internal fun ShowSheet(
     onRemove: () -> Unit,
 ) {
     val res = resources()
-    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val hidden = hiddenReason(entry)
     // Each action closes the sheet first; its result shows in the list or as a message.
     val act = { action: () -> Unit -> { onDismiss(); action() } }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheet) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                entry?.title ?: itemId,
-                style = MaterialTheme.typography.titleLarge,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                stringResource(R.string.home_place, sectionTitle(res, section.title), index + 1, section.itemIds.size),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+    IzleSheet(onDismiss, title = entry?.title ?: itemId, padded = false) {
+        Column(Modifier.padding(horizontal = IzleTheme.spacing.lg), verticalArrangement = Arrangement.spacedBy(IzleTheme.spacing.sm)) {
+            Caption(stringResource(R.string.home_place, sectionTitle(res, section.title), index + 1, section.itemIds.size))
             if (hidden != null) {
-                Text(stringResource(hidden), style = MaterialTheme.typography.bodyMedium)
+                Caption(stringResource(hidden), tone = Tone.Warning)
             } else if (entry != null) {
-                Text(showLine(res, entry), style = MaterialTheme.typography.bodyMedium)
-                VerdictChip(verdictOf(entry.check))
+                Caption(showLine(res, entry))
+                VerdictLine(verdictOf(entry.check))
             }
-            Spacer(Modifier.height(8.dp))
-            if (hidden == null) {
-                Button(onClick = act(onPlay), modifier = Modifier.fillMaxWidth()) { WideLabel(stringResource(R.string.home_play_now, tvName)) }
-                if (entry?.kind == "series") {
-                    OutlinedButton(onClick = act(onContinue), modifier = Modifier.fillMaxWidth()) { WideLabel(stringResource(R.string.home_continue_from)) }
-                }
-            }
-            if (sectionCount > 1) {
-                OutlinedButton(onClick = act(onMoveTo), modifier = Modifier.fillMaxWidth()) { WideLabel(stringResource(R.string.home_move_to_section)) }
-            }
-            if (index > 0) {
-                OutlinedButton(onClick = act(onFirst), modifier = Modifier.fillMaxWidth()) { WideLabel(stringResource(R.string.home_move_first)) }
-            }
-            OutlinedButton(
-                onClick = act(onRemove),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                modifier = Modifier.fillMaxWidth(),
-            ) { WideLabel(stringResource(R.string.home_remove_from_home)) }
         }
+        if (hidden == null) {
+            ActionRow(stringResource(R.string.home_play_now, tvName), Icons.Outlined.PlayArrow, act(onPlay))
+            if (entry?.kind == "series") {
+                ActionRow(stringResource(R.string.home_continue_from), IzleIcons.SkipNext, act(onContinue))
+            }
+        }
+        if (sectionCount > 1) ActionRow(stringResource(R.string.home_move_to_section), Icons.Outlined.List, act(onMoveTo))
+        if (index > 0) ActionRow(stringResource(R.string.home_move_first), Icons.Outlined.KeyboardArrowUp, act(onFirst))
+        ActionRow(stringResource(R.string.home_remove_from_home), Icons.Outlined.Delete, act(onRemove), tone = Tone.Danger)
     }
 }
