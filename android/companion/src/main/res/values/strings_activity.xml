@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- A TV's Activity (docs/ux/companion-tv.md, Activity) -->
+    <string name="activity_title">Activity</string>
+    <string name="activity_empty">Nothing yet.</string>
+    <string name="activity_load_failed">The activity could not be read.</string>
+
+    <string name="activity_filter_everything">Everything</string>
+    <string name="activity_filter_playing">Playing</string>
+    <string name="activity_filter_remote">Remote</string>
+    <string name="activity_filter_home">Home</string>
+    <string name="activity_filter_problems">Problems</string>
+    <string name="activity_filter_connection">Connection</string>
+
+    <!-- Playing -->
+    <string name="activity_started">Started %1$s</string>
+    <string name="activity_from">from %1$s</string>
+    <string name="activity_trigger_viewer">OK on Home</string>
+    <string name="activity_trigger_autoplay">autoplay on start</string>
+    <string name="activity_trigger_next">auto-next</string>
+    <string name="activity_trigger_channel">CH+/CH−</string>
+    <string name="activity_played_from">played from %1$s</string>
+    <string name="activity_played_from_admin">played from the admin page</string>
+    <string name="activity_played_by">played by %1$s</string>
+    <string name="activity_played_by_command">played by a command</string>
+    <string name="activity_stopped_at">Stopped at %1$s</string>
+    <string name="activity_stopped">Stopped</string>
+    <string name="activity_watched_to_end">Watched to the end</string>
+    <string name="activity_switched_away_at">Switched away at %1$s</string>
+    <string name="activity_switched_away">Switched away</string>
+    <string name="activity_went_silent_at">Went silent at %1$s</string>
+    <string name="activity_went_silent">Went silent</string>
+    <string name="activity_seen_word">seen</string>
+    <string name="activity_stalled_at">Stalled at %1$s</string>
+    <string name="activity_stalled">Stalled</string>
+    <string name="activity_marked_seen">Marked seen: %1$s</string>
+    <string name="activity_marked_seen_plain">Marked seen</string>
+
+    <!-- Remote -->
+    <string name="activity_sent">Sent: %1$s</string>
+    <string name="activity_sent_offline">the TV was offline</string>
+    <string name="activity_couldnt">Couldn\'t %1$s</string>
+    <string name="activity_couldnt_why">Couldn\'t %1$s: %2$s</string>
+    <string name="activity_didnt">Didn\'t %1$s</string>
+    <string name="activity_didnt_why">Didn\'t %1$s: %2$s</string>
+    <string name="activity_cmd_play">play</string>
+    <string name="activity_cmd_stop">stop</string>
+    <string name="activity_cmd_pause">pause</string>
+    <string name="activity_cmd_resume">resume</string>
+    <string name="activity_cmd_seek">seek</string>
+    <string name="activity_cmd_next">next</string>
+    <string name="activity_cmd_previous">previous</string>
+    <string name="activity_cmd_message">a message</string>
+    <string name="activity_cmd_update">update the app</string>
+    <string name="activity_verb_next">skip to the next</string>
+    <string name="activity_verb_previous">go back</string>
+    <string name="activity_verb_message">show the message</string>
+    <string name="activity_verb_update">update the app</string>
+    <string name="activity_verb_unknown">do that</string>
+
+    <!-- Home and settings -->
+    <string name="activity_home_changed">Home changed · %1$s</string>
+    <plurals name="activity_home_added">
+        <item quantity="one">+%d show</item>
+        <item quantity="other">+%d shows</item>
+    </plurals>
+    <string name="activity_home_removed">−%d</string>
+    <string name="activity_home_rearranged">Home rearranged</string>
+    <string name="activity_continues_from">Continues from %1$s</string>
+    <string name="activity_continues_plain">Continue point changed</string>
+    <string name="activity_settings">Settings changed: %1$s</string>
+    <string name="activity_settings_plain">Settings changed</string>
+    <string name="activity_setting_name">name</string>
+    <string name="activity_setting_menu_language">menu language</string>
+    <string name="activity_setting_audio">audio</string>
+    <string name="activity_setting_subtitles">subtitles</string>
+    <string name="activity_setting_play_on_start">play on start</string>
+    <string name="activity_setting_grid">grid size</string>
+
+    <!-- Problems -->
+    <string name="activity_problem">Problem: %1$s</string>
+    <string name="activity_check">Home check: %1$s</string>
+    <string name="activity_check_fail">%d fail</string>
+    <string name="activity_check_warn">%d warn</string>
+    <string name="activity_check_all_work">all work</string>
+    <string name="activity_check_cancelled">Home check cancelled</string>
+
+    <!-- Connection -->
+    <string name="activity_online">Online</string>
+    <string name="activity_offline">Offline</string>
+    <string name="activity_paired">Paired</string>
+    <string name="activity_paired_replaced">Paired, in place of the old TV</string>
+    <string name="activity_app">App %1$s</string>
+    <string name="activity_app_changed">App %1$s → %2$s</string>
+    <string name="activity_phone_connected">Phone connected: %1$s</string>
+    <string name="activity_catalog_reloaded">Catalog reloaded</string>
+    <string name="activity_catalog_reloaded_counts">Catalog reloaded · %1$s</string>
+    <plurals name="activity_catalog_added">
+        <item quantity="one">+%d show</item>
+        <item quantity="other">+%d shows</item>
+    </plurals>
+
+    <!-- Who did it -->
+    <string name="activity_actor_your_phone">your phone</string>
+    <string name="activity_actor_a_phone">a phone</string>
+    <string name="activity_actor_owner">admin page</string>
+    <string name="activity_actor_token">a token: %1$s</string>
+    <string name="activity_actor_token_unnamed">a token</string>
+    <string name="activity_actor_tv">the TV</string>
+    <string name="activity_actor_server">the server</string>
+</resources>

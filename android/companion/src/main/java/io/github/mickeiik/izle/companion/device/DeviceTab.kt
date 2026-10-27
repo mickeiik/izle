@@ -26,6 +26,7 @@ import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import io.github.mickeiik.izle.companion.activity.eventWords
 import io.github.mickeiik.izle.companion.R
 import io.github.mickeiik.izle.companion.home.HomeError
 import io.github.mickeiik.izle.companion.home.errorText
@@ -189,7 +190,7 @@ internal fun DeviceContent(
             item(key = "activity") {
                 ListRow(
                     stringResource(R.string.activity),
-                    supporting = stringResource(R.string.device_activity_line, tvName),
+                    supporting = state.latest?.let { eventWords(res, it)?.title } ?: stringResource(R.string.device_activity_line, tvName),
                     trailing = { Chevron() },
                     onClick = actions.onOpenActivity,
                     divider = false,

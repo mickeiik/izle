@@ -89,6 +89,23 @@ fun playResultText(tvName: String, title: String, outcome: CommandOutcome): Stri
     }
 }
 
+/**
+ * Why a command was not done, as a phrase ("no source could be played"), for a line that names the command itself
+ * (the Activity log's "Couldn't play: …"); null without a reason.
+ */
+fun commandReasonWords(type: String, reason: String?): String? {
+    val back = type == "previous"
+    return when (reason) {
+        null -> null
+        "not_in_player" -> "nothing was playing"
+        "no_episode" -> if (back) "no previous episode" else "no next episode"
+        "no_channel" -> if (back) "no channel before this one on Home" else "no channel after this one on Home"
+        "live" -> "a channel can't be paused or skipped through"
+        "not_ready" -> "it showed its pairing screen"
+        else -> REASONS[reason] ?: reason.replace('_', ' ')
+    }
+}
+
 /** lib.js's REASONS, for the reasons without a sentence of their own. */
 private val REASONS = mapOf(
     "unknown_type" to "it does not know this command",

@@ -2,11 +2,13 @@ package io.github.mickeiik.izle.companion.device
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import io.github.mickeiik.izle.companion.activity.ACTIVITY_TYPES
 import io.github.mickeiik.izle.companion.home.HomeError
 import io.github.mickeiik.izle.companion.home.HomeViewModel
 import io.github.mickeiik.izle.companion.tv.CommandOutcome
 import io.github.mickeiik.izle.companion.tv.sendAndAwait
 import io.github.mickeiik.izle.data.api.AdminDevice
+import io.github.mickeiik.izle.data.api.AdminEvent
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.ApiException
 import io.github.mickeiik.izle.data.api.DeviceChange
@@ -41,6 +43,8 @@ data class DeviceState(
     val updating: Boolean = false,
     /** The TV was forgotten: the host goes to the TV list. */
     val forgotten: Boolean = false,
+    /** The newest event Activity shows, for its row (null: none among the log's recent events). */
+    val latest: AdminEvent? = null,
 ) {
     /** Problems of the last 24 hours, as the TV list's device says. */
     val recent: Int get() = device?.problems?.recent ?: 0
@@ -90,11 +94,15 @@ class DeviceViewModel(private val api: ApiClient, val tvId: String) : ViewModel(
             try {
                 if (after == null) {
                     // Where the log is now, then the TV as it is: nothing that happens in between is missed.
-                    after = api.adminEvents(null, types = EVENT_TYPES, devices = listOf(tvId)).last
+                    val last = api.adminEvents(null, types = FOLLOWED, devices = listOf(tvId)).last
+                    after = last
                     changes.withLock { reload() }
+                    val recent = api.adminEvents((last - LATEST_WINDOW).coerceAtLeast(0), types = ACTIVITY_TYPES, devices = listOf(tvId), limit = LATEST_WINDOW.toInt())
+                    recent.events.lastOrNull()?.let { latest -> _state.update { it.copy(latest = latest) } }
                 }
-                val page = api.adminEvents(after, waitSec = 25, types = EVENT_TYPES, devices = listOf(tvId))
-                if (page.gap || page.events.isNotEmpty()) changes.withLock { reload() }
+                val page = api.adminEvents(after, waitSec = 25, types = FOLLOWED, devices = listOf(tvId))
+                page.events.lastOrNull { it.type in ACTIVITY_TYPES }?.let { latest -> _state.update { it.copy(latest = latest) } }
+                if (page.gap || page.events.any { it.type in EVENT_TYPES }) changes.withLock { reload() }
                 after = page.last
             } catch (e: CancellationException) {
                 throw e
@@ -257,6 +265,12 @@ class DeviceViewModel(private val api: ApiClient, val tvId: String) : ViewModel(
     companion object {
         /** The events that change what the tab shows. */
         val EVENT_TYPES = listOf("problem.recorded", "device.updated", "device.app_version")
+
+        /** What the tab follows: its own reasons to reload, and what Activity shows (for the row's newest event). */
+        private val FOLLOWED = (EVENT_TYPES + ACTIVITY_TYPES).distinct()
+
+        /** How far back in the log (event ids) the row looks for its newest event. */
+        const val LATEST_WINDOW = 500L
 
         /** A TV keeps its newest 100 problems: the tab reads them all, so it knows how many there are. */
         const val PROBLEMS_MAX = 100

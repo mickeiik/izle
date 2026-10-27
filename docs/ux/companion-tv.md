@@ -13,7 +13,7 @@ from the last 24 hours (`problems.recent` > 0 in the TV list's device).
 From the top, one scrolling page:
 
 - **Problems** (a `SectionHeader`, meta "3 today" for `recent`, **Clear** at its right while there are any): the
-  newest five as `ListRow`s: the title in words ("Can't play: the source refused (403)"), supporting "Caminandes ·
+  newest five as `ListRow`s: the title in words ("The source refused (403)"), supporting "Caminandes ·
   S1 · E2 — Gran Dillama · 2 h ago", and the kind as a Neutral `StatusChip` badge (Playback, Resolve, Proxy, Network,
   Other). Then "All 12 problems" (a row with a chevron) when there are more; it opens the full list (up to 100) in
   the same rows. None: "No problems recorded." (`EmptyState`). **Clear** asks first ("Forget this TV's problems?").

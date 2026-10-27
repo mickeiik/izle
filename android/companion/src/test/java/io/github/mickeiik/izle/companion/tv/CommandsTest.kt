@@ -29,6 +29,15 @@ class CommandsTest {
     }
 
     @Test
+    fun reasonsAsPhrases() {
+        assertNull(commandReasonWords("play", null))
+        assertEquals("no source could be played", commandReasonWords("play", "no_playable_source"))
+        assertEquals("no previous episode", commandReasonWords("previous", "no_episode"))
+        assertEquals("nothing was playing", commandReasonWords("pause", "not_in_player"))
+        assertEquals("some new thing", commandReasonWords("next", "some_new_thing"))
+    }
+
+    @Test
     fun outcomesOfARemotePress() {
         assertEquals(offlineText("Salon"), commandOutcomeText("Salon", CommandOutcome.Queued))
         assertEquals(noAnswerText("Salon"), commandOutcomeText("Salon", CommandOutcome.NoAnswer))

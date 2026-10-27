@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Pairing a TV from the phone, on the TV list (docs/ux/companion-tv.md) -->
+    <string name="pairing_online_playing">Online · playing %1$s</string>
+    <plurals name="pairing_problems">
+        <item quantity="one">%d problem</item>
+        <item quantity="other">%d problems</item>
+    </plurals>
+
+    <string name="pairing_waiting">A TV is waiting to pair</string>
+    <plurals name="pairing_minutes_left">
+        <item quantity="one">%d min left</item>
+        <item quantity="other">%d min left</item>
+    </plurals>
+    <string name="pairing_not_mine">Not mine</string>
+    <string name="pairing_approve_button">Approve…</string>
+    <string name="pairing_approved_as">Approved as %1$s · waiting for the TV</string>
+    <string name="pairing_approved">Approved · waiting for the TV</string>
+
+    <string name="pairing_by_code">Pair a new TV by its code</string>
+    <string name="pairing_by_code_title">Pair a new TV</string>
+    <string name="pairing_by_code_text">Type the 6 digits the TV shows.</string>
+    <string name="pairing_code_field">Code</string>
+    <string name="pairing_next">Next</string>
+
+    <string name="pairing_code_title">Code %1$s</string>
+    <string name="pairing_name">Name</string>
+    <string name="pairing_this_tv_is">This TV is</string>
+    <string name="pairing_new_tv">A new TV</string>
+    <string name="pairing_replaces">Replaces %1$s</string>
+    <string name="pairing_approve">Approve</string>
+
+    <string name="pairing_not_mine_title">Clear code %1$s?</string>
+    <string name="pairing_not_mine_text">A TV showing it gets a new code.</string>
+    <string name="pairing_clear">Clear</string>
+    <string name="pairing_keep">Keep</string>
+
+    <string name="pairing_unknown_code">No TV shows this code (it may have expired).</string>
+    <string name="pairing_already_approved">This code was approved already.</string>
+    <string name="pairing_refused">The server refused (%1$s).</string>
+</resources>

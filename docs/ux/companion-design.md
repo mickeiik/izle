@@ -79,7 +79,8 @@ Every button label is centred, single line, and never pushed to an edge; equal-w
 - **`Card`**: `surface`, 1 dp `border`, radius `md`, padding `lg`. No elevation, no shadow, anywhere.
 - **`ListRow(title, supporting?, badge?, leading?, trailing?, onClick?)`**: min 56 dp, `heading`-sized title
   (Regular weight for rows), one `caption` supporting line (ellipsised) with an optional `badge` (a `StatusChip`)
-  after it, divider hairline between rows, padding `lg` horizontally.
+  after it, divider hairline between rows, padding `lg` horizontally; `titleTone` colours the title for a status
+  (Activity's problems in `danger`).
 - **`SectionHeader(title, meta?, trailing?)`**: `surfaceMuted` band, `heading` title on the left, the `caption` meta
   ("grid · 6") and an overflow icon button at the right edge.
 - **`StatusChip(text, tone)`**: tone Success / Warning / Danger / Neutral, `*Muted` fill with the tone's colour as
