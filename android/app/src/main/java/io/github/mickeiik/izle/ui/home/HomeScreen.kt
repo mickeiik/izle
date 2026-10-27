@@ -3,6 +3,7 @@ package io.github.mickeiik.izle.ui.home
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.BringIntoViewSpec
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -63,6 +65,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.key.Key
@@ -102,6 +105,7 @@ import coil3.compose.LocalPlatformContext
 import coil3.request.ImageRequest
 import coil3.size.Precision
 import io.github.mickeiik.izle.R
+import io.github.mickeiik.izle.apps.AppPicture
 import io.github.mickeiik.izle.data.api.HomeEntry
 import io.github.mickeiik.izle.data.api.ItemCard
 import io.github.mickeiik.izle.data.api.TvState
@@ -109,6 +113,7 @@ import io.github.mickeiik.izle.domain.AutoplayPlan
 import io.github.mickeiik.izle.domain.EpisodeNames
 import io.github.mickeiik.izle.domain.HomeSection
 import io.github.mickeiik.izle.domain.HomeSections
+import io.github.mickeiik.izle.domain.HomeTile
 import io.github.mickeiik.izle.domain.TileBadge
 import io.github.mickeiik.izle.ui.AutoplayUi
 import io.github.mickeiik.izle.ui.HomeMessage
@@ -148,30 +153,38 @@ private const val OPEN_MS = 200
 private const val BLUR_WIDTH_PX = 16
 private const val BLUR_HEIGHT_PX = 24
 
+/** What Home needs of the apps on this TV for its app cards; [version] changes when an app comes or goes. */
+class HomeApps(val version: Int, val card: (String) -> HomeTile.App?, val picture: (String) -> AppPicture?)
+
 /**
- * The only screen the viewer navigates: the owner's sections of poster cards ([HomeLayout]), the focused one open, OK
- * plays. The card played (or focused) last gets the focus back. Nothing is above the cards: IzleRoot draws the owner's
- * message over them. [active] is false while the hidden menu or the autoplay countdown is on top: Home must not take
- * the focus back then.
+ * The only screen the viewer navigates: the owner's sections of poster cards and app cards ([HomeLayout]), the
+ * focused one open, OK plays or opens. The card played (or opened, or focused) last gets the focus back. Nothing is
+ * above the cards: IzleRoot draws the owner's message over them. [active] is false while the hidden menu or the
+ * autoplay countdown is on top: Home must not take the focus back then.
  */
 @Composable
 fun HomeScreen(
     state: TvState?,
     online: Boolean,
     message: HomeMessage?,
-    initialFocusItemId: String?,
+    initialFocusKey: String?,
     active: Boolean,
+    apps: HomeApps,
     imageUrl: (String?) -> String?,
     onFocused: (String) -> Unit,
     onPlay: (HomeEntry) -> Unit,
+    onOpenApp: (HomeTile.App) -> Unit,
 ) {
+    // A section with nothing this TV can play or open is not shown, nor an app card it cannot open.
+    val sections = remember(state?.home, state?.homeSections, apps.version) {
+        state?.let { HomeSections.of(it.home, it.homeSections, apps.card) }.orEmpty()
+    }
     Box(Modifier.fillMaxSize().background(IzleColors.Background)) {
-        if (state != null && state.home.isNotEmpty()) {
+        if (state != null && sections.isNotEmpty()) {
             // The whole width: a row section's cards show into the side margins.
-            val sections = remember(state.home, state.homeSections) { HomeSections.of(state.home, state.homeSections) }
             Box(Modifier.fillMaxSize().padding(vertical = IzleSpacing.SafeVertical)) {
                 HomeLines(
-                    sections, state.device.homeColumns, state.device.homeRows, initialFocusItemId, active, imageUrl, onFocused, onPlay,
+                    sections, state.device.homeColumns, state.device.homeRows, initialFocusKey, active, apps, imageUrl, onFocused, onPlay, onOpenApp,
                 )
             }
         }
@@ -179,20 +192,31 @@ fun HomeScreen(
             when {
                 state == null && !online -> Message(stringResource(R.string.no_connection), stringResource(R.string.no_connection_detail))
                 state == null -> Message(stringResource(R.string.loading))
-                state.home.isEmpty() -> Message(stringResource(R.string.home_empty), stringResource(R.string.home_empty_detail))
+                sections.isEmpty() -> Message(stringResource(R.string.home_empty), stringResource(R.string.home_empty_detail))
             }
             if (!online) OfflineChip(Modifier.align(Alignment.TopStart))
         }
-        if (message == HomeMessage.NoConnection) {
-            Box(Modifier.fillMaxSize().background(IzleColors.Scrim), contentAlignment = Alignment.Center) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.background(IzleColors.Surface, IzleShapes.Large).padding(horizontal = IzleSpacing.Huge, vertical = IzleSpacing.XXLarge),
-                ) {
-                    Text(stringResource(R.string.no_connection), style = MaterialTheme.typography.displaySmall, color = IzleColors.Error)
-                    Spacer(Modifier.height(IzleSpacing.Medium))
-                    Text(stringResource(R.string.no_connection_detail), style = MaterialTheme.typography.bodyLarge, color = IzleColors.Dim)
-                }
+        when (message) {
+            HomeMessage.NoConnection -> MessageBox(stringResource(R.string.no_connection), stringResource(R.string.no_connection_detail))
+            is HomeMessage.CannotOpen -> MessageBox(stringResource(R.string.app_cannot_open, message.name), detail = null)
+            null -> Unit
+        }
+    }
+}
+
+/** A short message over Home, in large type: OK while offline ("No connection · Trying again…"), "Can't open <name>". */
+@Composable
+private fun MessageBox(title: String, detail: String?) {
+    Box(Modifier.fillMaxSize().background(IzleColors.Scrim), contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(IzleSpacing.Safe).background(IzleColors.Surface, IzleShapes.Large)
+                .padding(horizontal = IzleSpacing.Huge, vertical = IzleSpacing.XXLarge),
+        ) {
+            Text(title, style = MaterialTheme.typography.displaySmall, color = IzleColors.Error, textAlign = TextAlign.Center)
+            if (detail != null) {
+                Spacer(Modifier.height(IzleSpacing.Medium))
+                Text(detail, style = MaterialTheme.typography.bodyLarge, color = IzleColors.Dim)
             }
         }
     }
@@ -255,11 +279,12 @@ private object NoSlide : BringIntoViewSpec {
 }
 
 /**
- * The focused card, known as soon as the focus moves (the scroll asks for its line in the same frame); its [section]
- * (−1: none) lights that section's title; [pendingMove] is a move waiting for its card to be laid out.
+ * The focused card ([key]: its [HomeTile.key]), known as soon as the focus moves (the scroll asks for its line in the
+ * same frame); its [section] (−1: none) lights that section's title; [pendingMove] is a move waiting for its card to be
+ * laid out.
  */
 private class FocusTrack {
-    var itemId: String? = null
+    var key: String? = null
     val section = mutableIntStateOf(-1)
     var pendingMove: Job? = null
 }
@@ -308,11 +333,13 @@ private fun HomeLines(
     sections: List<HomeSection>,
     columns: Int,
     rows: Int,
-    initialFocusItemId: String?,
+    initialFocusKey: String?,
     active: Boolean,
+    apps: HomeApps,
     imageUrl: (String?) -> String?,
     onFocused: (String) -> Unit,
     onPlay: (HomeEntry) -> Unit,
+    onOpenApp: (HomeTile.App) -> Unit,
 ) {
     // A line beyond each edge is composed ahead, so ↓ or ↑ onto it does not compose a whole line in one frame.
     val rowsShown = rows.coerceIn(HomeGrid.MIN_ROWS, HomeGrid.MAX_ROWS)
@@ -327,13 +354,13 @@ private fun HomeLines(
     val scope = rememberCoroutineScope()
     var gridHasFocus by remember { mutableStateOf(false) }
     var lastFocusedIndex by remember { mutableIntStateOf(0) }
-    val ids = remember(sections) { sections.flatMap { s -> s.entries.map { it.item.id } } }
-    val sectionStarts = remember(sections) { sections.runningFold(0) { at, s -> at + s.entries.size } }
+    val ids = remember(sections) { sections.flatMap { s -> s.tiles.map { it.key } } }
+    val sectionStarts = remember(sections) { sections.runningFold(0) { at, s -> at + s.tiles.size } }
     val places = remember(sections) {
-        HashMap<String, Pair<Int, Int>>().apply { sections.forEachIndexed { k, s -> s.entries.forEachIndexed { i, e -> put(e.item.id, k to i) } } }
+        HashMap<String, Pair<Int, Int>>().apply { sections.forEachIndexed { k, s -> s.tiles.forEachIndexed { i, t -> put(t.key, k to i) } } }
     }
     // The focus is put back when this changes: which card is in which section, laid out how.
-    val structure = remember(sections) { sections.map { s -> Triple(s.id, s.row, s.entries.map { it.item.id }) } }
+    val structure = remember(sections) { sections.map { s -> Triple(s.id, s.row, s.tiles.map { it.key }) } }
 
     val density = LocalDensity.current
     val cardTitleStyle = MaterialTheme.typography.titleSmall
@@ -344,7 +371,7 @@ private fun HomeLines(
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         val safeWidth = maxWidth.value - 2 * IzleSpacing.SafeHorizontal.value
         val layout = remember(sections, columns, rows, safeWidth, maxHeight, titleLine) {
-            val shapes = sections.map { s -> SectionShape(s.title != null, s.row, s.entries.size) }
+            val shapes = sections.map { s -> SectionShape(s.title != null, s.row, s.tiles.size) }
             HomeLayout.compute(columns, rows, safeWidth, maxHeight.value, titleLine.value, shapes)
         }
         val g = layout.grid
@@ -376,7 +403,7 @@ private fun HomeLines(
 
         // The card that had the focus when the sections changed: when it moved to another line its old place went
         // away, and Compose hands the focus to another card (which then counts as focused last).
-        val focusedBefore = remember(structure) { focus.itemId }
+        val focusedBefore = remember(structure) { focus.key }
 
         // Focus a tile when the screen appears, when the menu closes, and if the focused tile disappeared or moved to
         // another line after a live update. Its line is brought into view the way moving there would: Home stays put
@@ -387,9 +414,9 @@ private fun HomeLines(
             if (moved != null) withFrameNanos { }
             val id = if (gridHasFocus) {
                 // The focused card may have kept the focus but moved out of view: its line comes back into view.
-                moved?.takeIf { it != focus.itemId } ?: focus.itemId?.takeIf { it in places } ?: return@LaunchedEffect
+                moved?.takeIf { it != focus.key } ?: focus.key?.takeIf { it in places } ?: return@LaunchedEffect
             } else {
-                initialFocusItemId?.takeIf { it in places } ?: ids[lastFocusedIndex.coerceIn(0, ids.lastIndex)]
+                initialFocusKey?.takeIf { it in places } ?: ids[lastFocusedIndex.coerceIn(0, ids.lastIndex)]
             }
             val (s, i) = places.getValue(id)
             val l = currentLayout
@@ -401,7 +428,7 @@ private fun HomeLines(
             val to = l.scrollFor(l.lineOf(s, i), now)
             // Already in view: a scroll under way (the viewer's) is left alone.
             if (abs(to - now) >= 0.5f) listState.scrollTo(l, to, density)
-            requestFocusWithin({ requesters[id] }, took = { gridHasFocus && focus.itemId == id })
+            requestFocusWithin({ requesters[id] }, took = { gridHasFocus && focus.key == id })
         }
 
         /** Whether card [index] of [section] (its id: [id]) is laid out (on screen, if only in part), so it can take the focus. */
@@ -424,7 +451,7 @@ private fun HomeLines(
                 else -> return false
             }
             if (focus.pendingMove?.isActive == true) return true
-            val (s, i) = focus.itemId?.let { currentPlaces[it] } ?: return false
+            val (s, i) = focus.key?.let { currentPlaces[it] } ?: return false
             val l = currentLayout
             val (ts, ti) = if (key == Key.DirectionLeft || key == Key.DirectionRight) {
                 s to (l.horizontal(s, i, direction) ?: return true)
@@ -432,10 +459,10 @@ private fun HomeLines(
                 l.vertical(s, i, direction, ::rowFirst) ?: return true
             }
             val target = currentSections[ts]
-            val id = target.entries[ti].item.id
+            val id = target.tiles[ti].key
             if (target.row) {
                 val first = rowFirst(ts)
-                val to = HomeLayout.rowFirst(first, ti, target.entries.size, l.grid.columns)
+                val to = HomeLayout.rowFirst(first, ti, target.tiles.size, l.grid.columns)
                 if (to != first) slide(target, to)
             }
             val requester = requesters[id]
@@ -451,16 +478,19 @@ private fun HomeLines(
         }
 
         val lineInView = remember(density) {
-            LineInView(density, { currentLayout }, { focus.itemId?.let { currentPlaces[it] }?.let { (s, i) -> currentLayout.lineOf(s, i) } }) { isActive }
+            LineInView(density, { currentLayout }, { focus.key?.let { currentPlaces[it] }?.let { (s, i) -> currentLayout.lineOf(s, i) } }) { isActive }
         }
 
-        /** A poster card, open while it has the focus: [HomeGrid.openWidth] wide, the panel at the poster's right. */
+        /**
+         * A poster card or an app card, open while it has the focus: [HomeGrid.openWidth] wide, the panel at the
+         * picture's right.
+         */
         @Composable
-        fun CardTile(entry: HomeEntry, section: Int, index: Int) {
-            val id = entry.item.id
+        fun CardTile(tile: HomeTile, section: Int, index: Int) {
+            val id = tile.key
             val requester = requesters.getOrPut(id) { FocusRequester() }
             // A card that keeps the focus while the sections around it move lights its section's title at its new place.
-            LaunchedEffect(section) { if (gridHasFocus && focus.itemId == id) focus.section.intValue = section }
+            LaunchedEffect(section) { if (gridHasFocus && focus.key == id) focus.section.intValue = section }
             // Moving the focus recomposes the two cards that open and close; their width changes in the layout phase only.
             val interaction = remember { MutableInteractionSource() }
             val focused = interaction.collectIsFocusedAsState()
@@ -473,7 +503,12 @@ private fun HomeLines(
             // The panel stays while the card closes.
             val open by remember(g) { derivedStateOf { focused.value || width.value > g.cardWidth } }
             Card(
-                onClick = { onPlay(entry) },
+                onClick = {
+                    when (tile) {
+                        is HomeTile.Show -> onPlay(tile.entry)
+                        is HomeTile.App -> onOpenApp(tile)
+                    }
+                },
                 interactionSource = interaction,
                 scale = CardDefaults.scale(focusedScale = 1f),
                 border = CardDefaults.border(focusedBorder = IzleBorders.focus(IzleShapes.Medium)),
@@ -495,31 +530,33 @@ private fun HomeLines(
                     .focusProperties { canFocus = active }
                     .onFocusChanged {
                         if (it.isFocused) {
-                            focus.itemId = id
+                            focus.key = id
                             focus.section.intValue = section
                         }
                     },
             ) {
+                // At its full width while the card opens and closes: the card's edge uncovers it.
+                val panel = Modifier
+                    .padding(start = g.cardWidth.dp)
+                    .wrapContentWidth(Alignment.Start, unbounded = true)
+                    .width((g.openWidth - g.cardWidth).dp)
+                    .fillMaxHeight()
                 Box(Modifier.fillMaxSize()) {
-                    Box(Modifier.width(g.cardWidth.dp).fillMaxHeight()) {
-                        CardPicture(entry.item, imageUrl(entry.item.posterUrl), g.titleLinesInCard)
-                        // On the open card, what the chips say is in the panel.
-                        if (!open) CardChips(entry, g, textSizes)
-                    }
-                    if (open) {
-                        OpenPanel(
-                            entry,
-                            imageUrl(entry.item.backdropUrl),
-                            imageUrl(entry.item.posterUrl),
-                            g,
-                            textSizes,
-                            // At its full width while the card opens and closes: the card's edge uncovers it.
-                            Modifier
-                                .padding(start = g.cardWidth.dp)
-                                .wrapContentWidth(Alignment.Start, unbounded = true)
-                                .width((g.openWidth - g.cardWidth).dp)
-                                .fillMaxHeight(),
-                        )
+                    when (tile) {
+                        is HomeTile.Show -> {
+                            val entry = tile.entry
+                            Box(Modifier.width(g.cardWidth.dp).fillMaxHeight()) {
+                                CardPicture(entry.item, imageUrl(entry.item.posterUrl), g.titleLinesInCard)
+                                // On the open card, what the chips say is in the panel.
+                                if (!open) CardChips(entry, g, textSizes)
+                            }
+                            if (open) OpenPanel(entry, imageUrl(entry.item.backdropUrl), imageUrl(entry.item.posterUrl), g, textSizes, panel)
+                        }
+                        is HomeTile.App -> {
+                            val picture = remember(tile.appId, apps.version) { apps.picture(tile.appId) }
+                            Box(Modifier.width(g.cardWidth.dp).fillMaxHeight()) { AppCardPicture(picture, tile.label, g) }
+                            if (open) AppPanel(tile.label, g, textSizes, panel)
+                        }
                     }
                 }
             }
@@ -571,8 +608,8 @@ private fun HomeLines(
                                         horizontalArrangement = Arrangement.spacedBy(g.gap.dp),
                                         modifier = Modifier.fillMaxWidth().height(g.cardHeight.dp),
                                     ) {
-                                        itemsIndexed(section.entries, key = { _, entry -> entry.item.id }) { index, entry ->
-                                            CardTile(entry, slot.section, index)
+                                        itemsIndexed(section.tiles, key = { _, tile -> tile.key }) { index, tile ->
+                                            CardTile(tile, slot.section, index)
                                         }
                                     }
                                 }
@@ -580,8 +617,8 @@ private fun HomeLines(
                                 // A grid row fits one open card, so it never slides.
                                 Row(Modifier.padding(start = x0.dp).height(g.cardHeight.dp), horizontalArrangement = Arrangement.spacedBy(g.gap.dp)) {
                                     for (j in line.first until line.first + line.count) {
-                                        val entry = section.entries[j]
-                                        key(entry.item.id) { CardTile(entry, slot.section, j) }
+                                        val tile = section.tiles[j]
+                                        key(tile.key) { CardTile(tile, slot.section, j) }
                                     }
                                 }
                             }
@@ -680,15 +717,72 @@ private fun BoxScope.CardPicture(item: ItemCard, posterUrl: String?, titleLines:
             )
         }
     } else {
-        Text(
-            item.title,
-            style = MaterialTheme.typography.titleSmall.copy(hyphens = Hyphens.Auto, lineBreak = LineBreak.Heading),
-            color = IzleColors.OnSurface,
-            textAlign = TextAlign.Center,
-            maxLines = titleLines,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.align(Alignment.Center).padding(HomeGrid.CARD_TEXT_PADDING.dp),
-        )
+        CardName(item.title, titleLines)
+    }
+}
+
+/** The name, inside a card that has no picture. */
+@Composable
+private fun BoxScope.CardName(name: String, lines: Int) {
+    Text(
+        name,
+        style = MaterialTheme.typography.titleSmall.copy(hyphens = Hyphens.Auto, lineBreak = LineBreak.Heading),
+        color = IzleColors.OnSurface,
+        textAlign = TextAlign.Center,
+        maxLines = lines,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier.align(Alignment.Center).padding(HomeGrid.CARD_TEXT_PADDING.dp),
+    )
+}
+
+/**
+ * An app card's picture on the card's colour, no chip: its banner whole across the card's width less [HomeGrid.INSET]
+ * on each side, centred; else its icon whole, centred, as wide; else (no picture) the name.
+ */
+@Composable
+private fun BoxScope.AppCardPicture(picture: AppPicture?, label: String, grid: HomeGrid) {
+    val image = remember(picture) { picture?.bitmap?.asImageBitmap() }
+    if (image == null) return CardName(label, grid.titleLinesInCard)
+    Image(
+        image,
+        contentDescription = label,
+        contentScale = ContentScale.Fit,
+        modifier = Modifier
+            .align(Alignment.Center)
+            .padding(horizontal = HomeGrid.INSET.dp)
+            .fillMaxWidth()
+            .aspectRatio(image.width.toFloat() / image.height),
+    )
+}
+
+/**
+ * An open app card's panel, plain as a channel's: the app's name at the top (up to 3 lines) and a light grey "Open"
+ * chip at the bottom (24 sp; 16 sp when the panel is too narrow or short), fitted as [PanelFit] says.
+ */
+@Composable
+private fun AppPanel(label: String, grid: HomeGrid, sizes: TextSizes, modifier: Modifier) {
+    val typography = MaterialTheme.typography
+    val inset = HomeGrid.INSET.dp
+    val width = (grid.openWidth - grid.cardWidth).dp - 2 * inset
+    val open = stringResource(R.string.app_open)
+    val large = sizes.chip(open, typography.labelLarge, ChipVerticalPadding)
+    val fit = PanelFit.of(
+        height = (grid.cardHeight.dp - 2 * inset).value,
+        nameLines = sizes.lines(label, typography.titleMedium, width),
+        nameLine = sizes.lineHeight(typography.titleMedium).value,
+        newLine = 0f,
+        largeChip = if (large.width <= width) large.height.value else 0f,
+        smallChip = sizes.chip(open, typography.labelMedium, ChipVerticalPadding).height.value,
+        episodeLine = 0f,
+        bar = 0f,
+        gap = IzleSpacing.Small.value,
+    )
+    Box(modifier.background(IzleColors.SurfaceHigh)) {
+        Column(Modifier.fillMaxSize().padding(inset)) {
+            Text(label, style = typography.titleMedium, color = IzleColors.OnSurface, maxLines = fit.nameLines, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.weight(1f).heightIn(min = IzleSpacing.Small))
+            Chip(open, IzleColors.ChipNeutral, IzleColors.OnChipNeutral, if (fit.largeChip) typography.labelLarge else typography.labelMedium)
+        }
     }
 }
 
@@ -865,6 +959,11 @@ private fun ActionChip(badge: TileBadge, label: String, style: TextStyle) {
         TileBadge.WatchAgain -> IzleColors.ChipNeutral to IzleColors.OnChipNeutral
         is TileBadge.Episode -> if (badge.resume) IzleColors.Accent to IzleColors.OnAccent else IzleColors.ChipNeutral to IzleColors.OnChipNeutral
     }
+    Chip(label, background, foreground, style)
+}
+
+@Composable
+private fun Chip(label: String, background: Color, foreground: Color, style: TextStyle) {
     Box(Modifier.posterChip(background).padding(vertical = ChipVerticalPadding)) {
         Text(label, style = style, color = foreground, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
     }

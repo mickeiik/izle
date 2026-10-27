@@ -1,5 +1,12 @@
 package io.github.mickeiik.izle.ui.home
 
+import io.github.mickeiik.izle.data.api.ContinueInfo
+import io.github.mickeiik.izle.data.api.HomeEntry
+import io.github.mickeiik.izle.data.api.HomeSectionInfo
+import io.github.mickeiik.izle.data.api.ItemCard
+import io.github.mickeiik.izle.data.api.SectionEntry
+import io.github.mickeiik.izle.domain.HomeSections
+import io.github.mickeiik.izle.domain.HomeTile
 import io.github.mickeiik.izle.ui.home.HomeLayout.Cards
 import io.github.mickeiik.izle.ui.home.HomeLayout.Title
 import org.junit.Assert.assertEquals
@@ -233,5 +240,26 @@ class HomeLayoutTest {
         assertNull(l.vertical(2, 1, 1, rowFirst))
         assertEquals(listOf(0, 1, 2, 3), listOf(l.lineOf(0, 3), l.lineOf(0, 4), l.lineOf(1, 8), l.lineOf(2, 1)))
         assertNull(l.vertical(0, 0, 0) { 0 })
+    }
+
+    @Test
+    fun appCardsAreCardsLikeAnyOther() {
+        val home = listOf("a", "b").map { HomeEntry(ItemCard(it, "movie", it), ContinueInfo("$it.film")) }
+        val sections = HomeSections.of(
+            home,
+            listOf(
+                HomeSectionInfo("Apps1234", "Apps", "row", emptyList(), listOf(SectionEntry(appId = "w"), SectionEntry(appId = "m"))),
+                HomeSectionInfo("untitled", null, "grid", listOf("a", "b"), listOf(SectionEntry(itemId = "a"), SectionEntry(appId = "x"), SectionEntry(itemId = "b"))),
+            ),
+        ) { HomeTile.App(it, it) }
+        val l = layout(4, 2, *sections.map { SectionShape(it.title != null, it.row, it.tiles.size) }.toTypedArray())
+        assertEquals(listOf(2, 3), l.sections.map { it.count })
+        fun key(at: Pair<Int, Int>?) = at?.let { (s, i) -> sections[s].tiles[i].key }
+        // ↓ from the row's second app card: the card under it in the grid, an app card too; ↑ back to it.
+        assertEquals("app:x", key(l.vertical(0, 1, 1) { 0 }))
+        assertEquals("app:m", key(l.vertical(1, 1, -1) { 0 }))
+        // ← → along the grid row, through the app card.
+        assertEquals("app:x", key(1 to l.horizontal(1, 0, 1)!!))
+        assertEquals("b", key(1 to l.horizontal(1, 1, 1)!!))
     }
 }

@@ -1,6 +1,7 @@
 package io.github.mickeiik.izle
 
 import android.content.ActivityNotFoundException
+import android.content.BroadcastReceiver
 import android.content.Intent
 import android.os.Bundle
 import android.view.KeyEvent
@@ -24,13 +25,18 @@ import kotlinx.coroutines.launch
 /**
  * The only activity. Key routing lives here because OK has two meanings (click / long-press menu), the player owns
  * the D-pad while video is showing, channel keys must never reach the system, and the autoplay countdown gives way to
- * any key. It also receives the app's install session statuses and starts a guided update's system dialog.
+ * any key. It also receives the app's install session statuses, HOME while izle is the TV's home screen, and starts
+ * what the view model asks for (a guided update's system dialog, an app a card opens, TV settings).
  */
 class MainActivity : ComponentActivity() {
     private val vm: AppViewModel by viewModels {
         viewModelFactory { initializer { AppViewModel((application as IzleApp).graph) } }
     }
     private val okPress = OkPressDetector()
+    private var packageReceiver: BroadcastReceiver? = null
+
+    /** Stopped since it was last in front: a HOME delivered now comes from another app. */
+    private var stopped = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,21 +45,36 @@ class MainActivity : ComponentActivity() {
         setContent { IzleRoot(vm) }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                vm.launchIntents.collect { target ->
-                    try {
-                        startActivity(target)
-                    } catch (e: ActivityNotFoundException) {
-                        vm.onLaunchFailed()
-                    } catch (e: SecurityException) {
-                        vm.onLaunchFailed()
-                    }
+                vm.launches.collect { launch ->
+                    if (launch.intents.none(::tryStart)) launch.onFailed()
                 }
             }
         }
+        packageReceiver = (application as IzleApp).graph.tvApps.watch(vm::onPackagesChanged)
+    }
+
+    override fun onDestroy() {
+        packageReceiver?.let(::unregisterReceiver)
+        super.onDestroy()
+    }
+
+    private fun tryStart(target: Intent): Boolean = try {
+        startActivity(target)
+        true
+    } catch (e: ActivityNotFoundException) {
+        false
+    } catch (e: SecurityException) {
+        false
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        // HOME while izle is the home screen, by way of HomeActivity (which only pauses izle when it is in front). From
+        // another app izle was stopped, and onBackground already brought it back to Home.
+        if (intent.action == HomeActivity.ACTION_HOME) {
+            if (!stopped) vm.onHomeButton()
+            return
+        }
         handleIntent(intent)
     }
 
@@ -68,7 +89,14 @@ class MainActivity : ComponentActivity() {
         vm.onForeground()
     }
 
+    override fun onResume() {
+        super.onResume()
+        stopped = false
+        vm.onResumed()
+    }
+
     override fun onStop() {
+        stopped = true
         vm.onBackground()
         super.onStop()
     }
@@ -76,6 +104,8 @@ class MainActivity : ComponentActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (!hasFocus) okPress.reset()
+        // Back from Android's home-screen chooser or settings, which may only cover the app.
+        if (hasFocus) vm.refreshHomeScreen()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {

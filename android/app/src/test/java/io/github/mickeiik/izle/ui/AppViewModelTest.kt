@@ -1,20 +1,29 @@
 package io.github.mickeiik.izle.ui
 
 import android.content.Intent
+import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInstaller
+import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
 import android.os.Looper
+import android.provider.Settings
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import androidx.test.core.app.ApplicationProvider
 import io.github.mickeiik.izle.BuildConfig
+import io.github.mickeiik.izle.HomeActivity
 import io.github.mickeiik.izle.IzleApp
+import io.github.mickeiik.izle.apps.HomeScreenState
+import io.github.mickeiik.izle.apps.HomeScreenSwitch
 import io.github.mickeiik.izle.data.api.ContinueInfo
 import io.github.mickeiik.izle.data.api.EpisodeDetails
 import io.github.mickeiik.izle.data.api.HomeEntry
 import io.github.mickeiik.izle.data.api.ItemCard
 import io.github.mickeiik.izle.domain.AutoplayPlan
+import io.github.mickeiik.izle.domain.HomeTile
 import io.github.mickeiik.izle.installStatus
 import io.github.mickeiik.izle.json
 import io.github.mickeiik.izle.player.FakeMediaEngine
@@ -169,7 +178,7 @@ class AppViewModelTest {
         runBlocking { assertEquals("tok-9", app.graph.deviceStore.current().deviceToken) }
         waitUntil("the state with the new token") { count("/api/v1/tv/state") > 0 }
         assertEquals("Bearer tok-9", requests.first { it.url.encodedPath == "/api/v1/tv/state" }.headers["Authorization"])
-        assertNull(vm.homeFocusItemId)
+        assertNull(vm.homeFocusKey)
     }
 
     @Test
@@ -291,7 +300,7 @@ class AppViewModelTest {
         command("play", """{"itemId":"b","episodeId":"b.e2"}""")
         waitUntil("the player") { vm.screen.value == Screen.Player }
         assertNull("playing closes the menu", vm.menu.value)
-        assertEquals("b", vm.homeFocusItemId)
+        assertEquals("b", vm.homeFocusKey)
         assertEquals("Show B", vm.player.ui.value.item?.title)
         awaitResolves(1)
         assertEquals("""{"episodeId":"b.e2","trigger":"command","commandId":1}""", resolveBodies().single())
@@ -419,7 +428,7 @@ class AppViewModelTest {
         waitUntil("the autoplay countdown") { vm.autoplay.value != null }
         assertEquals("a", vm.autoplay.value?.entry?.item?.id)
         assertEquals(10, vm.autoplay.value?.secondsLeft)
-        assertEquals("a", vm.homeFocusItemId)
+        assertEquals("a", vm.homeFocusKey)
         for (left in 9 downTo 1) {
             advance(1_000)
             assertEquals(left, vm.autoplay.value?.secondsLeft)
@@ -717,7 +726,7 @@ class AppViewModelTest {
         assertEquals(PlayerPhase.Loading, vm.player.ui.value.phase)
         assertTrue("its name and Live while it loads", vm.player.ui.value.live)
         assertEquals("Channel 1", vm.player.ui.value.item?.title)
-        assertEquals("tv1", vm.homeFocusItemId)
+        assertEquals("tv1", vm.homeFocusKey)
         awaitResolves(1)
         assertEquals("""{"itemId":"tv1","trigger":"viewer"}""", resolveBodies().single())
         awaitErrorScreen(vm)
@@ -749,7 +758,7 @@ class AppViewModelTest {
         assertEquals(PlayerPhase.Loading, vm.player.ui.value.phase)
         assertEquals("Channel 2", vm.player.ui.value.item?.title)
         assertTrue(vm.player.ui.value.live)
-        assertEquals("tv2", vm.homeFocusItemId)
+        assertEquals("tv2", vm.homeFocusKey)
         awaitResolves(2)
         vm.onChannelKey(1)
         awaitResolves(3)
@@ -761,7 +770,7 @@ class AppViewModelTest {
         assertEquals("Channel 3", vm.player.ui.value.item?.title)
         vm.onChannelKey(-1)
         awaitResolves(4)
-        assertEquals("tv2", vm.homeFocusItemId)
+        assertEquals("tv2", vm.homeFocusKey)
         assertEquals(listOf("tv1" to "viewer", "tv2" to "next", "tv3" to "next", "tv2" to "next").map(::channelResolve), resolveBodies())
 
         // Nothing plays here: channel 2 ends on "Can't play right now", from where the owner's next zaps as CH+ does.
@@ -784,7 +793,7 @@ class AppViewModelTest {
         // Back: Home, the channel played last focused.
         vm.onBack()
         assertEquals(Screen.Home, vm.screen.value)
-        assertEquals("tv2", vm.homeFocusItemId)
+        assertEquals("tv2", vm.homeFocusKey)
     }
 
     @Test
@@ -796,7 +805,7 @@ class AppViewModelTest {
         assertEquals("""{"itemId":"tv1","trigger":"command","commandId":$play}""", resolveBodies().single())
         assertTrue(vm.player.ui.value.live)
         assertEquals("Channel 1", vm.player.ui.value.item?.title)
-        assertEquals("tv1", vm.homeFocusItemId)
+        assertEquals("tv1", vm.homeFocusKey)
         // No pause on a channel: pause, resume and seek do nothing.
         for ((type, payload) in listOf("pause" to "{}", "resume" to "{}", "seek" to """{"deltaMs":30000}""")) {
             assertEquals(type, ignored("live"), awaitResult(command(type, payload)))
@@ -810,7 +819,7 @@ class AppViewModelTest {
         assertEquals("the play command was replaced", ignored("superseded"), awaitResult(play))
         awaitResolves(2)
         assertEquals("""{"itemId":"tv2","trigger":"command","commandId":$next}""", resolveBodies().last())
-        assertEquals("tv2", vm.homeFocusItemId)
+        assertEquals("tv2", vm.homeFocusKey)
 
         // A channel that is not on Home has no neighbours there.
         val elsewhere = command("play", """{"itemId":"tv9","episodeId":null}""")
@@ -823,6 +832,135 @@ class AppViewModelTest {
         assertEquals(failed("no_playable_source"), awaitResult(elsewhere))
         // On its error screen the transport commands find no video, as for a show.
         assertEquals(ignored("not_in_player"), awaitResult(command("pause")))
+    }
+
+    @Test
+    fun anAppCardOpensItsAppOfflineTooAndOneThatWillNotOpenSaysSoForFiveSeconds() {
+        stateCode = 503
+        val vm = startTv()
+        waitUntil("offline") { vm.screen.value == Screen.Home && !vm.online.value }
+        installLaunchable("com.example.weather")
+        vm.onAppClicked(HomeTile.App("com.example.weather", "Weather"))
+        val launch = runBlocking { withTimeout(5_000) { vm.launches.first() } }
+        assertEquals("com.example.weather", launch.intents.single().component?.packageName)
+        assertTrue(launch.intents.single().flags and Intent.FLAG_ACTIVITY_NEW_TASK != 0)
+        assertEquals("app:com.example.weather", vm.homeFocusKey)
+        assertNull(vm.homeMessage.value)
+        // The system refused it.
+        launch.onFailed()
+        assertEquals(HomeMessage.CannotOpen("Weather"), vm.homeMessage.value)
+        advance(5_000)
+        assertNull(vm.homeMessage.value)
+        // Removed meanwhile: no launch at all.
+        vm.onAppClicked(HomeTile.App("com.example.gone", "Gone"))
+        assertEquals(HomeMessage.CannotOpen("Gone"), vm.homeMessage.value)
+        assertEquals(Screen.Home, vm.screen.value)
+        assertEquals(0, count(RESOLVE))
+    }
+
+    @Test
+    fun comingBackFromAnAppACardOpenedOffersNoAutoplayButTheNextStartDoes() {
+        autoplayOnStart = true
+        val vm = startTv()
+        waitUntil("the autoplay countdown") { vm.autoplay.value != null }
+        vm.cancelAutoplay()
+        installLaunchable("com.example.weather")
+        vm.onAppClicked(HomeTile.App("com.example.weather", "Weather"))
+        runBlocking { withTimeout(5_000) { vm.launches.first() } }
+        // The app covers izle, then Back in it.
+        vm.onBackground()
+        var states = count("/api/v1/tv/state")
+        vm.onForeground()
+        waitUntil("a fresh state") { count("/api/v1/tv/state") > states }
+        settle()
+        assertNull(vm.autoplay.value)
+        assertEquals("app:com.example.weather", vm.homeFocusKey)
+        // The TV switched off and on again: autoplay as always.
+        vm.onBackground()
+        states = count("/api/v1/tv/state")
+        vm.onForeground()
+        waitUntil("the autoplay countdown again") { vm.autoplay.value != null }
+        assertTrue(count("/api/v1/tv/state") > states)
+    }
+
+    @Test
+    fun onAnAppCardTheMenuHasOnlyTheEntriesShownAlways() {
+        val vm = startTvOnHome()
+        vm.onTileFocused(HomeTile.appKey("com.example.weather"))
+        vm.openMenu()
+        assertEquals(MenuUi(listOf(MenuPage.Root(listOf(RootEntry.Settings, RootEntry.About))), item = null, fromPlayer = false), vm.menu.value)
+    }
+
+    @Test
+    fun homeAsTheHomeScreenGoesBackToHomeFromThePlayerAndItsMenuAndDoesNothingOnHome() {
+        val vm = startTvOnHome()
+        vm.onHomeButton()
+        assertEquals(Screen.Home, vm.screen.value)
+        vm.openMenu()
+        vm.onRootEntry(RootEntry.Settings)
+        vm.onHomeButton()
+        assertNull("the whole menu closes", vm.menu.value)
+
+        vm.onTileClicked(vm.state.value!!.home[1])
+        assertEquals(Screen.Player, vm.screen.value)
+        awaitErrorScreen(vm)
+        vm.onHomeButton()
+        assertEquals(Screen.Home, vm.screen.value)
+        assertEquals("b", vm.homeFocusKey)
+
+        // Connect a phone: Home, and its invite is cancelled.
+        openConnectAPhone(vm)
+        vm.onHomeButton()
+        assertEquals(Screen.Home, vm.screen.value)
+        waitUntil("the invite cancelled") { requests.any { it.method == "DELETE" && it.url.encodedPath == "/api/v1/tv/phones/invite" } }
+
+        // The address screen: nothing.
+        vm.openMenu()
+        vm.onRootEntry(RootEntry.Settings)
+        vm.onSettingsEntry(SettingsEntry.ServerAddress)
+        vm.onHomeButton()
+        assertEquals(Screen.Setup(canGoBack = true), vm.screen.value)
+    }
+
+    @Test
+    fun tvSettingsOpenAndIzleStaysWhereItWas() {
+        val vm = startTvOnHome()
+        vm.openMenu()
+        vm.onRootEntry(RootEntry.Settings)
+        vm.onSettingsEntry(SettingsEntry.TvSettings)
+        val launch = runBlocking { withTimeout(5_000) { vm.launches.first() } }
+        assertEquals(Settings.ACTION_SETTINGS, launch.intents.single().action)
+        assertEquals(listOf(MenuPage.Root(listOf(RootEntry.StartOver, RootEntry.Settings, RootEntry.About), focused = 1), MenuPage.Settings), vm.menu.value?.pages)
+        assertEquals(Screen.Home, vm.screen.value)
+    }
+
+    @Test
+    fun theHomeScreenRowOffersIzleAndTakesItBack() {
+        val vm = startTvOnHome()
+        vm.openMenu()
+        vm.onRootEntry(RootEntry.Settings)
+        assertEquals(HomeScreenState.TvOwn, vm.homeScreen.value)
+        vm.onSettingsEntry(SettingsEntry.HomeScreen)
+        // Here izle is the only home screen once offered: HOME opens it, nothing to ask (HomeScreenPlanTest has the rest).
+        assertEquals(HomeScreenState.Izle, vm.homeScreen.value)
+        val home = app.packageManager.resolveActivity(HomeScreenSwitch.HOME, PackageManager.MATCH_DEFAULT_ONLY)
+        assertEquals(HomeActivity::class.java.name, home?.activityInfo?.name)
+        vm.onSettingsEntry(SettingsEntry.HomeScreen)
+        assertEquals(HomeScreenState.TvOwn, vm.homeScreen.value)
+    }
+
+    /** An app with a launch entry, as PackageManager will find it. */
+    private fun installLaunchable(appId: String) {
+        val info = ResolveInfo().apply {
+            activityInfo = ActivityInfo().apply {
+                packageName = appId
+                name = "$appId.Main"
+                applicationInfo = ApplicationInfo().apply { packageName = appId }
+            }
+        }
+        val pm = shadowOf(app.packageManager)
+        pm.addResolveInfoForIntent(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setPackage(appId), info)
+        pm.addResolveInfoForIntent(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER), info)
     }
 
     /** Checks and installs nothing; remembers what it was asked. */
@@ -873,7 +1011,7 @@ class AppViewModelTest {
         mainLooper.idle()
     }
 
-    private fun AppViewModel.launchIntent(): Intent = runBlocking { withTimeout(5_000) { launchIntents.first() } }
+    private fun AppViewModel.launchIntent(): Intent = runBlocking { withTimeout(5_000) { launches.first().intents.single() } }
 
     private fun userAgent(capability: String) = "izle-tv/${BuildConfig.VERSION_NAME} (Android 36; ${BuildConfig.VERSION_CODE}; $capability)"
 

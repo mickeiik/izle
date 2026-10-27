@@ -11,6 +11,7 @@
     <string name="setup_hint">izle sunucunuzun adresini girin, örneğin http://192.168.1.10:8787</string>
     <string name="setup_connect">Bağlan</string>
     <string name="setup_connecting">Bağlanıyor…</string>
+    <string name="setup_tv_settings">TV ayarları</string>
     <string name="setup_error_invalid">Bu adres geçerli değil.</string>
     <string name="setup_error_unreachable">Sunucuya ulaşılamıyor.</string>
 
@@ -24,6 +25,8 @@
     <!-- Home -->
     <string name="home_empty">Henüz içerik yok</string>
     <string name="home_empty_detail">Diziler ve filmler izle yönetim sayfasından eklenir.</string>
+    <string name="app_open">Aç</string>
+    <string name="app_cannot_open">%1$s açılamıyor</string>
     <string name="badge_new">Yeni</string>
     <string name="badge_continue">Devam et</string>
     <string name="badge_watch_again">Tekrar izle</string>
@@ -81,6 +84,10 @@
     <string name="about_up_to_date">Güncel</string>
     <string name="settings_install_update">Güncellemeyi kur</string>
     <string name="settings_connect_phone">Telefon bağla</string>
+    <string name="settings_home_screen">Ana ekran</string>
+    <string name="home_screen_tv_own">TV\'nin kendi ana ekranı</string>
+    <string name="home_screen_not_chosen">izle · seçilmedi</string>
+    <string name="settings_tv_settings">TV ayarları</string>
 
     <!-- Telefon bağla -->
     <string name="phone_instructions">Bunu telefonun kamerasıyla okutun ya da izle companion uygulamasını açıp kodu girin</string>

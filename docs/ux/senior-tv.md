@@ -202,21 +202,25 @@ focus.
 ### Home screen
 
 izle can be the TV's home screen (its launcher): HOME, and switching the TV on, then open izle's Home. It is off
-until chosen on the TV, since Android asks there which app to use.
+until chosen on the TV, since Android asks there which app to use. A TV whose own home screen claims HOME before any
+other (Google's TV home screen does) keeps it whatever is chosen: there izle is the home screen only once the owner
+turns that home screen off (`adb shell pm disable-user --user 0 <its package>`, which such a TV may undo when it
+restarts), and the row reads "izle · not chosen" until then.
 
 - Hidden menu → Settings → **Home screen** reads "izle" when HOME opens izle, "TV's own" when izle is not offered as
   a home screen, and "izle · not chosen" when it is offered but HOME opens another app. OK:
   - from "TV's own": izle offers itself as a home screen (a home entry that is off until then) and opens the system's
     home, so that Android asks which app to use: choose izle and **Always**. When Android does not ask (another home
-    screen is fixed as the default), izle opens Android's home-screen settings when the TV has them, else TV settings.
-    Coming back, the row reads the new state.
+    screen is fixed as the default, as from Android 10 on, where the default home app is a setting), izle opens
+    Android's home-screen settings ("Default home app") when the TV has them, else TV settings. When HOME already
+    opens izle (chosen before), nothing opens. Coming back, the row reads the new state.
   - from "izle" or "izle · not chosen": izle stops offering itself; the next HOME opens the TV's own home screen.
 - While izle is the home screen, HOME acts as Back towards Home: from the player it saves the position and goes Home,
   it closes the hidden menu, Up next, "The end", "Can't play right now", the update screens (without stopping an
   install under way) and Connect a phone, each ending on Home; on Home it does nothing; on the address and pairing
   screens it does nothing. From another app it brings izle's Home back, with the focus where it was.
-- izle stays in the TV's own list of apps either way. After a self-update the system opens its home screen, which is
-  izle again.
+- izle stays in the TV's own list of apps either way. After a self-update izle opens again by itself (the system would
+  show the app used before it).
 - The server address screen has **TV settings** under **Connect**, since a TV without a network can only be fixed
   there.
 

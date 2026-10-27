@@ -52,9 +52,12 @@ import io.github.mickeiik.izle.ui.theme.IzleColors
 import io.github.mickeiik.izle.ui.theme.IzleShapes
 import io.github.mickeiik.izle.ui.theme.IzleSpacing
 
-/** First run (and "Server address" in the hidden menu): the owner types the server address with the TV keyboard. */
+/**
+ * First run (and "Server address" in the hidden menu): the owner types the server address with the TV keyboard. TV
+ * settings under Connect: a TV without a network can only be fixed there.
+ */
 @Composable
-fun SetupScreen(ui: SetupUi, onAddressChange: (String) -> Unit, onConnect: () -> Unit) {
+fun SetupScreen(ui: SetupUi, onAddressChange: (String) -> Unit, onConnect: () -> Unit, onTvSettings: () -> Unit) {
     val focusManager = LocalFocusManager.current
     val fieldFocus = remember { FocusRequester() }
     var fieldFocused by remember { mutableStateOf(false) }
@@ -97,6 +100,7 @@ fun SetupScreen(ui: SetupUi, onAddressChange: (String) -> Unit, onConnect: () ->
                 TvButton(stringResource(if (ui.busy) R.string.setup_connecting else R.string.setup_connect), onConnect, enabled = !ui.busy)
                 if (ui.busy) Spinner(size = 48.dp)
             }
+            TvButton(stringResource(R.string.setup_tv_settings), onTvSettings)
             when (ui.error) {
                 SetupError.Invalid -> ErrorText(stringResource(R.string.setup_error_invalid))
                 SetupError.Unreachable -> ErrorText(stringResource(R.string.setup_error_unreachable))

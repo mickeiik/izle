@@ -14,6 +14,7 @@ import io.github.mickeiik.izle.ui.common.LocalizedContent
 import io.github.mickeiik.izle.ui.common.MessageBannerOverlay
 import io.github.mickeiik.izle.ui.hidden.*
 import io.github.mickeiik.izle.ui.home.AutoplayOverlay
+import io.github.mickeiik.izle.ui.home.HomeApps
 import io.github.mickeiik.izle.ui.home.HomeScreen
 import io.github.mickeiik.izle.ui.phone.ConnectPhoneScreen
 import io.github.mickeiik.izle.ui.player.PlayerScreen
@@ -39,7 +40,7 @@ fun IzleRoot(vm: AppViewModel) {
                     Screen.Starting -> Unit
                     is Screen.Setup -> {
                         val setup by vm.setup.collectAsStateWithLifecycle()
-                        SetupScreen(setup, vm::onAddressChange, vm::onConnect)
+                        SetupScreen(setup, vm::onAddressChange, vm::onConnect, vm::openTvSettings)
                     }
                     Screen.Pairing -> {
                         val pairing by vm.pairing.collectAsStateWithLifecycle()
@@ -48,15 +49,19 @@ fun IzleRoot(vm: AppViewModel) {
                     Screen.Home -> {
                         val online by vm.online.collectAsStateWithLifecycle()
                         val message by vm.homeMessage.collectAsStateWithLifecycle()
+                        val appsVersion by vm.appsVersion.collectAsStateWithLifecycle()
+                        val apps = remember(appsVersion) { HomeApps(appsVersion, vm::appCard, vm::appPicture) }
                         HomeScreen(
                             state = state,
                             online = online,
                             message = message,
-                            initialFocusItemId = vm.homeFocusItemId,
+                            initialFocusKey = vm.homeFocusKey,
                             active = menu == null && autoplay == null,
+                            apps = apps,
                             imageUrl = vm::absoluteUrl,
                             onFocused = vm::onTileFocused,
                             onPlay = vm::onTileClicked,
+                            onOpenApp = vm::onAppClicked,
                         )
                         autoplay?.let { a ->
                             AutoplayOverlay(a, vm.absoluteUrl(a.entry.item.posterUrl), onPlayNow = vm::onAutoplayPlayNow, onNotNow = vm::cancelAutoplay)
@@ -72,10 +77,11 @@ fun IzleRoot(vm: AppViewModel) {
                 }
                 menu?.let { m ->
                     val override by vm.uiLanguageOverride.collectAsStateWithLifecycle()
+                    val homeScreen by vm.homeScreen.collectAsStateWithLifecycle()
                     val actions = remember(vm) {
                         MenuActions(vm::onRootEntry, vm::onEpisodeChosen, vm::onAudioChosen, vm::onSubtitlesChosen, vm::onSettingsEntry)
                     }
-                    HiddenMenu(m, state?.device?.uiLanguage ?: language, override, vm.aboutInfo(), actions)
+                    HiddenMenu(m, state?.device?.uiLanguage ?: language, override, homeScreen, vm.aboutInfo(), actions)
                 }
                 // The owner's message, over Home and the player only (and over what is on them); playback goes on under it.
                 if (screen == Screen.Player || screen == Screen.Home) {

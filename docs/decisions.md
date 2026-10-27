@@ -137,5 +137,19 @@ entries, and how each feature was built, are in git history.
 - Pictures are content-addressed and public like `/assets/`: an app's banner is not secret, and the TV uploads each
   image once for all TVs.
 - izle as the home screen is a hidden-menu switch on the TV, not an owner setting: Android asks which home app to use
-  on the TV itself anyway. A disabled activity alias carries the HOME filter, so an izle that is not chosen never
-  makes Android ask.
+  on the TV itself anyway. A disabled activity carries the HOME filter, so an izle that is not chosen never makes
+  Android ask.
+- TV app: the HOME filter is on `HomeActivity`, a no-display activity without task affinity that hands over to
+  MainActivity, not on an alias of MainActivity: Android starts the home activity in its home task, so a singleTask
+  MainActivity there was a second instance beside the one in front (two view models on one player and repository).
+  HOME reaches MainActivity as `onNewIntent` while it is only paused (in front) or after `onStop` (another app).
+- TV app: on the Android 16 TV emulator (Google's TV home screen), choosing izle as the default home app changes the
+  HOME role but not HOME, which still opens Google's launcher (its HOME filter has a higher priority, which wins over
+  a preferred activity); with that launcher disabled HOME, the app switch and self-updates work as specified, and the
+  launcher comes back on at reboot. The row reports what HOME really opens rather than the role.
+- TV app: after a self-update the system shows the task under izle, not its home screen; `MY_PACKAGE_REPLACED`
+  reopens izle when it is the home screen (a background start Android 10+ allows for the home app).
+- TV app: an unchanged list of apps is sent again once a day: a server that lost its pictures has no way to ask for
+  them, and its answer to a report names them again. A report counts as sent once every missing picture is uploaded.
+- TV app: app cards are keyed `app:<appId>` beside shows' item ids (item ids cannot hold a colon), so focus restore
+  and the lazy keys need no second id space.
