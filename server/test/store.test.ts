@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import path from "node:path";
 import { DatabaseVersionError, Store } from "../src/store.ts";
 import { MIGRATIONS } from "../src/store/schema.ts";
-import { tempDir, untitled } from "./helpers.ts";
+import { section, tempDir, untitled } from "./helpers.ts";
 
 /** A new store with one device, `d1`, and its database file. */
 async function storeWithDevice(name = "TV"): Promise<{ s: Store; file: string }> {
@@ -24,7 +24,7 @@ test("a new database gets every migration and opens again as it is; one written 
   const tables = raw.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((r) => r.name);
   raw.close();
   assert.deepEqual(tables, [
-    "access_tokens", "app_apk", "catalog_builds", "catalog_seen", "catalog_seen_items", "commands", "companion_links", "devices", "episode_marks",
+    "access_tokens", "app_apk", "app_images", "catalog_builds", "catalog_seen", "catalog_seen_items", "commands", "companion_links", "device_apps", "devices", "episode_marks",
     "events", "home_entries", "home_sections", "item_cursor", "now_playing", "pair_codes", "phone_invites", "phones", "problems", "progress",
     "source_checks", "viewing_ranges", "viewings",
   ]);
@@ -320,12 +320,12 @@ test("Home is cut into sections in the owner's order, per TV; sections go with t
   s.setHome("d1", "c", untitled(["b", "a"]), 11);
   assert.deepEqual(s.getHomeSections("d1"), [untitledGrid]);
 
-  s.setHome("d1", "c", [{ id: "Abc12345", title: "Kids", layout: "row", itemIds: ["a"] }, { ...untitledGrid, itemIds: ["b", "x"] }], 50);
+  s.setHome("d1", "c", [section("Abc12345", "Kids", "row", ["a"]), section("untitled", null, "grid", ["b", "x"])], 50);
   assert.deepEqual(s.getHomeSections("d1"), [{ id: "Abc12345", title: "Kids", layout: "row" }, untitledGrid]);
   assert.deepEqual(s.getHomeEntries("d1", "c"), [
     { itemId: "a", addedAt: 11, sectionId: "Abc12345" }, { itemId: "b", addedAt: 10, sectionId: "untitled" }, { itemId: "x", addedAt: 50, sectionId: "untitled" },
   ], "Home order; a move to another section keeps the date");
-  s.setHome("d3", "c", [{ id: "Abc12345", title: "Same id, other TV", layout: "grid", itemIds: [] }], 60);
+  s.setHome("d3", "c", [section("Abc12345", "Same id, other TV", "grid", [])], 60);
   assert.deepEqual(s.getHomeSections("d3"), [untitledGrid, { id: "Abc12345", title: "Same id, other TV", layout: "grid" }], "section ids are per TV");
   s.close();
 

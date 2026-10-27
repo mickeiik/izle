@@ -126,7 +126,12 @@ export const uris = (playlist: string): string[] =>
 
 /** A Home of the untitled section alone, holding `itemIds` (for `Store#setHome`). */
 export function untitled(itemIds: string[]) {
-  return [{ id: "untitled", title: null, layout: "grid", itemIds }];
+  return [section("untitled", null, "grid", itemIds)];
+}
+
+/** A section for `Store#setHome`, its items given by id. */
+export function section(id: string, title: string | null, layout: string, itemIds: string[]) {
+  return { id, title, layout, entries: itemIds.map((itemId) => ({ itemId })) };
 }
 
 /** Starts a local HTTP server on a free loopback port: its base URL, and a close that ends its connections. */

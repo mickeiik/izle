@@ -10,6 +10,7 @@ import { HTTPException } from "hono/http-exception";
 import { routePath } from "hono/route";
 import { OWNER, phoneActor, type Actor } from "../actor.ts";
 import { parseTvUserAgent } from "../app-updates.ts";
+import { APP_IMAGE_MAX_BYTES } from "../apps.ts";
 import { bearerToken, secretsEqual, sha256 } from "../auth.ts";
 import { clientAddress, compileTrustedProxies, limiterKey } from "../clientip.ts";
 import type { ServerConfig } from "../config.ts";
@@ -38,7 +39,8 @@ const SATISFIED_BY: Record<Required, readonly Required[]> = {
 /** The admin routes `manage` opens (under /api/v1/admin). */
 const MANAGE_ROUTES = [
   "PUT /devices/:id/home", "POST /devices/:id/home/items", "PATCH /devices/:id/home/items/:itemId",
-  "DELETE /devices/:id/home/items/:itemId", "POST /devices/:id/home/sections",
+  "DELETE /devices/:id/home/items/:itemId", "POST /devices/:id/home/apps", "PATCH /devices/:id/home/apps/:appId",
+  "DELETE /devices/:id/home/apps/:appId", "POST /devices/:id/home/sections",
   "PATCH /devices/:id/home/sections/:sectionId", "DELETE /devices/:id/home/sections/:sectionId",
   "PUT /devices/:id/cursor", "PATCH /devices/:id", "POST /history/marks", "DELETE /devices/:id/problems",
   "POST /catalog/reload", "PUT /app/apk", "DELETE /app/apk", "POST /app/check",
@@ -63,6 +65,8 @@ const ADMIN_AUTH_WINDOW_MS = 10 * 60_000;
 const API_BODY_LIMIT = 64 * 1024;
 /** The APK upload streams and caps its own body. */
 const LARGE_BODY_ROUTE = "/api/v1/admin/app/apk";
+/** An app's picture is a PNG of its own size limit. */
+const APP_IMAGE_ROUTE = "/api/v1/tv/apps/images/:sha256";
 
 /** The address a request is counted under (pair/start, admin sign-ins): `X-Forwarded-For` only from trusted proxies. */
 export function clientKeyFor(config: ServerConfig): (c: Context) => string {
@@ -103,8 +107,14 @@ export function registerMiddleware(app: Hono<Env>, ctx: AppContext, clientKey: (
     await next();
     if (!c.res.headers.has("Cache-Control")) c.header("Cache-Control", "no-store");
   });
-  const apiBodyLimit = bodyLimit({ maxSize: API_BODY_LIMIT, onError: (c) => c.json({ error: "body_too_large" }, 413) });
-  app.use("/api/*", (c, next) => (c.req.method === "PUT" && routePath(c, -1) === LARGE_BODY_ROUTE ? next() : apiBodyLimit(c, next)));
+  const tooLarge = (c: Context) => c.json({ error: "body_too_large" }, 413);
+  const apiBodyLimit = bodyLimit({ maxSize: API_BODY_LIMIT, onError: tooLarge });
+  const imageBodyLimit = bodyLimit({ maxSize: APP_IMAGE_MAX_BYTES, onError: tooLarge });
+  app.use("/api/*", (c, next) => {
+    const route = c.req.method === "PUT" ? routePath(c, -1) : "";
+    if (route === LARGE_BODY_ROUTE) return next();
+    return (route === APP_IMAGE_ROUTE ? imageBodyLimit : apiBodyLimit)(c, next);
+  });
 
   app.onError((err, c) => {
     if (err instanceof HttpError) {

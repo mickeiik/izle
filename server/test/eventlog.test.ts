@@ -46,8 +46,8 @@ test("events: every change appends one, in order, with its actor and data; nothi
   assert.deepEqual([pending.deviceId, pending.actor, pending.data.expiresAt], [null, { type: "server" }, "2026-10-10T12:10:00.000Z"]);
   assert.match(pending.data.code, /^\d{6}$/);
   assert.deepEqual([paired.deviceId, paired.actor, paired.data], [d, { type: "tv", deviceId: d }, { name: "Salon", replaced: false }]);
-  assert.deepEqual([home1.actor, home1.data], [{ type: "owner" }, { itemIds: ["show", "film"], added: ["show", "film"], removed: [] }]);
-  assert.deepEqual([home2.actor, home2.data], [agent, { itemIds: ["film", "silent"], added: ["silent"], removed: ["show"] }]);
+  assert.deepEqual([home1.actor, home1.data], [{ type: "owner" }, { itemIds: ["show", "film"], added: ["show", "film"], removed: [], appIds: [], appsAdded: [], appsRemoved: [] }]);
+  assert.deepEqual([home2.actor, home2.data], [agent, { itemIds: ["film", "silent"], added: ["silent"], removed: ["show"], appIds: [], appsAdded: [], appsRemoved: [] }]);
   assert.deepEqual([updated.deviceId, updated.actor, updated.data], [d, { type: "owner" }, { fields: ["name", "autoplayOnStart"] }]);
   assert.deepEqual([cursor.actor, cursor.data], [agent, { itemId: "show", episodeId: "show.e2" }]);
   assert.deepEqual([sent.actor, sent.data], [agent, { commandId: cmd.json.id, type: "message", online: false }]);

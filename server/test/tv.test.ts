@@ -327,9 +327,9 @@ test("state: homeSections cut home in Home order; sections left empty by missing
   let st = await state();
   assert.equal(st.version, last.json.version);
   assert.deepEqual(st.homeSections, [
-    { id: films, title: "Films", layout: "grid", itemIds: ["film"] },
-    { id: "untitled", title: null, layout: "grid", itemIds: ["show", "silent"] },
-    { id: channels, title: "Channels", layout: "row", itemIds: ["news"] },
+    { id: films, title: "Films", layout: "grid", itemIds: ["film"], entries: [{ itemId: "film" }] },
+    { id: "untitled", title: null, layout: "grid", itemIds: ["show", "silent"], entries: [{ itemId: "show" }, { itemId: "silent" }] },
+    { id: channels, title: "Channels", layout: "row", itemIds: ["news"], entries: [{ itemId: "news" }] },
   ]);
   assert.deepEqual(st.home.map((h: Json) => h.item.id), ["film", "show", "silent", "news"], "home in Home order: the sections' items one after another");
   const moved = await home("PATCH", "/sections/untitled", { position: 0 });
@@ -342,7 +342,7 @@ test("state: homeSections cut home in Home order; sections left empty by missing
   await writeBundle(s.bundleDir, { ...fixtureManifest(), buildId: "fixture-2" }, items);
   assert.equal((await s.admin("POST", "/catalog/reload")).status, 200);
   st = await state();
-  assert.deepEqual([st.homeSections, st.home.map((h: Json) => h.item.id)], [[{ id: "untitled", title: null, layout: "grid", itemIds: ["show", "silent"] }], ["show", "silent"]]);
+  assert.deepEqual([st.homeSections, st.home.map((h: Json) => h.item.id)], [[{ id: "untitled", title: null, layout: "grid", itemIds: ["show", "silent"], entries: [{ itemId: "show" }, { itemId: "silent" }] }], ["show", "silent"]]);
   const detail = (await s.admin("GET", `/devices/${tv.deviceId}`)).json;
   assert.deepEqual(detail.sections.map((x: Json) => [x.title, x.itemIds]), [[null, ["show", "silent"]], ["Films", ["film"]], ["Channels", ["news"]], ["Empty", []]],
     "the admin page keeps every section and item");

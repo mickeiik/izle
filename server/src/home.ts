@@ -1,7 +1,8 @@
 // The Home list of each TV, bound to the catalog: its entries as data (what OK would play on each, the new episodes,
-// whether the item left the catalog or cannot play), its sections, and the owner's operations on them. The TV's state
-// (tv.ts) and the admin page (devices.ts) are two projections of `list` and `sections`: the TV drops what it cannot
-// play (and the sections left empty), the admin page flags it.
+// whether the item left the catalog or cannot play), its sections, its app cards (apps of the TV, whatever catalog is
+// loaded), and the owner's operations on them. The TV's state (tv.ts) and the admin page (devices.ts) are two
+// projections of `list` and `sections`: the TV drops what it cannot play (and the sections left empty), the admin page
+// flags it.
 
 import { isLiveItem, type CatalogItem, type EpisodicItem } from "@izle/contract";
 import type { Actor } from "./actor.ts";
@@ -13,12 +14,14 @@ import type { Notifier } from "./events.ts";
 import { requireEpisodicItem, requirePlayable } from "./lookup.ts";
 import { cursorIndex, isPlayable } from "./playback.ts";
 import { episodeSummary } from "./presenters.ts";
-import { UNTITLED_SECTION, type Cursor, type HomeSectionWrite, type Progress, type Store } from "./store.ts";
+import { UNTITLED_SECTION, type Cursor, type HomeCard, type HomeSectionWrite, type Progress, type Store } from "./store.ts";
 
-export { UNTITLED_SECTION } from "./store.ts";
+export { UNTITLED_SECTION, type HomeCard } from "./store.ts";
 
 /** A technical safety limit on every device's home list, not a product rule: Home scrolls past one screen. */
 export const HOME_MAX_ITEMS = 200;
+/** App cards a Home may hold besides its items. */
+export const HOME_MAX_APPS = 50;
 /** Sections a Home may have besides the untitled one. */
 export const HOME_MAX_SECTIONS = 20;
 /** How a section lays out its cards: rows of `homeColumns`, or one line that scrolls sideways. */
@@ -29,15 +32,24 @@ export const SECTION_TITLE_MAX = 40;
 export const HOME_COLUMNS = { min: 3, max: 10, default: 4 } as const;
 export const HOME_ROWS = { min: 1, max: 4, default: 2 } as const;
 
-/** A section of a TV's Home with its items in display order, those gone from the catalog or unplayable included. */
-export type Section = HomeSectionWrite;
+/**
+ * A section of a TV's Home: its cards in display order (`entries`), and its items alone (`itemIds`), those gone from
+ * the catalog or unplayable included.
+ */
+export interface Section extends HomeSectionWrite {
+  itemIds: string[];
+}
 
-/** A section of `PUT …/home {"sections"}`: without `id` a new one; without `layout` it keeps its own. */
+/**
+ * A section of `PUT …/home {"sections"}`: without `id` a new one; without `layout` it keeps its own. `itemIds` sets its
+ * items and keeps its app cards; `entries` sets its cards of both kinds.
+ */
 export interface SectionInput {
   id?: string;
   title?: string | null;
   layout?: SectionLayout;
-  itemIds: string[];
+  itemIds?: string[];
+  entries?: HomeCard[];
 }
 
 /** A section as the caller of `PUT …/home {"sections"}` saw it: title and layout compared when given. */
@@ -54,14 +66,35 @@ export interface SectionPatch {
   position?: number;
 }
 
+const isApp = (c: HomeCard): c is { appId: string } => "appId" in c;
+const itemIdsOf = (cards: readonly HomeCard[]) => cards.flatMap((c) => (isApp(c) ? [] : [c.itemId]));
+const appIdsOf = (cards: readonly HomeCard[]) => cards.flatMap((c) => (isApp(c) ? [c.appId] : []));
+const sameCard = (a: HomeCard, b: HomeCard) => (isApp(a) ? isApp(b) && a.appId === b.appId : !isApp(b) && a.itemId === b.itemId);
 const sameIds = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((id, i) => id === b[i]);
-const flat = (sections: readonly Section[]) => sections.flatMap((s) => s.itemIds);
-const copy = (sections: readonly Section[]): Section[] => sections.map((s) => ({ ...s, itemIds: [...s.itemIds] }));
+const sameCards = (a: readonly HomeCard[], b: readonly HomeCard[]) => a.length === b.length && a.every((c, i) => sameCard(c, b[i]!));
+/** A card as answered: exactly its one field. */
+const cardOf = (c: HomeCard): HomeCard => (isApp(c) ? { appId: c.appId } : { itemId: c.itemId });
+const flat = (sections: readonly HomeSectionWrite[]) => sections.flatMap((s) => itemIdsOf(s.entries));
+const copy = (sections: readonly HomeSectionWrite[]): HomeSectionWrite[] => sections.map((s) => ({ ...s, entries: [...s.entries] }));
+const present = (sections: readonly HomeSectionWrite[]): Section[] =>
+  sections.map(({ id, title, layout, entries }) => ({ id, title, layout, itemIds: itemIdsOf(entries), entries: entries.map(cardOf) }));
 const unknownSection = (sectionId: string) => new HttpError(404, "unknown_section", "no such section on this TV's Home", { sectionId });
-const notOnHome = () => new HttpError(404, "not_on_home", "the item is not on this TV's home list");
+const notOnHome = (card: HomeCard) => new HttpError(404, "not_on_home", isApp(card) ? "the app is not on this TV's Home" : "the item is not on this TV's home list");
 const untitledError = (message: string) => new HttpError(400, "untitled_section", message);
 
-function sectionIn(sections: Section[], sectionId: string): Section {
+/**
+ * `cards` with the app cards of `old` (a section's cards before) put back at their places among the section's cards,
+ * at its end when it has fewer now; those in `skip` are left out.
+ */
+function withAppCards(old: readonly HomeCard[], cards: HomeCard[], skip: ReadonlySet<string> = new Set()): HomeCard[] {
+  const out = [...cards];
+  old.forEach((c, i) => {
+    if (isApp(c) && !skip.has(c.appId)) out.splice(Math.min(i, out.length), 0, c);
+  });
+  return out;
+}
+
+function sectionIn<S extends { id: string }>(sections: S[], sectionId: string): S {
   const found = sections.find((s) => s.id === sectionId);
   if (!found) throw unknownSection(sectionId);
   return found;
@@ -148,45 +181,70 @@ export class HomeService {
     return this.s.store.getHomeEntries(deviceId, this.s.catalog.catalogId).map((e) => e.itemId);
   }
 
-  sections(deviceId: string): Section[] {
-    return this.sectionsOf(deviceId, this.s.store.getHomeEntries(deviceId, this.s.catalog.catalogId));
+  /**
+   * The device's sections in display order, each with its cards in Home order; with `keep`, only the cards it keeps
+   * (the TV's state: the items it can play, and every app card).
+   */
+  sections(deviceId: string, keep: (card: HomeCard) => boolean = () => true): Section[] {
+    return present(this.drafts(deviceId)).map((s) => {
+      const entries = s.entries.filter(keep);
+      return { ...s, itemIds: itemIdsOf(entries), entries };
+    });
   }
 
-  /** The device's sections in display order, each with the ids of those `entries` (in Home order) that are in it. */
-  sectionsOf(deviceId: string, entries: ReadonlyArray<{ itemId: string; sectionId: string }>): Section[] {
+  /** The device's app cards, in Home order, with the label and picture of the last report that named each. */
+  appCards(deviceId: string): Array<{ appId: string; label: string; image: string | null }> {
+    return this.s.store.getHomeCards(deviceId, this.s.catalog.catalogId).flatMap((c) =>
+      c.appId === null ? [] : [{ appId: c.appId, label: c.appLabel ?? c.appId, image: c.appImage }]);
+  }
+
+  /** The sections as stored: each with its cards in order. */
+  private drafts(deviceId: string): HomeSectionWrite[] {
+    const cards = this.s.store.getHomeCards(deviceId, this.s.catalog.catalogId);
     return this.s.store.getHomeSections(deviceId).map(({ id, title, layout }) => ({
-      id, title, layout, itemIds: entries.filter((e) => e.sectionId === id).map((e) => e.itemId),
+      id, title, layout,
+      entries: cards.filter((c) => c.sectionId === id).map((c): HomeCard => (c.appId !== null ? { appId: c.appId } : { itemId: c.itemId! })),
     }));
   }
 
   /**
    * `PUT …/home {"itemIds"}`: an item already on Home stays in its section, a new one goes to the untitled section,
-   * and each section's items follow their order in `itemIds`. With `expected` (the list the caller saw, in Home
-   * order), 409 `home_changed` when the list is no longer that, so two editors do not overwrite each other.
+   * and each section's items follow their order in `itemIds`; its app cards keep their places. With `expected` (the
+   * list the caller saw, in Home order), 409 `home_changed` when the list is no longer that, so two editors do not
+   * overwrite each other.
    */
   set(deviceId: string, itemIds: string[], actor: Actor, expected?: string[]): number {
     return this.change(deviceId, actor, (before) => {
       if (expected && !sameIds(flat(before), expected)) throw this.changed(before);
-      const sectionOf = new Map(before.flatMap((s) => s.itemIds.map((id) => [id, s.id] as const)));
-      return before.map((s) => ({ ...s, itemIds: itemIds.filter((id) => (sectionOf.get(id) ?? UNTITLED_SECTION) === s.id) }));
+      const sectionOf = new Map(before.flatMap((s) => itemIdsOf(s.entries).map((id) => [id, s.id] as const)));
+      return before.map((s) => {
+        const items = itemIds.filter((id) => (sectionOf.get(id) ?? UNTITLED_SECTION) === s.id).map((itemId) => ({ itemId }));
+        return { ...s, entries: withAppCards(s.entries, items) };
+      });
     });
   }
 
   /**
    * `PUT …/home {"sections"}`: a section without `id` is new; a titled section left out is deleted, and its items
-   * leave Home unless another section lists them. The untitled section is listed exactly once.
+   * leave Home unless another section lists them. The untitled section is listed exactly once. A section given with
+   * `itemIds` keeps its app cards at their places; one given with `entries` gets exactly those, and an app card that
+   * no section lists leaves Home. A deleted section's app cards go to the end of the untitled section, unless that is
+   * given with `entries` too.
    */
   setSections(deviceId: string, sections: SectionInput[], actor: Actor, expected?: ExpectedSection[]): number {
     return this.change(deviceId, actor, (before) => {
       if (expected && !this.sameSections(before, expected)) throw this.changed(before);
       const existing = new Map(before.map((s) => [s.id, s]));
+      const listedApps = new Set(sections.flatMap((s) => appIdsOf(s.entries ?? [])));
+      const cardsOf = (s: SectionInput, id: string) =>
+        s.entries ?? withAppCards(existing.get(id)?.entries ?? [], (s.itemIds ?? []).map((itemId) => ({ itemId })), listedApps);
       const listed = new Set<string>();
       let untitled = 0;
-      const next = sections.map((s): Section => {
+      const next = sections.map((s): HomeSectionWrite => {
         if (s.id === UNTITLED_SECTION) {
           untitled++;
           if (typeof s.title === "string") throw untitledError("the untitled section has no title");
-          return { id: UNTITLED_SECTION, title: null, layout: s.layout ?? existing.get(UNTITLED_SECTION)!.layout, itemIds: s.itemIds };
+          return { id: UNTITLED_SECTION, title: null, layout: s.layout ?? existing.get(UNTITLED_SECTION)!.layout, entries: cardsOf(s, UNTITLED_SECTION) };
         }
         if (s.id !== undefined) {
           if (listed.has(s.id)) throw new HttpError(400, "duplicate_section", "a section appears twice", { sectionId: s.id });
@@ -195,41 +253,72 @@ export class HomeService {
         }
         if (typeof s.title !== "string") throw new HttpError(400, "invalid_request", "a section other than the untitled one needs a title");
         const id = s.id ?? this.newSectionId([...existing.values()]);
-        if (s.id === undefined) existing.set(id, { id, title: null, layout: "grid", itemIds: [] });
-        return { id, title: s.title.trim(), layout: s.layout ?? existing.get(id)!.layout, itemIds: s.itemIds };
+        if (s.id === undefined) existing.set(id, { id, title: null, layout: "grid", entries: [] });
+        return { id, title: s.title.trim(), layout: s.layout ?? existing.get(id)!.layout, entries: cardsOf(s, id) };
       });
       if (untitled !== 1) throw untitledError("the untitled section must be listed exactly once");
+      if (!sections.find((s) => s.id === UNTITLED_SECTION)!.entries) {
+        const kept = new Set(next.map((s) => s.id));
+        const orphans = before.filter((s) => !kept.has(s.id)).flatMap((s) => s.entries.filter((c) => isApp(c) && !listedApps.has(c.appId)));
+        sectionIn(next, UNTITLED_SECTION).entries.push(...orphans);
+      }
       return next;
     });
   }
 
-  /** Puts the item in a section (default the untitled one) at `position` (default and upper bound: its end). */
+  /** Puts the item in a section (default the untitled one) at `position` among its cards (default and upper bound: its end). */
   add(deviceId: string, itemId: string, to: ItemMove, actor: Actor): number {
+    return this.addCard(deviceId, { itemId }, to, actor);
+  }
+
+  /** Puts an app card on Home, as `add` does an item. */
+  addApp(deviceId: string, appId: string, to: ItemMove, actor: Actor): number {
+    return this.addCard(deviceId, { appId }, to, actor);
+  }
+
+  private addCard(deviceId: string, card: HomeCard, to: ItemMove, actor: Actor): number {
     return this.change(deviceId, actor, (before) => {
       const next = copy(before);
-      insertAt(sectionIn(next, to.sectionId ?? UNTITLED_SECTION).itemIds, to.position, itemId);
+      insertAt(sectionIn(next, to.sectionId ?? UNTITLED_SECTION).entries, to.position, card);
       return next;
     });
   }
 
   /** Moves an item to another section and/or position (by default the end of a new section, else where it is). */
   move(deviceId: string, itemId: string, to: ItemMove, actor: Actor): number {
+    return this.moveCard(deviceId, { itemId }, to, actor);
+  }
+
+  /** Moves an app card, as `move` does an item. */
+  moveApp(deviceId: string, appId: string, to: ItemMove, actor: Actor): number {
+    return this.moveCard(deviceId, { appId }, to, actor);
+  }
+
+  remove(deviceId: string, itemId: string, actor: Actor): number {
+    return this.removeCard(deviceId, { itemId }, actor);
+  }
+
+  removeApp(deviceId: string, appId: string, actor: Actor): number {
+    return this.removeCard(deviceId, { appId }, actor);
+  }
+
+  private moveCard(deviceId: string, ref: HomeCard, to: ItemMove, actor: Actor): number {
     return this.change(deviceId, actor, (before) => {
       const next = copy(before);
-      const from = next.find((s) => s.itemIds.includes(itemId));
-      if (!from) throw notOnHome();
+      const from = next.find((s) => s.entries.some((c) => sameCard(c, ref)));
+      if (!from) throw notOnHome(ref);
       const target = to.sectionId === undefined ? from : sectionIn(next, to.sectionId);
-      const index = from.itemIds.indexOf(itemId);
-      from.itemIds.splice(index, 1);
-      insertAt(target.itemIds, to.position ?? (target === from ? index : undefined), itemId);
+      const index = from.entries.findIndex((c) => sameCard(c, ref));
+      const [moved] = from.entries.splice(index, 1);
+      insertAt(target.entries, to.position ?? (target === from ? index : undefined), moved!);
       return next;
     });
   }
 
-  remove(deviceId: string, itemId: string, actor: Actor): number {
+  private removeCard(deviceId: string, ref: HomeCard, actor: Actor): number {
     return this.change(deviceId, actor, (before) => {
-      if (!flat(before).includes(itemId)) throw notOnHome();
-      return before.map((s) => ({ ...s, itemIds: s.itemIds.filter((id) => id !== itemId) }));
+      if (!before.some((s) => s.entries.some((c) => sameCard(c, ref)))) throw notOnHome(ref);
+      return before.map((s) => ({ ...s, entries: s.entries.filter((c) => !sameCard(c, ref)) }));
     });
   }
 
@@ -239,7 +328,7 @@ export class HomeService {
     const version = this.change(deviceId, actor, (before) => {
       sectionId = this.newSectionId(before);
       const next = copy(before);
-      insertAt(next, position, { id: sectionId, title: title.trim(), layout: layout ?? "grid", itemIds: [] });
+      insertAt(next, position, { id: sectionId, title: title.trim(), layout: layout ?? "grid", entries: [] });
       return next;
     });
     return { version, sectionId };
@@ -262,13 +351,13 @@ export class HomeService {
     });
   }
 
-  /** Deletes a titled section; its items move to the end of the untitled section, in their order. */
+  /** Deletes a titled section; its cards (items and app cards) move to the end of the untitled section, in their order. */
   deleteSection(deviceId: string, sectionId: string, actor: Actor): number {
     return this.change(deviceId, actor, (before) => {
       const next = copy(before);
       const section = sectionIn(next, sectionId);
       if (section.id === UNTITLED_SECTION) throw untitledError("the untitled section cannot be deleted");
-      sectionIn(next, UNTITLED_SECTION).itemIds.push(...section.itemIds);
+      sectionIn(next, UNTITLED_SECTION).entries.push(...section.entries);
       return next.filter((s) => s !== section);
     });
   }
@@ -276,13 +365,15 @@ export class HomeService {
   /**
    * Every change to a Home, in one transaction: `edit` turns the sections into what they become, checked against the
    * limits. Only items new to the list must be in the catalog and playable: one a catalog reload left missing or
-   * unplayable may stay (the TV hides it), so the list can still be reordered or shortened. Returns the new version.
+   * unplayable may stay (the TV hides it), so the list can still be reordered or shortened. Likewise only app cards new
+   * to Home must be in the TV's last report. Returns the new version.
    */
-  private change(deviceId: string, actor: Actor, edit: (before: Section[]) => Section[]): number {
+  private change(deviceId: string, actor: Actor, edit: (before: HomeSectionWrite[]) => HomeSectionWrite[]): number {
     this.s.store.transaction(() => {
-      const before = this.sections(deviceId);
+      const before = this.drafts(deviceId);
       const next = edit(before);
-      const itemIds = flat(next);
+      const cards = next.flatMap((s) => s.entries);
+      const itemIds = itemIdsOf(cards);
       if (itemIds.length > HOME_MAX_ITEMS) {
         throw new HttpError(400, "too_many_items", `a home list holds at most ${HOME_MAX_ITEMS} items`, { max: HOME_MAX_ITEMS });
       }
@@ -291,6 +382,12 @@ export class HomeService {
       if (next.filter((s) => s.id !== UNTITLED_SECTION).length > HOME_MAX_SECTIONS) {
         throw new HttpError(400, "too_many_sections", `a Home has at most ${HOME_MAX_SECTIONS} sections besides the untitled one`, { max: HOME_MAX_SECTIONS });
       }
+      const appIds = appIdsOf(cards);
+      const twice = appIds.find((id, i) => appIds.indexOf(id) !== i);
+      if (twice !== undefined) throw new HttpError(400, "duplicate_app", "an app card appears twice", { appId: twice });
+      if (appIds.length > HOME_MAX_APPS) {
+        throw new HttpError(400, "too_many_apps", `a Home holds at most ${HOME_MAX_APPS} app cards`, { max: HOME_MAX_APPS });
+      }
       const was = new Set(flat(before));
       for (const id of itemIds) {
         if (was.has(id)) continue;
@@ -298,27 +395,38 @@ export class HomeService {
         if (!item) throw new HttpError(400, "unknown_item", "no such item in the catalog", { itemId: id });
         if (!isPlayable(item)) throw new HttpError(400, "not_playable", "the item has no episode with playback allowed, or is a channel whose playback is not allowed", { itemId: id });
       }
+      const appsWere = new Set(before.flatMap((s) => appIdsOf(s.entries)));
+      const reported = new Set(this.s.store.getDeviceApps(deviceId).map((a) => a.appId));
+      const unknown = appIds.find((id) => !appsWere.has(id) && !reported.has(id));
+      if (unknown !== undefined) throw new HttpError(400, "unknown_app", "the TV's last list of its apps does not name this app", { appId: unknown });
       this.s.store.setHome(deviceId, this.s.catalog.catalogId, next, this.s.now());
-      const removed = [...was].filter((id) => !itemIds.includes(id));
-      this.s.eventLog.append("home.changed", deviceId, actor, { itemIds, added: itemIds.filter((id) => !was.has(id)), removed });
+      this.s.eventLog.append("home.changed", deviceId, actor, {
+        itemIds, added: itemIds.filter((id) => !was.has(id)), removed: [...was].filter((id) => !itemIds.includes(id)),
+        appIds, appsAdded: appIds.filter((id) => !appsWere.has(id)), appsRemoved: [...appsWere].filter((id) => !appIds.includes(id)),
+      });
     });
     return this.s.notifier.bump(deviceId);
   }
 
-  private changed(before: Section[]): HttpError {
-    return new HttpError(409, "home_changed", "the home list changed in the meantime", { itemIds: flat(before), sections: before });
+  private changed(before: HomeSectionWrite[]): HttpError {
+    return new HttpError(409, "home_changed", "the home list changed in the meantime", { itemIds: flat(before), sections: present(before) });
   }
 
-  /** Whether the Home is the one the caller saw: the same sections in order, with the same items (titles and layouts when given). */
-  private sameSections(before: Section[], expected: ExpectedSection[]): boolean {
+  /**
+   * Whether the Home is the one the caller saw: the same sections in order, with the same items (or, given `entries`,
+   * the same cards), titles and layouts when given.
+   */
+  private sameSections(before: HomeSectionWrite[], expected: ExpectedSection[]): boolean {
     return before.length === expected.length && before.every((s, i) => {
       const e = expected[i]!;
-      return s.id === e.id && sameIds(s.itemIds, e.itemIds) && (e.title === undefined || e.title === s.title) && (e.layout === undefined || e.layout === s.layout);
+      const same = (e.entries === undefined || sameCards(s.entries, e.entries)) &&
+        ((e.itemIds === undefined && e.entries !== undefined) || sameIds(itemIdsOf(s.entries), e.itemIds ?? []));
+      return s.id === e.id && same && (e.title === undefined || e.title === s.title) && (e.layout === undefined || e.layout === s.layout);
     });
   }
 
   /** A new section id: 8 alphanumeric characters, none of the Home's. */
-  private newSectionId(taken: readonly Section[]): string {
+  private newSectionId(taken: readonly HomeSectionWrite[]): string {
     const used = new Set(taken.map((s) => s.id));
     for (;;) {
       const id = newId(8);

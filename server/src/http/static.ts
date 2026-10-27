@@ -1,4 +1,4 @@
-// Health check, posters, and the static files of the admin page and of the `/connect` page a phone opens from the QR
+// Health check, posters, the pictures of the TVs' apps, and the static files of the admin page and of the `/connect` page a phone opens from the QR
 // code a TV shows (allow-lists, served under a strict CSP, without authentication).
 
 import { readFile } from "node:fs/promises";
@@ -38,6 +38,14 @@ export function registerStatic(app: Hono<Env>, ctx: AppContext): void {
       "Cache-Control": "public, max-age=31536000, immutable",
       ETag: `"${file.slice(0, 64)}"`,
     });
+  });
+
+  // The pictures of the TVs' apps, content-addressed and public like the posters.
+  app.get("/app-images/:file", (c) => {
+    const file = c.req.param("file");
+    const png = ctx.apps.image(file);
+    if (!png) throw new HttpError(404, "not_found");
+    return c.body(new Uint8Array(png), 200, { "Content-Type": "image/png", "Cache-Control": "public, max-age=31536000, immutable", ETag: `"${file.slice(0, 64)}"` });
   });
 
   /** A file of an allow-list (own entries only: `__proto__` is no file). */

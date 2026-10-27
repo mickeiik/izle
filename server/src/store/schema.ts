@@ -322,4 +322,44 @@ export const MIGRATIONS: string[] = [
   );
   CREATE INDEX phone_invites_by_code ON phone_invites (code);
 `,
+  `
+  -- App cards. Each TV's last list of the apps it can open, in its order, and their pictures (PNGs, content-addressed,
+  -- shared by all TVs, kept in the database so that a backup has them).
+  ALTER TABLE devices ADD COLUMN apps_reported_at INTEGER;  -- when the TV's list last changed; NULL: it never sent one
+  CREATE TABLE device_apps (
+    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,              -- the TV's order
+    app_id TEXT NOT NULL,                   -- the Android package name
+    label TEXT NOT NULL,
+    image TEXT,                             -- sha256 of its picture; NULL: none
+    PRIMARY KEY (device_id, app_id)
+  );
+  CREATE INDEX device_apps_by_image ON device_apps (image);
+  CREATE TABLE app_images (
+    sha256 TEXT PRIMARY KEY,
+    png BLOB NOT NULL,
+    stored_at INTEGER NOT NULL
+  );
+  -- A Home entry is an item of a catalog or an app card (an app of the TV, whatever catalog is loaded): one ordering for
+  -- both. The table is rebuilt with its rows, as SQLite cannot drop a NOT NULL; no other table refers to it.
+  CREATE TABLE home_entries_new (
+    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,              -- Home order: the sections in order, each with its cards in order
+    catalog_id TEXT,                        -- with item_id: an item of that catalog
+    item_id TEXT,
+    app_id TEXT,                            -- an app card
+    app_label TEXT,                         -- an app card's label and picture from the last report that named its app
+    app_image TEXT,
+    added_at INTEGER NOT NULL,              -- when the card first went on this TV's list (epoch ms)
+    section_id TEXT NOT NULL,
+    PRIMARY KEY (device_id, position),
+    FOREIGN KEY (device_id, section_id) REFERENCES home_sections (device_id, section_id),
+    CHECK ((catalog_id IS NULL) = (item_id IS NULL) AND (item_id IS NULL) <> (app_id IS NULL))
+  );
+  INSERT INTO home_entries_new (device_id, position, catalog_id, item_id, added_at, section_id)
+    SELECT device_id, position, catalog_id, item_id, added_at, section_id FROM home_entries;
+  DROP TABLE home_entries;
+  ALTER TABLE home_entries_new RENAME TO home_entries;
+  CREATE INDEX home_entries_by_image ON home_entries (app_image);
+`,
 ];
