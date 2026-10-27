@@ -106,7 +106,10 @@ data class CommandInfo(
     val resultAt: String? = null,
 )
 
-/** A catalog search hit; [episodeCount], [playableCount] and [newEpisodes] are null for a channel. */
+/**
+ * A catalog search hit; [episodeCount], [playableCount] and [newEpisodes] are null for a channel. [newEpisodes]: those
+ * first seen at or after the search's `since` (0 without it); [firstSeenAt] is null for what the baseline build carried.
+ */
 @Serializable
 data class CatalogHit(
     val id: String,
@@ -118,13 +121,23 @@ data class CatalogHit(
     val playableCount: Int? = null,
     val playable: Boolean = false,
     val newEpisodes: Int? = null,
+    val firstSeenAt: String? = null,
 )
 
 /** [total] counts every match; [items] is the page from [offset]. */
 @Serializable
-data class CatalogSearch(val items: List<CatalogHit> = emptyList(), val total: Int = 0, val offset: Int = 0)
+data class CatalogSearch(val items: List<CatalogHit> = emptyList(), val total: Int = 0, val offset: Int = 0) {
+    companion object {
+        const val SORT_TITLE = "title"
+        const val SORT_YEAR = "year"
+        const val SORT_NEWEST = "newest"
+    }
+}
 
-/** `GET admin/catalog/items/:id`: a series or film with its episodes; a channel has none and [playbackAllowed]. */
+/**
+ * `GET admin/catalog/items/:id`: a series or film with its episodes (and [autoAdvance]); a channel has none, and
+ * [playbackAllowed], [sources] and [check] of its own.
+ */
 @Serializable
 data class AdminItem(
     val id: String,
@@ -132,10 +145,18 @@ data class AdminItem(
     val title: String,
     val year: Int? = null,
     val posterUrl: String? = null,
+    val backdropUrl: String? = null,
+    val originalTitle: String? = null,
+    val synopsis: String? = null,
+    val genres: List<String> = emptyList(),
+    val autoAdvance: Boolean? = null,
     val episodes: List<AdminEpisode> = emptyList(),
     val playbackAllowed: Boolean? = null,
+    val sources: List<AdminSource> = emptyList(),
+    val check: CheckSummary? = null,
 )
 
+/** In play order; [sources] in the order the TV tries them; [autoAdvance] null: the item's. */
 @Serializable
 data class AdminEpisode(
     val id: String,
@@ -143,8 +164,262 @@ data class AdminEpisode(
     val number: Int? = null,
     val title: String? = null,
     val label: String? = null,
+    val durationMs: Long? = null,
     val playbackAllowed: Boolean = false,
+    val autoAdvance: Boolean? = null,
+    val sources: List<AdminSource> = emptyList(),
     val check: CheckSummary? = null,
+)
+
+/**
+ * A source as the admin routes show it, never where it comes from: [type] `direct` (with its media [kind] and
+ * [needsProxy]: it has upstream headers) or `adapter` (with its [adapter] id). Null language facts: unknown.
+ */
+@Serializable
+data class AdminSource(
+    val id: String,
+    val type: String,
+    val label: String? = null,
+    val languages: CandidateLanguages = CandidateLanguages(),
+    val kind: String? = null,
+    val needsProxy: Boolean = false,
+    val adapter: String? = null,
+)
+
+/** `GET admin/devices/:id/progress`: where OK continues each series ([cursors]) and the saved positions ([progress]). */
+@Serializable
+data class DeviceProgress(val cursors: List<ItemCursor> = emptyList(), val progress: List<SavedProgress> = emptyList()) {
+    /**
+     * The episode OK plays for [item] on this TV (null for a channel, or when none may play), by the server's play
+     * order: the cursor's episode (or the next allowed one after it), else the first allowed one not finished, else the
+     * first allowed one. Not known here: episodes appended after the item was watched to the end, which OK plays first;
+     * for an item on Home the device detail's `continue` knows them and is the one to use.
+     */
+    fun okPlays(item: AdminItem): String? {
+        val episodes = item.episodes
+        val first = episodes.indexOfFirst { it.playbackAllowed }
+        if (first < 0) return null
+        val cursor = cursors.firstOrNull { it.itemId == item.id }
+        val at = cursor?.let { c -> episodes.indexOfFirst { it.id == c.episodeId } } ?: -1
+        if (at >= 0) return (episodes.drop(at).firstOrNull { it.playbackAllowed } ?: episodes[first]).id
+        val finished = progress.filter { it.itemId == item.id && it.status == SavedProgress.FINISHED }.mapTo(HashSet()) { it.episodeId }
+        return (episodes.firstOrNull { it.playbackAllowed && it.id !in finished } ?: episodes[first]).id
+    }
+}
+
+/** A cursor; titles from the loaded catalog, or [missing] (and no titles) when its episode left it. */
+@Serializable
+data class ItemCursor(
+    val itemId: String,
+    val episodeId: String,
+    val updatedAt: String? = null,
+    val itemTitle: String? = null,
+    val kind: String? = null,
+    val season: Int? = null,
+    val number: Int? = null,
+    val episodeTitle: String? = null,
+    val missing: Boolean = false,
+)
+
+/** A saved position; [status] `watching` or `finished`. Titles as in [ItemCursor]. */
+@Serializable
+data class SavedProgress(
+    val itemId: String,
+    val episodeId: String,
+    val positionMs: Long = 0,
+    val durationMs: Long? = null,
+    val status: String = "",
+    val updatedAt: String? = null,
+    val itemTitle: String? = null,
+    val kind: String? = null,
+    val season: Int? = null,
+    val number: Int? = null,
+    val episodeTitle: String? = null,
+    val missing: Boolean = false,
+) {
+    companion object {
+        const val FINISHED = "finished"
+    }
+}
+
+/**
+ * `GET admin/catalog` (and what a reload answers): the loaded bundle. [builds] newest first (at most 50); [changes]:
+ * those of the newest build that is not the baseline, null when there is none; [resolver] null without a module.
+ */
+@Serializable
+data class AdminCatalog(
+    val id: String,
+    val buildId: String,
+    val builtAt: String? = null,
+    val name: String = "",
+    val loadedAt: String? = null,
+    val stats: CatalogStats = CatalogStats(),
+    val adapters: List<String> = emptyList(),
+    val warnings: List<CatalogIssue> = emptyList(),
+    val resolver: ResolverInfo? = null,
+    val server: ServerInfo? = null,
+    val builds: List<CatalogBuild> = emptyList(),
+    val changes: CatalogChanges? = null,
+    val facets: CatalogFacets = CatalogFacets(),
+)
+
+/** [items] = [movies] + [series] + [live]. */
+@Serializable
+data class CatalogStats(
+    val items: Int = 0,
+    val movies: Int = 0,
+    val series: Int = 0,
+    val live: Int = 0,
+    val episodes: Int = 0,
+    val playableEpisodes: Int = 0,
+    val sources: Int = 0,
+    val posters: Int = 0,
+    val backdrops: Int = 0,
+)
+
+/** A warning of the loaded bundle, or an issue of one a reload refused ([severity] `error` or `warning`; [path] a JSON pointer). */
+@Serializable
+data class CatalogIssue(val severity: String? = null, val file: String = "", val path: String = "", val message: String = "")
+
+@Serializable
+data class ResolverInfo(val sha256: String, val adapters: List<String> = emptyList())
+
+@Serializable
+data class ServerInfo(val version: String)
+
+/**
+ * A build in the catalog's history: [counts] what it holds, [added]/[removed] what changed against the one loaded
+ * before it. [baseline]: the first build the server loaded for this catalog (nothing in it counts as new).
+ */
+@Serializable
+data class CatalogBuild(
+    val buildId: String,
+    val builtAt: String? = null,
+    val loadedAt: String,
+    val baseline: Boolean = false,
+    val counts: BuildCounts = BuildCounts(),
+    val added: BuildCounts = BuildCounts(),
+    val removed: BuildCounts = BuildCounts(),
+)
+
+@Serializable
+data class BuildCounts(val items: Int = 0, val episodes: Int = 0)
+
+/** What a build changed; each list at most 500 entries, added ones in catalog order. */
+@Serializable
+data class CatalogChanges(val items: ItemChanges = ItemChanges(), val episodes: EpisodeChanges = EpisodeChanges())
+
+@Serializable
+data class ItemChanges(val added: List<ChangedItem> = emptyList(), val removed: List<ChangedItem> = emptyList())
+
+@Serializable
+data class EpisodeChanges(val added: List<ChangedEpisode> = emptyList(), val removed: List<ChangedEpisode> = emptyList())
+
+/** [kind] only for an added item; [title] null for a removed one when the catalog before was not in memory. */
+@Serializable
+data class ChangedItem(val id: String, val title: String? = null, val kind: String? = null)
+
+/** [season], [number], [label] and [playbackAllowed] only for an added episode. */
+@Serializable
+data class ChangedEpisode(
+    val id: String,
+    val itemId: String,
+    val itemTitle: String? = null,
+    val season: Int? = null,
+    val number: Int? = null,
+    val label: String? = null,
+    val playbackAllowed: Boolean = false,
+)
+
+/** `GET admin/catalog/builds/:buildId`. */
+@Serializable
+data class BuildChanges(val build: CatalogBuild, val changes: CatalogChanges = CatalogChanges())
+
+/** Over the whole catalog: genres most common first; [years] null when no film or series has one. */
+@Serializable
+data class CatalogFacets(val kinds: KindCounts = KindCounts(), val genres: List<GenreCount> = emptyList(), val years: YearRange? = null)
+
+@Serializable
+data class KindCounts(val movie: Int = 0, val series: Int = 0, val live: Int = 0)
+
+@Serializable
+data class GenreCount(val name: String, val count: Int = 0)
+
+@Serializable
+data class YearRange(val min: Int, val max: Int)
+
+/**
+ * One source's check (the spec's `SourceReport`): [ok] whether it resolved (in [ms]; [code] and [name] why not),
+ * [verdict] `ok`, `warn` or `fail`. [checkedAt] and [stale] (the source changed since) only on a stored report.
+ */
+@Serializable
+data class SourceReport(
+    val sourceId: String,
+    val type: String = "",
+    val adapterId: String? = null,
+    val ok: Boolean = false,
+    val ms: Long = 0,
+    val code: String? = null,
+    val name: String? = null,
+    val stream: CheckedStream? = null,
+    val verdict: String,
+    val steps: List<CheckStep> = emptyList(),
+    val codecs: List<VariantCodecs> = emptyList(),
+    val warnings: List<String> = emptyList(),
+    val checkMs: Long = 0,
+    val checkedAt: String? = null,
+    val stale: Boolean = false,
+)
+
+/** The stream a check followed: [kind] `hls`, `mp4`, …; [delivery] `direct`, `proxy` or `unsupported`. */
+@Serializable
+data class CheckedStream(
+    val kind: String? = null,
+    val delivery: String? = null,
+    val languages: CandidateLanguages? = null,
+    val label: String? = null,
+)
+
+/**
+ * One request of a check: [what] `playlist`, `variant`, `segment`, `file`, …; [index] of the variant, rendition or
+ * track ([of] names which for a segment, init or key); [error] `timeout`, `http`, `not_media`, … when not [ok].
+ */
+@Serializable
+data class CheckStep(
+    val what: String,
+    val index: Int? = null,
+    val of: String? = null,
+    val host: String? = null,
+    val ok: Boolean = false,
+    val status: Int? = null,
+    val ms: Long = 0,
+    val error: String? = null,
+    val bytes: Long? = null,
+    val container: String? = null,
+)
+
+/** A master playlist's variant; [resolution] `1920x1080`. */
+@Serializable
+data class VariantCodecs(val codecs: String? = null, val resolution: String? = null, val bandwidth: Long? = null)
+
+/** `GET admin/checks/playables/:id`: the stored reports of the sources still in the catalog, in bundle order. [episodeId] null for a channel. */
+@Serializable
+data class PlayableChecks(
+    val itemId: String,
+    val episodeId: String? = null,
+    val check: CheckSummary? = null,
+    val sources: List<SourceReport> = emptyList(),
+)
+
+/** `POST admin/diagnostics/resolve`: every source checked now (and stored). [episodeId] null for a channel. */
+@Serializable
+data class PlayableReport(
+    val itemId: String,
+    val episodeId: String? = null,
+    val playbackAllowed: Boolean = false,
+    val verdict: String,
+    val checkedAt: String? = null,
+    val sources: List<SourceReport> = emptyList(),
 )
 
 /** An event of the admin log (`home.changed`, `cursor.changed`, …); the app only reacts to its [type]. */
@@ -218,6 +493,9 @@ internal data class ItemResponse(val item: AdminItem)
 
 @Serializable
 internal data class RunResponse(val run: CheckRun)
+
+@Serializable
+internal data class CatalogResponse(val catalog: AdminCatalog)
 
 /** `GET admin/checks/current`: null when no run was started since the server started. */
 @Serializable

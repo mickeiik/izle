@@ -21,14 +21,20 @@ import kotlin.coroutines.resumeWithException
 
 /**
  * The server answered with an error status. `code` is the API error code (`not_allowed`, `expired`, …); [runId] is
- * the run already going of a `409 check_running`.
+ * the run already going of a `409 check_running`; [issues] those of a `422 invalid_catalog` (a refused reload).
  */
-class ApiException(val status: Int, val code: String, val retryAfterSec: Long? = null, val runId: String? = null) : Exception("HTTP $status $code")
+class ApiException(
+    val status: Int,
+    val code: String,
+    val retryAfterSec: Long? = null,
+    val runId: String? = null,
+    val issues: List<CatalogIssue> = emptyList(),
+) : Exception("HTTP $status $code")
 
 /** An error answer, with its API error code (`http_<status>` without one). Public: the TV app's APK download uses it. */
 fun apiError(status: Int, body: String, retryAfter: String? = null): ApiException {
     val error = runCatching { ApiJson.decodeFromString(ErrorBody.serializer(), body) }.getOrNull()
-    return ApiException(status, error?.error ?: "http_$status", retryAfter?.toLongOrNull(), error?.runId)
+    return ApiException(status, error?.error ?: "http_$status", retryAfter?.toLongOrNull(), error?.runId, error?.issues.orEmpty())
 }
 
 /** What [block] returns, or null when the server could not be reached or answered with an error. */
@@ -273,7 +279,14 @@ class ApiClient(
         exchange(jsonRequest(deviceUrl(deviceId).addPathSegment("cursor").build(), "PUT", body)).requireOk()
     }
 
-    /** `GET admin/catalog/search`: [kinds] `movie`, `series`, `live`; [notOnDevice] leaves out that TV's Home. */
+    /** Where OK continues each series on this TV, and its saved positions (see [DeviceProgress.okPlays]). */
+    suspend fun deviceProgress(deviceId: String): DeviceProgress =
+        get(deviceUrl(deviceId).addPathSegment("progress").build(), DeviceProgress.serializer())
+
+    /**
+     * `GET admin/catalog/search`: [kinds] `movie`, `series`, `live`; [notOnDevice] leaves out that TV's Home; [since]
+     * (ISO 8601 UTC) only what was first seen then or later, or has an episode that was; [sort] a [CatalogSearch] `SORT_…`.
+     */
     suspend fun catalogSearch(
         q: String = "",
         kinds: List<String> = emptyList(),
@@ -281,12 +294,16 @@ class ApiClient(
         playable: Boolean? = null,
         offset: Int = 0,
         limit: Int = 50,
+        since: String? = null,
+        sort: String? = null,
     ): CatalogSearch {
         val url = url("api/v1/admin/catalog/search").newBuilder().apply {
             if (q.isNotEmpty()) addQueryParameter("q", q)
             if (kinds.isNotEmpty()) addQueryParameter("kind", kinds.joinToString(","))
             notOnDevice?.let { addQueryParameter("notOnDevice", it) }
             playable?.let { addQueryParameter("playable", it.toString()) }
+            since?.let { addQueryParameter("since", it) }
+            sort?.let { addQueryParameter("sort", it) }
             addQueryParameter("offset", offset.toString())
             addQueryParameter("limit", limit.toString())
         }.build()
@@ -296,6 +313,22 @@ class ApiClient(
     suspend fun catalogItem(itemId: String): AdminItem {
         val url = url("api/v1/admin/catalog/items").newBuilder().addPathSegment(itemId).build()
         return get(url, ItemResponse.serializer()).item
+    }
+
+    /** The loaded catalog with its build history and what its newest build changed. */
+    suspend fun catalog(): AdminCatalog = get(url("api/v1/admin/catalog"), AdminCatalog.serializer())
+
+    /** What one build of the history changed (also one beyond the 50 [catalog] lists); `404 unknown_build`. */
+    suspend fun catalogBuild(buildId: String): BuildChanges =
+        get(url("api/v1/admin/catalog/builds").newBuilder().addPathSegment(buildId).build(), BuildChanges.serializer())
+
+    /**
+     * Re-reads the bundle on the server (on longPollHttp: validating every poster takes a while). A refused bundle is
+     * `422 invalid_catalog` with its [ApiException.issues], and the catalog loaded before stays.
+     */
+    suspend fun reloadCatalog(): AdminCatalog {
+        val request = authorize(Request.Builder().url(url("api/v1/admin/catalog/reload")).post(EMPTY_BODY)).build()
+        return exchange(request, longPollHttp).decode(CatalogResponse.serializer()).catalog
     }
 
     /**
@@ -351,6 +384,31 @@ class ApiClient(
     /** Stops a running run (`cancelled`; what it checked stays stored); a run that ended is answered as it is. */
     suspend fun cancelCheck(runId: String): CheckRun =
         exchange(authorize(Request.Builder().url(checksUrl().addPathSegment(runId).build()).delete()).build()).decode(RunResponse.serializer()).run
+
+    /**
+     * The stored reports of an episode, or of a channel by its item id; with [itemId] that item's (an episode id may
+     * equal a channel's). `404 unknown_item` / `unknown_episode`.
+     */
+    suspend fun checkPlayable(playableId: String, itemId: String? = null): PlayableChecks {
+        val url = checksUrl().addPathSegment("playables").addPathSegment(playableId).apply {
+            itemId?.let { addQueryParameter("itemId", it) }
+        }.build()
+        return get(url, PlayableChecks.serializer())
+    }
+
+    /**
+     * Checks every source of [episodeId], or of the channel [itemId] (exactly one), now, one after the other, and stores
+     * the reports; on longPollHttp (each source may take 20 s).
+     */
+    suspend fun checkNow(episodeId: String? = null, itemId: String? = null): PlayableReport {
+        require((episodeId == null) != (itemId == null)) { "exactly one of episodeId and itemId" }
+        val body = buildJsonObject {
+            episodeId?.let { put("episodeId", it) }
+            itemId?.let { put("itemId", it) }
+        }
+        val raw = exchange(jsonRequest(url("api/v1/admin/diagnostics/resolve"), "POST", body), longPollHttp)
+        return raw.decode(PlayableReport.serializer())
+    }
 
     private fun checksUrl(): HttpUrl.Builder = url("api/v1/admin/checks").newBuilder()
 
