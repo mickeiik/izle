@@ -283,7 +283,7 @@ test("admin helpers: the TV's Home grid and what its cards show", () => {
     [size(tvGrid(6, 2)), [6, 2, 96, 144, 256]],
     [size(tvGrid(6, 4)), [6, 4, 66, 99, 176]],
     [size(tvGrid(5, 3)), [5, 3, 92, 138, 245]],
-    [[tvGrid(9, 0).columns, tvGrid(9, 0).rows], [6, 1], "clamped to 3–6 × 1–4"],
+    [[tvGrid(11, 0).columns, tvGrid(11, 0).rows], [10, 1], "clamped to 3–10 × 1–4"],
     // A row with one card open fits the safe area (864 dp) with PADDING on each side; the viewport is exactly R rows.
     [[tvGrid(4, 2).rowWidth, tvGrid(4, 2).viewportWidth, tvGrid(4, 2).viewportHeight], [3 * 156 + 362, 858, 2 * 204 + 20 + 28]],
     [[tvGrid(4, 2).faceLines, tvGrid(6, 4).faceLines], [5, 2], "a name's lines in a card without a picture"],

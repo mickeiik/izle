@@ -51,6 +51,12 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
   reports such a source as a warning, in an episode or a channel (a bundle that uses it stays valid: that source is
   served as itself, and its episode gets no `pasted` candidate).
 
+### Changed
+
+- **Home grids up to 10 columns** (was 6): with 3 or 4 rows, the cards could not fill the screen's width at any
+  setting and left empty sides; 7 columns fill it at 3 rows, 9 at 4 (10 with a titled section). The admin page offers
+  3–10; `homeColumns` accepts 3–10. A TV on an older app shows 6 columns until it is updated.
+
 ### Fixed
 
 - **The companion's link finder shows its address row and leaves the page more room.** On a phone, a freshly opened

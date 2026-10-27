@@ -4,7 +4,7 @@
 
 /** The server's limits (it enforces them): Home's items, and the grid's cards per row and rows per screen. */
 export const HOME_MAX = 200;
-export const HOME_COLUMNS = [3, 4, 5, 6];
+export const HOME_COLUMNS = [3, 4, 5, 6, 7, 8, 9, 10];
 export const HOME_ROWS = [1, 2, 3, 4];
 /** The TV resumes a saved position only from 30 s on (PlaybackPlan); earlier positions start over. */
 const RESUME_MIN_MS = 30_000;
@@ -423,7 +423,7 @@ export function gridSummary(columns, rows, homeCount) {
 
 /**
  * The TV's Home grid in dp, as HomeGrid.compute of the TV app (keep the two in step) on its safe area: `columns` ×
- * `rows` portrait 2:3 cards (clamped to 3–6 × 1–4) as large as fit with one card of a row open (16:9 at the card's
+ * `rows` portrait 2:3 cards (clamped to 3–10 × 1–4) as large as fit with one card of a row open (16:9 at the card's
  * height, `openWidth`), and no names under them. `rowWidth`: a row with one card open, from its first card's left edge
  * to its last card's right edge; the viewport is that and PADDING around it, exactly `rows` rows tall. `faceLines`: the
  * lines of a name that fit in a card without a picture. `height`: the area, less `SECTION_HEADER` when Home shows a

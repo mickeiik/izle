@@ -53,11 +53,11 @@ class HomeGridTest {
 
     @Test
     fun outOfRangeSettingsAreClampedAndRowsCounted() {
-        assertEquals(grid(6, 1), grid(9, 0))
+        assertEquals(grid(10, 1), grid(13, 0))
         assertEquals(grid(3, 4), grid(1, 7))
         assertEquals(grid(3, 1), grid(-2, -5))
-        assertEquals(6, grid(9, 0).columns)
-        assertEquals(1, grid(9, 0).rows)
+        assertEquals(10, grid(13, 0).columns)
+        assertEquals(1, grid(13, 0).rows)
         assertEquals(listOf(0, 1, 2, 50), listOf(0, 4, 5, 200).map { grid(4, 2).rowCount(it) })
         // Never below 1 dp, however small the screen.
         assertEquals(1f, HomeGrid.compute(6, 4, 10f, 10f, 32f).cardWidth, 0f)

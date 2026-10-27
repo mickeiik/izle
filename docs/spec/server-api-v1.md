@@ -136,7 +136,7 @@ Everything the home screen needs:
   own setting (no fallback); null means subtitles off.
 - `device.autoplayOnStart` (owner setting, default false): when the app opens, the show or channel watched last (else
   the first tile; the TV decides what "last" is) starts after a 10-second countdown that any key stops.
-- `device.homeColumns` (3–6, default 4) and `device.homeRows` (1–4, default 2), owner settings: Home is a grid of
+- `device.homeColumns` (3–10, default 4) and `device.homeRows` (1–4, default 2), owner settings: Home is a grid of
   portrait cards, `homeColumns` per row and `homeRows` rows per screen; the rest of the list scrolls.
 - `home`: the owner's list (≤ 200, a safety limit) in [Home order](#home-sections), without items that left the
   catalog or cannot be played (no `playbackAllowed` episode; a channel with `playbackAllowed: false`). `posterUrl` and
@@ -434,7 +434,7 @@ owner's `PUT …/cursor`, makes the cursor an ordinary one again.
 |---|---|---|
 | `GET /api/v1/admin/devices` | | `{"devices": [Device & {"homeCount"}]}` |
 | `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "backdropUrl", "missing", "playable", "continue", "newEpisodes", "check", "checkAll"}], "homeMax": 200, "sections": [Section], "sectionsMax": 20}` (`home` in [Home order](#home-sections)); `playable`: the item has a `playbackAllowed` episode, or is a channel with `playbackAllowed: true` (false for a missing item); `continue` and `newEpisodes` as in [`GET /tv/state`](#get-apiv1tvstate) (`null` and 0 for a missing item); `check`: the [`CheckSummary`](#checks) of what OK plays (the channel itself), null when nothing plays; `checkAll`: `{"verdict", "checked", "total", "failed", "warned", "oldestCheckedAt"}` over every episode that may play (`total`; `checked`: those with a summary; `verdict` the worst of theirs, null when none), null for a channel or a missing item |
-| `PATCH /api/v1/admin/devices/:id` | any of `name`, `uiLanguage` (`"tr"`/`"en"`/null), `preferredAudioLanguage` (tag/null), `subtitlesLanguage` (tag/null = off), `autoplayOnStart` (boolean), `homeColumns` (integer 3–6), `homeRows` (integer 1–4) | `{"device": Device}` |
+| `PATCH /api/v1/admin/devices/:id` | any of `name`, `uiLanguage` (`"tr"`/`"en"`/null), `preferredAudioLanguage` (tag/null), `subtitlesLanguage` (tag/null = off), `autoplayOnStart` (boolean), `homeColumns` (integer 3–10), `homeRows` (integer 1–4) | `{"device": Device}` |
 | `DELETE /api/v1/admin/devices/:id` | | `204`; the TV must pair again |
 | `PUT /api/v1/admin/devices/:id/home` | `{"itemIds": [...]}` (≤ 200, in display order) or `{"sections": [...]}`, see [Home sections](#home-sections) | `{"version", "home", "sections"}` |
 | `PUT /api/v1/admin/devices/:id/cursor` | `{"itemId", "episodeId"}` | `{"version"}` |
@@ -1155,3 +1155,5 @@ The example's values are the defaults, except the samples for `publicUrl`, `trus
   [`/connect`](#static-routes) page (additive: new routes, a new secret, event types and an actor type, which clients
   ignore when they do not know them). `DELETE /tv/phones/invite` cancels a TV's open invite, and failed claims by code
   are also limited for all addresses together (additive: a new route and a rate limit on a new route).
+- **v1 (2026-10-27)** — `homeColumns` accepts 3–10 instead of 3–6, so that every row count has a grid that fills the
+  screen's width. A TV app from before clamps the new values to 6 and draws them as 6 columns, as it always clamped.

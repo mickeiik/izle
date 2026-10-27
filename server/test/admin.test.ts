@@ -29,7 +29,7 @@ test("devices: list, detail, settings PATCHed into the TV's state with a version
   // Each changes what it names only; the grid's columns and rows either alone.
   const patches = [
     { name: "Yatak odası", uiLanguage: "en", subtitlesLanguage: "tr" }, { uiLanguage: null }, { autoplayOnStart: true },
-    { homeColumns: 6, homeRows: 1 }, { homeRows: 4 }, { homeColumns: 3 }, { autoplayOnStart: false, name: "Salon 2" },
+    { homeColumns: 10, homeRows: 1 }, { homeRows: 4 }, { homeColumns: 3 }, { autoplayOnStart: false, name: "Salon 2" },
   ];
   for (const [i, { name, ...patch }] of patches.entries()) {
     const r = await s.admin("PATCH", `/devices/${tv.deviceId}`, { name, ...patch });
@@ -43,7 +43,7 @@ test("devices: list, detail, settings PATCHed into the TV's state with a version
 
   const bad = [
     {}, { uiLanguage: "fr" }, ...["yes", 1, null, "true"].map((v) => ({ autoplayOnStart: v })),
-    ...[2, 7, "4", null, 4.5].map((v) => ({ homeColumns: v })), ...[0, 5, "2", null].map((v) => ({ homeRows: v })),
+    ...[2, 11, "4", null, 4.5].map((v) => ({ homeColumns: v })), ...[0, 5, "2", null].map((v) => ({ homeRows: v })),
   ];
   for (const body of bad) {
     const r = await s.admin("PATCH", `/devices/${tv.deviceId}`, body);

@@ -26,7 +26,7 @@ export const SECTION_LAYOUTS = ["grid", "row"] as const;
 export type SectionLayout = (typeof SECTION_LAYOUTS)[number];
 export const SECTION_TITLE_MAX = 40;
 /** Per-TV home grid: cards per row and rows per screen (the defaults are the schema's). */
-export const HOME_COLUMNS = { min: 3, max: 6, default: 4 } as const;
+export const HOME_COLUMNS = { min: 3, max: 10, default: 4 } as const;
 export const HOME_ROWS = { min: 1, max: 4, default: 2 } as const;
 
 /** A section of a TV's Home with its items in display order, those gone from the catalog or unplayable included. */

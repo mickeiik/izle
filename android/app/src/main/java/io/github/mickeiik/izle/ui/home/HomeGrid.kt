@@ -30,7 +30,7 @@ data class HomeGrid(
 
     companion object {
         const val MIN_COLUMNS = 3
-        const val MAX_COLUMNS = 6
+        const val MAX_COLUMNS = 10
         const val MIN_ROWS = 1
         const val MAX_ROWS = 4
         const val GAP = 20f

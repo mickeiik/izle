@@ -23,7 +23,7 @@ remotely from the admin page or, on the TV itself, behind a hidden menu.
 ### Home
 
 - Portrait cards, shaped like posters (2:3), fill the safe area with nothing above or below them (no clock, no hint),
-  sized from the owner's columns (3–6) and rows (1–4) per screen (default 4 × 2). Without [sections](#sections) Home
+  sized from the owner's columns (3–10) and rows (1–4) per screen (default 4 × 2). Without [sections](#sections) Home
   is one grid showing exactly that many rows: moving down from the last visible row scrolls by one row (up from the
   first scrolls back), and a thin scroll bar in the right margin shows where the screen is. Left and right stop at a
   row's ends. Cards carry no name under them.
