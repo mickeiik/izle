@@ -5,35 +5,18 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -43,22 +26,31 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleStartEffect
 import io.github.mickeiik.izle.companion.R
-import io.github.mickeiik.izle.companion.ui.design.ButtonGrid
-import io.github.mickeiik.izle.companion.ui.design.ButtonRow
-import io.github.mickeiik.izle.companion.ui.design.ChoiceGrid
-import io.github.mickeiik.izle.companion.ui.design.IzleButton
 import io.github.mickeiik.izle.companion.sync.ListenTiming
 import io.github.mickeiik.izle.companion.sync.PASTED_SOURCE_ID
+import io.github.mickeiik.izle.companion.ui.design.ButtonGrid
+import io.github.mickeiik.izle.companion.ui.design.ButtonKind
+import io.github.mickeiik.izle.companion.ui.design.ButtonRow
+import io.github.mickeiik.izle.companion.ui.design.ButtonSize
+import io.github.mickeiik.izle.companion.ui.design.Caption
+import io.github.mickeiik.izle.companion.ui.design.ChoiceGrid
+import io.github.mickeiik.izle.companion.ui.design.Disclosure
+import io.github.mickeiik.izle.companion.ui.design.EmptyState
+import io.github.mickeiik.izle.companion.ui.design.IzleButton
+import io.github.mickeiik.izle.companion.ui.design.IzleTheme
+import io.github.mickeiik.izle.companion.ui.design.ListRow
+import io.github.mickeiik.izle.companion.ui.design.ProgressBar
+import io.github.mickeiik.izle.companion.ui.design.SectionHeader
+import io.github.mickeiik.izle.companion.ui.design.StatusChip
+import io.github.mickeiik.izle.companion.ui.design.Tone
+import io.github.mickeiik.izle.companion.ui.design.toneColor
 
 /**
  * Listen along, over the Now tab: one line saying what and where, the source to hear on this phone, Listen / Stop,
@@ -79,129 +71,176 @@ fun ListenScreen(state: CompanionUi.Tv, vm: CompanionViewModel, modifier: Modifi
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         if (ask) notifications.launch(Manifest.permission.POST_NOTIFICATIONS) else vm.listen()
     }
+    ListenContent(
+        state,
+        onListen = onListen,
+        onStop = vm::stopListening,
+        onChoose = vm::choose,
+        onNudge = vm::nudge,
+        onFinder = vm::openFinder,
+        onForget = vm::forgetFoundLink,
+        timing = { TimingControls(state, vm) },
+        modifier = modifier,
+    )
+}
 
+/** Listen along's content, without the view model; [timing] fills the Timing disclosure. */
+@Composable
+internal fun ListenContent(
+    state: CompanionUi.Tv,
+    onListen: () -> Unit,
+    onStop: () -> Unit,
+    onChoose: (CandidateOption) -> Unit,
+    onNudge: (Long) -> Unit,
+    onFinder: () -> Unit,
+    onForget: () -> Unit,
+    timing: @Composable () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val s = IzleTheme.spacing
+    val inset = Modifier.padding(horizontal = s.lg)
     Column(modifier = modifier.fillMaxSize()) {
-        if (state.refreshing || !state.loaded) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        if (state.refreshing || !state.loaded) ProgressBar(null)
         Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(vertical = s.lg),
+            verticalArrangement = Arrangement.spacedBy(s.lg),
         ) {
-            Text(listenContext(state.nowPlaying, state.displayName), style = MaterialTheme.typography.bodyLarge)
+            Caption(listenContext(state.nowPlaying, state.displayName), modifier = inset)
             // While listening the form stays, whatever the TV reports meanwhile.
             val episode = state.nowPlaying?.episodeId != null && !state.isChannel
             when {
                 !state.loaded -> Unit
-                state.listening || episode -> ListenForm(state, vm, onListen)
-                else -> Text(
-                    nothingToListenText(state.nowPlaying, state.displayName).orEmpty(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                state.listening || episode -> ListenForm(state, onListen, onStop, onChoose, onNudge, onFinder, onForget, timing, inset)
+                else -> EmptyState(nothingToListenText(state.nowPlaying, state.displayName).orEmpty(), modifier = inset)
             }
             val error = state.session.error ?: state.error
-            if (error != null) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+            if (error != null) Caption(error, tone = Tone.Danger, modifier = inset)
         }
     }
 }
 
 @Composable
-private fun ListenForm(state: CompanionUi.Tv, vm: CompanionViewModel, onListen: () -> Unit) {
-    Text(stringResource(R.string.source), style = MaterialTheme.typography.titleMedium)
-    if (state.options.isEmpty()) {
-        Text(stringResource(R.string.no_candidates), style = MaterialTheme.typography.bodyMedium)
-    } else {
-        Column(modifier = Modifier.selectableGroup()) {
-            for (option in state.options) SourceRow(option, state, vm)
+private fun ListenForm(
+    state: CompanionUi.Tv,
+    onListen: () -> Unit,
+    onStop: () -> Unit,
+    onChoose: (CandidateOption) -> Unit,
+    onNudge: (Long) -> Unit,
+    onFinder: () -> Unit,
+    onForget: () -> Unit,
+    timing: @Composable () -> Unit,
+    inset: Modifier,
+) {
+    Column {
+        SectionHeader(stringResource(R.string.source))
+        if (state.options.isEmpty()) {
+            Caption(stringResource(R.string.no_candidates), modifier = inset.padding(top = IzleTheme.spacing.md))
+        } else {
+            Column(modifier = Modifier.selectableGroup()) {
+                for (option in state.options) SourceRow(option, state, onChoose, onFinder, onForget)
+            }
         }
     }
 
     if (state.listening) {
-        Button(
-            onClick = vm::stopListening,
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError),
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-        ) { Text(stringResource(R.string.stop), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center) }
+        IzleButton(stringResource(R.string.stop), onClick = onStop, kind = ButtonKind.Danger, modifier = inset.fillMaxWidth())
     } else {
-        Button(onClick = onListen, enabled = state.canListen, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-            Text(stringResource(R.string.listen), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
-        }
+        IzleButton(
+            stringResource(R.string.listen),
+            onClick = onListen,
+            kind = ButtonKind.Primary,
+            enabled = state.canListen,
+            modifier = inset.fillMaxWidth(),
+        )
     }
 
-    EarphoneDelay(state.nudgeMs, vm::nudge)
+    EarphoneDelay(state.nudgeMs, onNudge, inset)
 
-    var timingOpen by rememberSaveable { mutableStateOf(false) }
-    Fold(
-        title = stringResource(R.string.timing_title),
-        summary = timingSummary(parseTiming(state.offsetText, state.speedText)),
-        open = timingOpen,
-        onToggle = { timingOpen = !timingOpen },
-    ) { TimingControls(state, vm) }
+    Column(modifier = inset) {
+        var timingOpen by rememberSaveable { mutableStateOf(false) }
+        Disclosure(
+            title = stringResource(R.string.timing_title),
+            summary = timingSummary(parseTiming(state.offsetText, state.speedText)),
+            expanded = timingOpen,
+            onToggle = { timingOpen = !timingOpen },
+        ) { timing() }
 
-    var detailsOpen by rememberSaveable { mutableStateOf(false) }
-    val status = statusLine(state.session)
-    Fold(
-        title = stringResource(R.string.sync_details),
-        summary = null,
-        open = detailsOpen,
-        onToggle = { detailsOpen = !detailsOpen },
-    ) {
-        val synced = state.session.syncLabel == "synced"
-        Text(
-            status ?: stringResource(R.string.not_listening),
-            style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-            color = if (synced) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        var detailsOpen by rememberSaveable { mutableStateOf(false) }
+        Disclosure(
+            title = stringResource(R.string.sync_details),
+            summary = null,
+            expanded = detailsOpen,
+            onToggle = { detailsOpen = !detailsOpen },
+        ) {
+            val synced = state.session.syncLabel == "synced"
+            Text(
+                statusLine(state.session) ?: stringResource(R.string.not_listening),
+                style = IzleTheme.type.mono,
+                color = toneColor(if (synced) Tone.Success else Tone.Neutral),
+            )
+        }
     }
 }
 
-/** One source; the `pasted` one is the found link: whether one is ready (never its URL), and the way to the finder. */
+/** One source as a radio row; the `pasted` one is the found link: whether one is ready (never its URL), and the way to the finder. */
 @Composable
-private fun SourceRow(option: CandidateOption, state: CompanionUi.Tv, vm: CompanionViewModel) {
+private fun SourceRow(
+    option: CandidateOption,
+    state: CompanionUi.Tv,
+    onChoose: (CandidateOption) -> Unit,
+    onFinder: () -> Unit,
+    onForget: () -> Unit,
+) {
     val selected = option.key == state.chosen?.key
     val found = option.sourceId == PASTED_SOURCE_ID
-    Column(modifier = Modifier.fillMaxWidth()) {
+    val label = when {
+        !found -> option.label
+        state.foundLink != null -> stringResource(R.string.found_link_ready)
+        else -> stringResource(R.string.found_link_none)
+    }
+    // "dub — French dub · Français (fr) · the TV's source": the source is the title, the rest its supporting line.
+    ListRow(
+        title = label.substringBefore(LABEL_SEPARATOR),
+        supporting = label.substringAfter(LABEL_SEPARATOR, "").ifEmpty { null },
+        selected = selected,
+        onClick = { onChoose(option) },
+        trailing = { option.kind?.let { StatusChip(mediaKindLabel(it), Tone.Neutral) } },
+    )
+    if (found && selected) {
         Row(
-            modifier = Modifier.fillMaxWidth()
-                .selectable(selected = selected, onClick = { vm.choose(option) }, role = Role.RadioButton)
-                .padding(vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = IzleTheme.spacing.lg, vertical = IzleTheme.spacing.sm),
+            horizontalArrangement = Arrangement.spacedBy(IzleTheme.spacing.sm),
         ) {
-            RadioButton(selected = selected, onClick = null)
-            val label = when {
-                !found -> option.label
-                state.foundLink != null -> stringResource(R.string.found_link_ready)
-                else -> stringResource(R.string.found_link_none)
-            }
-            Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-            option.kind?.let { KindChip(mediaKindLabel(it)) }
-        }
-        if (found && selected) {
-            Row(modifier = Modifier.padding(start = 48.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = vm::openFinder) {
-                    Text(stringResource(if (state.foundLink != null) R.string.find_new_link else R.string.find_link))
-                }
-                if (state.foundLink != null) TextButton(onClick = vm::forgetFoundLink) { Text(stringResource(R.string.forget_link)) }
+            IzleButton(
+                stringResource(if (state.foundLink != null) R.string.find_new_link else R.string.find_link),
+                onClick = onFinder,
+                size = ButtonSize.Small,
+            )
+            if (state.foundLink != null) {
+                IzleButton(stringResource(R.string.forget_link), onClick = onForget, kind = ButtonKind.Quiet, size = ButtonSize.Small)
             }
         }
     }
 }
 
-/** "Earphone delay": −50 ms, the value, +50 ms; kept on this phone. */
+private const val LABEL_SEPARATOR = " · "
+
+/** "Earphone delay": the value, then −50 ms and +50 ms buttons; kept on this phone. */
 @Composable
-private fun EarphoneDelay(nudgeMs: Long, onNudge: (Long) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(stringResource(R.string.earphone_delay), style = MaterialTheme.typography.titleMedium)
-        ButtonRow(modifier = Modifier.padding(top = 4.dp)) {
-            IzleButton(stringResource(R.string.nudge_minus), onClick = { onNudge(-NUDGE_STEP_MS) })
-            Text(nudgeText(nudgeMs), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center, maxLines = 1)
-            IzleButton(stringResource(R.string.nudge_plus), onClick = { onNudge(NUDGE_STEP_MS) })
-        }
-        Text(
-            stringResource(R.string.earphone_delay_hint),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+private fun EarphoneDelay(nudgeMs: Long, onNudge: (Long) -> Unit, inset: Modifier) {
+    Column(verticalArrangement = Arrangement.spacedBy(IzleTheme.spacing.xs)) {
+        ListRow(
+            title = stringResource(R.string.earphone_delay),
+            supporting = nudgeText(nudgeMs),
+            divider = false,
+            trailing = {
+                Row(horizontalArrangement = Arrangement.spacedBy(IzleTheme.spacing.sm)) {
+                    IzleButton(stringResource(R.string.nudge_minus), onClick = { onNudge(-NUDGE_STEP_MS) }, size = ButtonSize.Small)
+                    IzleButton(stringResource(R.string.nudge_plus), onClick = { onNudge(NUDGE_STEP_MS) }, size = ButtonSize.Small)
+                }
+            },
         )
+        Caption(stringResource(R.string.earphone_delay_hint), modifier = inset)
     }
 }
 
@@ -235,23 +274,27 @@ internal fun TimingControls(
     onSave: () -> Unit,
     onApplyAll: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(stringResource(R.string.line_it_up), style = MaterialTheme.typography.titleSmall)
-        Text(stringResource(R.string.mark_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val s = IzleTheme.spacing
+    Column(verticalArrangement = Arrangement.spacedBy(s.sm)) {
+        Text(stringResource(R.string.line_it_up), style = IzleTheme.type.label, color = IzleTheme.colors.textPrimary)
+        Caption(stringResource(R.string.mark_hint))
         ButtonRow {
             IzleButton(stringResource(R.string.mark_on_tv), onClick = { onMark(true) }, selected = state.tvMarkMs != null)
             IzleButton(stringResource(R.string.mark_on_phone), onClick = { onMark(false) }, selected = state.phoneMarkMs != null)
         }
-        markPendingText(state.tvMarkMs, state.phoneMarkMs)?.let {
-            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-        }
+        markPendingText(state.tvMarkMs, state.phoneMarkMs)?.let { Caption(it, tone = Tone.Accent) }
 
         var editing by rememberSaveable { mutableStateOf(false) }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(stringResource(R.string.offset), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(s.md)) {
+            Caption(stringResource(R.string.offset))
             val offsetMs = parseTiming(state.offsetText, "1")?.offsetMs
-            Text(offsetMs?.let(ListenTiming::formatOffset) ?: "–", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-            TextButton(onClick = { editing = !editing }) { Text(stringResource(R.string.edit)) }
+            Text(
+                offsetMs?.let(ListenTiming::formatOffset) ?: "–",
+                style = IzleTheme.type.title.copy(fontFamily = FontFamily.Monospace),
+                color = IzleTheme.colors.textPrimary,
+                modifier = Modifier.weight(1f),
+            )
+            IzleButton(stringResource(R.string.edit), onClick = { editing = !editing }, kind = ButtonKind.Quiet, size = ButtonSize.Small)
         }
         if (editing) {
             OutlinedTextField(
@@ -264,9 +307,13 @@ internal fun TimingControls(
                 // A decimal keyboard may have no minus key.
                 trailingIcon = {
                     val flip = stringResource(R.string.flip_sign)
-                    TextButton(onClick = { onOffsetText(flipSign(state.offsetText)) }, modifier = Modifier.semantics { contentDescription = flip }) {
-                        Text(stringResource(R.string.flip_sign_symbol))
-                    }
+                    IzleButton(
+                        stringResource(R.string.flip_sign_symbol),
+                        onClick = { onOffsetText(flipSign(state.offsetText)) },
+                        kind = ButtonKind.Quiet,
+                        size = ButtonSize.Small,
+                        modifier = Modifier.semantics { contentDescription = flip },
+                    )
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -274,9 +321,9 @@ internal fun TimingControls(
         ButtonGrid(columns = 3) {
             for (ms in ListenTiming.OFFSET_NUDGES_MS) IzleButton(ListenTiming.nudgeLabel(ms), onClick = { onNudge(ms) })
         }
-        Text(stringResource(R.string.nudges_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Caption(stringResource(R.string.nudges_hint))
 
-        Text(stringResource(R.string.speed), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+        Text(stringResource(R.string.speed), style = IzleTheme.type.label, color = IzleTheme.colors.textPrimary, modifier = Modifier.padding(top = s.sm))
         val rate = parseTiming("0", state.speedText)?.rate
         val preset = if (state.otherSpeed || rate == null) ListenTiming.OTHER else ListenTiming.speedPreset(rate)
         val choices = ListenTiming.SPEED_PRESETS.map { Triple(it.label, it.rate as Double?, it.id) } +
@@ -293,43 +340,12 @@ internal fun TimingControls(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        if (!state.timingValid) {
-            Text(stringResource(R.string.timing_invalid), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-        }
-        ButtonRow(modifier = Modifier.padding(top = 8.dp)) {
+        if (!state.timingValid) Caption(stringResource(R.string.timing_invalid), tone = Tone.Danger)
+        ButtonRow(modifier = Modifier.padding(top = s.sm)) {
             val chosen = state.chosen != null
             IzleButton(stringResource(R.string.save_timing), onClick = onSave, enabled = state.timingValid && chosen)
             if (state.applyAllVisible) IzleButton(stringResource(R.string.apply_to_all), onClick = onApplyAll, enabled = chosen)
         }
-    }
-}
-
-/** A section folded under its title (and a one-line [summary]); tap the title to open it. */
-@Composable
-private fun Fold(title: String, summary: String?, open: Boolean, onToggle: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        HorizontalDivider()
-        val action = stringResource(if (open) R.string.hide else R.string.show)
-        Row(
-            modifier = Modifier.fillMaxWidth().clickable(onClickLabel = action, onClick = onToggle).padding(vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                if (summary != null && !open) {
-                    Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            Icon(if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, contentDescription = null)
-        }
-        if (open) Column(modifier = Modifier.padding(bottom = 8.dp), content = content)
-    }
-}
-
-@Composable
-private fun KindChip(text: String) {
-    Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.secondaryContainer) {
-        Text(text, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
     }
 }
 

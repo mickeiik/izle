@@ -4,18 +4,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,9 +17,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import io.github.mickeiik.izle.companion.R
 import io.github.mickeiik.izle.companion.tv.timeAgo
+import io.github.mickeiik.izle.companion.ui.design.ButtonKind
+import io.github.mickeiik.izle.companion.ui.design.ButtonSize
+import io.github.mickeiik.izle.companion.ui.design.Caption
+import io.github.mickeiik.izle.companion.ui.design.Hairline
+import io.github.mickeiik.izle.companion.ui.design.IzleButton
+import io.github.mickeiik.izle.companion.ui.design.IzleTheme
+import io.github.mickeiik.izle.companion.ui.design.ListRow
+import io.github.mickeiik.izle.companion.ui.design.ProgressBar
+import io.github.mickeiik.izle.companion.ui.design.StatusChip
+import io.github.mickeiik.izle.companion.ui.design.Tone
 import io.github.mickeiik.izle.data.api.Phone
 import io.github.mickeiik.izle.domain.IsoTime
 
@@ -41,26 +43,33 @@ fun PhonesScreen(
 ) {
     BackHandler(onBack = onBack)
     var confirming by rememberSaveable { mutableStateOf<String?>(null) }
+    val s = IzleTheme.spacing
     Column(modifier = modifier.fillMaxSize()) {
-        if (state.loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth()) else HorizontalDivider()
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(stringResource(R.string.phones_hint), style = MaterialTheme.typography.bodyMedium)
+        if (state.loading) ProgressBar(null) else Hairline()
+        Column(modifier = Modifier.padding(s.lg), verticalArrangement = Arrangement.spacedBy(s.sm)) {
+            Caption(stringResource(R.string.phones_hint))
             state.error?.let {
-                Text(connectErrorText(it), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-                OutlinedButton(onClick = onRetry, enabled = !state.loading) { Text(stringResource(R.string.try_again)) }
+                Caption(connectErrorText(it), tone = Tone.Danger)
+                IzleButton(stringResource(R.string.try_again), onClick = onRetry, enabled = !state.loading, size = ButtonSize.Small)
             }
         }
         LazyColumn {
             items(state.phones, key = { it.id }) { phone ->
-                val isThis = phone.id == state.thisPhoneId
-                ListItem(
-                    overlineContent = if (isThis) ({ Text(stringResource(R.string.this_phone)) }) else null,
-                    headlineContent = { Text(phone.name) },
-                    supportingContent = { Text(usedText(phone)) },
-                    trailingContent = {
-                        TextButton(onClick = { confirming = phone.id }, enabled = !state.loading) {
-                            Text(stringResource(R.string.disconnect))
-                        }
+                // This phone: its mark above the row, so the row keeps its room for the name and when it was used.
+                if (phone.id == state.thisPhoneId) {
+                    StatusChip(stringResource(R.string.this_phone), Tone.Neutral, Modifier.padding(start = s.lg, top = s.sm))
+                }
+                ListRow(
+                    title = phone.name,
+                    supporting = usedText(phone),
+                    trailing = {
+                        IzleButton(
+                            stringResource(R.string.disconnect),
+                            onClick = { confirming = phone.id },
+                            kind = ButtonKind.Danger,
+                            size = ButtonSize.Small,
+                            enabled = !state.loading,
+                        )
                     },
                 )
             }
@@ -77,12 +86,12 @@ fun PhonesScreen(
                 Text(stringResource(if (self) R.string.disconnect_self_text else R.string.disconnect_other_text))
             },
             confirmButton = {
-                TextButton(onClick = {
+                IzleButton(stringResource(R.string.disconnect), kind = ButtonKind.Danger, onClick = {
                     confirming = null
                     onDisconnect(phone.id)
-                }) { Text(stringResource(R.string.disconnect)) }
+                })
             },
-            dismissButton = { TextButton(onClick = { confirming = null }) { Text(stringResource(R.string.cancel)) } },
+            dismissButton = { IzleButton(stringResource(R.string.cancel), kind = ButtonKind.Quiet, onClick = { confirming = null }) },
         )
     }
 }

@@ -25,6 +25,7 @@
     <string name="use_code">Use the code instead</string>
     <string name="access_token">Access token</string>
     <string name="connect">Connect</string>
+    <string name="connecting">Connecting…</string>
     <string name="error_invalid_address">That is not a valid server address.</string>
     <string name="error_unreachable">The server cannot be reached. Check the address, and that this phone can reach it.</string>
     <string name="error_code_not_accepted">That code is not valid any more. Open Connect a phone on the TV again.</string>

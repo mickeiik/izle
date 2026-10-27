@@ -57,11 +57,6 @@ class DesignSystemTest {
             "home/AddShowScreen.kt",
             "home/HomeTab.kt",
             "home/ShowSheet.kt",
-            "ui/ConnectScreen.kt",
-            "ui/LinkFinderScreen.kt",
-            "ui/ListenScreen.kt",
-            "ui/PhonesScreen.kt",
-            "ui/TvPickerScreen.kt",
         )
 
         val RULES = listOf(
