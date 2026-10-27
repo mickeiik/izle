@@ -380,7 +380,16 @@ th { font-size: var(--text-sm); font-weight: 600; color: var(--muted); border-to
 .problems time { font-size: var(--text-sm); white-space: nowrap; }
 .problems .detail { font-size: var(--text-sm); overflow-wrap: anywhere; }
 
-.companion .timing { display: grid; grid-template-columns: 1fr 1fr; gap: 0 var(--space-4); max-width: var(--measure); }
+.companion .timing { max-width: var(--measure); }
+.companion .timing h3 { margin: var(--space-5) 0 var(--space-1); font-size: var(--text-md); }
+.companion .timing p { margin: var(--space-3) 0 var(--space-1); }
+.companion .grid2, .companion .grid3 { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
+.companion .grid2 { grid-template-columns: 1fr 1fr; }
+.companion .grid3 { grid-template-columns: repeat(3, 1fr); }
+.companion .grid2 button, .companion .grid3 button { width: 100%; min-width: 0; text-align: center; white-space: nowrap; padding-inline: var(--space-1); }
+.companion button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.companion .offset-row { display: flex; align-items: center; gap: var(--space-3); margin-top: var(--space-3); }
+.companion .offset-row .readout { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
 .companion .nudge { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); flex-wrap: wrap; }
 .companion .nudge span { min-width: 7rem; font-variant-numeric: tabular-nums; }
 .companion .status { margin: var(--space-3) 0 0; font-variant-numeric: tabular-nums; }

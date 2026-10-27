@@ -1,5 +1,7 @@
 package io.github.mickeiik.izle.companion.ui
 
+import io.github.mickeiik.izle.companion.tv.UNREACHABLE
+import io.github.mickeiik.izle.companion.tv.apiErrorText
 import io.github.mickeiik.izle.companion.sync.EndReason
 import io.github.mickeiik.izle.companion.sync.ListenPhase
 import io.github.mickeiik.izle.companion.sync.ListenState
@@ -116,8 +118,6 @@ fun statusLine(state: ListenState): String? {
     return if (parts.isEmpty()) "Starting…" else parts.joinToString(" · ")
 }
 
-/** The nudge row's value: `nudge +0 ms`, `nudge −50 ms`. */
-fun nudgeText(nudgeMs: Long): String = "nudge ${ListenSync.formatDrift(nudgeMs.toDouble())}"
 
 /** Why listening ended, for a snackbar; null when the owner stopped it. */
 fun endedText(reason: EndReason?, error: String?): String? = when (reason) {
@@ -128,7 +128,7 @@ fun endedText(reason: EndReason?, error: String?): String? = when (reason) {
     EndReason.StreamKeepsFailing -> "The companion stream keeps failing; listening ended."
     EndReason.Unauthorized -> "This phone was disconnected. Connect it again from the TV."
     EndReason.Interrupted -> "The phone's audio was interrupted (earphones unplugged, or another app took over); listening ended."
-    EndReason.Failed -> "Could not start: ${error?.let { ERRORS[it] ?: it } ?: "something went wrong."}"
+    EndReason.Failed -> "Could not start: ${error?.let { apiErrorText(it) ?: it } ?: "something went wrong."}"
     EndReason.LinkExpired ->
         "The link looks expired or obtained from another address: its playlist is far shorter than the episode. Find a new link."
 }
@@ -141,21 +141,8 @@ const val TIMING_SAVED = "Timing saved for this episode."
 
 /** lib.js's `errorText` for what the Listen along routes answer. */
 fun errorText(e: Throwable): String = when (e) {
-    is IOException -> "The server cannot be reached."
-    is ApiException -> ERRORS[e.code] ?: "The server answered: ${e.code}."
+    is IOException -> UNREACHABLE
+    is ApiException -> apiErrorText(e.code) ?: "The server answered: ${e.code}."
     else -> "Something went wrong."
 }
-
-private val ERRORS = mapOf(
-    "unauthorized" to "This phone was disconnected.",
-    "insufficient_scope" to "This connection may not do that.",
-    "not_allowed" to "Playback of that episode is not allowed by the catalog.",
-    "unknown_episode" to "That episode is not in the catalog (any more).",
-    "unknown_device" to "That TV does not exist any more.",
-    "unknown_source" to "That source is not in the catalog (any more).",
-    "unsupported_media" to "The server does not offer that source's DASH or MPEG-TS stream to a phone.",
-    "no_playable_source" to "The source could not be resolved right now.",
-    "no_link" to "Save the timing for this episode first.",
-    "invalid_request" to "The server did not accept the request.",
-)
 

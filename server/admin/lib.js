@@ -1467,3 +1467,35 @@ export function formatPosition(ms) {
   if (ms === null || ms === undefined || !Number.isFinite(ms) || ms < 0) return "–";
   return `${formatClock(ms)}.${Math.floor((ms % 1000) / 100)}`;
 }
+
+/** `+1:23.5`, `−0:04.0`: a link's offset to 0.1 s (minutes may exceed 59; a zero result is `+0:00.0`). @param {number} ms */
+export function formatOffset(ms) {
+  const tenths = Math.round(Math.abs(ms) / 100);
+  const sign = ms < 0 && tenths > 0 ? "−" : "+";
+  const seconds = tenths % 600;
+  return `${sign}${Math.floor(tenths / 600)}:${String(Math.floor(seconds / 10)).padStart(2, "0")}.${seconds % 10}`;
+}
+
+/**
+ * The offset that puts the companion at `phoneMs` when the TV is at `tvMs` (`rate · tv + offset = phone`): the result
+ * of the two-tap mark. @param {number} tvMs @param {number} phoneMs @param {number} rate
+ */
+export const markOffset = (tvMs, phoneMs, rate) => Math.round(phoneMs - rate * tvMs);
+
+/** The offset nudges, in milliseconds, in the order they are shown (back row, then forward row). */
+export const OFFSET_NUDGES_MS = /** @type {const} */ ([-30_000, -5_000, -500, 500, 5_000, 30_000]);
+
+/** `+5 s`, `−0.5 s`: a nudge button's label. @param {number} ms */
+export const nudgeLabel = (ms) => `${ms < 0 ? "−" : "+"}${Math.abs(ms) / 1000} s`;
+
+/** The speed choices (companion seconds per TV second); `Other` is the decimal field. */
+export const SPEED_PRESETS = /** @type {const} */ ([
+  { id: "same", label: "Same speed", rate: 1 },
+  { id: "pal-film", label: "PAL vs film", rate: 1.0427 },
+  { id: "film-pal", label: "Film vs PAL", rate: 0.9591 },
+]);
+
+/** Which speed choice `rate` is: the preset within 0.00005, else `other`. @param {number} rate */
+export function speedPreset(rate) {
+  return SPEED_PRESETS.find((p) => Math.abs(p.rate - rate) < 0.00005)?.id ?? "other";
+}

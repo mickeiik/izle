@@ -118,7 +118,7 @@ class ListenService : Service() {
             .setContentTitle(shown.title)
             .setContentText(shown.text)
             .setContentIntent(open)
-            .addAction(0, getString(R.string.notification_stop), stop)
+            .addAction(0, getString(R.string.stop), stop)
             .setOngoing(true)
             .setSilent(true)
             .setOnlyAlertOnce(true)
@@ -130,7 +130,7 @@ class ListenService : Service() {
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val channel = NotificationChannel(CHANNEL_ID, getString(R.string.notification_channel), NotificationManager.IMPORTANCE_LOW)
+        val channel = NotificationChannel(CHANNEL_ID, getString(R.string.listen_along), NotificationManager.IMPORTANCE_LOW)
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 

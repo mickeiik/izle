@@ -207,7 +207,7 @@ class ModelsTest {
                  {"id": "tv2", "name": "Kitchen", "status": "pending", "online": null, "lastSeenAt": null}
                ], "future": 1}""",
         ).devices
-        assertEquals(AdminDevice("tv1", "Living room", "active", online = true, lastSeenAt = "2026-10-26T10:00:00.000Z"), devices[0])
+        assertEquals(AdminDevice("tv1", "Living room", "active", online = true, lastSeenAt = "2026-10-26T10:00:00.000Z", effective = DeviceEffective(), problems = DeviceProblems(), homeCount = 3), devices[0])
         assertEquals(AdminDevice("tv2", "Kitchen", "pending", online = false, lastSeenAt = null), devices[1])
     }
 

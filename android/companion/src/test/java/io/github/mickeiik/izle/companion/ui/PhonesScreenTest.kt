@@ -8,7 +8,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ActivityScenario
 import io.github.mickeiik.izle.companion.MainActivity
-import io.github.mickeiik.izle.companion.ui.theme.CompanionTheme
+import io.github.mickeiik.izle.companion.ui.design.IzleTheme
 import io.github.mickeiik.izle.data.api.Phone
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -39,7 +39,7 @@ class PhonesScreenTest {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
                 activity.setContent {
-                    CompanionTheme { PhonesScreen(state, onDisconnect = { disconnected += it }, onRetry = {}, onBack = {}) }
+                    IzleTheme { PhonesScreen(state, onDisconnect = { disconnected += it }, onRetry = {}, onBack = {}) }
                 }
             }
             compose.onNodeWithText("This phone").assertIsDisplayed()

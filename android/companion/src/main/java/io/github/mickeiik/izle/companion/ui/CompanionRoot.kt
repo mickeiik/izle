@@ -1,25 +1,16 @@
 package io.github.mickeiik.izle.companion.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -35,14 +26,24 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.mickeiik.izle.companion.R
 import io.github.mickeiik.izle.companion.finder.BrowserData
+import io.github.mickeiik.izle.companion.home.HomeTab
+import io.github.mickeiik.izle.companion.ui.design.ButtonKind
+import io.github.mickeiik.izle.companion.ui.design.IzleBottomBar
+import io.github.mickeiik.izle.companion.ui.design.IzleButton
+import io.github.mickeiik.izle.companion.ui.design.IzleIcons
+import io.github.mickeiik.izle.companion.ui.design.IzleTopBar
+import io.github.mickeiik.izle.companion.ui.design.MenuItem
+import io.github.mickeiik.izle.companion.ui.design.OverflowMenu
+import io.github.mickeiik.izle.companion.ui.design.TabItem
 import kotlinx.coroutines.launch
 
 /**
- * The app: one screen at a time, as the view model says, under an app bar with the TV's name (none over the link
- * finder). The menu holds what is not about the TV: the server's phones, disconnecting this phone, the browser's
- * cookies; screens opened from it (Phones) have a back arrow.
+ * The app: one screen at a time, as the view model says, under an app bar (none over the link finder). On a TV's page
+ * the bar's title is the TV's name (tap it to switch TV), a bottom bar switches between Now and Home, and Listen
+ * along opens over Now with a back arrow. The menu holds what is not about the TV: the server's phones, disconnecting
+ * this phone, the browser's cookies; screens opened from it (Phones) have a back arrow. Back on a TV's page goes to
+ * the TV list when the server has more than one TV, else it leaves the app (listening goes on in its notification).
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
     val ui by vm.ui.collectAsStateWithLifecycle()
@@ -54,42 +55,53 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
         vm.dismissSnackbar()
     }
     var confirmDisconnect by rememberSaveable { mutableStateOf(false) }
-    val onTvScreen = ui is CompanionUi.Listen || ui is CompanionUi.PickTv
+    val onTvScreen = ui is CompanionUi.Tv || ui is CompanionUi.PickTv
+    val tv = ui as? CompanionUi.Tv
 
     // The link finder has its own chrome (Close and the address row): no app bar while it is open, so the page gets
     // the room. Without a top bar the Scaffold's insets still start the content below the status bar.
-    val finderOpen = (ui as? CompanionUi.Listen)?.finderOpen == true
+    val finderOpen = tv?.finderOpen == true
+    BackHandler(enabled = tv != null && tv.listenOpen && !finderOpen, onBack = vm::closeListen)
+    BackHandler(enabled = tv != null && !tv.listenOpen && tv.severalTvs, onBack = vm::changeTv)
     Scaffold(
         topBar = {
-            if (!finderOpen) TopAppBar(
-                title = {
-                    val title = when (val screen = ui) {
-                        is CompanionUi.Listen -> screen.tvName
-                        is CompanionUi.Phones -> stringResource(R.string.phones_title)
+            if (!finderOpen) {
+                val appName = stringResource(R.string.app_name)
+                IzleTopBar(
+                    title = when {
+                        tv?.listenOpen == true -> stringResource(R.string.listen_along)
+                        tv != null -> tv.tvName ?: appName
+                        ui is CompanionUi.Phones -> stringResource(R.string.phones)
+                        else -> appName
+                    },
+                    onBack = when {
+                        ui is CompanionUi.Phones -> vm::closePhones
+                        tv?.listenOpen == true -> vm::closeListen
                         else -> null
-                    }
-                    Text(title ?: stringResource(R.string.app_name))
-                },
-                navigationIcon = {
-                    if (ui is CompanionUi.Phones) {
-                        IconButton(onClick = vm::closePhones) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
+                    },
+                    onTitleClick = if (tv != null && !tv.listenOpen) vm::changeTv else null,
+                    titleClickLabel = stringResource(R.string.switch_tv),
+                    actions = {
+                        if (onTvScreen) {
+                            AppMenu(
+                                onPhones = vm::openPhones,
+                                onDisconnect = { confirmDisconnect = true },
+                                onBrowserDataCleared = { snackbars.showSnackbar(it) },
+                            )
                         }
-                    }
-                },
-                actions = {
-                    if (ui is CompanionUi.Listen) {
-                        TextButton(onClick = vm::changeTv) { Text(stringResource(R.string.change_tv)) }
-                    }
-                    if (onTvScreen) {
-                        OverflowMenu(
-                            onPhones = vm::openPhones,
-                            onDisconnect = { confirmDisconnect = true },
-                            onBrowserDataCleared = { snackbars.showSnackbar(it) },
-                        )
-                    }
-                },
-            )
+                    },
+                )
+            }
+        },
+        bottomBar = {
+            if (tv != null && !tv.listenOpen && !finderOpen) {
+                IzleBottomBar(
+                    listOf(
+                        TabItem(stringResource(R.string.tab_now), IzleIcons.Tv, tv.tab == TvTab.Now) { vm.selectTab(TvTab.Now) },
+                        TabItem(stringResource(R.string.tab_home), IzleIcons.Grid, tv.tab == TvTab.Home) { vm.selectTab(TvTab.Home) },
+                    ),
+                )
+            }
         },
         snackbarHost = { SnackbarHost(snackbars) },
     ) { insets ->
@@ -102,12 +114,15 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
             is CompanionUi.Phones -> PhonesScreen(
                 screen, onDisconnect = vm::disconnectPhone, onRetry = vm::reloadPhones, onBack = vm::closePhones, modifier = modifier,
             )
-            is CompanionUi.Listen ->
-                if (screen.finderOpen) {
+            is CompanionUi.Tv -> when {
+                screen.finderOpen ->
                     LinkFinderScreen(vm.linkFinder, initialUrl = null, onListenToThis = vm::useFoundLink, onClose = vm::closeFinder, modifier = modifier)
-                } else {
-                    ListenScreen(screen, vm, modifier = modifier)
+                screen.listenOpen -> ListenScreen(screen, vm, modifier = modifier)
+                screen.tab == TvTab.Now -> NowTab(screen, vm, modifier = modifier)
+                else -> vm.apiClient?.let { api ->
+                    HomeTab(api, tvId = screen.tvId, tvName = screen.displayName, onMessage = vm::say, onRevoked = vm::homeRevoked, modifier = modifier)
                 }
+            }
         }
     }
 
@@ -117,48 +132,30 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
             title = { Text(stringResource(R.string.disconnect_this_phone_title)) },
             text = { Text(stringResource(R.string.disconnect_self_text)) },
             confirmButton = {
-                TextButton(onClick = {
+                IzleButton(stringResource(R.string.disconnect), kind = ButtonKind.Danger, onClick = {
                     confirmDisconnect = false
                     vm.forgetPairing()
-                }) { Text(stringResource(R.string.disconnect)) }
+                })
             },
-            dismissButton = { TextButton(onClick = { confirmDisconnect = false }) { Text(stringResource(R.string.cancel)) } },
+            dismissButton = { IzleButton(stringResource(R.string.cancel), kind = ButtonKind.Quiet, onClick = { confirmDisconnect = false }) },
         )
     }
 }
 
+/** The app bar's ⋮: Phones, Disconnect this phone, Clear browser cookies. */
 @Composable
-private fun OverflowMenu(onPhones: () -> Unit, onDisconnect: () -> Unit, onBrowserDataCleared: suspend (String) -> Unit) {
-    var open by rememberSaveable { mutableStateOf(false) }
+private fun AppMenu(onPhones: () -> Unit, onDisconnect: () -> Unit, onBrowserDataCleared: suspend (String) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val cleared = stringResource(R.string.browser_data_cleared)
-    Box {
-        IconButton(onClick = { open = true }) {
-            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
-        }
-        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.phones)) },
-                onClick = {
-                    open = false
-                    onPhones()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.disconnect_this_phone)) },
-                onClick = {
-                    open = false
-                    onDisconnect()
-                },
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.clear_browser_data)) },
-                onClick = {
-                    open = false
-                    BrowserData.clear(context) { scope.launch { onBrowserDataCleared(cleared) } }
-                },
-            )
-        }
-    }
+    OverflowMenu(
+        stringResource(R.string.more_options),
+        listOf(
+            MenuItem(stringResource(R.string.phones), onPhones),
+            MenuItem(stringResource(R.string.disconnect_this_phone), onDisconnect),
+            MenuItem(stringResource(R.string.clear_browser_data), {
+                BrowserData.clear(context) { scope.launch { onBrowserDataCleared(cleared) } }
+            }),
+        ),
+    )
 }

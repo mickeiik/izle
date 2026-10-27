@@ -333,6 +333,16 @@ class ListenSession(
         loadFound(p.episodeId, link, currentTarget())
     }
 
+    /**
+     * For the two-tap mark: where the TV is now (the loop's estimate) and where the player is now, read at the tap
+     * rather than at the last tick; null unless listening with the TV's anchor known. Reads only.
+     */
+    fun positionsNow(): Pair<Double, Double>? {
+        if (phase != ListenPhase.Listening || playing == null) return null
+        val tv = ListenSync.tvPositionAt(anchor, serverNow()) ?: return null
+        return tv to engine.positionMs.toDouble()
+    }
+
     /** [stop] and frees the engine. */
     fun release() {
         stop()

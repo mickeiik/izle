@@ -1,5 +1,6 @@
 package io.github.mickeiik.izle.companion.sync
 
+import io.github.mickeiik.izle.companion.tv.formatClock
 import io.github.mickeiik.izle.data.api.Anchor
 import io.github.mickeiik.izle.data.api.LinkTiming
 import io.github.mickeiik.izle.data.api.NowPlaying
@@ -98,16 +99,6 @@ object ListenSync {
     /** `1:02:05.4`, `1:05.0`, for the sync status line; `–` when unknown. */
     fun formatPosition(ms: Double?): String {
         if (ms == null || !ms.isFinite() || ms < 0) return "–"
-        return "${formatClock(ms)}.${floor((ms % 1000) / 100).toLong()}"
-    }
-
-    /** lib.js formatClock: `1:02:03` or `12:34`. */
-    private fun formatClock(ms: Double): String {
-        val total = floor(ms / 1000).toLong()
-        val h = total / 3600
-        val m = (total % 3600) / 60
-        val s = total % 60
-        fun pad(n: Long) = n.toString().padStart(2, '0')
-        return if (h > 0) "$h:${pad(m)}:${pad(s)}" else "$m:${pad(s)}"
+        return "${formatClock(floor(ms).toLong())}.${floor((ms % 1000) / 100).toLong()}"
     }
 }

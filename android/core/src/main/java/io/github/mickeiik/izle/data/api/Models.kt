@@ -297,7 +297,16 @@ data class AvailableUpdate(val versionName: String, val versionCode: Long, val s
 
 /** `GET /admin/devices`: one TV; `status` `pending` or `active`. */
 @Serializable
-data class AdminDevice(val id: String, val name: String, val status: String = "active", val online: Boolean = false, val lastSeenAt: String? = null)
+data class AdminDevice(
+    val id: String,
+    val name: String,
+    val status: String = "active",
+    val online: Boolean = false,
+    val lastSeenAt: String? = null,
+    val effective: DeviceEffective? = null,
+    val problems: DeviceProblems? = null,
+    val homeCount: Int? = null,
+)
 
 @Serializable
 data class DevicesResponse(val devices: List<AdminDevice> = emptyList())
@@ -408,4 +417,4 @@ data class LinkResponse(val link: StoredLink)
 data class CopyToItemResponse(val updated: Int, val episodeIds: List<String> = emptyList())
 
 @Serializable
-internal data class ErrorBody(val error: String = "unknown")
+internal data class ErrorBody(val error: String = "unknown", val runId: String? = null)

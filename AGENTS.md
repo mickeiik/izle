@@ -1,8 +1,9 @@
 # AGENTS.md
 
 Guidance for coding agents (and humans) working in this repository. What the software does: the specs in
-[docs/spec/](docs/spec/), the UX rules in [docs/ux/senior-tv.md](docs/ux/senior-tv.md) (the TV) and
-[docs/ux/admin-home.md](docs/ux/admin-home.md) (a TV's Home on the admin page). Append a line or two to
+[docs/spec/](docs/spec/), the UX rules in [docs/ux/senior-tv.md](docs/ux/senior-tv.md) (the TV),
+[docs/ux/admin-home.md](docs/ux/admin-home.md) (a TV's Home on the admin page), and [docs/ux/companion.md](docs/ux/companion.md)
+with [docs/ux/companion-home.md](docs/ux/companion-home.md) (the phone app). Append a line or two to
 [docs/decisions.md](docs/decisions.md) only for a choice that the code, the docs and this file do not explain.
 
 ## Product principles
@@ -82,6 +83,9 @@ imports, ESM only, erasable syntax only (no enums, no parameter properties, no n
 - AGP 9 has built-in Kotlin: **never apply `org.jetbrains.kotlin.android`**. It is declared `apply false` in the
   root build only to lift the Kotlin Gradle Plugin version; check with `./gradlew buildEnvironment`.
 - `compileSdk` 37 (required by the compose BOM), `targetSdk` 36, `minSdk` 24.
+- The companion's look lives in one place, its design system (`companion/…/ui/design`, specified in
+  [docs/ux/companion-design.md](docs/ux/companion-design.md)): tokens and components; screens never style Material
+  components or use colour, shape or type literals themselves, and a unit test enforces it.
 - `android/core` is the library module shared with any future second app (API client and models, the media engine,
   shared domain helpers); Kotlin packages are unchanged (`io.github.mickeiik.izle.*`), shared test doubles live in its
   test fixtures (`testFixtures(project(":core"))`), and Robolectric's test setup is the `izle.robolectric-tests` plugin

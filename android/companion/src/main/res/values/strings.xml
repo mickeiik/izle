@@ -3,13 +3,18 @@
     <string name="app_name" translatable="false">izle companion</string>
 
     <!-- The app bar -->
-    <string name="change_tv">Change TV</string>
     <string name="more_options">More options</string>
     <string name="phones">Phones</string>
     <string name="disconnect_this_phone">Disconnect this phone</string>
     <string name="clear_browser_data">Clear browser cookies</string>
     <string name="browser_data_cleared">Browser cookies cleared.</string>
     <string name="back">Back</string>
+
+    <!-- Shared words -->
+    <string name="close">Close</string>
+    <string name="show">Show</string>
+    <string name="hide">Hide</string>
+    <string name="just_now">just now</string>
 
     <!-- Connecting this phone -->
     <string name="connect_title">Connect to your TV</string>
@@ -19,9 +24,8 @@
     <string name="use_token">Use a token instead</string>
     <string name="use_code">Use the code instead</string>
     <string name="access_token">Access token</string>
-    <string name="show_token">Show</string>
-    <string name="hide_token">Hide</string>
     <string name="connect">Connect</string>
+    <string name="connecting">Connecting…</string>
     <string name="error_invalid_address">That is not a valid server address.</string>
     <string name="error_unreachable">The server cannot be reached. Check the address, and that this phone can reach it.</string>
     <string name="error_code_not_accepted">That code is not valid any more. Open Connect a phone on the TV again.</string>
@@ -32,12 +36,10 @@
     <string name="error_server">The server answered: %1$s.</string>
 
     <!-- The phones -->
-    <string name="phones_title">Phones</string>
     <string name="phones_hint">Each phone was connected from a TV. To connect another one, on the TV hold OK, then Settings → Connect a phone.</string>
     <string name="this_phone">This phone</string>
     <string name="phone_last_used">Last used %1$s</string>
     <string name="phone_never_used">Not used yet</string>
-    <string name="phone_used_just_now">Last used just now</string>
     <string name="disconnect">Disconnect</string>
     <string name="cancel">Cancel</string>
     <string name="disconnect_title">Disconnect %1$s?</string>
@@ -54,50 +56,86 @@
     <string name="tv_never_seen">Not seen yet</string>
     <string name="try_again">Try again</string>
 
+    <!-- The TV page -->
+    <string name="tab_now">Now</string>
+    <string name="tab_home">Home</string>
+    <string name="switch_tv">Switch TV</string>
+    <string name="tv_offline_seen">Offline · seen %1$s</string>
+    <string name="tv_offline">Offline</string>
+    <string name="nothing_is_playing">Nothing is playing</string>
+    <string name="channel_line">Channel · %1$s</string>
+    <string name="listen_along">Listen along</string>
+    <string name="listening_bar">Listening · %1$s</string>
+    <string name="listening_bar_hint">Tap the bar for source and timing</string>
+    <string name="previous_episode">Previous episode</string>
+    <string name="next_episode">Next episode</string>
+    <string name="previous_channel">Previous channel</string>
+    <string name="next_channel">Next channel</string>
+    <string name="back_30">Back 30 seconds</string>
+    <string name="forward_30">Forward 30 seconds</string>
+    <string name="seek_back_label">−30</string>
+    <string name="seek_forward_label">+30</string>
+    <string name="play">Play</string>
+    <string name="pause">Pause</string>
+    <string name="stop_the_tv">Stop the TV</string>
+    <string name="message">Message</string>
+    <string name="send_message">Send a message to the TV</string>
+    <string name="message_title">A message for %1$s</string>
+    <string name="message_counter">%1$d / %2$d</string>
+    <string name="show_for">Show for</string>
+    <string name="show_15s">15 s</string>
+    <string name="show_1min">1 min</string>
+    <string name="show_2min">2 min</string>
+    <string name="send">Send</string>
+
     <!-- Listen along -->
-    <string name="listen_intro">Hear another source of what the TV is playing, on this phone, in sync with the picture. Plug in earphones first.</string>
-    <string name="what_the_tv_plays">What the TV plays</string>
-    <string name="nothing_playing">The TV is not playing anything right now.</string>
-    <string name="channel_playing">“%1$s” is a channel. Listen along is not available for a channel: it has no timeline to follow.</string>
-    <string name="tv_state_playing">Playing</string>
-    <string name="tv_state_paused">Paused</string>
-    <string name="tv_state_starting">Starting</string>
-    <string name="tv_state_stopped">Stopped</string>
-    <string name="audio_on_this_phone">Audio on this phone</string>
+    <string name="source">Source</string>
     <string name="no_candidates">This episode has no source this phone can play along.</string>
+    <string name="listen">Listen</string>
+    <string name="stop">Stop</string>
+    <string name="earphone_delay">Earphone delay</string>
+    <string name="nudge_minus">−50 ms</string>
+    <string name="nudge_plus">+50 ms</string>
+    <string name="minus_sign" translatable="false">−</string>
+    <string name="plus_sign" translatable="false">+</string>
+    <string name="earphone_delay_hint">kept on this phone</string>
+    <string name="sync_details">Sync details</string>
+    <string name="not_listening">Not listening</string>
+
+    <!-- Timing for this source (issue #34; the admin card has the same words) -->
+    <string name="timing_title">Timing for this source</string>
+    <string name="line_it_up">Line it up</string>
+    <string name="mark_hint">Tap when you see a moment on the TV, then when you hear it on the phone, in either order.</string>
+    <string name="mark_on_tv">Mark on TV</string>
+    <string name="mark_on_phone">Mark on phone</string>
+    <string name="offset">Offset</string>
+    <string name="edit">Edit</string>
     <string name="offset_label">Offset (seconds)</string>
-    <string name="speed_label">Speed</string>
     <string name="flip_sign">Change the sign</string>
     <string name="flip_sign_symbol" translatable="false">±</string>
-    <string name="timing_hint">Offset: where the companion is when the TV is at 0:00 (negative when it starts earlier). Speed: companion seconds per TV second, e.g. 1.0427 for a PAL transfer against a film-rate source. Changes apply while you listen; Save keeps them.</string>
+    <string name="nudges_hint">Moves the phone at once while you listen</string>
+    <string name="speed">Speed</string>
+    <string name="speed_other">Other</string>
+    <string name="speed_label">Speed (0.5–2)</string>
     <string name="timing_invalid">Offset or speed is not a valid number (speed 0.5–2).</string>
     <string name="save_timing">Save timing</string>
     <string name="apply_to_all">Apply to all episodes</string>
-    <string name="listen">Listen</string>
-    <string name="stop">Stop</string>
-    <string name="nudge_minus">−50 ms</string>
-    <string name="nudge_plus">+50 ms</string>
-    <string name="nudge_hint">for your earphones\' delay; remembered on this phone</string>
 
     <!-- A link found on this phone (the pasted option) -->
-    <string name="found_link_none">No link yet</string>
-    <string name="found_link_ready">A link is ready</string>
-    <string name="find_link">Find a link</string>
-    <string name="find_new_link">Find a new link</string>
+    <string name="found_link_none">Found link · none yet</string>
+    <string name="found_link_ready">Found link · ready</string>
+    <string name="find_link">Find</string>
+    <string name="find_new_link">Find new</string>
     <string name="forget_link">Forget</string>
 
     <!-- The notification -->
-    <string name="notification_channel">Listen along</string>
-    <string name="notification_stop">Stop</string>
     <string name="notification_starting">starting</string>
 
     <!-- The link finder -->
-    <string name="finder_close">Close</string>
     <string name="finder_address">Web address</string>
     <string name="finder_go">Go</string>
     <string name="finder_hint">Start the video on the page; its stream shows up here.</string>
     <string name="finder_paste_toggle">Paste a link</string>
-    <string name="finder_paste_hide">Hide</string>
     <string name="finder_paste">Link to a playlist</string>
     <string name="finder_use">Use</string>
     <string name="finder_paste_error">That link did not open as a playlist on this phone.</string>

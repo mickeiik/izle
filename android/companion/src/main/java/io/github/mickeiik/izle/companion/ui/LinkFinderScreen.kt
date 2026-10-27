@@ -11,6 +11,7 @@ import android.webkit.WebViewClient
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewFeature
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,16 +24,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.Button
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -49,7 +42,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.util.concurrent.atomic.AtomicReference
@@ -60,6 +52,14 @@ import io.github.mickeiik.izle.companion.finder.LinkFinder
 import io.github.mickeiik.izle.companion.finder.addressUrl
 import io.github.mickeiik.izle.companion.finder.isHttpUrl
 import io.github.mickeiik.izle.companion.finder.opensInBrowser
+import io.github.mickeiik.izle.companion.ui.design.ButtonKind
+import io.github.mickeiik.izle.companion.ui.design.Caption
+import io.github.mickeiik.izle.companion.ui.design.Hairline
+import io.github.mickeiik.izle.companion.ui.design.IconAction
+import io.github.mickeiik.izle.companion.ui.design.IzleButton
+import io.github.mickeiik.izle.companion.ui.design.IzleTheme
+import io.github.mickeiik.izle.companion.ui.design.ProgressBar
+import io.github.mickeiik.izle.companion.ui.design.Tone
 
 /**
  * The link finder: a browser for the page that plays the episode. Every request the page makes is offered to
@@ -82,7 +82,7 @@ fun LinkFinderScreen(
     var pasted by remember { mutableStateOf("") }
     var pasteOpen by remember { mutableStateOf(false) }
     val browser = remember { BrowserHolder() }
-    val background = MaterialTheme.colorScheme.surface.toArgb()
+    val background = IzleTheme.colors.surface.toArgb()
 
     BackHandler {
         val web = browser.view
@@ -111,17 +111,16 @@ fun LinkFinderScreen(
         }
     }
 
+    val sp = IzleTheme.spacing
     Column(modifier = modifier.fillMaxSize()) {
         // The address row is the finder's whole chrome (no app bar above it). It is drawn before the WebView, in its
         // own surface, and the WebView is clipped to its own bounds so it never paints over the row.
-        Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth().background(IzleTheme.colors.surface)) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(start = sp.xs, end = sp.xs, bottom = sp.xs),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(onClick = onClose) {
-                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.finder_close))
-                }
+                IconAction(Icons.Filled.Close, stringResource(R.string.close), onClick = onClose)
                 OutlinedTextField(
                     value = address,
                     onValueChange = { address = it },
@@ -131,8 +130,9 @@ fun LinkFinderScreen(
                     keyboardActions = KeyboardActions(onGo = { go() }),
                     modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = go) { Text(stringResource(R.string.finder_go)) }
+                IzleButton(stringResource(R.string.finder_go), onClick = go, kind = ButtonKind.Quiet)
             }
+            Hairline()
         }
         AndroidView(
             factory = { context ->
@@ -157,73 +157,69 @@ fun LinkFinderScreen(
             },
             modifier = Modifier.weight(1f).fillMaxWidth().clipToBounds(),
         )
-        Surface(tonalElevation = 3.dp, modifier = Modifier.fillMaxWidth()) {
-            Box {
-                Column {
-                    if (found == null && pasteOpen) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            OutlinedTextField(
-                                value = pasted,
-                                onValueChange = { pasted = it },
-                                label = { Text(stringResource(R.string.finder_paste)) },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
-                                modifier = Modifier.weight(1f),
-                            )
-                            OutlinedButton(
-                                onClick = {
-                                    // The pasted link moves to the finder: the field is cleared so its URL is not left on screen.
-                                    finder.paste(pasted)
-                                    pasted = ""
-                                    focus.clearFocus()
-                                },
-                                enabled = pasted.isNotBlank(),
-                            ) { Text(stringResource(R.string.finder_use)) }
-                        }
-                        if (state.pasteError) {
-                            Text(
-                                stringResource(R.string.finder_paste_error),
-                                color = MaterialTheme.colorScheme.error,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp),
-                            )
-                        }
-                    }
+        Box(Modifier.fillMaxWidth().background(IzleTheme.colors.surface)) {
+            Column {
+                Hairline()
+                if (found == null && pasteOpen) {
                     Row(
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp).padding(start = 16.dp, end = 8.dp),
+                        modifier = Modifier.fillMaxWidth().padding(start = sp.lg, end = sp.sm, top = sp.sm),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(sp.sm),
                     ) {
-                        if (found != null) {
-                            Text(
-                                stringResource(R.string.finder_found),
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Button(onClick = { onListenToThis(found) }) { Text(stringResource(R.string.finder_listen_to_this)) }
-                        } else {
-                            Text(
-                                stringResource(R.string.finder_hint),
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                            TextButton(onClick = togglePaste) {
-                                Text(stringResource(if (pasteOpen) R.string.finder_paste_hide else R.string.finder_paste_toggle))
-                            }
-                        }
+                        OutlinedTextField(
+                            value = pasted,
+                            onValueChange = { pasted = it },
+                            label = { Text(stringResource(R.string.finder_paste)) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrectEnabled = false),
+                            modifier = Modifier.weight(1f),
+                        )
+                        IzleButton(
+                            stringResource(R.string.finder_use),
+                            onClick = {
+                                // The pasted link moves to the finder: the field is cleared so its URL is not left on screen.
+                                finder.paste(pasted)
+                                pasted = ""
+                                focus.clearFocus()
+                            },
+                            enabled = pasted.isNotBlank(),
+                        )
+                    }
+                    if (state.pasteError) {
+                        Caption(
+                            stringResource(R.string.finder_paste_error),
+                            tone = Tone.Danger,
+                            modifier = Modifier.padding(start = sp.lg, end = sp.lg, top = sp.xs),
+                        )
                     }
                 }
-                // A thin line over the top edge while a link is checked: the bar keeps its height.
-                if (state.checking) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter))
+                Row(
+                    modifier = Modifier.fillMaxWidth().heightIn(min = IzleTheme.sizes.listRow).padding(start = sp.lg, end = sp.sm),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(sp.sm),
+                ) {
+                    if (found != null) {
+                        Text(
+                            stringResource(R.string.finder_found),
+                            style = IzleTheme.type.body,
+                            color = IzleTheme.colors.textPrimary,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IzleButton(stringResource(R.string.finder_listen_to_this), onClick = { onListenToThis(found) }, kind = ButtonKind.Primary)
+                    } else {
+                        Caption(stringResource(R.string.finder_hint), maxLines = 2, modifier = Modifier.weight(1f))
+                        IzleButton(
+                            stringResource(if (pasteOpen) R.string.hide else R.string.finder_paste_toggle),
+                            onClick = togglePaste,
+                            kind = ButtonKind.Quiet,
+                        )
+                    }
+                }
             }
+            // A thin line over the top edge while a link is checked: the bar keeps its height.
+            if (state.checking) ProgressBar(null, Modifier.align(Alignment.TopCenter))
         }
     }
 }

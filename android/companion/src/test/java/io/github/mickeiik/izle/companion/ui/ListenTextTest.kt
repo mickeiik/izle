@@ -94,8 +94,6 @@ class ListenTextTest {
             "TV 1:05.0 · drift −1.5 s · seeking · MPEG-TS",
             statusLine(ListenState(phase = ListenPhase.Listening, tvPositionMs = 65_000.0, driftMs = -1_540.0, syncLabel = "seeking", mediaKind = "ts")),
         )
-        assertEquals("nudge +0 ms", nudgeText(0))
-        assertEquals("nudge −50 ms", nudgeText(-50))
     }
 
     @Test
