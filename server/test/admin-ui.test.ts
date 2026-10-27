@@ -8,7 +8,7 @@ import {
   foldText, sinceAt, yearValue,
   actorLabel, buildSummary, candidateOptions, catalogContents, clockOffset, commandResultText, companionTarget,
   continueText, episodeHistoryLine, episodeName, episodeStateLabel, episodeStates, errorText, formatClock, formatCode,
-  formatCountdown, formatDrift, formatDuration, formatPosition, formatRelative, gridSummary, groupEpisodeChanges, isActive, issueLine,
+  formatCountdown, formatDrift, formatDuration, formatOffset, formatPosition, markOffset, OFFSET_NUDGES_MS, SPEED_PRESETS, speedPreset, formatRelative, gridSummary, groupEpisodeChanges, isActive, issueLine,
   languageLabel, liveViewingLine, mediaKindLabel, nowPlayingLine, parseCandidate, parseSse, percent, playbackState, plural,
   phoneLine, problemContext, resumes, sameLanguage, scopeLabel, serverAddress, shortId, showMeta, sourceReport, syncDecision,
   checkSummaryText, homeCheckLines, runProgressText, runTitle, skippedText, stepText, verdictChip, verdictOf,
@@ -806,6 +806,22 @@ test("every module the admin UI imports exists and is allow-listed", async () =>
     }
   }
   for (const file of await adminScripts()) assert.ok(reached.has(file), `${file} is imported by some module (or is the entry)`);
+});
+
+test("listen along timing by ear: offset readout, two-tap mark, nudges, speed presets", () => {
+  cases([
+    [formatOffset(0), "+0:00.0"], [formatOffset(83_500), "+1:23.5"], [formatOffset(-4_000), "−0:04.0"],
+    [formatOffset(-49), "+0:00.0", "rounds first; zero has no minus"], [formatOffset(-1_250), "−0:01.3", "half away from zero"],
+    [formatOffset(3_600_000), "+60:00.0"],
+    [markOffset(100_000, 101_500, 1), 1_500], [markOffset(600_000, 500_000, 1.0427), Math.round(500_000 - 625_620)],
+    [markOffset(0, 4_000, 0.9591), 4_000], [markOffset(1_000, 0, 1), -1_000],
+    [speedPreset(1), "same"], [speedPreset(1.0427), "pal-film"], [speedPreset(0.9591), "film-pal"],
+    [speedPreset(1.04274), "pal-film", "within 0.00005"], [speedPreset(1.0428), "other"], [speedPreset(1.5), "other"],
+  ]);
+  assert.deepEqual([...OFFSET_NUDGES_MS], [-30_000, -5_000, -500, 500, 5_000, 30_000]);
+  assert.deepEqual(SPEED_PRESETS.map((p) => p.rate), [1, 1.0427, 0.9591]);
+  // A mark puts the companion at the marked moment: rate · tv + offset = phone.
+  assert.ok(Math.abs(companionTarget(724_200, { rate: 1.0427, offsetMs: markOffset(724_200, 725_500, 1.0427) }) - 725_500) <= 0.5);
 });
 
 test("listen along helpers: TV position, companion target, sync decisions, clock offset, candidate options", () => {
