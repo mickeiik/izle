@@ -1,5 +1,9 @@
 package io.github.mickeiik.izle.data.api
 
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.JsonObject
@@ -15,9 +19,6 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import java.io.IOException
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 /**
  * The server answered with an error status. `code` is the API error code (`not_allowed`, `expired`, …); [runId] is
@@ -59,6 +60,14 @@ class ApiClient(
     private val userAgent: () -> String? = { null },
 ) {
     private fun url(path: String): HttpUrl = baseUrl.resolve(path) ?: error("bad path $path")
+
+    /**
+     * For the calls the server may work on for minutes: a check of every source of an episode (20 s each) and a catalog
+     * reload (it hashes every poster). Shares [longPollHttp]'s pool.
+     */
+    private val slowHttp: OkHttpClient by lazy {
+        longPollHttp.newBuilder().readTimeout(SLOW_CALL_MIN, TimeUnit.MINUTES).callTimeout(SLOW_CALL_MIN, TimeUnit.MINUTES).build()
+    }
 
     /** A server-handed URL made absolute; null when unusable. */
     fun resolve(reference: String?): HttpUrl? = reference?.let { ServerUrls.resolve(baseUrl, it) }
@@ -328,7 +337,7 @@ class ApiClient(
      */
     suspend fun reloadCatalog(): AdminCatalog {
         val request = authorize(Request.Builder().url(url("api/v1/admin/catalog/reload")).post(EMPTY_BODY)).build()
-        return exchange(request, longPollHttp).decode(CatalogResponse.serializer()).catalog
+        return exchange(request, slowHttp).decode(CatalogResponse.serializer()).catalog
     }
 
     /**
@@ -406,7 +415,7 @@ class ApiClient(
             episodeId?.let { put("episodeId", it) }
             itemId?.let { put("itemId", it) }
         }
-        val raw = exchange(jsonRequest(url("api/v1/admin/diagnostics/resolve"), "POST", body), longPollHttp)
+        val raw = exchange(jsonRequest(url("api/v1/admin/diagnostics/resolve"), "POST", body), slowHttp)
         return raw.decode(PlayableReport.serializer())
     }
 
@@ -480,5 +489,6 @@ class ApiClient(
         val JSON = "application/json".toMediaType()
         val EMPTY_BODY: RequestBody = ByteArray(0).toRequestBody(null)
         val SHA256 = Regex("^[0-9a-fA-F]{64}$")
+        const val SLOW_CALL_MIN = 5L
     }
 }
