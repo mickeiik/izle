@@ -10,7 +10,7 @@
   --danger: #b3261e; --danger-bg: #fbe4e2; --on-danger: #ffffff;
   /* A channel's "Live" chip and the TV's own colours (the TV app's theme) stay the same in both themes. */
   --live: #c62828; --on-live: #ffffff;
-  --tv-bg: #0b0b0f; --tv-surface: #1c1c24; --tv-text: #f5f5f7; --tv-dim: #b8b8c4; --tv-focus: #ffffff; --tv-bezel: #18181d;
+  --tv-bg: #0b0b0f; --tv-surface: #1c1c24; --tv-surface-high: #2a2a35; --tv-text: #f5f5f7; --tv-dim: #b8b8c4; --tv-focus: #ffffff; --tv-bezel: #18181d;
   --tv-chip: #e2e2ea; --on-tv-chip: #15151b; --tv-new: #7fe3c4; --on-tv-new: #002118; --tv-accent: #ffc94d; --on-tv-accent: #1a1300;
   --tv-hairline: rgb(255 255 255 / 20%); --tv-track: rgb(255 255 255 / 33%); --tv-shade: rgb(0 0 0 / 90%);
   --shadow: 0 1px 2px rgb(0 0 0 / 6%), 0 2px 8px rgb(0 0 0 / 4%);
@@ -322,7 +322,8 @@ p.add-section { font-size: var(--text-sm); }
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--face-lines); line-clamp: var(--face-lines); overflow: hidden;
   overflow-wrap: anywhere; font-size: 24px; line-height: 32px; font-weight: 700;
 }
-.tv-panel { position: relative; flex: none; width: calc(var(--open-w) - var(--card-w)); height: 100%; background: var(--tv-surface); }
+/* The open card's panel is lighter than the card's face, as on the TV (its SurfaceHigh). */
+.tv-panel { position: relative; flex: none; width: calc(var(--open-w) - var(--card-w)); height: 100%; background: var(--tv-surface-high); }
 .tv-backdrop, .tv-backdrop img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
 .tv-backdrop { overflow: hidden; }
 .tv-backdrop img { object-fit: cover; }
