@@ -40,6 +40,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import coil3.compose.AsyncImage
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
@@ -77,7 +81,7 @@ fun NowTab(state: CompanionUi.Tv, vm: CompanionViewModel, modifier: Modifier = M
                 style = MaterialTheme.typography.labelLarge,
                 color = if (state.online) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            state.now?.let { NowCard(it, state.nowAtMs) }
+            state.now?.let { NowCard(it, state.nowAtMs, state.posterUrl) }
             ListenAlongEntry(state, vm)
             Text(stringResource(R.string.remote), style = MaterialTheme.typography.titleMedium)
             Remote(state.now, vm)
@@ -112,7 +116,7 @@ private fun onlineText(state: CompanionUi.Tv): String {
 
 /** What plays: the title, the episode, a progress bar and `12:04 / 30:10 · playing`, moved on from the anchor. */
 @Composable
-private fun NowCard(now: NowResponse, nowAtMs: Long) {
+private fun NowCard(now: NowResponse, nowAtMs: Long, posterUrl: String?) {
     val n = now.nowPlaying
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -120,8 +124,17 @@ private fun NowCard(now: NowResponse, nowAtMs: Long) {
                 Text(stringResource(R.string.nothing_is_playing), style = MaterialTheme.typography.titleMedium)
                 return@Column
             }
-            // The playing item's poster goes here once the companion depends on coil (the Home tab adds it).
-            Text(n.itemTitle ?: n.itemId, style = MaterialTheme.typography.titleLarge)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (posterUrl != null) {
+                    AsyncImage(
+                        posterUrl,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(width = 48.dp, height = 72.dp).clip(RoundedCornerShape(4.dp)),
+                    )
+                }
+                Text(n.itemTitle ?: n.itemId, style = MaterialTheme.typography.titleLarge)
+            }
             if (n.isLive) {
                 Text(stringResource(R.string.channel_line, n.state), style = MaterialTheme.typography.bodyMedium)
                 return@Column
