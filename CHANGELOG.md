@@ -11,8 +11,9 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 - **App cards and izle as the home screen.** The owner can put cards that open an app installed on the TV on its
   Home, in any section among the shows (admin page: **Apps on <TV>**; izle companion: the **Apps** chip of Add show);
   the TV reports its apps with their banners. Hidden menu → Settings → **Home screen** makes izle the TV's launcher,
-  so HOME and switching the TV on open izle's Home; **TV settings** (also on the server address screen) opens
-  Android's settings.
+  so HOME and switching the TV on open izle's Home (a TV whose own home screen claims HOME first, as Google's TV home
+  screen does, keeps it until that one is turned off with adb); **TV settings** (also on the server address screen)
+  opens Android's settings.
 - **izle companion: a TV's problems, settings and activity, and pairing from the phone.** A fourth tab, **TV**, with
   a red dot while the TV had problems in the last day: its problems in words (show, episode, source, when; a problem's
   sheet has the details, **Check this episode now** and **Open the show**), **Clear**; its app version with **Update
