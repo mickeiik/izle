@@ -15,6 +15,11 @@
     <string name="show">Show</string>
     <string name="hide">Hide</string>
     <string name="just_now">just now</string>
+    <string name="ago_min">%d min ago</string>
+    <string name="ago_h">%d h ago</string>
+    <string name="ago_d">%d d ago</string>
+    <string name="today">Today</string>
+    <string name="yesterday">Yesterday</string>
 
     <!-- Connecting this phone -->
     <string name="connect_title">Connect to your TV</string>

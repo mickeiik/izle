@@ -27,6 +27,7 @@ import io.github.mickeiik.izle.data.api.AdminDevice
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.ApiException
 import io.github.mickeiik.izle.data.api.CompanionResponse
+import io.github.mickeiik.izle.data.api.DeviceProblems
 import io.github.mickeiik.izle.data.api.LinkTiming
 import io.github.mickeiik.izle.data.api.LinkUpdate
 import io.github.mickeiik.izle.data.api.NowPlaying
@@ -65,7 +66,7 @@ sealed interface ConnectError {
 }
 
 /** The TV page's bottom bar. */
-enum class TvTab { Now, Home, Catalog }
+enum class TvTab { Now, Home, Catalog, Tv }
 
 /** What the app shows; [CompanionRoot] switches on it. */
 sealed interface CompanionUi {
@@ -96,9 +97,10 @@ sealed interface CompanionUi {
     ) : CompanionUi
 
     /**
-     * One TV's page: the Now, Home and Catalog tabs ([tab]), Listen along over Now ([listenOpen]), and a show's page over
-     * the tabs ([openShow], with [openShowTitle] once read). [device]: the TV as the
-     * list gives it (its last-seen time); [severalTvs]: the server has more than one, so Back goes to the list.
+     * One TV's page: the Now, Home, Catalog and TV tabs ([tab]), Listen along over Now ([listenOpen]), a show's page over
+     * the tabs ([openShow], with [openShowTitle] once read) and the TV's Activity over the TV tab ([activityOpen]).
+     * [device]: the TV as the list gives it (its last-seen time, its problems of the last 24 hours, which the TV tab
+     * keeps current); [severalTvs]: the server has more than one, so Back goes to the list.
      *
      * Now: [now] is the last `GET …/now` answer, followed while the tab is shown, which arrived at [nowAtMs]
      * (`SystemClock.elapsedRealtime`); [posterUrl]: the playing item's poster, resolved against the server.
@@ -140,6 +142,7 @@ sealed interface CompanionUi {
         val otherSpeed: Boolean = false,
         val openShow: String? = null,
         val openShowTitle: String? = null,
+        val activityOpen: Boolean = false,
     ) : CompanionUi {
         val isChannel: Boolean get() = nowPlaying?.isLive == true
         val listening: Boolean get() = session.phase != ListenPhase.Idle
@@ -554,7 +557,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- the TV page: tabs, Now, the remote, a message -------------------------------------------------------------
 
-    fun selectTab(tab: TvTab) = updateTv { it.copy(tab = tab, listenOpen = false, openShow = null, openShowTitle = null) }
+    fun selectTab(tab: TvTab) = updateTv { it.copy(tab = tab, listenOpen = false, openShow = null, openShowTitle = null, activityOpen = false) }
 
     /** A show's page, full screen over the tabs; the page hands its title (for the bar) to [showTitle] once read. */
     fun openShow(itemId: String) = updateTv { it.copy(openShow = itemId, openShowTitle = null) }
@@ -562,6 +565,21 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     fun showTitle(itemId: String, title: String) = updateTv { if (it.openShow == itemId) it.copy(openShowTitle = title) else it }
 
     fun closeShow() = updateTv { it.copy(openShow = null, openShowTitle = null) }
+
+    /** The TV's Activity, full screen over the TV tab. */
+    fun openActivity() = updateTv { it.copy(activityOpen = true, openShow = null, openShowTitle = null) }
+
+    fun closeActivity() = updateTv { it.copy(activityOpen = false) }
+
+    /** The TV tab read [recent] problems of the last 24 hours: the tab's dot follows. */
+    fun problemsChanged(recent: Int) = updateTv { tv ->
+        val device = tv.device
+        if (device == null || device.problems?.recent == recent) tv
+        else tv.copy(device = device.copy(problems = (device.problems ?: DeviceProblems()).copy(recent = recent)))
+    }
+
+    /** The TV tab read (or saved) the TV's name: the app bar follows. */
+    fun renamed(name: String) = updateTv { it.copy(tvName = name, device = it.device?.copy(name = name)) }
 
     /** Listen along, over Now: what it offers is read again at once. */
     fun openListen() {

@@ -25,7 +25,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.mickeiik.izle.companion.R
+import io.github.mickeiik.izle.companion.activity.ActivityScreen
 import io.github.mickeiik.izle.companion.catalog.CatalogTab
+import io.github.mickeiik.izle.companion.device.DeviceTab
 import io.github.mickeiik.izle.companion.catalog.ShowScreen
 import io.github.mickeiik.izle.companion.finder.BrowserData
 import io.github.mickeiik.izle.companion.home.HomeTab
@@ -45,7 +47,9 @@ import kotlinx.coroutines.launch
  * along opens over Now with a back arrow. The menu holds what is not about the TV: the server's phones, disconnecting
  * this phone, the browser's cookies; screens opened from it (Phones) have a back arrow. Back on a TV's page goes to
  * the TV list when the server has more than one TV, else it leaves the app (listening goes on in its notification).
- * A show's page (from the Catalog tab) covers the tabs, with a back arrow and the show's title; Back closes it.
+ * A show's page (from the Catalog tab, or a problem on the TV tab) covers the tabs, with a back arrow and the show's
+ * title; so does the TV's Activity (from the TV tab), titled "Activity"; Back closes either. The TV tab carries a dot
+ * while the TV has problems from the last 24 hours; forgetting the TV goes to the TV list.
  */
 @Composable
 fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
@@ -65,9 +69,13 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
     // the room. Without a top bar the Scaffold's insets still start the content below the status bar.
     val finderOpen = tv?.finderOpen == true
     val showOpen = tv?.openShow != null && !finderOpen && !tv.listenOpen
+    val activityOpen = tv?.activityOpen == true && !showOpen && !finderOpen && !tv.listenOpen
+    // A page over the tabs: no tabs, no app menu, a back arrow.
+    val overTabs = showOpen || activityOpen
     BackHandler(enabled = tv != null && tv.listenOpen && !finderOpen, onBack = vm::closeListen)
-    BackHandler(enabled = tv != null && !tv.listenOpen && !showOpen && tv.severalTvs, onBack = vm::changeTv)
+    BackHandler(enabled = tv != null && !tv.listenOpen && !overTabs && tv.severalTvs, onBack = vm::changeTv)
     BackHandler(enabled = showOpen, onBack = vm::closeShow)
+    BackHandler(enabled = activityOpen, onBack = vm::closeActivity)
     Scaffold(
         topBar = {
             if (!finderOpen) {
@@ -76,6 +84,7 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
                     title = when {
                         tv?.listenOpen == true -> stringResource(R.string.listen_along)
                         showOpen -> tv?.openShowTitle.orEmpty()
+                        activityOpen -> stringResource(R.string.activity)
                         tv != null -> tv.tvName ?: appName
                         ui is CompanionUi.Phones -> stringResource(R.string.phones)
                         else -> appName
@@ -84,12 +93,13 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
                         ui is CompanionUi.Phones -> vm::closePhones
                         tv?.listenOpen == true -> vm::closeListen
                         showOpen -> vm::closeShow
+                        activityOpen -> vm::closeActivity
                         else -> null
                     },
-                    onTitleClick = if (tv != null && !tv.listenOpen && !showOpen) vm::changeTv else null,
+                    onTitleClick = if (tv != null && !tv.listenOpen && !overTabs) vm::changeTv else null,
                     titleClickLabel = stringResource(R.string.switch_tv),
                     actions = {
-                        if (onTvScreen && !showOpen) {
+                        if (onTvScreen && !overTabs) {
                             AppMenu(
                                 onPhones = vm::openPhones,
                                 onDisconnect = { confirmDisconnect = true },
@@ -101,12 +111,18 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
             }
         },
         bottomBar = {
-            if (tv != null && !tv.listenOpen && !finderOpen && !showOpen) {
+            if (tv != null && !tv.listenOpen && !finderOpen && !overTabs) {
                 IzleBottomBar(
                     listOf(
                         TabItem(stringResource(R.string.tab_now), IzleIcons.Tv, tv.tab == TvTab.Now) { vm.selectTab(TvTab.Now) },
                         TabItem(stringResource(R.string.tab_home), IzleIcons.Grid, tv.tab == TvTab.Home) { vm.selectTab(TvTab.Home) },
                         TabItem(stringResource(R.string.tab_catalog), IzleIcons.Library, tv.tab == TvTab.Catalog) { vm.selectTab(TvTab.Catalog) },
+                        TabItem(
+                            stringResource(R.string.tab_tv),
+                            IzleIcons.Tune,
+                            tv.tab == TvTab.Tv,
+                            dot = (tv.device?.problems?.recent ?: 0) > 0,
+                        ) { vm.selectTab(TvTab.Tv) },
                     ),
                 )
             }
@@ -138,7 +154,24 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
                         onTitle = { vm.showTitle(itemId, it) },
                     )
                 }
+                activityOpen -> vm.apiClient?.let { api ->
+                    ActivityScreen(api, tvId = screen.tvId, tvName = screen.displayName, modifier = modifier)
+                }
                 screen.tab == TvTab.Now -> NowTab(screen, vm, modifier = modifier)
+                screen.tab == TvTab.Tv -> vm.apiClient?.let { api ->
+                    DeviceTab(
+                        api,
+                        tvId = screen.tvId,
+                        tvName = screen.displayName,
+                        onOpenShow = vm::openShow,
+                        onOpenActivity = vm::openActivity,
+                        onForgotten = vm::changeTv,
+                        onProblemsChanged = vm::problemsChanged,
+                        onMessage = vm::say,
+                        modifier = modifier,
+                        onRenamed = vm::renamed,
+                    )
+                }
                 screen.tab == TvTab.Catalog -> vm.apiClient?.let { api ->
                     CatalogTab(api, tvId = screen.tvId, tvName = screen.displayName, onOpenShow = vm::openShow, onMessage = vm::say, modifier = modifier)
                 }

@@ -102,6 +102,8 @@ data class IzleSizes(
     val hairline: Dp = 1.dp,
     val progress: Dp = 4.dp,
     val statusDot: Dp = 8.dp,
+    /** A [FactRow]'s label column. */
+    val factLabel: Dp = 72.dp,
     /** The active tab's indicator behind its icon. */
     val tabIndicator: DpSize = DpSize(56.dp, 28.dp),
 )

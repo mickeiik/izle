@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -166,12 +168,13 @@ fun IzleTopBar(
     }
 }
 
-/** One tab of the [IzleBottomBar]. */
-data class TabItem(val label: String, val icon: ImageVector, val selected: Boolean, val onClick: () -> Unit)
+/** One tab of the [IzleBottomBar]; [dot] draws a small `danger` dot on its icon (the TV has problems). */
+data class TabItem(val label: String, val icon: ImageVector, val selected: Boolean, val dot: Boolean = false, val onClick: () -> Unit)
 
 /**
  * The bottom bar (64 dp, `surface`, a hairline above it, above the navigation bar): each tab an icon over its
- * `label`, the active one in `accent` on an `accentMuted` indicator, the others in `textSecondary`.
+ * `label`, the active one in `accent` on an `accentMuted` indicator, the others in `textSecondary`; a tab's [TabItem.dot]
+ * is an 8 dp `danger` dot at its icon's top end.
  */
 @Composable
 fun IzleBottomBar(tabs: List<TabItem>, modifier: Modifier = Modifier) {
@@ -192,6 +195,13 @@ fun IzleBottomBar(tabs: List<TabItem>, modifier: Modifier = Modifier) {
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(tab.icon, contentDescription = null, tint = color, modifier = Modifier.size(IzleTheme.sizes.icon))
+                        if (tab.dot) {
+                            val half = IzleTheme.sizes.icon / 2
+                            Box(
+                                Modifier.offset(x = half, y = -half + IzleTheme.sizes.statusDot / 2).size(IzleTheme.sizes.statusDot)
+                                    .clip(CircleShape).background(c.danger),
+                            )
+                        }
                     }
                     Spacer(Modifier.height(IzleTheme.spacing.xs))
                     Text(tab.label, style = IzleTheme.type.label, color = color, maxLines = 1)
