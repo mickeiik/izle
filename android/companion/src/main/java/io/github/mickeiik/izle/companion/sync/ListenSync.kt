@@ -102,7 +102,7 @@ object ListenSync {
     }
 
     /** lib.js formatClock: `1:02:03` or `12:34`. */
-    private fun formatClock(ms: Double): String {
+    fun formatClock(ms: Double): String {
         val total = floor(ms / 1000).toLong()
         val h = total / 3600
         val m = (total % 3600) / 60

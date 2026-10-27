@@ -12,7 +12,7 @@ import io.github.mickeiik.izle.companion.ui.CompanionViewModel
 import io.github.mickeiik.izle.companion.ui.theme.CompanionTheme
 
 /**
- * The only activity: connecting, the TV picker, the phones and Listen along (see [CompanionRoot]). It also opens the
+ * The only activity: connecting, the TV picker, the phones and a TV's page (see [CompanionRoot]). It also opens the
  * connect link ([ConnectLink]) that the server's `/connect` page hands over after the camera scanned a TV's QR code.
  */
 class MainActivity : ComponentActivity() {

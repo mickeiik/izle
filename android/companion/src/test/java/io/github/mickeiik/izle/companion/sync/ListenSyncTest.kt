@@ -86,6 +86,37 @@ class ListenSyncTest {
         assertFalse("no updatedAt", ListenSync.isActive(playing(updatedAt = null), NOW))
     }
 
+    /** admin-ui.test.ts "listen along timing by ear", case for case. */
+    @Test
+    fun timingByEar() {
+        assertEquals("+0:00.0", ListenTiming.formatOffset(0))
+        assertEquals("+1:23.5", ListenTiming.formatOffset(83_500))
+        assertEquals("−0:04.0", ListenTiming.formatOffset(-4_000))
+        assertEquals("rounds first; zero has no minus", "+0:00.0", ListenTiming.formatOffset(-49))
+        assertEquals("half away from zero", "−0:01.3", ListenTiming.formatOffset(-1_250))
+        assertEquals("+60:00.0", ListenTiming.formatOffset(3_600_000))
+
+        assertEquals(1_500L, ListenTiming.markOffset(100_000.0, 101_500.0, 1.0))
+        assertEquals(Math.round(500_000 - 625_620.0), ListenTiming.markOffset(600_000.0, 500_000.0, 1.0427))
+        assertEquals(4_000L, ListenTiming.markOffset(0.0, 4_000.0, 0.9591))
+        assertEquals(-1_000L, ListenTiming.markOffset(1_000.0, 0.0, 1.0))
+
+        assertEquals("same", ListenTiming.speedPreset(1.0))
+        assertEquals("pal-film", ListenTiming.speedPreset(1.0427))
+        assertEquals("film-pal", ListenTiming.speedPreset(0.9591))
+        assertEquals("within 0.00005", "pal-film", ListenTiming.speedPreset(1.04274))
+        assertEquals("other", ListenTiming.speedPreset(1.0428))
+        assertEquals("other", ListenTiming.speedPreset(1.5))
+
+        assertEquals(listOf(-30_000L, -5_000L, -500L, 500L, 5_000L, 30_000L), ListenTiming.OFFSET_NUDGES_MS)
+        assertEquals(listOf(1.0, 1.0427, 0.9591), ListenTiming.SPEED_PRESETS.map { it.rate })
+        assertEquals(listOf("Same speed", "PAL vs film", "Film vs PAL"), ListenTiming.SPEED_PRESETS.map { it.label })
+        assertEquals(listOf("−30 s", "−5 s", "−0.5 s", "+0.5 s", "+5 s", "+30 s"), ListenTiming.OFFSET_NUDGES_MS.map(ListenTiming::nudgeLabel))
+        // A mark puts the companion at the marked moment: rate · tv + offset = phone.
+        val offset = ListenTiming.markOffset(724_200.0, 725_500.0, 1.0427)
+        assertEquals(725_500.0, ListenSync.companionTarget(724_200.0, LinkTiming(offsetMs = offset, rate = 1.0427)), 0.5)
+    }
+
     private companion object {
         const val NOW = 1_800_000_000_000L
         fun iso(ms: Long) = Instant.ofEpochMilli(ms).toString()

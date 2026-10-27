@@ -1,6 +1,7 @@
 package io.github.mickeiik.izle.companion.ui
 
 import android.app.Application
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.mickeiik.izle.companion.BuildConfig
@@ -11,32 +12,36 @@ import io.github.mickeiik.izle.companion.connect.ConnectLink
 import io.github.mickeiik.izle.companion.finder.FoundLink
 import io.github.mickeiik.izle.companion.finder.LinkConfirmer
 import io.github.mickeiik.izle.companion.finder.LinkFinder
+import io.github.mickeiik.izle.companion.sync.EndReason
 import io.github.mickeiik.izle.companion.sync.ListenPhase
 import io.github.mickeiik.izle.companion.sync.ListenService
 import io.github.mickeiik.izle.companion.sync.ListenSession
 import io.github.mickeiik.izle.companion.sync.ListenState
 import io.github.mickeiik.izle.companion.sync.ListenTarget
-import io.github.mickeiik.izle.companion.sync.EndReason
+import io.github.mickeiik.izle.companion.sync.ListenTiming
 import io.github.mickeiik.izle.companion.sync.PASTED_SOURCE_ID
 import io.github.mickeiik.izle.data.api.AdminDevice
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.ApiException
+import io.github.mickeiik.izle.data.api.CommandInfo
 import io.github.mickeiik.izle.data.api.CompanionResponse
 import io.github.mickeiik.izle.data.api.LinkTiming
 import io.github.mickeiik.izle.data.api.LinkUpdate
 import io.github.mickeiik.izle.data.api.NowPlaying
+import io.github.mickeiik.izle.data.api.NowResponse
 import io.github.mickeiik.izle.data.api.Phone
 import io.github.mickeiik.izle.data.api.PhoneClaimRequest
 import io.github.mickeiik.izle.data.api.ServerUrls
 import io.github.mickeiik.izle.data.api.orNullOnFailure
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.IOException
@@ -56,6 +61,9 @@ sealed interface ConnectError {
     /** Any other API error, by its code. */
     data class Server(val code: String) : ConnectError
 }
+
+/** The TV page's bottom bar. */
+enum class TvTab { Now, Home }
 
 /** What the app shows; [CompanionRoot] switches on it. */
 sealed interface CompanionUi {
@@ -86,14 +94,29 @@ sealed interface CompanionUi {
     ) : CompanionUi
 
     /**
-     * Listen along for one TV. [loaded]: the first answer arrived; [nowPlaying] null: the TV plays nothing. [chosen] is
-     * one of [options]; the two texts are the timing fields ([timingValid]: both parse). [error]: the last refresh
-     * failed (the text says why). [foundLink]: the link found on this phone for the `pasted` option (in memory only,
-     * dropped when the TV moves to another episode or the link expires); [finderOpen]: the link finder is shown.
+     * One TV's page: the Now and Home tabs ([tab]), and Listen along over Now ([listenOpen]). [device]: the TV as the
+     * list gives it (its last-seen time); [severalTvs]: the server has more than one, so Back goes to the list.
+     *
+     * Now: [now] is the last `GET …/now` answer, followed while the tab is shown, which arrived at [nowAtMs]
+     * (`SystemClock.elapsedRealtime`); [posterUrl]: the playing item's poster, resolved against the server.
+     *
+     * Listen along (from `GET …/companion`): [loaded]: the first answer arrived; [nowPlaying] null: the TV plays
+     * nothing. [chosen] is one of [options]; the two texts are the timing fields ([timingValid]: both parse). [error]:
+     * the last refresh failed (the text says why). [foundLink]: the link found on this phone for the `pasted` option
+     * (in memory only, dropped when the TV moves to another episode or the link expires); [finderOpen]: the link finder
+     * is shown. [tvMarkMs] and [phoneMarkMs]: the two-tap mark's halves so far; [otherSpeed]: the speed's decimal field
+     * is open although the speed is a preset.
      */
-    data class Listen(
+    data class Tv(
         val tvId: String,
         val tvName: String? = null,
+        val device: AdminDevice? = null,
+        val severalTvs: Boolean = false,
+        val tab: TvTab = TvTab.Now,
+        val listenOpen: Boolean = false,
+        val now: NowResponse? = null,
+        val nowAtMs: Long = 0,
+        val posterUrl: String? = null,
         val loaded: Boolean = false,
         val nowPlaying: NowPlaying? = null,
         val options: List<CandidateOption> = emptyList(),
@@ -108,9 +131,18 @@ sealed interface CompanionUi {
         val error: String? = null,
         val foundLink: FoundLink? = null,
         val finderOpen: Boolean = false,
+        val tvMarkMs: Double? = null,
+        val phoneMarkMs: Double? = null,
+        val otherSpeed: Boolean = false,
     ) : CompanionUi {
         val isChannel: Boolean get() = nowPlaying?.isLive == true
         val listening: Boolean get() = session.phase != ListenPhase.Idle
+
+        /** The name the texts use. */
+        val displayName: String get() = tvName ?: "The TV"
+
+        /** Online as `/now` last said, else as the list did. */
+        val online: Boolean get() = now?.online ?: device?.online ?: false
 
         /** Listen needs an episode playing and a source chosen; the `pasted` option, a found link too. */
         val canListen: Boolean
@@ -121,10 +153,10 @@ sealed interface CompanionUi {
 
 /**
  * The companion's state and actions: connecting this phone (claiming the invite a TV shows, by its code or its QR
- * code's link), choosing the TV, the server's phones, and Listen along with
- * the graph's single [ListenSession] (the foreground [ListenService] keeps it playing when the screen is off).
- * Snackbar texts go to [snackbar], so one raised while the screen changes (a revoked token) is still shown. The
- * session belongs to the graph, not to this view model: it keeps playing after the activity is gone.
+ * code's link), choosing the TV, the server's phones, and a TV's page: Now (what it plays, the remote, a message) and
+ * Listen along with the graph's single [ListenSession] (the foreground [ListenService] keeps it playing when the
+ * screen is off). Snackbar texts go to [snackbar], so one raised while the screen changes (a revoked token) is still
+ * shown. The session belongs to the graph, not to this view model: it keeps playing after the activity is gone.
  */
 class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     private val graph: CompanionGraph = (app as CompanionApp).graph
@@ -141,9 +173,16 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     private var baseUrl: HttpUrl? = null
     private var api: ApiClient? = null
+
+    /** The paired server's API, for the Home tab; null while not connected. */
+    val apiClient: ApiClient? get() = api
     private var session: ListenSession? = null
     private var sessionJob: Job? = null
     private var refreshJob: Job? = null
+    private var nowJob: Job? = null
+
+    /** The item whose poster [CompanionUi.Tv.posterUrl] is (or is being read). */
+    private var posterFor: String? = null
 
     /** The last `/companion` answer and its identity (as companion.js's `candidatesKey`: unchanged answers are skipped). */
     private var candidates: CompanionResponse? = null
@@ -173,7 +212,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         if (url == null || s.token == null) return false
         phoneId = s.phoneId
         usePairing(url, s.token)
-        if (s.tvId != null) enterListen(s.tvId, name = null) else showPicker()
+        if (s.tvId != null) enterTv(s.tvId, devices = null) else showPicker()
         return true
     }
 
@@ -217,7 +256,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             val error = if (parsed == null) {
                 ConnectError.InvalidAddress
             } else {
-                leaveListen()
+                leaveTv()
                 _ui.value = shown
                 claim(parsed, PhoneClaimRequest(invite = link.invite, name = graph.phoneName())) ?: return@launch
             }
@@ -245,14 +284,14 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         if (previous != null && previousId != null && previousId != claim.phone.id) {
             viewModelScope.launch { withTimeoutOrNull(SELF_DELETE_MS) { orNullOnFailure { previous.deletePhone(previousId) } } }
         }
-        leaveListen()
+        leaveTv()
         linkFinder.clear()
         behindPhones = null
         store.savePairing(url.toString(), claim.secret, claim.phone.id, claim.deviceId)
         phoneId = claim.phone.id
         usePairing(url, claim.secret)
         val tv = claim.deviceId
-        if (tv != null) enterListen(tv, name = null) else showPicker()
+        if (tv != null) enterTv(tv, devices = null) else showPicker()
         return null
     }
 
@@ -282,27 +321,29 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             val only = devices.singleOrNull()
             if (only != null) {
                 store.setTv(only.id)
-                enterListen(only.id, only.name)
+                enterTv(only.id, devices)
             } else {
                 _ui.value = CompanionUi.PickTv(ServerUrls.display(parsed), devices, loading = false)
             }
         }
     }
 
+    /** Opens a TV's page; listening to another TV stops (it follows the TV it started with). */
     fun pickTv(id: String) {
         val picker = _ui.value as? CompanionUi.PickTv ?: return
-        val name = picker.devices.firstOrNull { it.id == id }?.name
+        val s = session
+        if (s != null && s.state.value.phase != ListenPhase.Idle && s.state.value.target?.deviceId != id) s.stop()
         viewModelScope.launch {
             store.setTv(id)
-            enterListen(id, name)
+            enterTv(id, picker.devices)
         }
     }
 
-    /** Back to the TV list (listening stops: it follows the TV it started with). */
+    /** Back to the TV list (Back, or the TV's name in the app bar); listening goes on until another TV is picked. */
     fun changeTv() {
-        session?.stop()
-        leaveListen()
-        // The Listen screen and its found link are gone (the picker replaces it); the finder forgets the link too.
+        leaveTv()
+        // The TV page and its found link are gone (the picker replaces it); the finder forgets the link too. A link
+        // still playing comes back from the session when the same TV is picked again.
         linkFinder.clear()
         viewModelScope.launch {
             store.setTv(null)
@@ -330,7 +371,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Back to the connect screen, saying [reason] there. */
     private suspend fun forget(reason: ConnectError? = null) {
-        leaveListen()
+        leaveTv()
         linkFinder.clear()
         sessionJob?.cancel()
         session = null
@@ -347,7 +388,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     /** A screen shown again (after the Phones screen, or a connect link that failed): read anew. */
     private fun restore(screen: CompanionUi) {
         when (screen) {
-            is CompanionUi.Listen -> {
+            is CompanionUi.Tv -> {
                 // The session's changes were not followed meanwhile.
                 _ui.value = screen.copy(session = session?.state?.value ?: screen.session, refreshing = false)
                 refresh()
@@ -366,12 +407,12 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- the server's phones ---------------------------------------------------------------------------------------
 
-    /** From the TV list or Listen along; [closePhones] goes back there. */
+    /** From the TV list or a TV's page; [closePhones] goes back there. */
     fun openPhones() {
         val current = _ui.value
-        if (current !is CompanionUi.Listen && current !is CompanionUi.PickTv) return
+        if (current !is CompanionUi.Tv && current !is CompanionUi.PickTv) return
         behindPhones = current
-        leaveListen()
+        leaveTv()
         _ui.value = CompanionUi.Phones(thisPhoneId = phoneId)
         viewModelScope.launch { loadPhones() }
     }
@@ -433,13 +474,13 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         sessionJob = viewModelScope.launch {
             var previous = s.state.value.phase
             s.state.collect { state ->
-                updateListen { it.copy(session = state) }
+                updateTv { it.copy(session = state) }
                 val ended = previous != ListenPhase.Idle && state.phase == ListenPhase.Idle
                 previous = state.phase
                 if (!ended) return@collect
                 // The timing fields stay as typed: only the link is gone.
                 if (state.ended == EndReason.LinkExpired) {
-                    updateListen { it.copy(foundLink = null) }
+                    updateTv { it.copy(foundLink = null) }
                     // Or reopening the finder would offer the expired link again.
                     linkFinder.clear()
                 }
@@ -468,26 +509,142 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun activeDevices(client: ApiClient): List<AdminDevice> =
         client.devices().devices.filter { it.status == "active" }
 
-    private suspend fun enterListen(tvId: String, name: String?) {
+    /** A TV's page, on Now; [devices]: the list it was picked from, null to read it (for the TV's name). */
+    private suspend fun enterTv(tvId: String, devices: List<AdminDevice>?) {
+        leaveTv()
         candidates = null
         candidatesKey = null
+        posterFor = null
         val nudge = store.current().nudgeMs
         val sessionState = session?.state?.value ?: ListenState()
         // A new screen over a session still playing a found link: the link it plays.
         val playingLink = sessionState.target?.takeIf { sessionState.phase != ListenPhase.Idle && it.deviceId == tvId }?.foundLink
-        _ui.value = CompanionUi.Listen(tvId = tvId, tvName = name, session = sessionState, nudgeMs = nudge, foundLink = playingLink)
-        if (name == null) {
-            viewModelScope.launch {
-                val found = orNullOnFailure { api?.devices() }?.devices?.firstOrNull { it.id == tvId }
-                if (found != null) updateListen { if (it.tvId == tvId) it.copy(tvName = found.name) else it }
-            }
-        }
+        val device = devices?.firstOrNull { it.id == tvId }
+        _ui.value = CompanionUi.Tv(
+            tvId = tvId, tvName = device?.name, device = device, severalTvs = (devices?.size ?: 0) > 1,
+            session = sessionState, nudgeMs = nudge, foundLink = playingLink,
+        )
+        if (devices == null) viewModelScope.launch { readDevice(tvId) }
         load(force = true)
     }
 
-    private fun leaveListen() {
+    /** The TV's name, last-seen time and whether there are others, from the list. */
+    private suspend fun readDevice(tvId: String) {
+        val client = api ?: return
+        val devices = orNullOnFailure { activeDevices(client) } ?: return
+        val found = devices.firstOrNull { it.id == tvId }
+        updateTv {
+            if (it.tvId != tvId) it
+            else it.copy(tvName = found?.name ?: it.tvName, device = found ?: it.device, severalTvs = devices.size > 1)
+        }
+    }
+
+    private fun leaveTv() {
         refreshJob?.cancel()
         refreshJob = null
+        nowJob?.cancel()
+        nowJob = null
+    }
+
+    // --- the TV page: tabs, Now, the remote, a message -------------------------------------------------------------
+
+    fun selectTab(tab: TvTab) = updateTv { it.copy(tab = tab, listenOpen = false) }
+
+    /** Listen along, over Now: what it offers is read again at once. */
+    fun openListen() {
+        if (_ui.value !is CompanionUi.Tv) return
+        updateTv { it.copy(listenOpen = true) }
+        viewModelScope.launch { load(force = true) }
+    }
+
+    fun closeListen() = updateTv { it.copy(listenOpen = false, finderOpen = false) }
+
+    /** While Now is shown: what the TV plays, following `GET …/now?seq=&wait=25` (a write answers at once). */
+    fun startFollowingNow() {
+        if (nowJob?.isActive == true) return
+        val tvId = (_ui.value as? CompanionUi.Tv)?.tvId ?: return
+        val client = api ?: return
+        nowJob = viewModelScope.launch {
+            var seq: Long? = null
+            while (true) {
+                val r = try {
+                    if (seq == null) client.now(tvId) else client.now(tvId, seq, NOW_WAIT_SEC)
+                } catch (e: Exception) {
+                    if (e !is IOException && e !is ApiException) throw e
+                    if (isRevoked(e)) return@launch unauthorized()
+                    seq = null
+                    delay(NOW_RETRY_MS)
+                    continue
+                }
+                seq = r.seq
+                showNow(tvId, r)
+            }
+        }
+    }
+
+    fun stopFollowingNow() {
+        nowJob?.cancel()
+        nowJob = null
+    }
+
+    private fun showNow(tvId: String, r: NowResponse) {
+        val shown = _ui.value as? CompanionUi.Tv ?: return
+        if (shown.tvId != tvId) return
+        val wentOffline = !r.online && shown.device?.online != false
+        updateTv { it.copy(now = r, nowAtMs = SystemClock.elapsedRealtime(), device = it.device?.copy(online = r.online)) }
+        // When it was last seen: the list has it.
+        if (wentOffline) viewModelScope.launch { readDevice(tvId) }
+        val itemId = r.nowPlaying?.itemId
+        if (itemId != null && itemId != posterFor) {
+            posterFor = itemId
+            viewModelScope.launch {
+                val client = api ?: return@launch
+                val poster = orNullOnFailure { client.catalogItem(itemId) }?.posterUrl?.let { client.resolve(it)?.toString() }
+                updateTv { if (it.tvId == tvId && it.now?.nowPlaying?.itemId == itemId) it.copy(posterUrl = poster) else it }
+            }
+        }
+    }
+
+    /**
+     * A remote button: `previous`, `next`, `pause`, `resume`, `stop`, or `seek` by [deltaMs]. The result is read
+     * afterwards and said only when worth saying ([commandResultText]).
+     */
+    fun remote(type: String, deltaMs: Long? = null) {
+        val fields = if (deltaMs != null) mapOf("deltaMs" to JsonPrimitive(deltaMs)) else emptyMap()
+        command(type, fields)
+    }
+
+    /** Shows [text] (1–200 characters, trimmed) on the TV for [durationSec]; "Shown on Salon" once it did. */
+    fun sendMessage(text: String, durationSec: Int) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty() || trimmed.length > MESSAGE_MAX) return
+        command("message", mapOf("text" to JsonPrimitive(trimmed), "durationSec" to JsonPrimitive(durationSec)))
+    }
+
+    private fun command(type: String, fields: Map<String, JsonPrimitive>) {
+        val tv = _ui.value as? CompanionUi.Tv ?: return
+        val client = api ?: return
+        val name = tv.displayName
+        viewModelScope.launch {
+            val sent = try {
+                client.sendCommand(tv.tvId, type, fields)
+            } catch (e: Exception) {
+                return@launch failed(e)
+            }
+            if (!sent.online) {
+                _snackbar.value = offlineText(name)
+                return@launch
+            }
+            val result = withTimeoutOrNull(COMMAND_WAIT_MS) {
+                var c: CommandInfo? = null
+                while (c?.result == null) {
+                    delay(COMMAND_POLL_MS)
+                    c = orNullOnFailure { client.command(tv.tvId, sent.id) }
+                }
+                c
+            }
+            result?.let { commandResultText(name, it) }?.let { _snackbar.value = it }
+        }
     }
 
     // --- Listen along ----------------------------------------------------------------------------------------------
@@ -504,7 +661,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stopRefreshing() {
-        leaveListen()
+        leaveTv()
     }
 
     /** Reads again, unless a read is in flight. */
@@ -514,10 +671,10 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun load(force: Boolean) {
         val client = api ?: return
-        val listen = _ui.value as? CompanionUi.Listen ?: return
+        val listen = _ui.value as? CompanionUi.Tv ?: return
         // One read at a time, or a slower older answer would overwrite a newer one; a forced read (a new TV, a save) runs anyway.
         if (!force && listen.refreshing) return
-        updateListen { it.copy(refreshing = true) }
+        updateTv { it.copy(refreshing = true) }
         val my = ++companionReadSeq
         val r = try {
             client.companion(listen.tvId)
@@ -526,7 +683,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             if (isRevoked(e)) return unauthorized()
             // A newer read is on its way (a forced one started meanwhile): it shows its answer and clears refreshing.
             if (my != companionReadSeq) return
-            updateListen { it.copy(refreshing = false, loaded = true, error = errorText(e)) }
+            updateTv { it.copy(refreshing = false, loaded = true, error = errorText(e)) }
             return
         }
         if (my != companionReadSeq) return
@@ -538,7 +695,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         val n = r.nowPlaying
         val key = listOf(n?.itemId, n?.episodeId, n?.sourceId, r.candidates.map { listOf(it.sourceId, it.type, it.link) }).toString()
         if (!force && key == candidatesKey) {
-            updateListen { it.copy(refreshing = false, loaded = true, error = null) }
+            updateTv { it.copy(refreshing = false, loaded = true, error = null) }
             return
         }
         candidatesKey = key
@@ -551,14 +708,14 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 s.stop()
                 _snackbar.value = endedText(EndReason.TvSwitchedToChannel, null)
             }
-            updateListen {
+            updateTv {
                 it.copy(loaded = true, refreshing = false, error = null, nowPlaying = n, options = emptyList(), chosen = null, applyAllVisible = false)
             }
             return
         }
         val options = candidateOptions(r.candidates)
         var droppedLink = false
-        updateListen { l ->
+        updateTv { l ->
             // The owner's choice of a link found on this phone, still waiting for one: kept over the session's source.
             val pending = l.chosen?.takeIf { !episodeChanged && it.sourceId == PASTED_SOURCE_ID && l.foundLink == null }
                 ?.let { c -> options.firstOrNull { it.key == c.key } }
@@ -584,7 +741,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun choose(option: CandidateOption) {
-        val listen = _ui.value as? CompanionUi.Listen ?: return
+        val listen = _ui.value as? CompanionUi.Tv ?: return
         listen.nowPlaying?.itemId?.let { remembered[it] = option.key }
         val next = listen.copy(chosen = option).withTiming(linkOf(option))
         _ui.value = next
@@ -604,19 +761,19 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     /** Shows the link finder (for the `pasted` option), starting a fresh search: a link found earlier is not offered again. */
     fun openFinder() {
         linkFinder.clear()
-        updateListen { it.copy(finderOpen = true) }
+        updateTv { it.copy(finderOpen = true) }
     }
 
     /** Drops the link found on this phone (and ends listening with it); the next search starts fresh. */
     fun forgetFoundLink() {
-        val listen = _ui.value as? CompanionUi.Listen ?: return
+        val listen = _ui.value as? CompanionUi.Tv ?: return
         if (listen.listening && listen.session.target?.sourceId == PASTED_SOURCE_ID) session?.stop()
         linkFinder.clear()
         _ui.value = listen.copy(foundLink = null)
     }
 
     fun closeFinder() {
-        updateListen { it.copy(finderOpen = false) }
+        updateTv { it.copy(finderOpen = false) }
     }
 
     /**
@@ -624,7 +781,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
      * listening with that option chosen, the session switches to the new link at once, keeping its timing.
      */
     fun useFoundLink(link: FoundLink) {
-        val listen = _ui.value as? CompanionUi.Listen ?: return
+        val listen = _ui.value as? CompanionUi.Tv ?: return
         val next = listen.copy(foundLink = link, finderOpen = false)
         _ui.value = next
         linkFinder.clear() // the link now lives here; the finder's next search starts fresh
@@ -638,13 +795,53 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         s.useFoundLink(link)
     }
 
+    // --- timing by ear (#34) ---------------------------------------------------------------------------------------
+
+    /** An offset nudge (±0.5, 5 or 30 s): applied at once while listening, else the pending value changes. */
+    fun nudgeOffset(deltaMs: Long) = editTiming { it.copy(offsetText = offsetText(LinkTiming(offsetMs = typedOffsetMs(it) + deltaMs))) }
+
+    /** "Edit"'s field and the speed's "Other" field type into these. */
+    fun setOffsetMs(ms: Long) = editTiming { it.copy(offsetText = offsetText(LinkTiming(offsetMs = ms))) }
+
+    /** A speed choice; null is "Other", which opens the decimal field. */
+    fun chooseSpeed(rate: Double?) {
+        if (rate == null) return updateTv { it.copy(otherSpeed = true) }
+        editTiming { it.copy(speedText = speedText(LinkTiming(rate = rate)), otherSpeed = false) }
+    }
+
+    /**
+     * One tap of the two-tap mark, while listening: [onTv] the TV's position (the sync loop's estimate), else the
+     * player's. A new tap of the same kind replaces that half; once both are there the offset is set and they clear.
+     */
+    fun mark(onTv: Boolean) {
+        val tv = _ui.value as? CompanionUi.Tv ?: return
+        val positions = session?.positionsNow()
+        if (!tv.listening || positions == null) {
+            _snackbar.value = LISTEN_FIRST
+            return
+        }
+        val next = if (onTv) tv.copy(tvMarkMs = positions.first) else tv.copy(phoneMarkMs = positions.second)
+        val tvMs = next.tvMarkMs
+        val phoneMs = next.phoneMarkMs
+        if (tvMs == null || phoneMs == null) {
+            _ui.value = next
+            return
+        }
+        val rate = parseTiming("0", next.speedText)?.rate ?: 1.0
+        _ui.value = next.copy(tvMarkMs = null, phoneMarkMs = null)
+        setOffsetMs(ListenTiming.markOffset(tvMs, phoneMs, rate))
+    }
+
+    /** The offset field's value in ms, 0 when it does not parse. */
+    private fun typedOffsetMs(tv: CompanionUi.Tv): Long = parseTiming(tv.offsetText, "1")?.offsetMs ?: 0
+
     fun setOffsetText(text: String) = editTiming { it.copy(offsetText = text) }
 
     fun setSpeedText(text: String) = editTiming { it.copy(speedText = text) }
 
     /** A valid change applies at once while listening; Save keeps it. */
-    private fun editTiming(change: (CompanionUi.Listen) -> CompanionUi.Listen) {
-        val listen = _ui.value as? CompanionUi.Listen ?: return
+    private fun editTiming(change: (CompanionUi.Tv) -> CompanionUi.Tv) {
+        val listen = _ui.value as? CompanionUi.Tv ?: return
         val edited = change(listen)
         val timing = parseTiming(edited.offsetText, edited.speedText)
         _ui.value = edited.copy(timingValid = timing != null)
@@ -652,7 +849,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun saveTiming() {
-        val listen = _ui.value as? CompanionUi.Listen ?: return
+        val listen = _ui.value as? CompanionUi.Tv ?: return
         val episodeId = listen.nowPlaying?.episodeId ?: return
         val option = listen.chosen ?: return
         val timing = parseTiming(listen.offsetText, listen.speedText) ?: return
@@ -669,7 +866,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun applyToAll() {
-        val listen = _ui.value as? CompanionUi.Listen ?: return
+        val listen = _ui.value as? CompanionUi.Tv ?: return
         val episodeId = listen.nowPlaying?.episodeId ?: return
         val option = listen.chosen ?: return
         val client = api ?: return
@@ -684,7 +881,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun listen() {
-        val listen = _ui.value as? CompanionUi.Listen ?: return
+        val listen = _ui.value as? CompanionUi.Tv ?: return
         val s = session ?: return
         if (listen.listening || !listen.canListen) return
         val n = listen.nowPlaying ?: return
@@ -708,13 +905,18 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         session?.stop()
     }
 
-    /** For the earphones' delay, remembered on this phone. */
+    /** "Earphone delay": the earphones' latency, kept on this phone. */
     fun nudge(deltaMs: Long) {
-        val listen = _ui.value as? CompanionUi.Listen ?: return
+        val listen = _ui.value as? CompanionUi.Tv ?: return
         val value = listen.nudgeMs + deltaMs
         _ui.value = listen.copy(nudgeMs = value)
         session?.setNudgeMs(value)
         viewModelScope.launch { store.setNudgeMs(value) }
+    }
+
+    /** A snackbar text from elsewhere (the Home tab). */
+    fun say(text: String) {
+        _snackbar.value = text
     }
 
     fun dismissSnackbar() {
@@ -726,11 +928,11 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     private fun linkOf(option: CandidateOption?): LinkTiming =
         option?.let { o -> candidates?.candidates?.firstOrNull { it.sourceId == o.sourceId }?.link } ?: LinkTiming()
 
-    private fun CompanionUi.Listen.withTiming(link: LinkTiming): CompanionUi.Listen =
-        copy(offsetText = offsetText(link), speedText = speedText(link), timingValid = true)
+    private fun CompanionUi.Tv.withTiming(link: LinkTiming): CompanionUi.Tv =
+        copy(offsetText = offsetText(link), speedText = speedText(link), timingValid = true, tvMarkMs = null, phoneMarkMs = null, otherSpeed = false)
 
-    private inline fun updateListen(change: (CompanionUi.Listen) -> CompanionUi.Listen) {
-        _ui.update { if (it is CompanionUi.Listen) change(it) else it }
+    private inline fun updateTv(change: (CompanionUi.Tv) -> CompanionUi.Tv) {
+        _ui.update { if (it is CompanionUi.Tv) change(it) else it }
     }
 
     private suspend fun failed(e: Exception) {
@@ -773,6 +975,16 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     companion object {
         private const val REFRESH_MS = 10_000L
+
+        /** `/now`'s long-poll, and the pause after a failed read. */
+        private const val NOW_WAIT_SEC = 25
+        private const val NOW_RETRY_MS = 5_000L
+
+        /** A command's result is read every 500 ms for up to 5 s. */
+        private const val COMMAND_POLL_MS = 500L
+        private const val COMMAND_WAIT_MS = 5_000L
+
+        const val MESSAGE_MAX = 200
 
         /** Disconnecting this phone waits this long for the server at most. */
         private const val SELF_DELETE_MS = 5_000L

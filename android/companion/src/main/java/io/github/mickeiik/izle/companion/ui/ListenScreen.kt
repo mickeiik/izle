@@ -5,8 +5,10 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,9 +19,13 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -29,6 +35,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -38,19 +48,21 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleStartEffect
 import io.github.mickeiik.izle.companion.R
+import io.github.mickeiik.izle.companion.sync.ListenTiming
 import io.github.mickeiik.izle.companion.sync.PASTED_SOURCE_ID
-import io.github.mickeiik.izle.data.api.NowPlaying
 
 /**
- * Listen along, as the admin page's card: what the TV plays, the source to hear on this phone, its timing, Listen /
- * Stop, the nudge for the earphones and the sync status. What the TV plays is read again every 10 s while shown.
+ * Listen along, over the Now tab: one line saying what and where, the source to hear on this phone, Listen / Stop,
+ * the earphone delay, and folded, the timing for this source (by ear: #34) and the sync details. What the TV plays
+ * is read again every 10 s while shown.
  */
 @Composable
-fun ListenScreen(state: CompanionUi.Listen, vm: CompanionViewModel, modifier: Modifier = Modifier) {
+fun ListenScreen(state: CompanionUi.Tv, vm: CompanionViewModel, modifier: Modifier = Modifier) {
     LifecycleStartEffect(vm) {
         vm.startRefreshing()
         onStopOrDispose { vm.stopRefreshing() }
@@ -70,11 +82,17 @@ fun ListenScreen(state: CompanionUi.Listen, vm: CompanionViewModel, modifier: Mo
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(stringResource(R.string.listen_intro), style = MaterialTheme.typography.bodyMedium)
-            NowPlayingCard(state)
-            // While listening Stop stays, whatever the TV reports meanwhile.
-            if (state.loaded && (state.listening || (state.nowPlaying?.episodeId != null && !state.isChannel))) {
-                ListenForm(state, vm, onListen)
+            Text(listenContext(state.nowPlaying, state.displayName), style = MaterialTheme.typography.bodyLarge)
+            // While listening the form stays, whatever the TV reports meanwhile.
+            val episode = state.nowPlaying?.episodeId != null && !state.isChannel
+            when {
+                !state.loaded -> Unit
+                state.listening || episode -> ListenForm(state, vm, onListen)
+                else -> Text(
+                    nothingToListenText(state.nowPlaying, state.displayName).orEmpty(),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             val error = state.session.error ?: state.error
             if (error != null) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
@@ -83,97 +101,13 @@ fun ListenScreen(state: CompanionUi.Listen, vm: CompanionViewModel, modifier: Mo
 }
 
 @Composable
-private fun NowPlayingCard(state: CompanionUi.Listen) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(stringResource(R.string.what_the_tv_plays), style = MaterialTheme.typography.labelLarge)
-            val n = state.nowPlaying
-            when {
-                !state.loaded -> Unit
-                n == null -> Text(stringResource(R.string.nothing_playing), style = MaterialTheme.typography.bodyLarge)
-                n.isLive -> Text(stringResource(R.string.channel_playing, n.itemTitle ?: n.itemId), style = MaterialTheme.typography.bodyLarge)
-                else -> {
-                    Text(n.itemTitle ?: n.itemId, style = MaterialTheme.typography.titleLarge)
-                    n.episodeTitle?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
-                    Text(tvStateText(n), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun tvStateText(n: NowPlaying): String = when (n.state) {
-    "playing" -> stringResource(R.string.tv_state_playing)
-    "paused" -> stringResource(R.string.tv_state_paused)
-    "starting" -> stringResource(R.string.tv_state_starting)
-    "stopped" -> stringResource(R.string.tv_state_stopped)
-    else -> n.state
-}
-
-@Composable
-private fun ListenForm(state: CompanionUi.Listen, vm: CompanionViewModel, onListen: () -> Unit) {
-    Text(stringResource(R.string.audio_on_this_phone), style = MaterialTheme.typography.titleMedium)
+private fun ListenForm(state: CompanionUi.Tv, vm: CompanionViewModel, onListen: () -> Unit) {
+    Text(stringResource(R.string.source), style = MaterialTheme.typography.titleMedium)
     if (state.options.isEmpty()) {
         Text(stringResource(R.string.no_candidates), style = MaterialTheme.typography.bodyMedium)
     } else {
         Column(modifier = Modifier.selectableGroup()) {
-            for (option in state.options) {
-                val selected = option.key == state.chosen?.key
-                Row(
-                    modifier = Modifier.fillMaxWidth()
-                        .selectable(selected = selected, onClick = { vm.choose(option) }, role = Role.RadioButton)
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    RadioButton(selected = selected, onClick = null)
-                    Text(option.label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                    option.kind?.let { KindChip(mediaKindLabel(it)) }
-                }
-            }
-        }
-    }
-    if (state.chosen?.sourceId == PASTED_SOURCE_ID) FoundLinkRow(state, vm)
-
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedTextField(
-            value = state.offsetText,
-            onValueChange = vm::setOffsetText,
-            label = { Text(stringResource(R.string.offset_label)) },
-            singleLine = true,
-            isError = !state.timingValid,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            // A decimal keyboard may have no minus key.
-            trailingIcon = {
-                val flip = stringResource(R.string.flip_sign)
-                TextButton(onClick = { vm.setOffsetText(flipSign(state.offsetText)) }, modifier = Modifier.semantics { contentDescription = flip }) {
-                    Text(stringResource(R.string.flip_sign_symbol))
-                }
-            },
-            modifier = Modifier.weight(1f),
-        )
-        OutlinedTextField(
-            value = state.speedText,
-            onValueChange = vm::setSpeedText,
-            label = { Text(stringResource(R.string.speed_label)) },
-            singleLine = true,
-            isError = !state.timingValid,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            modifier = Modifier.weight(0.7f),
-        )
-    }
-    Text(
-        stringResource(if (state.timingValid) R.string.timing_hint else R.string.timing_invalid),
-        style = MaterialTheme.typography.bodySmall,
-        color = if (state.timingValid) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error,
-    )
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedButton(onClick = vm::saveTiming, enabled = state.timingValid && state.chosen != null) {
-            Text(stringResource(R.string.save_timing))
-        }
-        if (state.applyAllVisible) {
-            OutlinedButton(onClick = vm::applyToAll, enabled = state.chosen != null) { Text(stringResource(R.string.apply_to_all)) }
+            for (option in state.options) SourceRow(option, state, vm)
         }
     }
 
@@ -182,47 +116,227 @@ private fun ListenForm(state: CompanionUi.Listen, vm: CompanionViewModel, onList
             onClick = vm::stopListening,
             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error, contentColor = MaterialTheme.colorScheme.onError),
             modifier = Modifier.fillMaxWidth().height(56.dp),
-        ) { Text(stringResource(R.string.stop), style = MaterialTheme.typography.titleMedium) }
+        ) { Text(stringResource(R.string.stop), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center) }
     } else {
         Button(onClick = onListen, enabled = state.canListen, modifier = Modifier.fillMaxWidth().height(56.dp)) {
-            Text(stringResource(R.string.listen), style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.listen), style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(onClick = { vm.nudge(-NUDGE_STEP_MS) }) { Text(stringResource(R.string.nudge_minus)) }
-            Text(nudgeText(state.nudgeMs), style = MaterialTheme.typography.bodyMedium)
-            OutlinedButton(onClick = { vm.nudge(NUDGE_STEP_MS) }) { Text(stringResource(R.string.nudge_plus)) }
-        }
-        Text(stringResource(R.string.nudge_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
+    EarphoneDelay(state.nudgeMs, vm::nudge)
 
-    statusLine(state.session)?.let { line ->
+    var timingOpen by rememberSaveable { mutableStateOf(false) }
+    Fold(
+        title = stringResource(R.string.timing_title),
+        summary = timingSummary(parseTiming(state.offsetText, state.speedText)),
+        open = timingOpen,
+        onToggle = { timingOpen = !timingOpen },
+    ) { TimingControls(state, vm) }
+
+    var detailsOpen by rememberSaveable { mutableStateOf(false) }
+    val status = statusLine(state.session)
+    Fold(
+        title = stringResource(R.string.sync_details),
+        summary = null,
+        open = detailsOpen,
+        onToggle = { detailsOpen = !detailsOpen },
+    ) {
         val synced = state.session.syncLabel == "synced"
         Text(
-            line,
+            status ?: stringResource(R.string.not_listening),
             style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
             color = if (synced) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
 
-/** The `pasted` option's link: whether one is ready (never its URL), and the way to the link finder. */
+/** One source; the `pasted` one is the found link: whether one is ready (never its URL), and the way to the finder. */
 @Composable
-private fun FoundLinkRow(state: CompanionUi.Listen, vm: CompanionViewModel) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+private fun SourceRow(option: CandidateOption, state: CompanionUi.Tv, vm: CompanionViewModel) {
+    val selected = option.key == state.chosen?.key
+    val found = option.sourceId == PASTED_SOURCE_ID
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth()
+                .selectable(selected = selected, onClick = { vm.choose(option) }, role = Role.RadioButton)
+                .padding(vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            RadioButton(selected = selected, onClick = null)
+            val label = when {
+                !found -> option.label
+                state.foundLink != null -> stringResource(R.string.found_link_ready)
+                else -> stringResource(R.string.found_link_none)
+            }
+            Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            option.kind?.let { KindChip(mediaKindLabel(it)) }
+        }
+        if (found && selected) {
+            Row(modifier = Modifier.padding(start = 48.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = vm::openFinder) {
+                    Text(stringResource(if (state.foundLink != null) R.string.find_new_link else R.string.find_link))
+                }
+                if (state.foundLink != null) TextButton(onClick = vm::forgetFoundLink) { Text(stringResource(R.string.forget_link)) }
+            }
+        }
+    }
+}
+
+/** "Earphone delay": −50 ms, the value, +50 ms; kept on this phone. */
+@Composable
+private fun EarphoneDelay(nudgeMs: Long, onNudge: (Long) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(stringResource(R.string.earphone_delay), style = MaterialTheme.typography.titleMedium)
+        EqualRow(modifier = Modifier.padding(top = 4.dp)) {
+            ChoiceButton(stringResource(R.string.nudge_minus), onClick = { onNudge(-NUDGE_STEP_MS) }, modifier = Modifier.weight(1f))
+            Text(
+                nudgeText(nudgeMs),
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                modifier = Modifier.weight(1f).align(Alignment.CenterVertically),
+            )
+            ChoiceButton(stringResource(R.string.nudge_plus), onClick = { onNudge(NUDGE_STEP_MS) }, modifier = Modifier.weight(1f))
+        }
         Text(
-            stringResource(if (state.foundLink != null) R.string.found_link_ready else R.string.found_link_none),
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.weight(1f),
+            stringResource(R.string.earphone_delay_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        if (state.foundLink != null) {
-            TextButton(onClick = vm::forgetFoundLink) { Text(stringResource(R.string.forget_link)) }
+    }
+}
+
+/**
+ * Timing for this source, by ear: Line it up (Mark on TV, Mark on phone), the offset's readout with Edit and its
+ * nudges (two rows of three), the speed (2 × 2 choices, Other opens the decimal field), Save timing and Apply to all
+ * episodes. Changes apply at once while listening.
+ */
+@Composable
+internal fun TimingControls(state: CompanionUi.Tv, vm: CompanionViewModel) {
+    TimingControls(
+        state,
+        onMark = vm::mark,
+        onNudge = vm::nudgeOffset,
+        onOffsetText = vm::setOffsetText,
+        onSpeed = vm::chooseSpeed,
+        onSpeedText = vm::setSpeedText,
+        onSave = vm::saveTiming,
+        onApplyAll = vm::applyToAll,
+    )
+}
+
+@Composable
+internal fun TimingControls(
+    state: CompanionUi.Tv,
+    onMark: (onTv: Boolean) -> Unit,
+    onNudge: (Long) -> Unit,
+    onOffsetText: (String) -> Unit,
+    onSpeed: (Double?) -> Unit,
+    onSpeedText: (String) -> Unit,
+    onSave: () -> Unit,
+    onApplyAll: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.line_it_up), style = MaterialTheme.typography.titleSmall)
+        Text(stringResource(R.string.mark_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        EqualRow {
+            val tvMarked = state.tvMarkMs != null
+            val phoneMarked = state.phoneMarkMs != null
+            ChoiceButton(stringResource(R.string.mark_on_tv), onClick = { onMark(true) }, selected = tvMarked, modifier = Modifier.weight(1f))
+            ChoiceButton(stringResource(R.string.mark_on_phone), onClick = { onMark(false) }, selected = phoneMarked, modifier = Modifier.weight(1f))
         }
-        OutlinedButton(onClick = vm::openFinder) {
-            Text(stringResource(if (state.foundLink != null) R.string.find_new_link else R.string.find_link))
+        markPendingText(state.tvMarkMs, state.phoneMarkMs)?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
         }
+
+        var editing by rememberSaveable { mutableStateOf(false) }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(stringResource(R.string.offset), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            val offsetMs = parseTiming(state.offsetText, "1")?.offsetMs
+            Text(offsetMs?.let(ListenTiming::formatOffset) ?: "–", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
+            TextButton(onClick = { editing = !editing }) { Text(stringResource(R.string.edit)) }
+        }
+        if (editing) {
+            OutlinedTextField(
+                value = state.offsetText,
+                onValueChange = onOffsetText,
+                label = { Text(stringResource(R.string.offset_label)) },
+                singleLine = true,
+                isError = !state.timingValid,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                // A decimal keyboard may have no minus key.
+                trailingIcon = {
+                    val flip = stringResource(R.string.flip_sign)
+                    TextButton(onClick = { onOffsetText(flipSign(state.offsetText)) }, modifier = Modifier.semantics { contentDescription = flip }) {
+                        Text(stringResource(R.string.flip_sign_symbol))
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        for (row in ListenTiming.OFFSET_NUDGES_MS.chunked(3)) {
+            EqualRow {
+                for (ms in row) ChoiceButton(ListenTiming.nudgeLabel(ms), onClick = { onNudge(ms) }, modifier = Modifier.weight(1f))
+            }
+        }
+        Text(stringResource(R.string.nudges_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+        Text(stringResource(R.string.speed), style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 8.dp))
+        val rate = parseTiming("0", state.speedText)?.rate
+        val preset = if (state.otherSpeed || rate == null) ListenTiming.OTHER else ListenTiming.speedPreset(rate)
+        val choices = ListenTiming.SPEED_PRESETS.map { Triple(it.label, it.rate as Double?, it.id) } +
+            Triple(stringResource(R.string.speed_other), null, ListenTiming.OTHER)
+        for (row in choices.chunked(2)) {
+            EqualRow {
+                for ((label, value, id) in row) {
+                    ChoiceButton(label, onClick = { onSpeed(value) }, selected = preset == id, modifier = Modifier.weight(1f))
+                }
+            }
+        }
+        if (preset == ListenTiming.OTHER) {
+            OutlinedTextField(
+                value = state.speedText,
+                onValueChange = onSpeedText,
+                label = { Text(stringResource(R.string.speed_label)) },
+                singleLine = true,
+                isError = !state.timingValid,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        if (!state.timingValid) {
+            Text(stringResource(R.string.timing_invalid), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        }
+        EqualRow(modifier = Modifier.padding(top = 8.dp)) {
+            val chosen = state.chosen != null
+            ChoiceButton(stringResource(R.string.save_timing), onClick = onSave, enabled = state.timingValid && chosen, modifier = Modifier.weight(1f))
+            if (state.applyAllVisible) {
+                ChoiceButton(stringResource(R.string.apply_to_all), onClick = onApplyAll, enabled = chosen, modifier = Modifier.weight(1f))
+            }
+        }
+    }
+}
+
+/** A section folded under its title (and a one-line [summary]); tap the title to open it. */
+@Composable
+private fun Fold(title: String, summary: String?, open: Boolean, onToggle: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        HorizontalDivider()
+        val action = stringResource(if (open) R.string.fold_close else R.string.fold_open)
+        Row(
+            modifier = Modifier.fillMaxWidth().clickable(onClickLabel = action, onClick = onToggle).padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                if (summary != null && !open) {
+                    Text(summary, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Icon(if (open) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown, contentDescription = null)
+        }
+        if (open) Column(modifier = Modifier.padding(bottom = 8.dp), content = content)
     }
 }
 

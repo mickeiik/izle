@@ -92,7 +92,7 @@ class MainActivityTest {
                 var vm: CompanionViewModel? = null
                 scenario.onActivity { vm = ViewModelProvider(it)[CompanionViewModel::class.java] }
                 waitUntil({ "the TV: ${requests.map { it.url.encodedPath }}" }) {
-                    (vm!!.ui.value as? CompanionUi.Listen)?.tvId == "tv-1"
+                    (vm!!.ui.value as? CompanionUi.Tv)?.tvId == "tv-1"
                 }
                 val claim = requests.first()
                 assertEquals("/api/v1/phones/claim", claim.url.encodedPath)

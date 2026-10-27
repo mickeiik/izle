@@ -40,6 +40,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -47,8 +48,9 @@ import java.util.concurrent.TimeUnit
 
 /**
  * The real [CompanionViewModel], store and API client under Robolectric against an in-process server: pairing and its
- * errors, the TV picker, the Listen along screen's refresh, Save timing, Apply to all, a channel, and Listen starting
- * the session and the foreground service. The session's API never answers (the session's own tests cover it).
+ * errors, the TV picker, the TV page (tabs, Now, the remote, a message), Listen along's refresh, timing by ear, Save
+ * timing, Apply to all, a channel, and Listen starting the session and the foreground service. The session's API
+ * never answers unless a test says otherwise (the session's own tests cover it).
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -63,6 +65,8 @@ class CompanionViewModelTest {
     @Volatile private var claimAnswer: () -> MockResponse = { json(201, CLAIM) }
     @Volatile private var phonesAnswer: () -> MockResponse = { json(200, PHONES) }
     @Volatile private var deletePhoneAnswer: () -> MockResponse = { MockResponse.Builder().code(204).build() }
+    @Volatile private var commandAnswer: () -> MockResponse = { json(202, """{"id":7,"online":true}""") }
+    @Volatile private var commandResult: String = commandInfo("next", null, null)
 
     @Before
     fun setUp() {
@@ -79,6 +83,10 @@ class CompanionViewModelTest {
                     path.startsWith("/api/v1/admin/phones/") && request.method == "DELETE" -> deletePhoneAnswer()
                     path == "/api/v1/admin/devices" -> devicesAnswer()
                     path == "/api/v1/admin/devices/tv-1/companion" -> companionAnswer()
+                    path == "/api/v1/admin/devices/tv-1/commands" && request.method == "POST" -> commandAnswer()
+                    path == "/api/v1/admin/devices/tv-1/commands/7" -> json(200, commandResult)
+                    path == "/api/v1/admin/catalog/items/show" ->
+                        json(200, """{"item":{"id":"show","kind":"series","title":"Show","posterUrl":"/assets/show.jpg","episodes":[]}}""")
                     // For a session on this server: the TV at 60 s; a long-poll answers after a second.
                     path == "/api/v1/admin/devices/tv-1/now" -> nowAnswer().let { r ->
                         if (request.url.queryParameter("wait") == "0") r else r.newBuilder().headersDelay(1, TimeUnit.SECONDS).build()
@@ -111,9 +119,9 @@ class CompanionViewModelTest {
         val vm = startUnpaired()
         vm.connect(server.url("/").toString().trimEnd('/'), " 483 920 ")
         assertTrue((vm.ui.value as CompanionUi.Connect).busy)
-        waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Listen)?.let { it.loaded && it.tvName != null } == true }
-        assertEquals("tv-1", (vm.ui.value as CompanionUi.Listen).tvId)
-        assertEquals("Living room", (vm.ui.value as CompanionUi.Listen).tvName)
+        waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Tv)?.let { it.loaded && it.tvName != null } == true }
+        assertEquals("tv-1", (vm.ui.value as CompanionUi.Tv).tvId)
+        assertEquals("Living room", (vm.ui.value as CompanionUi.Tv).tvName)
         val claim = requests.first()
         assertEquals("/api/v1/phones/claim", claim.url.encodedPath)
         assertNull(claim.headers["Authorization"])
@@ -189,7 +197,7 @@ class CompanionViewModelTest {
     fun theLinkClaimsItsInviteAtOnce() {
         val vm = startUnpaired()
         vm.connectWithLink(ConnectLink(server.url("/").toString(), "inv-abc_123"))
-        waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Listen)?.loaded == true }
+        waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Tv)?.loaded == true }
         assertEquals("""{"invite":"inv-abc_123","name":"Test phone"}""", requests.first().body?.utf8())
         assertNull(requests.first().headers["Authorization"])
         runBlocking { assertEquals(THIS_PHONE, app.graph.store.current().phoneId) }
@@ -212,7 +220,7 @@ class CompanionViewModelTest {
         claimAnswer = { json(404, """{"error":"not_found"}""") }
         vm.connectWithLink(ConnectLink(server.url("/").toString(), "inv-used"))
         waitUntil("the snackbar") { vm.snackbar.value == "That code is not valid any more. Open Connect a phone on the TV again." }
-        waitUntil("Listen along again") { (vm.ui.value as? CompanionUi.Listen)?.loaded == true }
+        waitUntil("Listen along again") { (vm.ui.value as? CompanionUi.Tv)?.loaded == true }
         runBlocking { assertEquals("izat_test", app.graph.store.current().token) }
     }
 
@@ -221,7 +229,7 @@ class CompanionViewModelTest {
         val vm = startListening(phoneId = "ph-old000000")
         vm.connectWithLink(ConnectLink(server.url("/").toString(), "inv-abc_123"))
         waitUntil("the new pairing") { runBlocking { app.graph.store.current().phoneId } == THIS_PHONE }
-        waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Listen)?.loaded == true }
+        waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Tv)?.loaded == true }
         runBlocking { assertEquals("izph_secret", app.graph.store.current().token) }
         waitUntil("the previous phone deleted") { requests.any { it.method == "DELETE" } }
         val delete = requests.single { it.method == "DELETE" }
@@ -240,7 +248,7 @@ class CompanionViewModelTest {
         }
         settle()
         assertTrue("nothing claimed", requests.drop(before).none { it.url.encodedPath == "/api/v1/phones/claim" })
-        assertTrue(vm.ui.value is CompanionUi.Listen)
+        assertTrue(vm.ui.value is CompanionUi.Tv)
         runBlocking { assertEquals(server.url("/").toString(), app.graph.store.current().serverUrl) }
     }
 
@@ -279,8 +287,8 @@ class CompanionViewModelTest {
             assertNull(stored.tvId)
         }
         vm.pickTv("tv-1")
-        waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Listen)?.loaded == true }
-        assertEquals("Living room", (vm.ui.value as CompanionUi.Listen).tvName)
+        waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Tv)?.loaded == true }
+        assertEquals("Living room", (vm.ui.value as CompanionUi.Tv).tvName)
         runBlocking { assertEquals("tv-1", app.graph.store.current().tvId) }
     }
 
@@ -289,8 +297,8 @@ class CompanionViewModelTest {
         devicesAnswer = { json(200, """{"devices":[{"id":"tv-1","name":"Living room","status":"active","online":true}]}""") }
         val vm = startUnpaired()
         vm.connectWithToken(server.url("/").toString(), "izat_test")
-        waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Listen)?.loaded == true }
-        assertEquals("tv-1", (vm.ui.value as CompanionUi.Listen).tvId)
+        waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Tv)?.loaded == true }
+        assertEquals("tv-1", (vm.ui.value as CompanionUi.Tv).tvId)
         runBlocking { assertEquals("tv-1", app.graph.store.current().tvId) }
     }
 
@@ -364,8 +372,8 @@ class CompanionViewModelTest {
 
         val gets = count(COMPANION)
         vm.closePhones()
-        assertEquals("tv-1", (vm.ui.value as CompanionUi.Listen).tvId)
-        waitUntil("read again") { count(COMPANION) > gets && !(vm.ui.value as CompanionUi.Listen).refreshing }
+        assertEquals("tv-1", (vm.ui.value as CompanionUi.Tv).tvId)
+        waitUntil("read again") { count(COMPANION) > gets && !(vm.ui.value as CompanionUi.Tv).refreshing }
     }
 
     @Test
@@ -405,7 +413,7 @@ class CompanionViewModelTest {
     @Test
     fun theCandidatesAndTheChosenTiming() {
         val vm = startListening()
-        val listen = vm.ui.value as CompanionUi.Listen
+        val listen = vm.ui.value as CompanionUi.Tv
         assertEquals("Pilot", listen.nowPlaying?.episodeTitle)
         assertEquals(
             listOf("main" to null, "dub" to "fr", "dub" to "de", "pasted" to null),
@@ -422,7 +430,7 @@ class CompanionViewModelTest {
         assertEquals("Living room", listen.tvName)
 
         vm.choose(listen.options[0])
-        val main = vm.ui.value as CompanionUi.Listen
+        val main = vm.ui.value as CompanionUi.Tv
         assertEquals("0.000", main.offsetText)
         assertEquals("1", main.speedText)
     }
@@ -433,8 +441,8 @@ class CompanionViewModelTest {
         vm.setOffsetText("-2")
         val gets = count(COMPANION)
         vm.refresh()
-        waitUntil("the second read") { count(COMPANION) > gets && !(vm.ui.value as CompanionUi.Listen).refreshing }
-        assertEquals("-2", (vm.ui.value as CompanionUi.Listen).offsetText)
+        waitUntil("the second read") { count(COMPANION) > gets && !(vm.ui.value as CompanionUi.Tv).refreshing }
+        assertEquals("-2", (vm.ui.value as CompanionUi.Tv).offsetText)
     }
 
     @Test
@@ -446,26 +454,26 @@ class CompanionViewModelTest {
             val gets = count(COMPANION)
             vm.refresh()
             waitUntil("the first read") { count(COMPANION) > gets }
-            assertTrue((vm.ui.value as CompanionUi.Listen).refreshing)
+            assertTrue((vm.ui.value as CompanionUi.Tv).refreshing)
             vm.refresh()
             settle()
             assertEquals(gets + 1, count(COMPANION))
         } finally {
             gate.countDown()
         }
-        waitUntil("the answer") { !(vm.ui.value as CompanionUi.Listen).refreshing }
+        waitUntil("the answer") { !(vm.ui.value as CompanionUi.Tv).refreshing }
     }
 
     @Test
     fun anInvalidTimingDisablesSave() {
         val vm = startListening()
         vm.setSpeedText("3")
-        assertFalse((vm.ui.value as CompanionUi.Listen).timingValid)
+        assertFalse((vm.ui.value as CompanionUi.Tv).timingValid)
         vm.saveTiming()
         settle()
         assertEquals(0, requests.count { it.method == "PUT" })
         vm.setSpeedText("1.0427")
-        assertTrue((vm.ui.value as CompanionUi.Listen).timingValid)
+        assertTrue((vm.ui.value as CompanionUi.Tv).timingValid)
     }
 
     @Test
@@ -498,7 +506,7 @@ class CompanionViewModelTest {
     fun aChannelHasNothingToListenTo() {
         companionAnswer = { json(200, CHANNEL) }
         val vm = startListening()
-        val listen = vm.ui.value as CompanionUi.Listen
+        val listen = vm.ui.value as CompanionUi.Tv
         assertTrue(listen.isChannel)
         assertTrue(listen.options.isEmpty())
         assertFalse(listen.canListen)
@@ -519,13 +527,13 @@ class CompanionViewModelTest {
         assertEquals(1.0427, state.timing.rate, 0.0)
         val started = shadowOf(app).nextStartedService
         assertEquals(ListenService::class.java.name, started.component?.className)
-        waitUntil("the session in the screen state") { (vm.ui.value as CompanionUi.Listen).listening }
+        waitUntil("the session in the screen state") { (vm.ui.value as CompanionUi.Tv).listening }
 
         companionAnswer = { json(200, CHANNEL) }
         vm.refresh()
         waitUntil("the end") { vm.snackbar.value == "The TV switched to a channel; listening ended." }
         assertEquals(ListenPhase.Idle, session.state.value.phase)
-        waitUntil("idle in the screen state") { !(vm.ui.value as CompanionUi.Listen).listening }
+        waitUntil("idle in the screen state") { !(vm.ui.value as CompanionUi.Tv).listening }
     }
 
     @Test
@@ -534,7 +542,7 @@ class CompanionViewModelTest {
         vm.nudge(50)
         vm.nudge(50)
         vm.nudge(-50)
-        assertEquals(50L, (vm.ui.value as CompanionUi.Listen).nudgeMs)
+        assertEquals(50L, (vm.ui.value as CompanionUi.Tv).nudgeMs)
         waitUntil("the stored nudge") { runBlocking { app.graph.store.current().nudgeMs } == 50L }
     }
 
@@ -553,22 +561,22 @@ class CompanionViewModelTest {
     @Test
     fun thePastedOptionHasItsOwnTimingAndNeedsAFoundLink() {
         val vm = startListening()
-        val pasted = (vm.ui.value as CompanionUi.Listen).options.last()
+        val pasted = (vm.ui.value as CompanionUi.Tv).options.last()
         assertEquals(CandidateOption("pasted", null, "a link found on this phone", null), pasted)
         vm.choose(pasted)
-        val chosen = vm.ui.value as CompanionUi.Listen
+        val chosen = vm.ui.value as CompanionUi.Tv
         assertEquals("3.500", chosen.offsetText)
         assertEquals("1", chosen.speedText)
         assertNull(chosen.foundLink)
         assertFalse(chosen.canListen)
 
         vm.openFinder()
-        assertTrue((vm.ui.value as CompanionUi.Listen).finderOpen)
+        assertTrue((vm.ui.value as CompanionUi.Tv).finderOpen)
         vm.closeFinder()
-        assertFalse((vm.ui.value as CompanionUi.Listen).finderOpen)
+        assertFalse((vm.ui.value as CompanionUi.Tv).finderOpen)
         vm.openFinder()
         vm.useFoundLink(LINK)
-        val ready = vm.ui.value as CompanionUi.Listen
+        val ready = vm.ui.value as CompanionUi.Tv
         assertEquals(LINK, ready.foundLink)
         assertFalse(ready.finderOpen)
         assertTrue(ready.canListen)
@@ -576,7 +584,7 @@ class CompanionViewModelTest {
 
         vm.refresh() // an unchanged answer keeps the link
         settle()
-        assertEquals(LINK, (vm.ui.value as CompanionUi.Listen).foundLink)
+        assertEquals(LINK, (vm.ui.value as CompanionUi.Tv).foundLink)
     }
 
     @Test
@@ -584,7 +592,7 @@ class CompanionViewModelTest {
         val engine = FakeMediaEngine()
         app.graph.newSession = { api, scope -> ListenSession(ApiClientCompanionApi(api), engine, scope, { it }) }
         val vm = startListening()
-        vm.choose((vm.ui.value as CompanionUi.Listen).options.last())
+        vm.choose((vm.ui.value as CompanionUi.Tv).options.last())
         vm.openFinder()
         vm.useFoundLink(LINK)
         vm.listen()
@@ -596,7 +604,7 @@ class CompanionViewModelTest {
         assertEquals(1_200_000L, target.episodeDurationMs)
         assertEquals(3_500L, session.state.value.timing.offsetMs)
 
-        waitUntil("the link loaded") { engine.loads.isNotEmpty() && (vm.ui.value as CompanionUi.Listen).listening }
+        waitUntil("the link loaded") { engine.loads.isNotEmpty() && (vm.ui.value as CompanionUi.Tv).listening }
         val media = engine.loads.single().media
         assertEquals(LINK.url, media.url)
         assertEquals(LINK.headers, media.headers)
@@ -622,18 +630,18 @@ class CompanionViewModelTest {
         val engine = FakeMediaEngine()
         app.graph.newSession = { api, scope -> ListenSession(ApiClientCompanionApi(api), engine, scope, { it }) }
         val vm = startListening()
-        vm.choose((vm.ui.value as CompanionUi.Listen).options.last())
+        vm.choose((vm.ui.value as CompanionUi.Tv).options.last())
         vm.useFoundLink(LINK)
         vm.setOffsetText("4.250")
         vm.listen()
-        waitUntil("the link loaded") { engine.loads.isNotEmpty() && (vm.ui.value as CompanionUi.Listen).listening }
+        waitUntil("the link loaded") { engine.loads.isNotEmpty() && (vm.ui.value as CompanionUi.Tv).listening }
         findInFinder(vm)
         engine.durationMs = 5 * 60_000L // a decoy, against an episode of 20 min
         engine.ready()
         waitUntil("the snackbar") { vm.snackbar.value == endedText(EndReason.LinkExpired, null) }
         assertEquals("the finder forgets the expired link", LinkFinderState(), vm.linkFinder.state.value)
         assertEquals(EndReason.LinkExpired, app.graph.currentSession!!.state.value.ended)
-        val listen = vm.ui.value as CompanionUi.Listen
+        val listen = vm.ui.value as CompanionUi.Tv
         assertFalse(listen.listening)
         assertNull(listen.foundLink)
         assertEquals("4.250", listen.offsetText)
@@ -644,13 +652,13 @@ class CompanionViewModelTest {
     @Test
     fun anotherEpisodeDropsTheFoundLinkAndTheFinderForgetsIt() {
         val vm = startListening()
-        vm.choose((vm.ui.value as CompanionUi.Listen).options.last())
+        vm.choose((vm.ui.value as CompanionUi.Tv).options.last())
         findInFinder(vm)
         vm.useFoundLink(vm.linkFinder.state.value.found!!)
         companionAnswer = { json(200, EPISODE.replace("show.e1", "show.e2").replace("Pilot", "Second")) }
         vm.refresh()
-        waitUntil("the next episode") { (vm.ui.value as CompanionUi.Listen).nowPlaying?.episodeId == "show.e2" }
-        assertNull((vm.ui.value as CompanionUi.Listen).foundLink)
+        waitUntil("the next episode") { (vm.ui.value as CompanionUi.Tv).nowPlaying?.episodeId == "show.e2" }
+        assertNull((vm.ui.value as CompanionUi.Tv).foundLink)
         assertEquals(LinkFinderState(), vm.linkFinder.state.value)
     }
 
@@ -671,19 +679,196 @@ class CompanionViewModelTest {
         vm.listen()
         val session = app.graph.currentSession!!
         waitUntil("listening to the catalog source") { session.state.value.phase == ListenPhase.Listening }
-        val pasted = (vm.ui.value as CompanionUi.Listen).options.last()
+        val pasted = (vm.ui.value as CompanionUi.Tv).options.last()
         vm.choose(pasted) // no link yet: the dub keeps playing
         assertEquals("dub", session.state.value.target?.sourceId)
         val gets = count(COMPANION)
         vm.saveTiming() // a forced read follows
-        waitUntil("the read after the save") { count(COMPANION) > gets && !(vm.ui.value as CompanionUi.Listen).refreshing }
-        assertEquals(pasted, (vm.ui.value as CompanionUi.Listen).chosen)
+        waitUntil("the read after the save") { count(COMPANION) > gets && !(vm.ui.value as CompanionUi.Tv).refreshing }
+        assertEquals(pasted, (vm.ui.value as CompanionUi.Tv).chosen)
 
         vm.useFoundLink(LINK)
         val target = session.state.value.target!!
         assertEquals("pasted", target.sourceId)
         assertEquals(LINK, target.foundLink)
         assertEquals(LINK.url, engine.loads.last().media.url)
+    }
+
+    // --- the TV page: tabs, Now, the remote, a message -------------------------------------------------------------
+
+    @Test
+    fun theTvPageOpensOnNowAndKnowsWhetherThereAreOtherTvs() {
+        val vm = startListening()
+        val tv = vm.ui.value as CompanionUi.Tv
+        assertEquals(TvTab.Now, tv.tab)
+        assertFalse(tv.listenOpen)
+        waitUntil("the list read") { (vm.ui.value as CompanionUi.Tv).device != null }
+        assertTrue("two active TVs: Back goes to the list", (vm.ui.value as CompanionUi.Tv).severalTvs)
+
+        vm.selectTab(TvTab.Home)
+        assertEquals(TvTab.Home, (vm.ui.value as CompanionUi.Tv).tab)
+        vm.selectTab(TvTab.Now)
+        settle()
+        val gets = count(COMPANION)
+        vm.openListen()
+        assertTrue((vm.ui.value as CompanionUi.Tv).listenOpen)
+        waitUntil("Listen along read anew") { count(COMPANION) > gets }
+        vm.closeListen()
+        assertFalse((vm.ui.value as CompanionUi.Tv).listenOpen)
+
+        viewModels.clear()
+        devicesAnswer = { json(200, """{"devices":[{"id":"tv-1","name":"Living room","status":"active","online":true}]}""") }
+        val one = startListening()
+        waitUntil("the list read") { (one.ui.value as CompanionUi.Tv).device != null }
+        assertFalse("one TV: Back leaves the app", (one.ui.value as CompanionUi.Tv).severalTvs)
+    }
+
+    @Test
+    fun nowFollowsTheTvWithALongPollAndReadsThePoster() {
+        val vm = startListening()
+        vm.startFollowingNow()
+        waitUntil("what the TV plays") { (vm.ui.value as CompanionUi.Tv).now != null }
+        val tv = vm.ui.value as CompanionUi.Tv
+        assertEquals("show.e1", tv.now?.nowPlaying?.episodeId)
+        assertTrue(tv.online)
+        assertEquals("0", requests.first { it.url.encodedPath == NOW_PATH }.url.queryParameter("wait"))
+        waitUntil("the long-poll") { requests.any { it.url.encodedPath == NOW_PATH && it.url.queryParameter("wait") == "25" } }
+        assertEquals("1", requests.last { it.url.encodedPath == NOW_PATH }.url.queryParameter("seq"))
+        waitUntil("the poster") { (vm.ui.value as CompanionUi.Tv).posterUrl != null }
+        assertEquals(server.url("/assets/show.jpg").toString(), (vm.ui.value as CompanionUi.Tv).posterUrl)
+
+        vm.stopFollowingNow()
+        settle()
+        val reads = count(NOW_PATH)
+        repeat(3) {
+            mainLooper.idleFor(Duration.ofSeconds(1))
+            Thread.sleep(50)
+        }
+        assertEquals("no read once stopped", reads, count(NOW_PATH))
+    }
+
+    @Test
+    fun theRemoteSendsTheCommandThenSaysItsResultWhenWorthSaying() {
+        val vm = startListening()
+        commandResult = commandInfo("seek", "ignored", "not_in_player")
+        vm.remote("seek", -30_000)
+        waitUntilAdvancing("the snackbar") { vm.snackbar.value == "Nothing is playing on Living room." }
+        val post = requests.single { it.method == "POST" && it.url.encodedPath.endsWith("/commands") }
+        assertEquals("""{"type":"seek","deltaMs":-30000}""", post.body?.utf8())
+        vm.dismissSnackbar()
+
+        // Done: nothing to say.
+        commandResult = commandInfo("next", "done", null)
+        val reads = count(COMMAND_7)
+        vm.remote("next")
+        waitUntilAdvancing("the result read") { count(COMMAND_7) > reads }
+        settle()
+        assertNull(vm.snackbar.value)
+        assertEquals("""{"type":"next"}""", requests.last { it.method == "POST" }.body?.utf8())
+    }
+
+    @Test
+    fun anOfflineTvGetsTheCommandLaterAndSaysSo() {
+        commandAnswer = { json(202, """{"id":7,"online":false}""") }
+        val vm = startListening()
+        vm.remote("stop")
+        waitUntil("the snackbar") { vm.snackbar.value == "Living room is offline. It gets this if it connects in the next 2 minutes." }
+        settle()
+        assertEquals("no result read", 0, count(COMMAND_7))
+    }
+
+    @Test
+    fun aCommandRefusedSaysWhy() {
+        commandAnswer = { json(400, """{"error":"invalid_request"}""") }
+        val vm = startListening()
+        vm.remote("next")
+        waitUntil("the snackbar") { vm.snackbar.value == "The server did not accept the request." }
+    }
+
+    @Test
+    fun aMessageIsTrimmedAndSaysWhenItWasShown() {
+        val vm = startListening()
+        vm.sendMessage("   ", 60)
+        vm.sendMessage("x".repeat(201), 60)
+        settle()
+        assertTrue("blank or too long: nothing sent", requests.none { it.method == "POST" })
+        commandResult = commandInfo("message", "done", null)
+        vm.sendMessage("  Dinner is ready  ", 15)
+        waitUntilAdvancing("the snackbar") { vm.snackbar.value == "Shown on Living room" }
+        assertEquals("""{"type":"message","text":"Dinner is ready","durationSec":15}""", requests.single { it.method == "POST" }.body?.utf8())
+    }
+
+    @Test
+    fun backToTheListKeepsListeningAndAnotherTvStopsIt() {
+        app.graph.newSession = { api, scope -> ListenSession(ApiClientCompanionApi(api), FakeMediaEngine(), scope, { it }) }
+        val vm = startListening()
+        vm.listen()
+        val session = app.graph.currentSession!!
+        waitUntil("listening") { session.state.value.phase == ListenPhase.Listening }
+        vm.changeTv()
+        waitUntil("the TV list") { (vm.ui.value as? CompanionUi.PickTv)?.loading == false }
+        assertEquals(ListenPhase.Listening, session.state.value.phase)
+        vm.pickTv("tv-2")
+        assertEquals(ListenPhase.Idle, session.state.value.phase)
+    }
+
+    // --- timing by ear (#34) ---------------------------------------------------------------------------------------
+
+    @Test
+    fun offsetNudgesAndSpeedChoices() {
+        val vm = startListening()
+        vm.nudgeOffset(-500)
+        assertEquals("-1.750", (vm.ui.value as CompanionUi.Tv).offsetText)
+        vm.nudgeOffset(30_000)
+        assertEquals("28.250", (vm.ui.value as CompanionUi.Tv).offsetText)
+        vm.chooseSpeed(0.9591)
+        assertEquals("0.9591", (vm.ui.value as CompanionUi.Tv).speedText)
+        vm.chooseSpeed(null)
+        val other = vm.ui.value as CompanionUi.Tv
+        assertTrue("Other opens the field", other.otherSpeed)
+        assertEquals("the speed is kept", "0.9591", other.speedText)
+        vm.chooseSpeed(1.0)
+        assertFalse((vm.ui.value as CompanionUi.Tv).otherSpeed)
+        assertTrue((vm.ui.value as CompanionUi.Tv).timingValid)
+        vm.saveTiming()
+        waitUntil("the save") { requests.any { it.method == "PUT" } }
+        assertEquals("""{"offsetMs":28250,"rate":1.0,"language":"fr"}""", requests.single { it.method == "PUT" }.body?.utf8())
+    }
+
+    @Test
+    fun aMarkNeedsListening() {
+        val vm = startListening()
+        vm.mark(onTv = true)
+        assertEquals("Listen first, then mark.", vm.snackbar.value)
+        assertNull((vm.ui.value as CompanionUi.Tv).tvMarkMs)
+    }
+
+    @Test
+    fun theTwoTapMarkSetsTheOffsetLiveAndClears() {
+        val engine = FakeMediaEngine()
+        app.graph.newSession = { api, scope -> ListenSession(ApiClientCompanionApi(api), engine, scope, { it }) }
+        val vm = startListening()
+        vm.listen()
+        val session = app.graph.currentSession!!
+        waitUntil("listening") { session.positionsNow() != null }
+
+        engine.positionMs = 70_000
+        vm.mark(onTv = false) // either order
+        assertEquals(70_000.0, (vm.ui.value as CompanionUi.Tv).phoneMarkMs!!, 0.0)
+        engine.positionMs = 71_000
+        vm.mark(onTv = false) // a new tap of the same kind replaces that half
+        assertEquals(71_000.0, (vm.ui.value as CompanionUi.Tv).phoneMarkMs!!, 0.0)
+        assertNull((vm.ui.value as CompanionUi.Tv).tvMarkMs)
+
+        val tvAt = session.positionsNow()!!.first
+        vm.mark(onTv = true)
+        val done = vm.ui.value as CompanionUi.Tv
+        assertNull(done.tvMarkMs)
+        assertNull(done.phoneMarkMs)
+        val offsetMs = parseTiming(done.offsetText, "1")!!.offsetMs
+        // rate · tv + offset = phone, at the dub's 1.0427; the TV moved on a few milliseconds between the two reads.
+        assertEquals(71_000 - 1.0427 * tvAt, offsetMs.toDouble(), 100.0)
+        assertEquals("applied live", offsetMs, session.state.value.timing.offsetMs)
     }
 
     /** The finder confirms a link pasted into it (served by the test server). */
@@ -703,7 +888,7 @@ class CompanionViewModelTest {
             app.graph.store.setTv("tv-1")
         }
         return viewModel().also { vm ->
-            waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Listen)?.let { it.loaded && it.tvName != null } == true }
+            waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Tv)?.let { it.loaded && it.tvName != null } == true }
         }
     }
 
@@ -719,6 +904,16 @@ class CompanionViewModelTest {
     private fun waitUntil(what: String, condition: () -> Boolean) {
         repeat(1_000) {
             mainLooper.idle()
+            if (condition()) return
+            Thread.sleep(10)
+        }
+        fail("Timed out waiting for $what; requests: ${requests.map { "${it.method} ${it.url.encodedPath}" }}")
+    }
+
+    /** As [waitUntil], letting the main looper's clock run too (for the view model's own delays). */
+    private fun waitUntilAdvancing(what: String, condition: () -> Boolean) {
+        repeat(1_000) {
+            mainLooper.idleFor(Duration.ofMillis(100))
             if (condition()) return
             Thread.sleep(10)
         }
@@ -748,6 +943,14 @@ class CompanionViewModelTest {
     private companion object {
         const val COMPANION = "/api/v1/admin/devices/tv-1/companion"
         const val PHONES_PATH = "/api/v1/admin/phones"
+        const val NOW_PATH = "/api/v1/admin/devices/tv-1/now"
+        const val COMMAND_7 = "/api/v1/admin/devices/tv-1/commands/7"
+
+        /** `GET …/commands/7`'s answer. */
+        fun commandInfo(type: String, result: String?, reason: String?): String {
+            fun quoted(v: String?) = v?.let { "\"$it\"" } ?: "null"
+            return """{"command":{"id":7,"type":"$type","payload":{},"createdAt":"2026-10-26T10:00:00.000Z","result":${quoted(result)},"reason":${quoted(reason)}}}"""
+        }
         const val THIS_PHONE = "ph0123456789"
         const val OTHER_PHONE = "ph9876543210"
 
