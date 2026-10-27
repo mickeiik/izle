@@ -669,6 +669,7 @@ export class Store {
         "INSERT INTO home_entries (device_id, position, catalog_id, item_id, app_id, app_label, app_image, added_at, section_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
       );
       let position = 0;
+      const images = new Set<string>();
       sections.forEach((s, i) => {
         section.run(deviceId, s.id, i, s.title, s.layout);
         for (const card of s.entries) {
@@ -676,11 +677,13 @@ export class Store {
           if ("itemId" in card) entry.run(deviceId, position++, catalogId, card.itemId, null, null, null, added, s.id);
           else {
             const app = known.get(card.appId);
+            if (app?.image) images.add(app.image);
             entry.run(deviceId, position++, null, null, card.appId, app?.label ?? card.appId, app?.image ?? null, added, s.id);
           }
         }
       });
-      this.purgeAppImages();
+      // Only a picture an app card no longer names may have to go: most writes touch the items alone.
+      if (before.some((c) => c.appImage !== null && !images.has(c.appImage))) this.purgeAppImages();
     });
   }
 

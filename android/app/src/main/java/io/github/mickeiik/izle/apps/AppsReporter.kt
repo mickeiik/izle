@@ -41,13 +41,20 @@ object AppsReport {
         return apps.asSequence()
             .filter { val id = it.app.appId; id != ownAppId && id.length <= 200 && APP_ID.matches(id) && seen.add(id) }
             .map { a ->
-                val label = a.app.label.trim().ifEmpty { a.app.appId }.take(MAX_LABEL).trim()
+                val label = a.app.label.trim().ifEmpty { a.app.appId }.let(::cut).trim()
                 val png = a.png?.takeIf { it.size <= MAX_IMAGE_BYTES }
                 ReportedApp(InstalledApp(a.app.appId, label, png?.let { a.app.image }), png)
             }
             .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { a: ReportedApp -> a.app.label }.thenBy { it.app.appId })
             .take(MAX_APPS)
             .toList()
+    }
+
+    /** At most [MAX_LABEL] UTF-16 units, never half of a surrogate pair. */
+    private fun cut(label: String): String {
+        if (label.length <= MAX_LABEL) return label
+        val end = if (Character.isHighSurrogate(label[MAX_LABEL - 1])) MAX_LABEL - 1 else MAX_LABEL
+        return label.substring(0, end)
     }
 
     /** The list with its pictures (by their hashes), to tell whether it changed since the last accepted report. */

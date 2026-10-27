@@ -14,8 +14,10 @@ import { requireDevice } from "./admin.ts";
 export function registerAdminHome(app: Hono<Env>, ctx: AppContext): void {
   const { store, home, devices, apps } = ctx;
 
-  const answer = (c: Context<Env>, d: Device, version: number, extra: Record<string, unknown> = {}) =>
-    c.json({ version, home: devices.home(d), sections: home.sections(d.id), apps: apps.list(d).apps, ...extra });
+  const answer = (c: Context<Env>, d: Device, version: number, extra: Record<string, unknown> = {}) => {
+    const cards = home.cards(d.id);
+    return c.json({ version, home: devices.home(d, cards), sections: home.sections(d.id, undefined, cards), apps: apps.list(d, cards).apps, ...extra });
+  };
 
   /** The device and the item, app or section the route names: an id that cannot be on a list is not on it (404 `code`). */
   const named = (c: Context<Env>, param: "itemId" | "appId" | "sectionId", code: string) => {

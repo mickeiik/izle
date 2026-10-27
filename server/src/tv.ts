@@ -45,10 +45,11 @@ export class TvService {
   state(device: Device) {
     const { catalog } = this.s;
     const { manifest } = catalog.current;
-    const shown = this.s.home.list(device.id).filter((e) => e.item && e.playable);
+    const cards = this.s.home.cards(device.id);
+    const shown = this.s.home.list(device.id, cards).filter((e) => e.item && e.playable);
     const home = shown.map(({ item, continue: cont, newEpisodes }) => ({ item: itemCard(catalog, item!), continue: cont, newEpisodes }));
     const plays = new Set(shown.map((e) => e.itemId));
-    const homeSections = this.s.home.sections(device.id, (c) => "appId" in c || plays.has(c.itemId)).filter((s) => s.entries.length > 0);
+    const homeSections = this.s.home.sections(device.id, (c) => "appId" in c || plays.has(c.itemId), cards).filter((s) => s.entries.length > 0);
     return {
       version: device.stateVersion, device: { id: device.id, name: device.name, ...this.settings(device) },
       catalog: { id: manifest.catalogId, buildId: manifest.buildId, name: manifest.name }, home, homeSections,

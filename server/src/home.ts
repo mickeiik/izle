@@ -14,7 +14,7 @@ import type { Notifier } from "./events.ts";
 import { requireEpisodicItem, requirePlayable } from "./lookup.ts";
 import { cursorIndex, isPlayable } from "./playback.ts";
 import { episodeSummary } from "./presenters.ts";
-import { UNTITLED_SECTION, type Cursor, type HomeCard, type HomeSectionWrite, type Progress, type Store } from "./store.ts";
+import { UNTITLED_SECTION, type Cursor, type HomeCard, type HomeSectionWrite, type Progress, type Store, type StoredHomeCard } from "./store.ts";
 
 export { UNTITLED_SECTION, type HomeCard } from "./store.ts";
 
@@ -151,11 +151,19 @@ export class HomeService {
     this.s = deps;
   }
 
+  /**
+   * The device's cards as stored, in Home order. A view built of several reads (the list, the sections, the app
+   * cards) reads them once and passes them along.
+   */
+  cards(deviceId: string): StoredHomeCard[] {
+    return this.s.store.getHomeCards(deviceId, this.s.catalog.catalogId);
+  }
+
   /** The device's home list in Home order, every entry, those a catalog reload left missing or unplayable included. */
-  list(deviceId: string): HomeEntry[] {
-    const { store, catalog } = this.s;
+  list(deviceId: string, cards: StoredHomeCard[] = this.cards(deviceId)): HomeEntry[] {
+    const { catalog } = this.s;
     const factsFor = this.homeFacts(deviceId);
-    return store.getHomeEntries(deviceId, catalog.catalogId).map(({ itemId, addedAt, sectionId }) => {
+    return cards.flatMap(({ itemId, addedAt, sectionId }) => (itemId === null ? [] : [{ itemId, addedAt, sectionId }])).map(({ itemId, addedAt, sectionId }) => {
       const item = catalog.item(itemId);
       if (!item) return { itemId, item: null, missing: true, playable: false, continue: null, newEpisodes: 0, addedAt, sectionId };
       const entry = { itemId, item, missing: false, playable: isPlayable(item), continue: null, newEpisodes: 0, addedAt, sectionId };
@@ -185,22 +193,21 @@ export class HomeService {
    * The device's sections in display order, each with its cards in Home order; with `keep`, only the cards it keeps
    * (the TV's state: the items it can play, and every app card).
    */
-  sections(deviceId: string, keep: (card: HomeCard) => boolean = () => true): Section[] {
-    return present(this.drafts(deviceId)).map((s) => {
+  sections(deviceId: string, keep: (card: HomeCard) => boolean = () => true, cards: StoredHomeCard[] = this.cards(deviceId)): Section[] {
+    return present(this.drafts(deviceId, cards)).map((s) => {
       const entries = s.entries.filter(keep);
       return { ...s, itemIds: itemIdsOf(entries), entries };
     });
   }
 
   /** The device's app cards, in Home order, with the label and picture of the last report that named each. */
-  appCards(deviceId: string): Array<{ appId: string; label: string; image: string | null }> {
-    return this.s.store.getHomeCards(deviceId, this.s.catalog.catalogId).flatMap((c) =>
+  appCards(deviceId: string, cards: StoredHomeCard[] = this.cards(deviceId)): Array<{ appId: string; label: string; image: string | null }> {
+    return cards.flatMap((c) =>
       c.appId === null ? [] : [{ appId: c.appId, label: c.appLabel ?? c.appId, image: c.appImage }]);
   }
 
   /** The sections as stored: each with its cards in order. */
-  private drafts(deviceId: string): HomeSectionWrite[] {
-    const cards = this.s.store.getHomeCards(deviceId, this.s.catalog.catalogId);
+  private drafts(deviceId: string, cards: StoredHomeCard[] = this.cards(deviceId)): HomeSectionWrite[] {
     return this.s.store.getHomeSections(deviceId).map(({ id, title, layout }) => ({
       id, title, layout,
       entries: cards.filter((c) => c.sectionId === id).map((c): HomeCard => (c.appId !== null ? { appId: c.appId } : { itemId: c.itemId! })),

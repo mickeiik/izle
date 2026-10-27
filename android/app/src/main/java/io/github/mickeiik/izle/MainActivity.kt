@@ -54,7 +54,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        packageReceiver?.let(::unregisterReceiver)
+        packageReceiver?.let((application as IzleApp).graph.tvApps::unwatch)
         super.onDestroy()
     }
 

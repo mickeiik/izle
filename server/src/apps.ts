@@ -9,7 +9,7 @@ import type { EventLog } from "./eventlog.ts";
 import type { HomeService } from "./home.ts";
 import type { Logger } from "./log.ts";
 import { iso } from "./presenters.ts";
-import type { Device, DeviceApp, Store } from "./store.ts";
+import type { Device, DeviceApp, Store, StoredHomeCard } from "./store.ts";
 
 /** Apps a TV's list holds at most. */
 export const APPS_MAX = 200;
@@ -103,10 +103,10 @@ export class AppService {
    * The TV's apps for the admin page: those of its last report in its order, then the app cards on Home that report
    * does not name (with the label and picture of the last report that named them). A picture not stored has no URL.
    */
-  list(d: Device): { apps: AppView[]; appsReportedAt: string | null } {
+  list(d: Device, homeCards: StoredHomeCard[] = this.s.home.cards(d.id)): { apps: AppView[]; appsReportedAt: string | null } {
     const { store, home } = this.s;
     const reported = store.getDeviceApps(d.id);
-    const cards = home.appCards(d.id);
+    const cards = home.appCards(d.id, homeCards);
     const onHome = new Set(cards.map((c) => c.appId));
     const named = new Set(reported.map((a) => a.appId));
     const gone = cards.filter((c) => !named.has(c.appId));
@@ -114,6 +114,6 @@ export class AppService {
     const view = (a: { appId: string; label: string; image: string | null }, installed: boolean): AppView => ({
       appId: a.appId, label: a.label, imageUrl: a.image !== null && stored.has(a.image) ? appImageUrl(a.image) : null, installed, onHome: onHome.has(a.appId),
     });
-    return { apps: [...reported.map((a) => view(a, true)), ...gone.map((a) => view(a, false))], appsReportedAt: iso(store.getDevice(d.id)?.appsReportedAt ?? null) };
+    return { apps: [...reported.map((a) => view(a, true)), ...gone.map((a) => view(a, false))], appsReportedAt: iso(d.appsReportedAt) };
   }
 }

@@ -60,6 +60,9 @@ class TvApps(private val context: Context) {
         return receiver
     }
 
+    /** Undoes [watch]: the receiver is registered on [context], not on the activity. */
+    fun unwatch(receiver: BroadcastReceiver) = context.unregisterReceiver(receiver)
+
     /** The card for [appId], or null when this TV cannot open it. */
     fun card(appId: String): HomeTile.App? = launchEntry(appId)?.let { HomeTile.App(appId, label(it, appId)) }
 

@@ -16,7 +16,7 @@ import { iso } from "./presenters.ts";
 import type { ProblemService } from "./problems.ts";
 import type { ProxyService } from "./proxy.ts";
 import { companionScope } from "./resolve.ts";
-import type { Device, DevicePatch, Store, TvAppInfo } from "./store.ts";
+import type { Device, DevicePatch, Store, StoredHomeCard, TvAppInfo } from "./store.ts";
 
 interface DeviceDeps {
   config: ServerConfig;
@@ -122,9 +122,9 @@ export class DeviceService {
    * The device's home list with what OK would play and its stored check (`checkAll`: every allowed episode's); items
    * gone from the catalog stay and are flagged `missing`.
    */
-  home(d: Device) {
+  home(d: Device, cards: StoredHomeCard[] = this.s.home.cards(d.id)) {
     const { catalog } = this.s;
-    const entries = this.s.home.list(d.id);
+    const entries = this.s.home.list(d.id, cards);
     const check = this.s.checker.summaries(entries.map((e) => e.itemId));
     return entries.map(({ itemId, item, missing, playable, continue: cont, newEpisodes }) => {
       const card = item

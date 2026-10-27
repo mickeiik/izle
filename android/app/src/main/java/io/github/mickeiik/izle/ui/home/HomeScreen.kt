@@ -45,6 +45,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -132,9 +133,11 @@ import io.github.mickeiik.izle.ui.theme.IzleBorders
 import io.github.mickeiik.izle.ui.theme.IzleColors
 import io.github.mickeiik.izle.ui.theme.IzleShapes
 import io.github.mickeiik.izle.ui.theme.IzleSpacing
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -191,10 +194,14 @@ fun HomeScreen(
     onPlay: (HomeEntry) -> Unit,
     onOpenApp: (HomeTile.App) -> Unit,
 ) {
-    // A section with nothing this TV can play or open is not shown, nor an app card it cannot open.
-    val sections = remember(state?.home, state?.homeSections, apps.version) {
-        state?.let { HomeSections.of(it.home, it.homeSections, apps.card) }.orEmpty()
+    // A section with nothing this TV can play or open is not shown, nor an app card it cannot open. Asking
+    // PackageManager about every app card is slow on a TV: off the main thread, the last sections shown meanwhile
+    // (null: none yet).
+    val drawn by produceState<List<HomeSection>?>(null, state?.home, state?.homeSections, apps.version) {
+        val s = state
+        value = if (s == null) emptyList() else withContext(Dispatchers.Default) { HomeSections.of(s.home, s.homeSections, apps.card) }
     }
+    val sections = drawn.orEmpty()
     Box(Modifier.fillMaxSize().background(IzleColors.Background)) {
         if (state != null && sections.isNotEmpty()) {
             // The whole width: a row section's cards show into the side margins.
@@ -208,7 +215,7 @@ fun HomeScreen(
             when {
                 state == null && !online -> Message(stringResource(R.string.no_connection), stringResource(R.string.no_connection_detail))
                 state == null -> Message(stringResource(R.string.loading))
-                sections.isEmpty() -> Message(stringResource(R.string.home_empty), stringResource(R.string.home_empty_detail))
+                drawn?.isEmpty() == true -> Message(stringResource(R.string.home_empty), stringResource(R.string.home_empty_detail))
             }
             if (!online) OfflineChip(Modifier.align(Alignment.TopStart))
         }
@@ -590,7 +597,10 @@ private fun HomeLines(
                             if (open) OpenPanel(entry, imageUrl(entry.item.backdropUrl), imageUrl(entry.item.posterUrl), g, textSizes, panel)
                         }
                         is HomeTile.App -> {
-                            val picture = remember(tile.appId, apps.version) { apps.picture(tile.appId) }
+                            // Drawn off the main thread; the old picture stays meanwhile.
+                            val picture by produceState<AppPicture?>(null, tile.appId, apps.version) {
+                                value = withContext(Dispatchers.Default) { apps.picture(tile.appId) }
+                            }
                             AppTile(picture, tile.label, height, measurer)
                         }
                     }

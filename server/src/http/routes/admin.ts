@@ -80,9 +80,10 @@ export function registerAdmin(app: Hono<Env>, ctx: AppContext): void {
 
   app.get("/api/v1/admin/devices/:id", (c) => {
     const d = device(c);
-    const { apps, appsReportedAt } = ctx.apps.list(d);
+    const cards = home.cards(d.id);
+    const { apps, appsReportedAt } = ctx.apps.list(d, cards);
     return c.json({
-      device: devices.view(d), home: devices.home(d), homeMax: HOME_MAX_ITEMS, sections: home.sections(d.id), sectionsMax: HOME_MAX_SECTIONS,
+      device: devices.view(d), home: devices.home(d, cards), homeMax: HOME_MAX_ITEMS, sections: home.sections(d.id, undefined, cards), sectionsMax: HOME_MAX_SECTIONS,
       apps, appsMax: HOME_MAX_APPS, appsReportedAt,
     });
   });

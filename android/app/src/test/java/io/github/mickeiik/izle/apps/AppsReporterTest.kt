@@ -178,6 +178,9 @@ class AppsReporterTest {
         // A picture over 256 KiB is not sent: no picture.
         assertNull(list[0].app.image)
         assertNull(list[0].png)
+        // A name is never cut inside a surrogate pair.
+        val emoji = AppsReport.list(listOf(app("com.example.emoji", "x".repeat(99) + "\uD83C\uDFAC more", null)), "x.y")
+        assertEquals("x".repeat(99), emoji.single().app.label)
         assertEquals(AppsReport.MAX_APPS, AppsReport.list((1..250).map { app("com.example.a$it", "App $it", null) }, "x.y").size)
     }
 
