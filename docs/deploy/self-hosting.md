@@ -1,9 +1,10 @@
 # Self-hosting izle
 
 izle has two parts: **izle-server**, on a machine that is always on (a home server, NAS, mini PC, Raspberry Pi 4/5
-or a small VPS), and the **Android TV app**, which talks only to that server. This guide runs the server as a
-systemd service, optionally behind Caddy for HTTPS, on a Debian/Ubuntu-like Linux; `izle-server-X.Y.Z.tgz` is the
-server package and `PKG=/opt/izle/lib/node_modules/@izle/server` is where it ends up.
+or a small VPS), and the **Android TV app**, which talks only to that server; **izle companion**, the owner's phone
+app, is optional (§ 8). This guide runs the server as a systemd service, optionally behind Caddy for HTTPS, on a
+Debian/Ubuntu-like Linux; `izle-server-X.Y.Z.tgz` is the server package and
+`PKG=/opt/izle/lib/node_modules/@izle/server` is where it ends up.
 
 ## 1. Choose a setup
 
@@ -196,11 +197,12 @@ scoped `read`, `control` (plus commands) or `manage` (plus home screens, setting
 counts as a wrong one for the throttle, so stop the app before revoking it. What each scope can call:
 [server API § Remote management](../spec/server-api-v1.md#remote-management).
 
-**Phones** with the izle companion app connect from a TV: its hidden menu, Settings → **Connect a phone**, shows a QR
-code (which opens the server's `/connect` page at the address the TV uses, then the app) and a 6-digit code to type in the app with the
-server's address. A connected phone has owner access, like the admin page; the TV it came through was approved by
-you at pairing, so there is no other step. The phones are listed under **Access** on the admin page, each with
-**Disconnect**; from the shell, `izle-server phone list` and `izle-server phone disconnect <id> --config
+**Phones** with the [izle companion app](#install-the-companion-app) connect from a TV: its hidden menu, Settings →
+**Connect a phone**, shows a QR code (which opens the server's `/connect` page at the address the TV uses, then the
+app) and a 6-digit code to type in the app with the server's address. A connected phone has owner access, like the
+admin page; the TV it came through was approved by you at pairing, so there is no other step. The phones are listed
+under **Access** on the admin page and under **Phones** in the app's menu, each with **Disconnect**; from the shell,
+`izle-server phone list` and `izle-server phone disconnect <id> --config
 /etc/izle/izle.json` cut a lost phone off.
 
 ## 6. HTTPS with Caddy
@@ -228,7 +230,8 @@ above 60 s (the server pings every 20 s), and the client address in `X-Forwarded
 - **With Caddy:** allow 80 and 443 (`sudo ufw allow 80,443/tcp`); 8787 listens on 127.0.0.1 only.
 - **Outgoing:** resolver modules and the media proxy reach your catalog's upstream hosts; with `appUpdates.source`
   `github` the server reaches `api.github.com` and GitHub's download hosts (`*.githubusercontent.com`) once a day.
-  TVs fetch direct streams themselves; Listen along goes through the proxy, so the phone needs only the admin page.
+  TVs fetch direct streams themselves; Listen along goes through the proxy, so the phone needs to reach only the
+  server (except a link found in the companion app's own browser, which the phone plays itself).
 - The media proxy refuses loopback, private, link-local (the cloud metadata address included) and CGNAT addresses
   (`502 egress_denied`, a problem on the TV's page). An upstream of yours on this machine or the LAN (a NAS, the
   [resolver example](../../server/examples/resolver-example/)'s stand-in site) goes in
@@ -264,7 +267,15 @@ or a USB stick, open it with a file manager and allow it to **install unknown ap
 add shows to the TV's home screen. From the shell: `sudo -u izle /opt/izle/bin/izle-server pair approve 483920 Living
 room --config /etc/izle/izle.json` (`pair pending` lists codes, `pair cancel <code>` clears one; `--server <url>`
 when the server does not listen where the config says). Never approve a code your TV does not show; **Clear** one you
-did not expect. Put izle first in the launcher's favourites.
+did not expect.
+
+**izle as the TV's home screen** (optional): hidden menu (hold OK, or the Menu key) → Settings → **Home screen**
+makes izle the TV's launcher, so HOME and switching the TV on open izle's Home; Android then asks which home app to
+use (choose izle and **Always**) or opens its "Default home app" setting. A TV whose own home screen claims HOME
+first, as Google's TV home screen does, keeps it until that one is turned off with adb (`adb shell pm disable-user
+--user 0 <its package>`, which such a TV may undo when it restarts); the row reads "izle · not chosen" until then.
+Without it, put izle first in the launcher's favourites. **TV settings** in the same menu, and on the server address
+screen, opens Android's settings. Details: [Home screen](../ux/senior-tv.md#home-screen).
 
 ### Updating the TV app
 
@@ -280,6 +291,23 @@ update a release install. What the viewer sees: [Update](../ux/senior-tv.md#upda
   when you press **Install now**: OK, then the system dialog's **Update** (it may start on Cancel); 10 and 11 then
   show the launcher too, 9 and older bring izle back.
 - The outcome comes back as the command's result; pairing, home screen and progress are kept.
+
+### Install the companion app
+
+izle companion is the owner's Android phone app (Android 7 or newer): a TV's page with what it plays, a remote and
+messages, its Home, the catalog, its problems, settings and activity, pairing new TVs, and Listen along, which keeps
+playing with the screen off ([companion UX](../ux/companion.md)). The release has two APKs, like the TV app's:
+**`izle-companion-X.Y.Z.apk`**, signed with the same release key, which later releases install over, and
+**`izle-companion-X.Y.Z-debug.apk`**, for trying it (a later APK cannot install over it). Sideload it: download it on
+the phone and allow the browser or file manager to install unknown apps, or `adb install -r
+izle-companion-X.Y.Z.apk`. The server never offers it: its TV app updates are for the TVs only, so install each new
+release on the phone yourself.
+
+**Connect it from a TV:** on the TV, hold OK (or press the Menu key), then Settings → **Connect a phone**. Scan the QR
+code with the phone's camera, which opens izle companion, or type the server's address and the 6-digit code in the
+app. The code lasts 5 minutes; Back on the TV cancels it. The phone gets owner access and is listed with
+**Disconnect** on the admin page and in the app; how that works and how to cut a lost phone off from the shell:
+[§ 5, Phones](#5-the-admin-token-and-the-admin-page).
 
 ## 9. Docker (alternative to systemd)
 

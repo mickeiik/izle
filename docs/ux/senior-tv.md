@@ -2,7 +2,7 @@
 
 How the izle TV app behaves for its viewer: someone who knows classic TV (switch on, pick a channel, it plays)
 and should never need to read small text, browse or configure anything. Everything else is the owner's job, done
-remotely from the admin page or, on the TV itself, behind a hidden menu.
+remotely from the admin page or the izle companion phone app or, on the TV itself, behind a hidden menu.
 
 ## Principles
 

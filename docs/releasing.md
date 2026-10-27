@@ -8,7 +8,7 @@ a GitHub release with these files ([installed by owners](deploy/self-hosting.md)
 | `izle-server-X.Y.Z.tgz` | the server package (`npm pack` tarball, no dependencies; built by `scripts/pack-server.mjs` and checked by `scripts/smoke-server.mjs`) |
 | `izle-tv-X.Y.Z.apk` | the Android TV app signed with the release key (only when the repository has the signing secrets, see below) |
 | `izle-tv-X.Y.Z-debug.apk` | the debug build, always |
-| `izle-companion-X.Y.Z.apk` | izle companion, the phone app for Listen along, signed with the same release key (only with the signing secrets); sideloaded on the owner's phone, never offered to the TVs |
+| `izle-companion-X.Y.Z.apk` | izle companion, the owner's phone app, signed with the same release key (only with the signing secrets); sideloaded on the owner's phone, never offered to the TVs |
 | `izle-companion-X.Y.Z-debug.apk` | the companion's debug build, always |
 | `SHA256SUMS` | checksums |
 

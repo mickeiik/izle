@@ -56,7 +56,7 @@ the same commit.
 
 - `contract/`: `npm test -w contract`, `npx izle-validate <bundleDir> [--probe]`
 - `server/`: `npm test -w server`, `npm run -w server dev -- --config server/izle.dev.json` (sample catalog on :8787,
-  state in `server/data/`; a curl walkthrough is in [README.md](README.md#try-the-api-with-curl)), and
+  state in `server/data/`; a curl walkthrough is in [docs/api-tour.md](docs/api-tour.md)), and
   `npm run -s -w server dev -- admin-token [--link] | pair approve <code> [name] | check-resolver --config <file>`
 - Resolver module + proxy end to end: [server/examples/resolver-example/](server/examples/resolver-example/README.md)
   (`make-media.sh` needs ffmpeg; `upstream.js` is the local stand-in site; `izle.example.json` the server config,
