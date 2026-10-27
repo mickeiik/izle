@@ -23,6 +23,9 @@ class HomeLayoutTest {
 
     private fun row(count: Int, title: Boolean = false) = SectionShape(title, row = true, count = count)
 
+    /** A section with app cards at [apps] (all of its cards when empty). */
+    private fun SectionShape.apps(vararg apps: Int) = copy(apps = if (apps.isEmpty()) (0 until count).toSet() else apps.toSet())
+
     @Test
     fun withoutATitledSectionHomeIsTodaysGrid() {
         for ((columns, rows) in listOf(4 to 2, 4 to 3, 6 to 4, 3 to 1)) {
@@ -136,11 +139,12 @@ class HomeLayoutTest {
 
     @Test
     fun theItemsReproduceTheLayout() {
-        val l = layout(4, 2, grid(6, title = true), grid(3), row(8, title = true), row(2), grid(5))
+        // App cards: a row of them only (lower than posters), a grid with one.
+        val l = layout(4, 2, grid(6, title = true), grid(3), row(8, title = true), row(2).apps(), grid(5).apps(1))
         // One item a line or title; the next starts one gap under it.
         for (i in 1 until l.slots.size) {
             val above = l.slots[i - 1]
-            val height = if (above is Title) above.height else l.grid.cardHeight
+            val height = if (above is Title) above.height else l.sections[above.section].cardHeight
             assertEquals("item $i", above.top + height + l.grid.gap, l.slots[i].top, 0.001f)
         }
         assertEquals(14f, l.slots.first().top)
@@ -167,15 +171,113 @@ class HomeLayoutTest {
     @Test
     fun aRowSectionSlidesOnlyAtTheEdgeOfWhatIsInView() {
         // 4 columns, 9 cards: 0–3 in view.
-        assertEquals(0, HomeLayout.rowFirst(first = 0, focus = 3, count = 9, columns = 4))
-        assertEquals(1, HomeLayout.rowFirst(first = 0, focus = 4, count = 9, columns = 4))
-        assertEquals(5, HomeLayout.rowFirst(first = 5, focus = 8, count = 9, columns = 4))
+        val l = layout(4, 2, row(9))
+        assertEquals(0, l.rowFirst(0, first = 0, focus = 3))
+        assertEquals(1, l.rowFirst(0, first = 0, focus = 4))
+        assertEquals(5, l.rowFirst(0, first = 5, focus = 8))
         // Back the same way: only once the focus passes the first card in view.
-        assertEquals(5, HomeLayout.rowFirst(first = 5, focus = 5, count = 9, columns = 4))
-        assertEquals(4, HomeLayout.rowFirst(first = 5, focus = 4, count = 9, columns = 4))
+        assertEquals(5, l.rowFirst(0, first = 5, focus = 5))
+        assertEquals(4, l.rowFirst(0, first = 5, focus = 4))
         // Never beyond the last screenful, never before the start.
-        assertEquals(5, HomeLayout.rowFirst(first = 7, focus = 8, count = 9, columns = 4))
-        assertEquals(0, HomeLayout.rowFirst(first = 3, focus = 1, count = 3, columns = 4))
+        assertEquals(5, l.rowFirst(0, first = 7, focus = 8))
+        assertEquals(0, layout(4, 2, row(3)).rowFirst(0, first = 3, focus = 1))
+        // After the last card: room for it to open.
+        assertEquals(l.grid.openWidth - l.grid.cardWidth, l.rowEnd(0), 0f)
+    }
+
+    @Test
+    fun appCardsAreTilesTwoColumnsWideAmongAppsOnlyAndOpenCardSizedAmongShows() {
+        // 4 × 2 without a title: 136 × 204 dp posters, 362 dp open; tiles 292 × 164.25 among apps only.
+        val l = layout(4, 2, grid(5).apps(), row(4).apps(1), grid(3))
+        val (apps, mixed, posters) = l.sections
+        assertEquals(listOf(true, false, false), listOf(apps.appsOnly, mixed.appsOnly, posters.appsOnly))
+        assertEquals(292f to 362f, apps.tileWidth to mixed.tileWidth)
+        assertEquals(listOf(164.25f, 204f, 204f), l.sections.map { it.cardHeight })
+        assertEquals(listOf(292f, 136f, 362f, 136f), listOf(l.cardWidth(0, 4), l.cardWidth(1, 0), l.cardWidth(1, 1), l.cardWidth(2, 2)))
+        // Two tiles a grid row; its rows a tile's height apart.
+        assertEquals(listOf(0 to 2, 2 to 2, 4 to 1), l.lines.take(3).map { it.first to it.count })
+        assertEquals(listOf(14f, 198.25f, 382.5f), l.lines.take(3).map { it.cardTop })
+        assertEquals(382.5f + 164.25f + 14f, l.lines[2].bottom, 0.001f)
+        // The next section starts where a next row would, its cards as tall as posters.
+        val next = l.lines[mixed.firstLine]
+        assertEquals(382.5f + 164.25f + 20f, next.cardTop, 0.001f)
+        assertEquals(next.cardTop - 14f, mixed.top, 0.001f)
+        assertEquals(next.cardTop + 204f + 14f, next.bottom, 0.001f)
+        assertEquals(l.lines.last().cardTop + 204f + 14f, l.contentHeight, 0.001f)
+        // Down onto the lower lines and back, the line whole at the edge.
+        assertEquals(next.bottom - l.viewportHeight, l.scrollFor(mixed.firstLine, current = 0f), 0.001f)
+        assertEquals(l.lines[1].top, l.scrollFor(1, current = 300f), 0.001f)
+        // The line between sections in the middle of the gap under the tiles.
+        assertEquals(kotlin.math.floor(382.5f + 164.25f + 10f + 0.5f), mixed.divider!!, 0f)
+    }
+
+    @Test
+    fun aGridRowTakesCardsWhileTheyFitWithOneOpen() {
+        // A section of app cards only: half the columns, at least one.
+        for (columns in 3..10) {
+            val l = layout(columns, 2, grid(12).apps())
+            assertEquals("$columns columns", maxOf(1, columns / 2), l.lines.first().count)
+            assertTrue(l.lines.all { it.count <= maxOf(1, columns / 2) })
+        }
+        // Among shows, 4 columns: a poster and a tile (one more poster would not fit with one open), then three
+        // posters; four posters a row as without app cards.
+        val l = layout(4, 2, grid(9).apps(1))
+        assertEquals(listOf(0 to 2, 2 to 4, 6 to 3), l.lines.map { it.first to it.count })
+        assertEquals(listOf(0, 0, 1, 1, 1, 1, 2, 2, 2), (0 until 9).map { l.lineOf(0, it) })
+        // ← → stop at a row's ends, which depend on the widths.
+        assertEquals(1, l.horizontal(0, 0, 1))
+        assertNull(l.horizontal(0, 1, 1))
+        assertNull(l.horizontal(0, 2, -1))
+        assertEquals(5, l.horizontal(0, 4, 1))
+        // A tile alone when a card after it does not fit.
+        assertEquals(listOf(0 to 1, 1 to 1, 2 to 2), layout(3, 2, grid(4).apps(0, 1)).lines.map { it.first to it.count })
+    }
+
+    @Test
+    fun aScrollingLineSlidesByOneCardWhateverItsWidth() {
+        // Tiles only, 4 columns: two in view, the third in the margin.
+        val apps = layout(4, 2, row(5).apps())
+        assertEquals(0, apps.rowFirst(0, first = 0, focus = 1))
+        assertEquals(1, apps.rowFirst(0, first = 0, focus = 2))
+        assertEquals(3, apps.rowFirst(0, first = 2, focus = 4))
+        assertEquals(2, apps.rowFirst(0, first = 3, focus = 2))
+        assertEquals(3, apps.rowFirst(0, first = 4, focus = 4))
+        // The last two tiles fill the columns.
+        assertEquals(830f - 312f - 292f, apps.rowEnd(0), 0f)
+        // Posters and tiles: a poster, then as far as shows the focused poster open.
+        val mixed = layout(4, 2, row(6).apps(1, 4))
+        assertEquals(0, mixed.rowFirst(0, first = 0, focus = 1))
+        assertEquals(1, mixed.rowFirst(0, first = 0, focus = 2))
+        assertEquals(2, mixed.rowFirst(0, first = 1, focus = 3))
+        assertEquals(2, mixed.rowFirst(0, first = 2, focus = 4))
+        assertEquals(4, mixed.rowFirst(0, first = 2, focus = 5))
+        // A tile and the last poster open.
+        assertEquals(830f - 382f - 136f, mixed.rowEnd(0), 0f)
+    }
+
+    @Test
+    fun upAndDownGoToTheCardWithTheNearestLeftEdge() {
+        // A row of tiles over a grid of posters (156 dp apart): tiles' left edges at 0 and 312 dp.
+        val l = layout(4, 2, row(5).apps(), grid(8))
+        var first = 0
+        val rowFirst: (Int) -> Int = { if (it == 0) first else 0 }
+        assertEquals(1 to 2, l.vertical(0, 1, 1, rowFirst))
+        assertEquals(1 to 0, l.vertical(0, 0, 1, rowFirst))
+        assertEquals(0 to 1, l.vertical(1, 3, -1, rowFirst))
+        assertEquals(0 to 1, l.vertical(1, 2, -1, rowFirst))
+        // Halfway: the first one.
+        assertEquals(0 to 0, l.vertical(1, 1, -1, rowFirst))
+        // Only the tiles in view: 3 and 4.
+        first = 3
+        assertEquals(0 to 4, l.vertical(1, 3, -1, rowFirst))
+        assertEquals(1 to 2, l.vertical(0, 4, 1, rowFirst))
+        // In a grid of tiles and posters: by the left edges of that row.
+        val grid = layout(4, 2, grid(4), grid(4).apps(1))
+        assertEquals(1 to 1, grid.vertical(0, 1, 1) { 0 })
+        assertEquals(1 to 1, grid.vertical(0, 2, 1) { 0 })
+        assertEquals(1 to 1, grid.vertical(0, 3, 1) { 0 })
+        assertEquals(1 to 3, grid.vertical(1, 1, 1) { 0 })
+        assertEquals(0 to 1, grid.vertical(1, 1, -1) { 0 })
     }
 
     @Test
@@ -252,14 +354,17 @@ class HomeLayoutTest {
                 HomeSectionInfo("untitled", null, "grid", listOf("a", "b"), listOf(SectionEntry(itemId = "a"), SectionEntry(appId = "x"), SectionEntry(itemId = "b"))),
             ),
         ) { HomeTile.App(it, it) }
-        val l = layout(4, 2, *sections.map { SectionShape(it.title != null, it.row, it.tiles.size) }.toTypedArray())
+        val shapes = sections.map { s -> SectionShape(s.title != null, s.row, s.tiles.size, s.tiles.indices.filter { s.tiles[it] is HomeTile.App }.toSet()) }
+        val l = layout(4, 2, *shapes.toTypedArray())
         assertEquals(listOf(2, 3), l.sections.map { it.count })
+        assertEquals(listOf(setOf(0, 1), setOf(1)), l.sections.map { it.apps })
         fun key(at: Pair<Int, Int>?) = at?.let { (s, i) -> sections[s].tiles[i].key }
-        // ↓ from the row's second app card: the card under it in the grid, an app card too; ↑ back to it.
+        // ↓ from the row's second app card: the card under it in the grid, an app card too.
         assertEquals("app:x", key(l.vertical(0, 1, 1) { 0 }))
-        assertEquals("app:m", key(l.vertical(1, 1, -1) { 0 }))
-        // ← → along the grid row, through the app card.
+        assertEquals("app:w", key(l.vertical(1, 0, -1) { 0 }))
+        // ← → along the grid row, through the app card; the next show is on the next row.
         assertEquals("app:x", key(1 to l.horizontal(1, 0, 1)!!))
-        assertEquals("b", key(1 to l.horizontal(1, 1, 1)!!))
+        assertNull(l.horizontal(1, 1, 1))
+        assertEquals("b", key(l.vertical(1, 1, 1) { 0 }))
     }
 }

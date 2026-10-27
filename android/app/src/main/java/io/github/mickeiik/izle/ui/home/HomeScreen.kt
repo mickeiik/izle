@@ -67,7 +67,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -96,6 +98,7 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.times
+import androidx.tv.material3.Border
 import androidx.tv.material3.Card
 import androidx.tv.material3.CardDefaults
 import androidx.tv.material3.MaterialTheme
@@ -140,8 +143,21 @@ import kotlin.math.roundToInt
 private val ScrollIndicatorWidth = 6.dp
 private val ScrollIndicatorEndGap = 22.dp
 
-/** The background at 38 % over an unfocused tile: the tile at 62 % opacity, without an offscreen layer. */
+/** The background at 38 % over an unfocused card: the card at 62 % opacity, without an offscreen layer. */
 private val UnfocusedVeil = IzleColors.Background.copy(alpha = 0.38f)
+
+/** Over an unfocused app tile, darker than over a poster: a white banner barely dims. */
+private val TileVeil = IzleColors.Background.copy(alpha = 0.55f)
+
+/** Between a focused app tile and its border, outside the tile: the border shows on a white banner too. */
+private val TileFocusGap = 4.dp
+
+/** A focused app tile in a section of app cards only grows this much, in this time. */
+private const val TILE_FOCUS_SCALE = 1.05f
+private const val TILE_SCALE_MS = 150
+
+/** An app tile's icon (without a banner): this much of the tile's height. */
+private const val TILE_ICON_FRACTION = 0.55f
 
 /** A poster that is not 2:3 is cut around its upper part, where posters keep faces and titles. */
 private val PosterCrop = BiasAlignment(horizontalBias = 0f, verticalBias = -0.44f)
@@ -247,8 +263,8 @@ private fun OfflineChip(modifier: Modifier) {
 
 /**
  * Scrolls Home as little as shows the focused line whole ([HomeLayout.Line.top] to its bottom padding), from the
- * focused card's top; the distance is asked again on every frame, so it is exact. Not [active]: the focus passes
- * through another tile for a moment while the tiles stop taking it, which must not scroll.
+ * focused card's top (a growing tile's unscaled top); the distance is asked again on every frame, so it is exact. Not
+ * [active]: the focus passes through another tile for a moment while the tiles stop taking it, which must not scroll.
  */
 @OptIn(ExperimentalFoundationApi::class)
 private class LineInView(
@@ -262,8 +278,10 @@ private class LineInView(
         val l = layout()
         val g = l.grid
         val line = focusedLine()?.let { l.lines.getOrNull(it) }
-        val top = offset - (if (line != null) line.cardTop - line.top else g.padding).dp.toPx()
-        val bottom = offset + g.cardHeight.dp.roundToPx() + g.padding.dp.toPx()
+        val height = (line?.let { l.sections[it.section].cardHeight } ?: g.cardHeight).dp.roundToPx()
+        val cardTop = offset + (size - height) / 2
+        val top = cardTop - (if (line != null) line.cardTop - line.top else g.padding).dp.toPx()
+        val bottom = cardTop + height + g.padding.dp.toPx()
         when {
             top < 0f -> top
             bottom > containerSize -> bottom - containerSize
@@ -371,7 +389,7 @@ private fun HomeLines(
     BoxWithConstraints(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         val safeWidth = maxWidth.value - 2 * IzleSpacing.SafeHorizontal.value
         val layout = remember(sections, columns, rows, safeWidth, maxHeight, titleLine) {
-            val shapes = sections.map { s -> SectionShape(s.title != null, s.row, s.tiles.size) }
+            val shapes = sections.map { s -> SectionShape(s.title != null, s.row, s.tiles.size, s.tiles.indices.filterTo(HashSet()) { s.tiles[it] is HomeTile.App }) }
             HomeLayout.compute(columns, rows, safeWidth, maxHeight.value, titleLine.value, shapes)
         }
         val g = layout.grid
@@ -422,7 +440,7 @@ private fun HomeLines(
             val l = currentLayout
             if (l.sections[s].row) {
                 val row = rowStates.getOrPut(sections[s].id) { LazyListState() }
-                row.requestScrollToItem(HomeLayout.rowFirst(row.firstInView(), i, l.sections[s].count, l.grid.columns))
+                row.requestScrollToItem(l.rowFirst(s, row.firstInView(), i))
             }
             val now = l.scrollOf(listState, density)
             val to = l.scrollFor(l.lineOf(s, i), now)
@@ -462,7 +480,7 @@ private fun HomeLines(
             val id = target.tiles[ti].key
             if (target.row) {
                 val first = rowFirst(ts)
-                val to = HomeLayout.rowFirst(first, ti, target.tiles.size, l.grid.columns)
+                val to = l.rowFirst(ts, first, ti)
                 if (to != first) slide(target, to)
             }
             val requester = requesters[id]
@@ -482,8 +500,8 @@ private fun HomeLines(
         }
 
         /**
-         * A poster card or an app card, open while it has the focus: [HomeGrid.openWidth] wide, the panel at the
-         * picture's right.
+         * A poster card, open while it has the focus: [HomeGrid.openWidth] wide, the panel at the picture's right; or an
+         * app card's tile, which never opens: its focus ring lies outside it, and it grows in a section of app cards only.
          */
         @Composable
         fun CardTile(tile: HomeTile, section: Int, index: Int) {
@@ -499,9 +517,15 @@ private fun HomeLines(
                 onFocused(id)
             }
             LaunchedEffect(interaction) { snapshotFlow { focused.value }.collect { if (it) onTileFocused() } }
-            val width = animateFloatAsState(if (focused.value) g.openWidth else g.cardWidth, tween(OPEN_MS), label = "open")
+            val app = tile is HomeTile.App
+            val placed = layout.sections[section]
+            val height = placed.cardHeight
+            val closed = layout.cardWidth(section, index)
+            val width = animateFloatAsState(if (focused.value && !app) g.openWidth else closed, tween(OPEN_MS), label = "open")
             // The panel stays while the card closes.
-            val open by remember(g) { derivedStateOf { focused.value || width.value > g.cardWidth } }
+            val open by remember(g) { derivedStateOf { !app && (focused.value || width.value > g.cardWidth) } }
+            val grow = placed.appsOnly
+            val scale = animateFloatAsState(if (grow && focused.value) TILE_FOCUS_SCALE else 1f, tween(TILE_SCALE_MS), label = "grow")
             Card(
                 onClick = {
                     when (tile) {
@@ -511,20 +535,33 @@ private fun HomeLines(
                 },
                 interactionSource = interaction,
                 scale = CardDefaults.scale(focusedScale = 1f),
-                border = CardDefaults.border(focusedBorder = IzleBorders.focus(IzleShapes.Medium)),
+                border = CardDefaults.border(focusedBorder = if (app) Border.None else IzleBorders.focus(IzleShapes.Medium)),
                 shape = CardDefaults.shape(IzleShapes.Medium),
                 colors = CardDefaults.colors(containerColor = IzleColors.Surface),
                 // While the hidden menu is open, focus must not fall through to the tiles behind it.
                 modifier = Modifier
                     .layout { measurable, _ ->
                         val w = width.value.dp.roundToPx()
-                        val h = g.cardHeight.dp.roundToPx()
+                        val h = height.dp.roundToPx()
                         val placeable = measurable.measure(Constraints.fixed(w, h))
                         layout(w, h) { placeable.place(0, 0) }
                     }
+                    .then(
+                        if (grow) {
+                            Modifier.graphicsLayer {
+                                scaleX = scale.value
+                                scaleY = scale.value
+                            }
+                        } else {
+                            Modifier
+                        },
+                    )
                     .drawWithContent {
                         drawContent()
-                        if (!focused.value) drawRect(UnfocusedVeil)
+                        when {
+                            !focused.value -> drawRect(if (app) TileVeil else UnfocusedVeil)
+                            app -> drawTileFocus()
+                        }
                     }
                     .focusRequester(requester)
                     .focusProperties { canFocus = active }
@@ -554,8 +591,7 @@ private fun HomeLines(
                         }
                         is HomeTile.App -> {
                             val picture = remember(tile.appId, apps.version) { apps.picture(tile.appId) }
-                            Box(Modifier.width(g.cardWidth.dp).fillMaxHeight()) { AppCardPicture(picture, tile.label, g) }
-                            if (open) AppPanel(tile.label, g, textSizes, panel)
+                            AppTile(picture, tile.label, height, measurer)
                         }
                     }
                 }
@@ -571,8 +607,9 @@ private fun HomeLines(
                     .fillMaxWidth()
                     .height(layout.viewportHeight.dp)
                     .drawWithContent {
-                        drawContent()
+                        // Under the cards: a focused tile's ring may reach a line.
                         drawDividers(currentLayout, listState, x0)
+                        drawContent()
                     }
                     .onFocusChanged {
                         gridHasFocus = it.hasFocus
@@ -596,17 +633,19 @@ private fun HomeLines(
                         is HomeLayout.Cards -> {
                             val section = sections[slot.section]
                             val line = layout.lines[slot.line]
+                            val height = layout.sections[slot.section].cardHeight
                             if (section.row) {
                                 val rowState = rowStates.getOrPut(section.id) { LazyListState() }
+                                val end = remember(layout, slot.section) { layout.rowEnd(slot.section) }
                                 CompositionLocalProvider(LocalBringIntoViewSpec provides NoSlide) {
                                     LazyRow(
                                         state = rowState,
                                         // From the screen's left edge to its right: the cards around the columns show in
-                                        // the side margins. The end leaves room for the last card in view to be open, so
+                                        // the side margins. The end leaves room for the last cards in view, one open, so
                                         // the line keeps its place when it closes.
-                                        contentPadding = PaddingValues(start = x0.dp, end = (x0 + g.openWidth - g.cardWidth).dp),
+                                        contentPadding = PaddingValues(start = x0.dp, end = (x0 + end).dp),
                                         horizontalArrangement = Arrangement.spacedBy(g.gap.dp),
-                                        modifier = Modifier.fillMaxWidth().height(g.cardHeight.dp),
+                                        modifier = Modifier.fillMaxWidth().height(height.dp),
                                     ) {
                                         itemsIndexed(section.tiles, key = { _, tile -> tile.key }) { index, tile ->
                                             CardTile(tile, slot.section, index)
@@ -615,7 +654,7 @@ private fun HomeLines(
                                 }
                             } else {
                                 // A grid row fits one open card, so it never slides.
-                                Row(Modifier.padding(start = x0.dp).height(g.cardHeight.dp), horizontalArrangement = Arrangement.spacedBy(g.gap.dp)) {
+                                Row(Modifier.padding(start = x0.dp).height(height.dp), horizontalArrangement = Arrangement.spacedBy(g.gap.dp)) {
                                     for (j in line.first until line.first + line.count) {
                                         val tile = section.tiles[j]
                                         key(tile.key) { CardTile(tile, slot.section, j) }
@@ -736,54 +775,62 @@ private fun BoxScope.CardName(name: String, lines: Int) {
 }
 
 /**
- * An app card's picture on the card's colour, no chip: its banner whole across the card's width less [HomeGrid.INSET]
- * on each side, centred; else its icon whole, centred, as wide; else (no picture) the name.
+ * An app card's tile, on the card's colour: its banner edge to edge; else its icon whole at the left
+ * ([TILE_ICON_FRACTION] of the tile's [height], centred in height) and its name at the right of it; without a picture,
+ * the name alone.
  */
 @Composable
-private fun BoxScope.AppCardPicture(picture: AppPicture?, label: String, grid: HomeGrid) {
+private fun AppTile(picture: AppPicture?, label: String, height: Float, measurer: TextMeasurer) {
     val image = remember(picture) { picture?.bitmap?.asImageBitmap() }
-    if (image == null) return CardName(label, grid.titleLinesInCard)
-    Image(
-        image,
-        contentDescription = label,
-        contentScale = ContentScale.Fit,
-        modifier = Modifier
-            .align(Alignment.Center)
-            .padding(horizontal = HomeGrid.INSET.dp)
-            .fillMaxWidth()
-            .aspectRatio(image.width.toFloat() / image.height),
-    )
+    if (image != null && picture?.banner == true) {
+        return Image(image, contentDescription = label, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+    }
+    Row(
+        Modifier.fillMaxSize().padding(start = IzleSpacing.Large + IzleSpacing.XSmall, end = IzleSpacing.Medium),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (image != null) {
+            Image(image, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.size((height * TILE_ICON_FRACTION).dp))
+            Spacer(Modifier.width(IzleSpacing.Large))
+        }
+        AppName(label, measurer, Modifier.weight(1f))
+    }
 }
 
 /**
- * An open app card's panel, plain as a channel's: the app's name at the top (up to 3 lines) and a light grey "Open"
- * chip at the bottom (24 sp; 16 sp when the panel is too narrow or short), fitted as [PanelFit] says.
+ * An app's name on its tile: 26 sp bold in up to [PanelFit.MAX_NAME_LINES] lines (fewer when the tile is too low),
+ * broken between words only; a word or a rest that does not fit is cut with "…".
  */
 @Composable
-private fun AppPanel(label: String, grid: HomeGrid, sizes: TextSizes, modifier: Modifier) {
-    val typography = MaterialTheme.typography
-    val inset = HomeGrid.INSET.dp
-    val width = (grid.openWidth - grid.cardWidth).dp - 2 * inset
-    val open = stringResource(R.string.app_open)
-    val large = sizes.chip(open, typography.labelLarge, ChipVerticalPadding)
-    val fit = PanelFit.of(
-        height = (grid.cardHeight.dp - 2 * inset).value,
-        nameLines = sizes.lines(label, typography.titleMedium, width),
-        nameLine = sizes.lineHeight(typography.titleMedium).value,
-        newLine = 0f,
-        largeChip = if (large.width <= width) large.height.value else 0f,
-        smallChip = sizes.chip(open, typography.labelMedium, ChipVerticalPadding).height.value,
-        episodeLine = 0f,
-        bar = 0f,
-        gap = IzleSpacing.Small.value,
-    )
-    Box(modifier.background(IzleColors.SurfaceHigh)) {
-        Column(Modifier.fillMaxSize().padding(inset)) {
-            Text(label, style = typography.titleMedium, color = IzleColors.OnSurface, maxLines = fit.nameLines, overflow = TextOverflow.Ellipsis)
-            Spacer(Modifier.weight(1f).heightIn(min = IzleSpacing.Small))
-            Chip(open, IzleColors.ChipNeutral, IzleColors.OnChipNeutral, if (fit.largeChip) typography.labelLarge else typography.labelMedium)
+private fun AppName(label: String, measurer: TextMeasurer, modifier: Modifier) {
+    val style = MaterialTheme.typography.titleMedium
+    val density = LocalDensity.current
+    BoxWithConstraints(modifier) {
+        val width = constraints.maxWidth
+        val lineHeight = with(density) { style.lineHeight.roundToPx() }.coerceAtLeast(1)
+        val maxLines = (constraints.maxHeight / lineHeight).coerceIn(1, PanelFit.MAX_NAME_LINES)
+        val lines = remember(label, width, maxLines, style) {
+            wordLines(label, maxLines) { measurer.measure(it, style, maxLines = 1, softWrap = false, density = density).size.width <= width }
+        }
+        Column {
+            for (line in lines) Text(line, style = style, color = IzleColors.OnSurface, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
         }
     }
+}
+
+/**
+ * Round a focused app tile, outside it: a [TileFocusGap] in Home's background colour, then the white border, so the
+ * border shows on a white banner and the banner shows whole.
+ */
+private fun DrawScope.drawTileFocus() {
+    val corner = IzleShapes.Medium.topStart.toPx(size, this)
+    fun ring(outset: Float, width: Float, color: Color) {
+        val at = outset + width / 2
+        drawRoundRect(color, Offset(-at, -at), Size(size.width + 2 * at, size.height + 2 * at), CornerRadius(corner + at), style = Stroke(width))
+    }
+    val gap = TileFocusGap.toPx()
+    ring(0f, gap, IzleColors.Background)
+    ring(gap, IzleBorders.FocusWidth.toPx(), IzleColors.Focus)
 }
 
 /** What a chip says ([full]); when OK resumes an episode, also its two parts: [short] ("Continue") and [episode]. */

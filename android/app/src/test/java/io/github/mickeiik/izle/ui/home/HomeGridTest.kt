@@ -63,6 +63,26 @@ class HomeGridTest {
         assertEquals(1f, HomeGrid.compute(6, 4, 10f, 10f, 32f).cardWidth, 0f)
     }
 
+    @Test
+    fun anAppTileIsTwoColumnsWideAnd16By9() {
+        assertEquals(292f, grid(4, 2).appTileWidth, 0f)
+        assertEquals(164.25f, grid(4, 2).appTileHeight, 0f)
+        assertEquals(2 * 66f + 20f, grid(6, 4).appTileWidth, 0f)
+    }
+
+    @Test
+    fun anAppsNameBreaksBetweenWordsOnly() {
+        // Ten characters a line.
+        val fits = { line: String -> line.length <= 10 }
+        assertEquals(listOf("izle", "companion"), wordLines("izle companion", 3, fits))
+        assertEquals(listOf("Google", "Play Store"), wordLines("Google Play Store", 3, fits))
+        // A word wider than a line is a line of its own; the last line takes the rest (both cut when drawn).
+        assertEquals(listOf("A", "Supercalifragilistic", "app"), wordLines("A Supercalifragilistic app", 3, fits))
+        assertEquals(listOf("One two", "three four", "five six seven eight"), wordLines("One two three four five six seven eight", 3, fits))
+        assertEquals(listOf("One two three"), wordLines("One  two three ", 1, fits))
+        assertEquals(emptyList<String>(), wordLines(" ", 3, fits))
+    }
+
     // The open card's panel at 4 × 2 (180 dp inside its 12 dp edges) and 6 × 4 (75 dp): 26 sp names on 34 dp lines,
     // 24 sp lines of 32 dp, chips 38 dp tall at 24 sp and 26 dp at 16 sp, a 6 dp bar, 8 dp apart.
     private fun panel(height: Float, nameLines: Int, new: Boolean = false, largeChip: Float = 38f, episode: Boolean = false, bar: Boolean = false) =
