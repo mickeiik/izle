@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- A show's page and an episode's sheet (docs/ux/companion-catalog.md) -->
+    <string name="show_load_failed">The show could not be read.</string>
+    <string name="show_kind_series">Series</string>
+    <string name="show_more">Show all</string>
+    <string name="show_on_home">On Home</string>
+    <string name="show_add_to_home">Add to Home</string>
+    <string name="show_add_to_section">Add to a section</string>
+    <string name="show_play_on">Play on %s</string>
+    <string name="show_not_allowed">Playback not allowed by the catalog</string>
+    <string name="show_episodes">Episodes</string>
+    <string name="show_sources">Sources</string>
+    <string name="show_check_all">Check all</string>
+    <string name="show_check">Check</string>
+    <string name="show_ok_plays_this">OK plays this</string>
+    <string name="show_new">new</string>
+    <string name="show_episode_not_allowed">not allowed to play</string>
+    <string name="show_advances">Episodes advance on their own.</string>
+    <string name="show_does_not_advance">Episodes do not advance on their own.</string>
+    <string name="show_no_episodes">No episodes.</string>
+    <string name="show_no_sources">No sources.</string>
+    <plurals name="show_episode_count">
+        <item quantity="one">%d episode</item>
+        <item quantity="other">%d episodes</item>
+    </plurals>
+
+    <!-- An episode's sheet -->
+    <plurals name="show_source_count">
+        <item quantity="one">%d source</item>
+        <item quantity="other">%d sources</item>
+    </plurals>
+    <string name="show_checked_ago">checked %s</string>
+    <string name="show_not_checked">not checked</string>
+    <string name="show_play_this_on">Play this on %s</string>
+    <string name="show_continues_from_here">%s continues from here</string>
+    <string name="show_check_episode">Check this episode</string>
+    <string name="show_checking">Checking…</string>
+    <string name="show_sources_order">Sources, in the order the TV tries them</string>
+    <string name="show_sources_failed">The last checks could not be read.</string>
+</resources>
