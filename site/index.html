@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>izle — switch on, press OK, it plays</title>
-  <meta name="description" content="A senior-first Android TV player with a small self-hosted server. One grid of big show cards: OK plays the next episode. Everything else is done remotely from your phone.">
+  <meta name="description" content="A senior-first Android TV player with a small self-hosted server. One grid of big show cards: OK plays the next episode. Everything else is done remotely, with the izle companion app on your phone.">
   <meta name="color-scheme" content="dark light">
   <link rel="canonical" href="https://mickeiik.github.io/izle/">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="izle">
   <meta property="og:url" content="https://mickeiik.github.io/izle/">
   <meta property="og:title" content="izle — switch on, press OK, it plays">
-  <meta property="og:description" content="A senior-first Android TV player with a small self-hosted server. One grid of big show cards: OK plays the next episode. Everything else is done remotely from your phone.">
+  <meta property="og:description" content="A senior-first Android TV player with a small self-hosted server. One grid of big show cards: OK plays the next episode. Everything else is done remotely, with the izle companion app on your phone.">
   <meta property="og:image" content="https://mickeiik.github.io/izle/share-card.jpg">
   <meta property="og:image:width" content="1280">
   <meta property="og:image:height" content="640">
@@ -26,6 +26,7 @@
     <a class="brand" href="#"><img src="icon.svg" alt="" width="28" height="28">izle</a>
     <nav>
       <a href="#how">How it works</a>
+      <a href="#phone">Your phone</a>
       <a href="#try">Try it</a>
       <a class="gh" href="https://github.com/mickeiik/izle">GitHub</a>
     </nav>
@@ -40,7 +41,7 @@
           OK button plays the next episode. You run everything else from your phone.</p>
         <div class="ctas">
           <a class="btn primary" href="#try">Try it in 10 minutes</a>
-          <a class="btn" href="https://github.com/mickeiik/izle/releases/latest">Download the TV app</a>
+          <a class="btn" href="https://github.com/mickeiik/izle/releases/latest">Download the apps</a>
         </div>
       </div>
 
@@ -76,25 +77,39 @@
       <img class="shot" src="images/tv-message.jpg" alt="A message from the owner, Dinner is ready!, in large letters over the picture" width="1280" height="720" loading="lazy">
     </section>
 
-    <section class="split reverse">
+    <section id="phone" class="split reverse">
       <div class="split-copy">
         <p class="eyebrow">For you</p>
         <h2>Everything else, from your phone</h2>
+        <p>izle companion is the Android app for you, the owner. It connects from the TV: hold OK, choose Settings → Connect
+          a phone, and scan the code it shows.</p>
         <ul class="ticks">
-          <li>Choose which shows are on each TV's home screen, in what order, and where to continue</li>
+          <li>Choose which shows are on each TV's home screen, in sections, in what order, and where to continue</li>
           <li>See what is playing and pause, seek, skip or stop it from anywhere</li>
           <li>Send a short message to the screen: <i>“Dinner is ready!”</i></li>
-          <li>See the problems a TV ran into, and test every episode's sources</li>
+          <li>Browse your catalog, see what is new in it, and play a show on the TV</li>
+          <li>See the problems a TV ran into, and check every episode's sources</li>
         </ul>
+        <p class="aside">No Android phone? The server's admin page does all of it in any browser, on a phone or a
+          computer.</p>
       </div>
-      <img class="shot light" src="images/admin-tv-page.jpg" alt="The admin page of a TV, its Home screen tab: the TV's home drawn to scale, its grid, its sections, the chosen show and &quot;Check Home…&quot;" width="1280" height="900" loading="lazy">
+      <div class="phones">
+        <img class="phone" src="images/companion-now.jpg" alt="izle companion on a phone, the Now tab of the TV Living room: Online, Sintel playing at 5:40 of 14:48 with its poster and a progress bar, the remote's row of buttons (previous, −30, pause, +30, next), Stop the TV, Listen along and Send a message to the TV" width="540" height="1200" loading="lazy">
+        <img class="phone" src="images/companion-home.jpg" alt="izle companion on a phone, the Home tab of the TV Living room: &quot;Grid 4 × 2 · 6 shows&quot;, the sections Cartoons (one scrolling line of 4) and Films (a grid of 2) with their shows as rows (poster, title, what OK plays, a drag handle), an empty untitled section, and the + Section and Add show buttons" width="540" height="1200" loading="lazy">
+      </div>
     </section>
 
     <section class="feature-band">
       <div>
         <h3>Listen along</h3>
         <p>Your phone plays another version of the episode on the TV, a dub in another language for example, in sync
-          with the picture. You can adjust the offset and speed when two releases don't line up.</p>
+          with the picture, and keeps playing with the screen off. When two releases don't line up, tap once when you
+          see a moment and once when you hear it.</p>
+      </div>
+      <div>
+        <h3>Apps on Home</h3>
+        <p>A card on Home can open another app on the TV. If you like, izle can be the TV's home screen, so switching
+          it on opens izle. Optional: a TV whose own home screen insists on the Home button, as Google TV does, keeps it.</p>
       </div>
       <div>
         <h3>Your server, your catalog</h3>
@@ -111,7 +126,8 @@
 
     <section id="try" class="try">
       <h2>Try it in about 10 minutes</h2>
-      <p>You need a computer with Docker and an Android TV, Google TV or the Android TV emulator on the same network.</p>
+      <p>You need a computer with Docker, an Android TV, Google TV or the Android TV emulator on the same network, and an
+        Android phone for the companion app.</p>
       <ol class="steps">
         <li><b>Build and start the server</b> from a clone of the repository
           <code>docker build -t izle-server .</code>
@@ -119,6 +135,8 @@
         <li><b>Install the TV app</b> from the latest release, with adb.</li>
         <li><b>Pair the TV</b> by approving its 6-digit code on the admin page.</li>
         <li><b>Add a few sample films</b> to its home screen and press OK.</li>
+        <li><b>Connect your phone:</b> install izle companion from the release, then on the TV open Settings → Connect
+          a phone and scan the code.</li>
       </ol>
       <div class="ctas center">
         <a class="btn primary" href="https://github.com/mickeiik/izle#quick-start-about-10-minutes">Full quick start</a>
@@ -128,7 +146,8 @@
   </main>
 
   <footer class="foot">
-    <p><b>Early development.</b> The server, TV app, admin page and self-hosting setup work, but expect rough edges.
+    <p><b>Early development.</b> The server, TV app, phone app, admin page and self-hosting setup work, but expect rough
+      edges.
       See the <a href="https://github.com/mickeiik/izle/blob/main/CHANGELOG.md">changelog</a>.</p>
     <p>izle is a player. It doesn't provide or point to any shows; you bring your own catalog.
       <a href="https://github.com/mickeiik/izle/blob/main/LICENSE">MIT licence</a>. The screenshots show openly

@@ -21,7 +21,8 @@ In scope:
 - a media-proxy session that can be made to fetch arbitrary URLs, or that leaks upstream request headers;
 - upstream stream URLs, upstream headers, tokens or playlist text reaching the server's log or the TV;
 - the admin page executing or loading third-party content;
-- pairing-code abuse: guessing or taking over a code, or getting a device token without the owner's approval.
+- pairing-code abuse: guessing or taking over a code, or getting a device token without the owner's approval;
+- connecting a phone without being in front of a paired TV (the code or QR code its **Connect a phone** screen shows).
 
 Out of scope:
 - the demo CDNs and hosts that the sample catalog links to;

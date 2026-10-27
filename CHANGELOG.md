@@ -8,106 +8,84 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 
 ### Added
 
-- **App cards and izle as the home screen.** The owner can put cards that open an app installed on the TV on its
-  Home, in any section among the shows or in a section of their own (admin page: **Apps on <TV>**; izle companion: the
-  **Apps** chip of Add show); the TV reports its apps with their banners and draws each card as the app's banner tile,
-  two poster columns wide in a section of apps only and open-card sized among shows. Hidden menu → Settings → **Home screen** makes izle the TV's launcher,
-  so HOME and switching the TV on open izle's Home (a TV whose own home screen claims HOME first, as Google's TV home
-  screen does, keeps it until that one is turned off with adb); **TV settings** (also on the server address screen)
-  opens Android's settings.
-- **izle companion: a TV's problems, settings and activity, and pairing from the phone.** A fourth tab, **TV**, with
-  a red dot while the TV had problems in the last day: its problems in words (show, episode, source, when; a problem's
-  sheet has the details, **Check this episode now** and **Open the show**), **Clear**; its app version with **Update
-  now**; its settings (name, menu language, audio, subtitles, play on start), saved as they change; **Forget this
-  TV**. **Activity** is the TV's event log in words, live, by day, with who did what and a filter. The TV list says
-  what each TV plays and whether it has problems, shows a TV waiting to pair with its code (**Approve…** as a new TV
-  or one that replaces another, **Not mine**), and pairs a TV by its code.
-- **izle companion: the catalog, from a TV's page.** A third tab, **Catalog**: search with **Films**, **Series**,
-  **Channels**, **New** and **Not on Home**, sorted by title, newest or year, "On Home" on what this TV has; **What's
-  new** lists each catalog build with the shows and episodes it added (with **Add**) and removed; the tab's menu has
-  **Reload catalog** and **About the catalog**. A show's page has its synopsis, **Add to Home** or **On Home**, **Play
-  on the TV**, and its episodes with what OK plays next on this TV and each one's check; **Check all** runs a check of
-  the show. An episode's sheet plays it, makes the TV continue from it, checks it, and lists its sources in the order
-  the TV tries them with what their last check found. Catalog content itself is not edited from the phone.
-- **izle companion: a TV's page, with a remote and its Home.** After choosing a TV, the app shows its page with two
-  tabs. **Now**: whether the TV is online, what it plays (poster, progress), a remote (previous, −30 s, play/pause,
-  +30 s, next, **Stop the TV**; previous/next channel on a channel) that says in words when the TV ignores a press,
-  and **Message** (shown on the TV for 15 s, 1 min or 2 min); while the phone listens, a bar says so, with
-  **Stop**. **Home**: the TV's Home by sections, as on the admin page: drag a show by its handle within or across
-  sections, a show's sheet (**Play on the TV now**, **Continue from episode…**, **Move to section…**, **Move to
-  first**, **Remove from Home**), sections (add, rename, one scrolling line, move, delete), **Add show** (a catalog
-  search that leaves out what is already on this TV) and the grid size; each edit is one single change, and edits made
-  elsewhere show at once. **Check Home…** (quick: what OK plays; full: every episode) and a show's **Check this show**
-  run the admin page's source checks, with their progress, **Stop** and the result in a strip at the top of the list. Listen along opens from **Now**, slimmer: the source, **Listen**, the earphone delay, and
-  the timing and sync details folded away. The app has one flat, compact look, light or dark as the phone is.
-- **Listen along timing by ear, in the companion app and on the admin page** ([#34](https://github.com/mickeiik/izle/issues/34)).
-  **Mark on TV** when a moment shows on the TV and **Mark on phone** when it is heard, in either order, set the
-  offset; ±30 s, ±5 s and ±0.5 s move it at once while listening, with the offset shown as `−0:01.3`; the speed is a
-  choice (**Same speed**, **PAL vs film**, **Film vs PAL**, **Other** for a number). The numbers stay editable behind
-  **Edit** and **Other**; the ±50 ms nudge is now **Earphone delay**.
+- **izle companion, the admin page as an Android phone app.** Releases now carry `izle-companion-X.Y.Z.apk` (signed
+  with the TV app's release key) and `izle-companion-X.Y.Z-debug.apk`, sideloaded on the owner's phone; a server's TV
+  app updates never offer them. The phone connects from a TV (see **Connect a phone from the TV**) and has one flat,
+  compact look, light or dark as the phone is. The TV list says what each TV plays and whether it has problems, shows
+  a TV waiting to pair with its code (**Approve…** as a new TV or one that replaces another, **Not mine**), and pairs
+  a TV by its code. A TV's page has four tabs:
+  - **Now**: whether the TV is online, what it plays (poster, progress), a remote (previous, −30 s, play/pause,
+    +30 s, next, **Stop the TV**; previous/next channel on a channel) that says in words when the TV ignores a press,
+    and **Message** (shown on the TV for 15 s, 1 min or 2 min).
+  - **Home**: the TV's Home by sections, as on the admin page: drag a show by its handle within or across sections,
+    a show's sheet (**Play on the TV now**, **Continue from episode…**, **Move to section…**, **Move to first**,
+    **Remove from Home**), sections (add, rename, one scrolling line, move, delete), **Add show** (a catalog search
+    that leaves out what is already on this TV, with an **Apps** chip for app cards) and the grid size; each edit is
+    one single change, and edits made elsewhere show at once. **Check Home…** (quick: what OK plays; full: every
+    episode) and a show's **Check this show** run the admin page's source checks, with their progress, **Stop** and
+    the result in a strip at the top of the list.
+  - **Catalog**: search with **Films**, **Series**, **Channels**, **New** and **Not on Home**, sorted by title,
+    newest or year, "On Home" on what this TV has; **What's new** lists each catalog build with the shows and episodes
+    it added (with **Add**) and removed; **Reload catalog** and **About the catalog**. A show's page has its synopsis,
+    **Add to Home** or **On Home**, **Play on the TV**, and its episodes with what OK plays next on this TV and each
+    one's check; **Check all** checks the whole show. An episode's sheet plays it, makes the TV continue from it,
+    checks it, and lists its sources in the order the TV tries them with what their last check found. Catalog
+    content itself is not edited from the phone.
+  - **TV**, with a red dot while the TV had problems in the last day: its problems in words (show, episode, source,
+    when; a problem's sheet has the details, **Check this episode now** and **Open the show**), **Clear**; its app
+    version with **Update now**; its settings (name, menu language, audio, subtitles, play on start), saved as they
+    change; **Forget this TV**. **Activity** is the TV's event log in words, live, by day, with who did what and a
+    filter.
+
+  **Listen along** opens from **Now**: the phone plays a candidate from the catalog through the server proxy, in sync
+  with the TV, as a foreground service (it keeps playing with the screen off), including an episode's DASH and
+  MPEG-TS sources, which the admin page's Listen along card cannot play; while it listens, a bar says so, with
+  **Stop**. For a release the catalog does not list, the **link finder** is an in-app browser for the owner's own
+  browsing: when the page requests something that looks like a playlist (its URL contains `m3u8`), the app checks it
+  once and offers **Listen to this** for the episode the TV is playing; a link found elsewhere can be pasted. Such a
+  link plays on the phone itself, with the `Referer`, `Origin` and cookies the page used, never through the server,
+  which keeps only its timing. A playlist far shorter than the episode (under half its duration) is reported as
+  expired or obtained from another address and not played; finding a new link mid-episode keeps the offset and the
+  speed. Found links, their headers and cookies live in the app's memory for the session only: never on disk, never
+  sent to the server, never logged; **Clear browser cookies** in the app's menu empties the in-app browser's cookies.
 - **Connect a phone from the TV.** The TV's hidden menu has **Settings → Connect a phone** (Turkish: **Telefon
   bağla**): it shows a QR code and a 6-digit code for 5 minutes. Scanning the QR code with the phone's camera opens
   izle companion, which connects at once; in the app, the server's address and the code do the same. A connected phone
   gets owner access, like the admin page: being in front of the TV, which the owner approved at pairing, is the
   security, so there is no other step. Leaving the screen (Back) cancels the code at once, and too many wrong codes
-  from anywhere pause connecting by code for 10 minutes (the QR code still works). The phones are listed on the admin page's **Access** view and in the app, each
-  with **Disconnect** (the phone loses access at once); `izle-server phone list` and `izle-server phone disconnect
-  <id>` do the same from the server's shell, so a lost phone can be cut off without the admin page. The companion app
-  no longer takes an access token (debug builds still accept one, for development). For clients of the API: the
-  routes `POST`/`GET`/`DELETE /api/v1/tv/phones/invite`, `POST /api/v1/phones/claim`, `GET /api/v1/admin/phones` and
-  `DELETE /api/v1/admin/phones/:id`, the page `/connect`, `izph_` phone secrets at the owner level, the events
-  `phone.connected` and `phone.disconnected`, and the actor type `phone`.
-- **izle companion, an Android phone app for Listen along (first step).** It connects from a TV (see **Connect a
-  phone from the TV**), lets the owner pick the TV, shows what it plays with the Listen along candidates and
-  their timing, and plays a candidate from the catalog bundle through the server proxy, in sync with the TV, as a
-  foreground service (it keeps playing with the screen off). Releases now carry `izle-companion-X.Y.Z.apk` (signed
-  with the TV app's release key) and `izle-companion-X.Y.Z-debug.apk`, sideloaded on the owner's phone; a server's TV
-  app updates never offer them.
-- **izle companion plays a link found in its own browser (second step).** For a release that a catalog bundle does
-  not list, the app has a link finder: an in-app browser for the owner's own browsing, which watches the requests
-  the page makes and, when one looks like a playlist (its URL contains `m3u8`), fetches it once from the phone to
-  confirm it starts like one, then offers **Listen to this** for the episode the TV is playing; a link found
-  elsewhere can be pasted. Such a link plays on the phone itself, with the `Referer`, `Origin` and cookies the page
-  used, never through the server: the server keeps only its timing, under the reserved source id `pasted`. A playlist
-  far shorter than the episode (under half its duration) is reported as expired or obtained from another address and
-  not played, with the prompt to find a new link; finding a new link mid-episode keeps the offset and the speed.
-  Found links, their headers and cookies live in the app's memory for the session only: never on disk, never sent to
-  the server, never logged; **Clear browser cookies** in the app's menu empties the in-app browser's cookie jar.
-  The companion app now also plays an episode's DASH and MPEG-TS sources from the catalog, which the admin page's
-  Listen along card still cannot.
-- **Listen along's resolve takes the media kinds the client plays.** `POST …/companion/resolve` accepts an optional
-  `kinds` (among `hls`, `dash`, `mp4`, `ts`); without it the server answers HLS and MP4 only, as before. A client that
-  lists them gets MPEG-TS through the proxy and DASH direct instead of `400 unsupported_media`.
-- **Listen along keeps the timing of a link found on the phone.** For a release the owner finds in a browser, which
-  is short-lived and bound to the address that fetched it, the companion app will play the link on the phone itself;
-  the link never reaches the server. The server stores only its offset, rate and language, for any episode, under
-  the reserved source id `pasted` (copied to a whole series like any link), lists it among the Listen along
-  candidates, and now also gives the episode's duration as the TV last reported it. The admin page's Listen along
-  card has no field for such a link: its hint says that a link found in a browser is for the companion app.
-- **The catalog validator warns about a source id `pasted`.** The id is reserved for that link; `izle-validate`
-  reports such a source as a warning, in an episode or a channel (a bundle that uses it stays valid: that source is
-  served as itself, and its episode gets no `pasted` candidate).
+  from anywhere pause connecting by code for 10 minutes (the QR code still works). The phones are listed on the admin
+  page's **Access** view and in the app, each with **Disconnect** (the phone loses access at once); `izle-server phone
+  list` and `izle-server phone disconnect <id>` do the same from the server's shell, so a lost phone can be cut off
+  without the admin page. For clients of the API: the routes `POST`/`GET`/`DELETE /api/v1/tv/phones/invite`, `POST
+  /api/v1/phones/claim`, `GET /api/v1/admin/phones` and `DELETE /api/v1/admin/phones/:id`, the page `/connect`,
+  `izph_` phone secrets at the owner level, the events `phone.connected` and `phone.disconnected`, and the actor type
+  `phone`.
+- **App cards and izle as the home screen.** The owner can put cards that open an app installed on the TV on its
+  Home, in any section among the shows or in a section of their own (admin page: **Apps on <TV>**; izle companion: the
+  **Apps** chip of Add show); the TV reports its apps with their banners and draws each card as the app's banner tile,
+  two poster columns wide in a section of apps only and open-card sized among shows. Hidden menu → Settings → **Home
+  screen** makes izle the TV's launcher, so HOME and switching the TV on open izle's Home (a TV whose own home screen
+  claims HOME first, as Google's TV home screen does, keeps it until that one is turned off with adb); **TV settings**
+  (also on the server address screen) opens Android's settings.
+- **Listen along timing by ear, in the companion app and on the admin page** ([#34](https://github.com/mickeiik/izle/issues/34)).
+  **Mark on TV** when a moment shows on the TV and **Mark on phone** when it is heard, in either order, set the
+  offset; ±30 s, ±5 s and ±0.5 s move it at once while listening, with the offset shown as `−0:01.3`; the speed is a
+  choice (**Same speed**, **PAL vs film**, **Film vs PAL**, **Other** for a number). The numbers stay editable behind
+  **Edit** and **Other**; the ±50 ms nudge is now **Earphone delay**.
+- **Listen along, for clients of the API and catalog producers.** `POST …/companion/resolve` accepts an optional
+  `kinds` (among `hls`, `dash`, `mp4`, `ts`); without it the server answers HLS and MP4 only, as before, and a client
+  that lists them gets MPEG-TS through the proxy and DASH direct instead of `400 unsupported_media`. The timing of a
+  link found on the phone is stored for any episode under the reserved source id `pasted` (copied to a whole series
+  like any link) and listed among the candidates, which now also give the episode's duration as the TV last reported
+  it; `izle-validate` warns about a source id `pasted` in an episode or a channel (the bundle stays valid: that
+  source is served as itself, and its episode gets no `pasted` candidate). The admin page's Listen along card has no
+  field for such a link: its hint says that a link found in a browser is for the companion app.
 
 ### Changed
 
 - **Home grids up to 10 columns** (was 6): with 3 or 4 rows, the cards could not fill the screen's width at any
   setting and left empty sides; 7 columns fill it at 3 rows, 9 at 4 (10 with a titled section). The admin page offers
   3–10; `homeColumns` accepts 3–10. A TV on an older app shows 6 columns until it is updated.
-
-### Fixed
-
-- **The companion's link finder shows its address row and leaves the page more room.** On a phone, a freshly opened
-  finder could paint its empty browser over the address row, so the address had to be typed blind; the browser now
-  starts on a blank page, in the theme's colour, clipped to its own area. While the finder is open the app bar
-  (the TV's name, **Change TV**, the menu) is gone: Close and the address row are its only chrome. The bottom bar is
-  one short row: a one-line hint and **Paste a link**, which opens the paste field (its error shows only with it), or,
-  once a stream is found, **Listen to this**. The address row now follows a site's in-page navigation too, and a
-  playlist request that the browser sends without `Referer` or `Origin` is checked and played with the page's
-  address and origin in their place, so a host that redirects such requests no longer hides the stream. The finder
-  checks a page's requests only until it has found a playlist, ignores images and media segments, and forgets what it
-  checked when the page changes, so coming back to a page finds its stream again. The in-app browser lets a page's
-  challenge frames load (`about:blank`, `about:srcdoc`) and no longer sends the app's package name with every
-  request, so sites protected by a bot check work in it as in any browser.
 
 ## [0.6.1] - 2026-10-23
 

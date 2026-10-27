@@ -88,9 +88,17 @@ h2 { font-size: clamp(1.9rem, 3.6vw, 2.7rem); font-weight: 800; }
 .ticks { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.85rem; font-size: 1.08rem; }
 .ticks li { padding-left: 2rem; position: relative; color: var(--muted); }
 .ticks li::before { content: "✓"; position: absolute; left: 0; top: 0; color: var(--green); font-weight: 900; }
+.split-copy .aside { font-size: 1rem; margin: 1.5rem 0 0; }
+
+/* Phone-shaped screenshots (540 × 1200): a dark bezel like the TV's, the second one a step lower. */
+.phones { display: flex; justify-content: center; align-items: flex-start; gap: clamp(0.9rem, 3vw, 2rem); }
+.phone { width: min(17rem, 44%); height: auto; aspect-ratio: 540 / 1200; object-fit: cover; background: #000;
+  border: 0.45rem solid #050507; border-radius: 1.9rem;
+  box-shadow: 0 0 0 1px #262830, 0 30px 70px -24px rgb(0 0 0 / 65%); }
+.phone + .phone { margin-top: 2.5rem; }
 
 /* --- feature band ---------------------------------------------------------------------------------------------- */
-.feature-band { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2.5rem; margin: 4rem 0; padding: 2.75rem 0;
+.feature-band { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2.5rem; margin: 4rem 0; padding: 2.75rem 0;
   border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .feature-band h3 { font-size: 1.25rem; }
 .feature-band p { color: var(--muted); margin: 0; }
@@ -101,7 +109,7 @@ h2 { font-size: clamp(1.9rem, 3.6vw, 2.7rem); font-weight: 800; }
 .steps { list-style: none; counter-reset: step; padding: 0; margin: 0 auto 2.5rem; max-width: 40rem; text-align: left;
   display: grid; gap: 0.75rem; }
 .steps li { counter-increment: step; position: relative; background: var(--surface); border: 1px solid var(--line);
-  border-radius: 14px; padding: 1rem 1.2rem 1rem 3.8rem; color: var(--muted); }
+  border-radius: 14px; padding: 1rem 1.2rem 1rem 3.8rem; color: var(--muted); min-width: 0; }
 .steps li::before { content: counter(step); position: absolute; left: 1.1rem; top: 0.9rem; width: 1.8rem; height: 1.8rem;
   border-radius: 50%; background: var(--yellow); color: var(--on-yellow); font-weight: 900; display: grid; place-items: center; }
 .steps code { display: block; margin-top: 0.5rem; padding: 0.6rem 0.8rem; background: var(--bg); border-radius: 8px;
@@ -110,12 +118,15 @@ h2 { font-size: clamp(1.9rem, 3.6vw, 2.7rem); font-weight: 800; }
 /* --- footer ---------------------------------------------------------------------------------------------------- */
 .foot { border-top: 1px solid var(--line); padding-top: 2rem; padding-bottom: 3rem; color: var(--muted); font-size: 0.92rem; }
 
+@media (max-width: 1100px) { .feature-band { grid-template-columns: repeat(2, 1fr); } }
+
 /* --- narrow ---------------------------------------------------------------------------------------------------- */
 @media (max-width: 860px) {
   .hero, .split { grid-template-columns: 1fr; gap: 2.5rem; }
   .split.reverse .split-copy { order: 0; }
   .hero { padding-top: 1.5rem; }
   .rules, .feature-band { grid-template-columns: 1fr; }
+  .phone + .phone { margin-top: 1.5rem; }
   .remote { right: 0.5rem; bottom: -2.25rem; transform: rotate(6deg) scale(0.85); }
   .top nav a:not(.gh) { display: none; }
 }

@@ -13,9 +13,9 @@ tab, Activity and pairing in [companion-tv.md](companion-tv.md); the routes are 
 - The TV list shows each TV's name and whether it is online ("Online", "Last seen 5 minutes ago").
 - The TV page's app bar holds the TV's name (tap it to switch TV: the list) and the ⋮ menu: **Phones**, **Disconnect
   this phone**, **Clear browser cookies**.
-- A bottom bar switches between **Now** and **Home**. Back goes to the TV list when the server has more than one TV;
-  with one, it leaves the app. Going to the list does not stop listening; picking another TV does (listening follows
-  the TV it started with).
+- A bottom bar switches between **Now**, **Home**, **Catalog** and **TV**. Back goes to the TV list when the server
+  has more than one TV; with one, it leaves the app. Going to the list does not stop listening; picking another TV
+  does (listening follows the TV it started with).
 
 ## Now
 
@@ -27,7 +27,7 @@ tab, Activity and pairing in [companion-tv.md](companion-tv.md); the routes are 
   round trip; it stops following when the tab, the page or the app is left.
 - Under it, while this phone listens to this TV, the **listening bar**: "Listening · in sync" (or `catching up`,
   `waiting`, `paused`, `starting`), the source, and **Stop**; tapping the bar opens Listen along. Otherwise a **Listen
-  along** button, or one line saying why not: "Nothing to listen to: Salon is on a channel." / "Nothing to listen to:
+  along** button (beside **Stop the TV**), or one line saying why not: "Nothing to listen to: Salon is on a channel." / "Nothing to listen to:
   Salon isn't playing anything."
 
 ## Remote
@@ -45,7 +45,7 @@ tab, Activity and pairing in [companion-tv.md](companion-tv.md); the routes are 
 
 ## Send a message
 
-- **Message** (beside **Stop the TV**) opens a bottom sheet: the text (1–200 characters, trimmed, with a counter), **Show
+- **Send a message to the TV** (under the remote, across the width) opens a bottom sheet: the text (1–200 characters, trimmed, with a counter), **Show
   for** 15 s, 1 min (the default) or 2 min, and **Send**. Once the TV reports it shown: "Shown on Salon".
 
 ## Listen along

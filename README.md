@@ -4,40 +4,76 @@
 [![Release](https://img.shields.io/github/v/release/mickeiik/izle)](https://github.com/mickeiik/izle/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/mickeiik/izle)](LICENSE)
 
-A senior-first Android TV player with a small self-hosted server. Project page: <https://mickeiik.github.io/izle/>
+A senior-first Android TV player, run from your phone and a small self-hosted server. Project page:
+<https://mickeiik.github.io/izle/>
 
-| The TV: one screen, OK plays | The owner's admin page |
+| The TV: one screen, OK plays | You: izle companion on your phone |
 |---|---|
-| ![The TV's home screen: a grid of poster cards; the focused one is open, with the show's name, "Continue", "Episode 1" and a progress bar](docs/images/tv-home.jpg) | ![The admin page of a TV, its Home screen tab: the TV's home drawn to scale, its grid, its sections, the chosen show and "Check Home…"](docs/images/admin-tv-page.jpg) |
+| <img src="docs/images/tv-home.jpg" width="560" alt="The TV's home screen: a grid of poster cards; the focused one is open, with the show's name, &quot;Continue&quot;, &quot;Episode 1&quot; and a progress bar"> | <img src="docs/images/companion-home.jpg" width="200" alt="izle companion on a phone, the Home tab of the TV Living room: &quot;Grid 4 × 2 · 6 shows&quot;, the sections Cartoons (one scrolling line of 4) and Films (a grid of 2) with their shows as rows (poster, title, what OK plays, a drag handle), an empty untitled section, and the + Section and Add show buttons"> |
+
+**Status:** early development (see the [changelog](CHANGELOG.md)). The server, the TV app, the phone app, the admin
+page and the self-hosting setup work; expect rough edges.
+
+## How it works
+
+**The TV.** izle is built for a viewer who only knows classic TV: switch on, pick a "channel", it plays. The TV shows
+one grid of big cards: shows and live channels. OK plays the next unwatched episode (or resumes the half-watched one)
+or a channel at its live edge. Episodes advance on their own, CH+/CH− switch between channels, and Back always returns
+to that single home screen. There is no browsing, no seasons list, no settings in the viewer's path. When something
+goes wrong, the TV says so in large letters and goes back to Home by itself. The app is in English and Turkish.
+
+**You.** Everything else is done remotely, by you: with **izle companion**, the Android app for your phone, or with
+the server's admin page in any browser, on a phone or a computer. The phone app has what you need day to day; the
+admin page has everything, the viewing history and access tokens included.
+
+**Your server.** izle-server runs on a machine that is always on (a home server, a NAS, a Raspberry Pi, a small VPS).
+It reads your **catalog bundle**, a folder of JSON and posters that says what the shows are and where their videos
+are, and, if your streams need it, your own **resolver module**. The TV and the phone talk only to it; there is no
+account and no cloud.
+
+## What you can do from your phone
+
+<table>
+<tr>
+<td><img src="docs/images/companion-now.jpg" width="200" alt="izle companion on a phone, the Now tab of the TV Living room: Online, Sintel playing at 5:40 of 14:48 with its poster and a progress bar, the remote's row of buttons (previous, −30, pause, +30, next), Stop the TV, Listen along and Send a message to the TV"></td>
+<td><img src="docs/images/companion-catalog.jpg" width="200" alt="izle companion on a phone, the Catalog tab: a search field, the Films, Series, Channels and Not on Home chips, &quot;6 shows&quot; sorted by title, and the sample films as rows with their year, each one marked &quot;On Home&quot;"></td>
+</tr>
+</table>
+
+- **Home and sections.** Choose which shows and channels are on each TV's Home, in titled sections or one scrolling
+  line, in what order (drag them), how big the grid is (3–10 columns, 1–4 rows), and "continue from episode X". The
+  Catalog tab searches the whole catalog, shows what each new catalog build added, and adds a show or plays it on the
+  TV.
+- **App cards and izle as the home screen.** A card on Home can open another app installed on the TV (a weather app,
+  for example). On the TV, izle can also be made its home screen, so that HOME and switching the TV on open
+  izle; this is optional, and a TV whose own home screen claims HOME (Google TV does) keeps it unless that one is
+  turned off with adb.
+- **Remote and messages.** See what is playing; pause, seek 30 s, skip episodes or channels, or stop it, from
+  anywhere. Send a short message that the TV shows in large letters for 15 s, 1 min or 2 min.
+- **Problems and source checks.** Each TV's problems in words (show, episode, source, when), and a check of what OK
+  plays on Home, or of every episode, along the TV's own path to the media.
+- **Listen along.** The phone plays another source of the episode the TV is showing (a dub in another language, for
+  example) in sync with the picture, in your earphones. When two releases differ in timing, tap **Mark on TV** when
+  you see a moment and **Mark on phone** when you hear it, and pick the speed (PAL vs film). The phone app keeps
+  playing with the screen off, and can play a link you found in its own browser.
+- **Viewing history.** What was watched when and how much of it, per TV and per title, with your own marks (on the
+  admin page). Each TV's activity, live, is on the phone too.
+- **Your own scripts and AI agents.** Access tokens with a scope (`read`, `control`, `manage`) let a script, a
+  home-automation hook or an AI agent watch the TVs, play something or change a Home, through the same
+  [API](docs/spec/server-api-v1.md#remote-management) and a live event stream.
+
+The phone connects from the TV: no token to copy. On the admin page, the same TV looks like this:
+
+<img src="docs/images/admin-tv-page.jpg" width="640" alt="The admin page of a TV, its Home screen tab: the TV's home drawn to scale, its grid, its sections, the chosen show and &quot;Check Home…&quot;">
+
+| On the TV: the player | On the TV: a message from you |
+|---|---|
 | ![The player, paused: show, episode and a progress bar in large type](docs/images/tv-player.jpg) | ![A message from the owner, "Dinner is ready!", in large letters over the picture](docs/images/tv-message.jpg) |
-
-izle is built for a viewer who only knows classic TV: switch on, pick a "channel", it plays. The TV shows one
-grid of big cards: shows and live channels. OK plays the next unwatched episode (or resumes the half-watched one)
-or a channel at its live edge; episodes advance on their own, CH+/CH− switch between channels, and Back always
-returns to that single home screen. There is no browsing, no seasons list, no settings in the viewer's path.
-
-Everything else is done remotely by the owner from the server's admin page, on a phone or a computer:
-
-- which shows are on each TV's home screen, in what order, and "continue from episode X"
-- menu, audio and subtitle languages, autoplay when the TV starts
-- what is playing right now: play, stop, pause, seek, skip episodes, and a short message in large letters on screen
-- the problems a TV ran into, and a test of every episode's sources
-- **listen along**: the phone plays another source of the episode the TV is showing (a dub in another language) in
-  sync with the picture, with an adjustable offset and speed for releases that differ in timing; from the admin page
-  in the phone's browser, or with the **izle companion** Android app, which keeps playing with the screen off
-- the viewing history: what was watched when and how much of it, per TV and per title, with the owner's own marks
-- access tokens with a scope, so the owner's own scripts or an AI agent can watch the TVs, play something, change a
-  home screen, through the same API and a live event stream
-
-The TV app always talks to the server (there is no standalone mode) and is in English and Turkish.
-
-**Status:** early development (see the [changelog](CHANGELOG.md)). Server, TV app, admin page and self-hosting
-setup work; expect rough edges.
 
 ## Quick start (about 10 minutes)
 
-Try izle with the included sample catalog of openly licensed films. You need a computer with Docker and Git, and an
-Android TV (or Google TV) on the same network, or an Android TV emulator.
+Try izle with the included sample catalog of openly licensed films. You need a computer with Docker and Git, an
+Android TV (or Google TV) on the same network, or an Android TV emulator, and for step 5 an Android phone.
 
 **1. Start the server** on the computer, then print the admin token and sign in at `http://localhost:8787/admin/`
 (from a phone: add `--link --base http://<computer's address>:8787` for a sign-in link and QR code):
@@ -69,7 +105,13 @@ prefilled `http://10.0.2.2:8787`). Approve the 6-digit code it shows on the admi
 **4. Put shows on its home screen.** On the TV's page, add a few sample films under **Home screen**; they appear on
 the TV at once. Press OK on one, and try **Now playing** and **Message to the TV** from the admin page while it plays.
 
-To remove everything afterwards: `docker rm -f izle && docker volume rm izle-data`, and uninstall the app.
+**5. Connect your phone.** Install `izle-companion-X.Y.Z-debug.apk` from the same release on your Android phone
+(Android 7 or newer; allow your browser or file manager to install unknown apps). On the TV, hold OK (or press the
+Menu key) to open the hidden menu, then **Settings → Connect a phone**: the TV shows a QR code and a 6-digit code for
+5 minutes. Scan the QR code with the phone's camera, or open izle companion and enter the server's address and the
+code. The phone opens that TV's page: **Now**, **Home**, **Catalog** and **TV**.
+
+To remove everything afterwards: `docker rm -f izle && docker volume rm izle-data`, and uninstall both apps.
 
 ## Your own content
 
@@ -88,15 +130,25 @@ each video or stream is. The [sample catalog](sample-catalog/) is one. Videos ar
 ## Running it for real
 
 Each [release](https://github.com/mickeiik/izle/releases) has the server as one dependency-free package
-(`izle-server-X.Y.Z.tgz`, Node.js ≥ 22.13) and the TV app as an APK. The [self-hosting guide](docs/deploy/self-hosting.md)
-covers systemd or Docker, HTTPS with Caddy for TVs outside your home, your own catalog and resolver module, backups
-and updates, installing the app, and troubleshooting. Security problems are reported privately:
+(`izle-server-X.Y.Z.tgz`, Node.js ≥ 22.13), the TV app and the phone app as APKs. The
+[self-hosting guide](docs/deploy/self-hosting.md) covers systemd or Docker, HTTPS with Caddy for TVs outside your
+home, your own catalog and resolver module, backups and updates, installing the apps, and troubleshooting. The server
+keeps the TVs' app up to date; the phone app is installed by hand. Security problems are reported privately:
 [SECURITY.md](SECURITY.md).
+
+## Documentation
+
+| For | Read |
+|---|---|
+| Owners | [Self-hosting guide](docs/deploy/self-hosting.md) · [the TV](docs/ux/senior-tv.md) · [izle companion](docs/ux/companion.md) ([Home](docs/ux/companion-home.md), [Catalog](docs/ux/companion-catalog.md), [TV tab](docs/ux/companion-tv.md)) · [a TV's Home on the admin page](docs/ux/admin-home.md) · [changelog](CHANGELOG.md) · [security](SECURITY.md) |
+| Catalog authors | [Catalog bundle contract](docs/spec/catalog-bundle-v1.md) · validator: `npx izle-validate <dir>` ([contract/](contract/)) · [resolver module](docs/spec/resolver-module-v1.md) and its [example](server/examples/resolver-example/README.md) |
+| Developers | [Server API](docs/spec/server-api-v1.md) · [API tour with curl](docs/api-tour.md) · [AGENTS.md](AGENTS.md) · [releasing](docs/releasing.md) · [decision log](docs/decisions.md) |
 
 ## Development
 
-Node.js ≥ 22.13 and npm (`npm ci && npm test`); for the TV app a JDK 21+ and the Android SDK. Every command is in
-[AGENTS.md](AGENTS.md#commands); making releases: [docs/releasing.md](docs/releasing.md).
+Node.js ≥ 22.13 and npm (`npm ci && npm test`); for the Android apps a JDK 21+ and the Android SDK. Every command is
+in [AGENTS.md](AGENTS.md#commands); a walk through the API with curl against the development server:
+[docs/api-tour.md](docs/api-tour.md); making releases: [docs/releasing.md](docs/releasing.md).
 
 | Path | What |
 |---|---|
@@ -104,37 +156,13 @@ Node.js ≥ 22.13 and npm (`npm ci && npm test`); for the TV app a JDK 21+ and t
 | `server/` | `@izle/server` — Hono + `node:sqlite` server: pairing, TV and admin APIs, live events, resolver modules, media proxy, admin page (`server/admin/`) |
 | `server/examples/resolver-example/` | example resolver module with a local stand-in upstream and catalog |
 | `sample-catalog/` | sample bundle of openly licensed content |
-| `android/` | Android TV app (Kotlin, Compose for TV, Media3) |
+| `android/core/` | shared Android library: API client and models, media engine, shared helpers |
+| `android/app/` | the Android TV app (Kotlin, Compose for TV, Media3) |
+| `android/companion/` | izle companion, the phone app (Kotlin, Compose, Media3) |
 | `scripts/` | release tooling: server package build (`pack-server.mjs`) and smoke test, version bump/check |
+| `site/` | the project page (static, no build step) |
 | `Dockerfile` | container image of the server package |
-| `docs/` | specs ([catalog bundle](docs/spec/catalog-bundle-v1.md), [resolver module](docs/spec/resolver-module-v1.md), [server API](docs/spec/server-api-v1.md)), UX ([TV](docs/ux/senior-tv.md), [admin Home](docs/ux/admin-home.md)), [self-hosting](docs/deploy/self-hosting.md), [releasing](docs/releasing.md), [decision log](docs/decisions.md) |
-
-### Try the API with curl
-
-What a TV and its owner do, against the development server with the sample catalog
-([server API](docs/spec/server-api-v1.md)); needs `curl` and `jq`. Start `npm run -w server dev -- --config
-server/izle.dev.json`, then in a second terminal:
-
-```bash
-B=http://localhost:8787; J='Content-Type: application/json'
-dev() { npm run -s -w server dev -- "$@" --config server/izle.dev.json; }
-ADMIN="Authorization: Bearer $(dev admin-token)"
-START=$(curl -s -X POST $B/api/v1/pair/start); CODE=$(echo "$START" | jq -r .code)   # the TV shows a code
-dev pair approve $CODE Living room                                                    # the owner approves it
-WAIT=$(curl -s "$B/api/v1/pair/wait?code=$CODE" -H "Authorization: Bearer $(echo "$START" | jq -r .pairToken)")
-DEVICE=$(echo "$WAIT" | jq -r .deviceId); TV="Authorization: Bearer $(echo "$WAIT" | jq -r .deviceToken)"
-curl -s -X PUT $B/api/v1/admin/devices/$DEVICE/home -H "$ADMIN" -H "$J" -d '{"itemIds":["caminandes","sintel"]}' >/dev/null
-curl -s $B/api/v1/tv/state -H "$TV" | jq -c '.home[] | {show: .item.title, next: .continue.episodeId}'
-curl -s -X POST $B/api/v1/tv/resolve -H "$TV" -H "$J" -d '{"episodeId":"caminandes.s01e01"}' | jq -c '{sourceId, media}'
-curl -s -X POST $B/api/v1/tv/progress -H "$TV" -H "$J" \
-  -d '{"episodeId":"caminandes.s01e01","positionMs":90000,"durationMs":90000,"status":"finished"}'   # cursor moves on
-AGENT="Authorization: Bearer $(dev token create Agent --scope control | tail -1)"                   # an access token
-curl -s -X POST $B/api/v1/admin/devices/$DEVICE/commands -H "$AGENT" -H "$J" -d '{"type":"play","itemId":"sintel"}'
-curl -s "$B/api/v1/admin/events?after=0&types=home.,command." -H "$AGENT" | jq -c '.events[] | {type, data}'
-```
-
-`curl -N $B/api/v1/tv/events -H "$TV"` follows the TV's live updates, `curl -N $B/api/v1/admin/events/stream -H
-"$AGENT"` the event log.
+| `docs/` | specs, UX rules, self-hosting, releasing, decision log (see [Documentation](#documentation)) |
 
 ## License
 
