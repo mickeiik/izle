@@ -92,10 +92,27 @@ fun EventContext.learn(events: List<AdminEvent>): EventContext {
 }
 
 /**
+ * Whether the Activity shows [event] ([eventWords] is not null): a type it lists, and not a command done, a check of
+ * no TV, an app version without one, or a start without its viewing.
+ */
+fun shownInActivity(event: AdminEvent): Boolean {
+    val d = event.data
+    return when (event.type) {
+        !in ACTIVITY_TYPES -> false
+        "playback.started" -> d.long("viewingId") != null
+        "command.result" -> d.string("result").let { it != null && it != "done" }
+        "check.finished" -> event.deviceId != null
+        "device.app_version" -> d.string("to") != null
+        else -> true
+    }
+}
+
+/**
  * [event] in words, or null when the Activity does not show it (an unknown type, a command done, a check of another
  * TV's Home or of a show).
  */
 fun eventWords(res: Resources, event: AdminEvent, ctx: EventContext = EventContext()): EventWords? {
+    if (!shownInActivity(event)) return null
     val d = event.data
     val by = actorText(res, event.actor, ctx.thisPhoneId)
     fun line(vararg parts: String?): String? = listOfNotNull(*parts).filter { it.isNotEmpty() }.joinToString(" · ").ifEmpty { null }
@@ -296,7 +313,7 @@ private fun settingName(res: Resources, field: String): String = when (field) {
     else -> field
 }
 
-private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
+internal fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
 private fun JsonObject.long(key: String): Long? = (this[key] as? JsonPrimitive)?.takeIf { !it.isString }?.longOrNull
 private fun JsonObject.int(key: String): Int? = (this[key] as? JsonPrimitive)?.takeIf { !it.isString }?.intOrNull
 private fun JsonObject.bool(key: String): Boolean? = (this[key] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull

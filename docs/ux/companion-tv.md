@@ -35,7 +35,7 @@ From the top, one scrolling page:
 - **Forget this TV** (`ActionRow`, Danger) at the end: a dialog "Forget Salon? It has to pair again to play. Its
   history stays." → `DELETE`; then the TV list.
 
-The tab reads `GET …/devices/:id` and `GET …/problems?limit=5` when shown and again after a change; it follows
+The tab reads `GET …/devices/:id` and `GET …/problems?limit=100` (all a TV keeps, for "All 12 problems") when shown and again after a change; it follows
 `problem.recorded`, `device.updated` and `device.app_version` events for this TV (a long-poll while the tab is shown,
 as Home follows its events).
 

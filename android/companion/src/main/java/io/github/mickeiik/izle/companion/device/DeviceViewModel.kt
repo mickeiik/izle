@@ -3,6 +3,7 @@ package io.github.mickeiik.izle.companion.device
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.mickeiik.izle.companion.activity.ACTIVITY_TYPES
+import io.github.mickeiik.izle.companion.activity.shownInActivity
 import io.github.mickeiik.izle.companion.home.HomeError
 import io.github.mickeiik.izle.companion.home.HomeViewModel
 import io.github.mickeiik.izle.companion.tv.CommandOutcome
@@ -98,10 +99,10 @@ class DeviceViewModel(private val api: ApiClient, val tvId: String) : ViewModel(
                     after = last
                     changes.withLock { reload() }
                     val recent = api.adminEvents((last - LATEST_WINDOW).coerceAtLeast(0), types = ACTIVITY_TYPES, devices = listOf(tvId), limit = LATEST_WINDOW.toInt())
-                    recent.events.lastOrNull()?.let { latest -> _state.update { it.copy(latest = latest) } }
+                    recent.events.lastOrNull(::shownInActivity)?.let { latest -> _state.update { it.copy(latest = latest) } }
                 }
                 val page = api.adminEvents(after, waitSec = 25, types = FOLLOWED, devices = listOf(tvId))
-                page.events.lastOrNull { it.type in ACTIVITY_TYPES }?.let { latest -> _state.update { it.copy(latest = latest) } }
+                page.events.lastOrNull(::shownInActivity)?.let { latest -> _state.update { it.copy(latest = latest) } }
                 if (page.gap || page.events.any { it.type in EVENT_TYPES }) changes.withLock { reload() }
                 after = page.last
             } catch (e: CancellationException) {
@@ -162,9 +163,11 @@ class DeviceViewModel(private val api: ApiClient, val tvId: String) : ViewModel(
 
     /** One setting: [shown] draws it at once; the answer redraws the TV, a failure the TV from before. */
     private fun save(setting: Setting, change: DeviceChange, shown: (AdminDevice) -> AdminDevice) {
-        val before = _state.value.device ?: return
+        if (_state.value.device == null) return
         viewModelScope.launch {
             changes.withLock {
+                // Read under the lock: a change queued behind another that fails must not restore that one's value.
+                val before = _state.value.device ?: return@withLock
                 _state.update { s -> s.copy(device = s.device?.let(shown)) }
                 try {
                     val saved = api.updateDevice(tvId, change)
@@ -218,9 +221,9 @@ class DeviceViewModel(private val api: ApiClient, val tvId: String) : ViewModel(
         }
     }
 
-    /** A problem's sheet closed: its check result is not kept. */
+    /** A problem's sheet closed: its check result is not kept, and a check still running is shown nowhere. */
     fun closeProblem() {
-        if (_check.value?.checking != true) _check.value = null
+        _check.value = null
     }
 
     // --- the app and the TV ---------------------------------------------------------------------------------------------

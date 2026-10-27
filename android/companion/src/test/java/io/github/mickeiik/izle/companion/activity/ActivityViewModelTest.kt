@@ -77,7 +77,10 @@ class ActivityViewModelTest {
         assertEquals(listOf(601L, 600L, 599L), s.events.take(3).map { it.id })
         assertEquals(302L, s.events.last().id)
 
-        val reads = requests.filter { it.url.encodedPath == "/api/v1/admin/events" }
+        val all = requests.filter { it.url.encodedPath == "/api/v1/admin/events" }
+        // First where the log stands (no `after`), so a filter matching nothing does not follow from 0.
+        assertEquals(null, all.first().url.queryParameter("after"))
+        val reads = all.filter { it.url.queryParameter("after") != null }
         assertEquals(listOf("0", "500"), reads.take(2).map { it.url.queryParameter("after") })
         assertEquals("500", reads.first().url.queryParameter("limit"))
         assertEquals("tv-1", reads.first().url.queryParameter("devices"))
@@ -97,6 +100,40 @@ class ActivityViewModelTest {
         val again = scope.launch { vm.follow() }
         waitUntil("the filtered read") { requests.any { it.url.queryParameter("types") == "command.sent,command.result" } }
         again.cancel()
+    }
+
+    @Test
+    fun aFilterMatchingNothingFollowsFromTheLogsHeadNotFromTheStart() {
+        // The oldest events were purged and none of the kept ones matches: reading from 0 finds nothing, and following
+        // from 0 would be answered with a gap at once, again and again.
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                requests += request
+                val url = request.url
+                if (url.encodedPath != "/api/v1/admin/events") return json(404, """{"error":"not_found"}""")
+                val after = url.queryParameter("after")?.toLong()
+                return when {
+                    after == null -> json(200, """{"events":[],"last":900,"gap":false}""")
+                    url.queryParameter("wait") != "25" -> json(200, """{"events":[],"last":$after,"gap":${after < 799}}""")
+                    after < 799 -> json(200, """{"events":[],"last":$after,"gap":true}""")
+                    else -> page(LongRange.EMPTY, last = after).newBuilder().headersDelay(1, TimeUnit.SECONDS).build()
+                }
+            }
+        }
+        val vm = ActivityViewModel(ApiClient(server.url("/"), "izph_test", OkHttpClient()), "tv-1")
+        vm.select(ActivityFilter.Remote)
+        val follow = scope.launch { vm.follow() }
+        waitUntil("the long-poll from the head") {
+            requests.any { it.url.queryParameter("wait") == "25" && it.url.queryParameter("after") == "900" }
+        }
+        mainLooper.idle()
+        Thread.sleep(200)
+        mainLooper.idle()
+        follow.cancel()
+        assertEquals(1, requests.count { it.url.queryParameter("after") == "0" })
+        assertEquals(0, requests.count { it.url.queryParameter("wait") == "25" && it.url.queryParameter("after") != "900" })
+        assertEquals(true, vm.state.value.loaded)
+        assertEquals(emptyList<Any>(), vm.state.value.events)
     }
 
     private fun page(ids: LongRange, gap: Boolean = false, last: Long = ids.last, cursor: Boolean = false): MockResponse {

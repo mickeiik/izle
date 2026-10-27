@@ -75,7 +75,7 @@ internal fun ActivityContent(state: ActivityState, onFilter: (ActivityFilter) ->
                 val d = at?.let { dayText(res, it, now) }
                 if (d != null && d != day) {
                     day = d
-                    add(ActivityLine.Day(d, "day-$d"))
+                    add(ActivityLine.Day(d, "day-${e.id}")) // a day may come back (a clock set back): keys stay unique
                 }
                 add(ActivityLine.Event(at?.let { clockTime(it) }.orEmpty(), words, "e-${e.id}"))
             }

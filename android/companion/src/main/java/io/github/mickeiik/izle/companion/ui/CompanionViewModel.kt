@@ -88,12 +88,16 @@ sealed interface CompanionUi {
         val error: ConnectError? = null,
     ) : CompanionUi
 
-    /** The paired server's TVs (active ones only: a pending TV plays nothing). */
+    /**
+     * The paired server's TVs (active ones only: a pending TV plays nothing); [takenNames]: every TV's name, pending
+     * ones included, as the server counts them when it names a newly approved TV.
+     */
     data class PickTv(
         val server: String,
         val devices: List<AdminDevice> = emptyList(),
         val loading: Boolean = true,
         val error: ConnectError? = null,
+        val takenNames: List<String> = emptyList(),
     ) : CompanionUi
 
     /**
@@ -318,8 +322,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         _ui.value = current.copy(busy = true, error = null)
         viewModelScope.launch {
             val client = graph.apiClient(parsed, secret)
-            val devices = try {
-                activeDevices(client)
+            val all = try {
+                client.devices().devices
             } catch (e: Exception) {
                 _ui.value = current.copy(busy = false, error = connectError(e) ?: throw e)
                 return@launch
@@ -327,12 +331,13 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             store.savePairing(parsed.toString(), secret)
             phoneId = null
             usePairing(parsed, secret)
+            val devices = all.active()
             val only = devices.singleOrNull()
             if (only != null) {
                 store.setTv(only.id)
                 enterTv(only.id, devices)
             } else {
-                _ui.value = CompanionUi.PickTv(ServerUrls.display(parsed), devices, loading = false)
+                _ui.value = CompanionUi.PickTv(ServerUrls.display(parsed), devices, loading = false, takenNames = all.map { it.name })
             }
         }
     }
@@ -504,19 +509,22 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         val client = api ?: return
         val server = baseUrl?.let(ServerUrls::display).orEmpty()
         val shown = _ui.value as? CompanionUi.PickTv
-        _ui.value = CompanionUi.PickTv(server, shown?.devices.orEmpty(), loading = true)
+        val taken = shown?.takenNames.orEmpty()
+        _ui.value = CompanionUi.PickTv(server, shown?.devices.orEmpty(), loading = true, takenNames = taken)
         try {
-            _ui.value = CompanionUi.PickTv(server, activeDevices(client), loading = false)
+            val all = client.devices().devices
+            _ui.value = CompanionUi.PickTv(server, all.active(), loading = false, takenNames = all.map { it.name })
         } catch (e: Exception) {
             val error = connectError(e) ?: throw e
             if (isRevoked(e)) return unauthorized()
-            _ui.value = CompanionUi.PickTv(server, shown?.devices.orEmpty(), loading = false, error = error)
+            _ui.value = CompanionUi.PickTv(server, shown?.devices.orEmpty(), loading = false, error = error, takenNames = taken)
         }
     }
 
     /** The paired server's active TVs: a pending TV plays nothing. */
-    private suspend fun activeDevices(client: ApiClient): List<AdminDevice> =
-        client.devices().devices.filter { it.status == "active" }
+    private suspend fun activeDevices(client: ApiClient): List<AdminDevice> = client.devices().devices.active()
+
+    private fun List<AdminDevice>.active(): List<AdminDevice> = filter { it.status == "active" }
 
     /** A TV's page, on Now; [devices]: the list it was picked from, null to read it (for the TV's name). */
     private suspend fun enterTv(tvId: String, devices: List<AdminDevice>?) {

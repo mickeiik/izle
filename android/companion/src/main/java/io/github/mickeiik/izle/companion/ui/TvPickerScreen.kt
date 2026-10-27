@@ -88,7 +88,8 @@ private fun TvPickerContent(
     val res = resources()
     val scope = rememberCoroutineScope()
     var dialog by remember { mutableStateOf<PairDialog?>(null) }
-    var cardError by rememberSaveable { mutableStateOf<String?>(null) }
+    // Why clearing a code failed, under that code's card only.
+    var cardError by rememberSaveable { mutableStateOf<Pair<String, String>?>(null) }
     Column(modifier = modifier.fillMaxSize()) {
         if (state.loading) ProgressBar(null) else Hairline()
         LazyColumn(Modifier.fillMaxSize()) {
@@ -111,7 +112,7 @@ private fun TvPickerContent(
                             onNotMine = { dialog = PairDialog.NotMine(code.code) },
                             onApprove = { dialog = PairDialog.Approve(code.code) },
                         )
-                        cardError?.let { Caption(it, tone = Tone.Danger) }
+                        cardError?.takeIf { it.first == code.code }?.let { Caption(it.second, tone = Tone.Danger) }
                     }
                 }
             }
@@ -146,7 +147,7 @@ private fun TvPickerContent(
             ApproveSheet(
                 code = d.code,
                 devices = state.devices,
-                defaultName = defaultTvName(state.devices.map { it.name }),
+                defaultName = defaultTvName(state.takenNames),
                 approve = { name, replaces -> vm.approve(d.code, name, replaces) },
                 onDone = {
                     dialog = null
@@ -160,7 +161,7 @@ private fun TvPickerContent(
                 d.code,
                 onClear = {
                     cardError = null
-                    scope.launch { vm.cancel(d.code)?.let { cardError = pairingErrorText(res, it) } }
+                    scope.launch { vm.cancel(d.code)?.let { cardError = d.code to pairingErrorText(res, it) } }
                 },
                 onDismiss = { dialog = null },
             )

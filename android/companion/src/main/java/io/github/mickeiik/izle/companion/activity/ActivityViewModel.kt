@@ -11,8 +11,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 
 /** The Activity as shown: [events] newest first, the [filter], and what names their episodes ([context]). */
 data class ActivityState(
@@ -60,7 +58,7 @@ class ActivityViewModel(private val api: ApiClient, val tvId: String) : ViewMode
                     after = null
                     continue
                 }
-                if (page.events.isNotEmpty()) add(page.events, replace = false)
+                if (page.events.isNotEmpty()) add(filter, page.events, replace = false)
                 after = page.last
                 _state.update { it.copy(error = null, failed = false) }
             } catch (e: CancellationException) {
@@ -75,6 +73,9 @@ class ActivityViewModel(private val api: ApiClient, val tvId: String) : ViewMode
     /** Reads the whole kept log, page after page, keeping the newest [KEEP]; answers where to follow from. */
     private suspend fun readAll(filter: ActivityFilter): Long {
         _state.update { it.copy(loading = true) }
+        // Where the whole log stands now: a filter that matches nothing (or only purged events) must not follow from 0,
+        // which the server answers with a gap at once.
+        val head = api.adminEvents(null, types = filter.types, devices = listOf(tvId)).last
         var after = 0L
         val kept = ArrayDeque<AdminEvent>()
         while (true) {
@@ -90,14 +91,18 @@ class ActivityViewModel(private val api: ApiClient, val tvId: String) : ViewMode
             }
             after = page.last
         }
-        add(kept.toList(), replace = true)
-        _state.update { it.copy(loaded = true, loading = false, error = null, failed = false) }
-        return after
+        add(filter, kept.toList(), replace = true)
+        _state.update { if (it.filter != filter) it else it.copy(loaded = true, loading = false, error = null, failed = false) }
+        return maxOf(after, head)
     }
 
-    /** Adds [oldestFirst] events (or replaces them all), newest first, at most [KEEP]; then names their episodes. */
-    private suspend fun add(oldestFirst: List<AdminEvent>, replace: Boolean) {
+    /**
+     * Adds [oldestFirst] events (or replaces them all), newest first, at most [KEEP]; then names their episodes. A read
+     * for a [filter] no longer picked (its follow not yet cancelled) changes nothing.
+     */
+    private suspend fun add(filter: ActivityFilter, oldestFirst: List<AdminEvent>, replace: Boolean) {
         _state.update { s ->
+            if (s.filter != filter) return@update s
             val events = ((if (replace) emptyList() else s.events.asReversed()) + oldestFirst)
                 .distinctBy { it.id }
                 .takeLast(KEEP)
@@ -138,8 +143,5 @@ class ActivityViewModel(private val api: ApiClient, val tvId: String) : ViewMode
         private const val MAX_LOOKUPS = 20
 
         private val NAMED_BY_ID = setOf("cursor.changed", "episode.seen", "problem.recorded")
-
-        private fun kotlinx.serialization.json.JsonObject.string(key: String): String? =
-            (this[key] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
     }
 }

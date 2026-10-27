@@ -152,7 +152,10 @@ internal fun ChoiceSheet(device: AdminDevice, setting: Setting, actions: DeviceA
 /** The settings' languages, and [current] at the end when it is another tag. */
 private fun languages(current: String?): List<Pair<String?, String>> {
     val known = LANGUAGES.map { (tag, name) -> tag to name }
-    return if (current == null || known.any { it.first == current }) known else known + (current to languageName(current))
+    if (current == null || known.any { it.first == current }) return known
+    // A regional tag ("tr-TR") says which it is, beside its language's own row.
+    val name = languageName(current).let { if (it == current) it else "$it ($current)" }
+    return known + (current to name)
 }
 
 /** Rename the TV: the field (1–60 characters), Cancel and Save. */

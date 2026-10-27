@@ -12,6 +12,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -90,7 +91,8 @@ internal fun ColumnScope.ApproveForm(
     val scope = rememberCoroutineScope()
     var name by rememberSaveable { mutableStateOf("") }
     var replaces by rememberSaveable { mutableStateOf<String?>(null) }
-    var busy by rememberSaveable { mutableStateOf(false) }
+    // Not saved: the request does not outlive the composition, so a restored "busy" would never clear.
+    var busy by remember { mutableStateOf(false) }
     var error by rememberSaveable { mutableStateOf<String?>(null) }
     val options = listOf<String?>(null) + devices.map { it.id }
     if (replaces == null) {

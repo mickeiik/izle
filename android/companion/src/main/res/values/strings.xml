@@ -57,7 +57,6 @@
     <string name="pick_tv_server">On %1$s</string>
     <string name="pick_tv_empty">No TV is paired with this server yet.</string>
     <string name="tv_online">Online</string>
-    <string name="tv_last_seen">Last seen %1$s</string>
     <string name="tv_never_seen">Not seen yet</string>
     <string name="try_again">Try again</string>
 
