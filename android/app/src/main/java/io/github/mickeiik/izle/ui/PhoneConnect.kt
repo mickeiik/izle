@@ -32,12 +32,17 @@ interface PhoneInviteApi {
 
     /** Long-polls the invite; 410 answers `expired`, 404 `not_found`. */
     suspend fun wait(): PhoneInviteStatus
+
+    /** The TV left the screen: the invite stops working on the server. */
+    suspend fun cancel()
 }
 
 fun ApiClient.phoneInviteApi(): PhoneInviteApi = object : PhoneInviteApi {
     override suspend fun create() = phoneInvite()
 
     override suspend fun wait() = phoneInviteWait()
+
+    override suspend fun cancel() = cancelPhoneInvite()
 }
 
 /**

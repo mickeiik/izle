@@ -12,11 +12,12 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
   bağla**): it shows a QR code and a 6-digit code for 5 minutes. Scanning the QR code with the phone's camera opens
   izle companion, which connects at once; in the app, the server's address and the code do the same. A connected phone
   gets owner access, like the admin page: being in front of the TV, which the owner approved at pairing, is the
-  security, so there is no other step. The phones are listed on the admin page's **Access** view and in the app, each
+  security, so there is no other step. Leaving the screen (Back) cancels the code at once, and too many wrong codes
+  from anywhere pause connecting by code for 10 minutes (the QR code still works). The phones are listed on the admin page's **Access** view and in the app, each
   with **Disconnect** (the phone loses access at once); `izle-server phone list` and `izle-server phone disconnect
   <id>` do the same from the server's shell, so a lost phone can be cut off without the admin page. The companion app
   no longer takes an access token (debug builds still accept one, for development). For clients of the API: the
-  routes `POST`/`GET /api/v1/tv/phones/invite`, `POST /api/v1/phones/claim`, `GET /api/v1/admin/phones` and
+  routes `POST`/`GET`/`DELETE /api/v1/tv/phones/invite`, `POST /api/v1/phones/claim`, `GET /api/v1/admin/phones` and
   `DELETE /api/v1/admin/phones/:id`, the page `/connect`, `izph_` phone secrets at the owner level, the events
   `phone.connected` and `phone.disconnected`, and the actor type `phone`.
 - **izle companion, an Android phone app for Listen along (first step).** It connects from a TV (see **Connect a

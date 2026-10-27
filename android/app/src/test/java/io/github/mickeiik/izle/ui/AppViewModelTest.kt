@@ -113,6 +113,7 @@ class AppViewModelTest {
                         json(200, """{"status":"pending"}""")
                     }
                     path == "/api/v1/tv/resolve" && resolveAnswers.isNotEmpty() -> resolveAnswers.remove()
+                    path == "/api/v1/tv/phones/invite" && request.method == "DELETE" -> MockResponse.Builder().code(204).build()
                     path == "/api/v1/tv/phones/invite" && request.method == "POST" ->
                         json(200, """{"code":"483920","invite":"inv-1","expiresAt":"2026-10-26T10:05:00.000Z"}""")
                     path == "/api/v1/tv/phones/invite" -> phoneWaits.poll() ?: run {
@@ -229,11 +230,13 @@ class AppViewModelTest {
     }
 
     @Test
-    fun backOnConnectAPhoneGoesHomeAndStopsTheLongPoll() {
+    fun backOnConnectAPhoneGoesHomeStopsTheLongPollAndCancelsTheInvite() {
         val vm = startTvOnHome()
         openConnectAPhone(vm)
         vm.onBack()
         assertEquals(Screen.Home, vm.screen.value)
+        waitUntil("the cancellation") { requests.any { it.url.encodedPath == "/api/v1/tv/phones/invite" && it.method == "DELETE" } }
+        assertEquals("Bearer device-token", requests.last { it.method == "DELETE" }.headers["Authorization"])
         settle()
         val polls = count("/api/v1/tv/phones/invite")
         settle()

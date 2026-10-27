@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import io.github.mickeiik.izle.companion.BuildConfig
 import io.github.mickeiik.izle.companion.CompanionApp
 import io.github.mickeiik.izle.companion.CompanionGraph
+import io.github.mickeiik.izle.companion.R
 import io.github.mickeiik.izle.companion.connect.ConnectLink
 import io.github.mickeiik.izle.companion.finder.FoundLink
 import io.github.mickeiik.izle.companion.finder.LinkConfirmer
@@ -198,6 +199,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * The QR code's link: claims its invite at once, with the connect screen busy. On failure the connect screen says why,
      * or, when this phone is still connected (a link opened again), the screen it showed comes back with a snackbar.
+     * While connected, a link to another server is refused with a snackbar (any web page can open such a link: it must
+     * not move this phone to a server of its choosing); disconnecting this phone first allows it.
      */
     fun connectWithLink(link: ConnectLink) {
         viewModelScope.launch {
@@ -205,6 +208,11 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             val before = _ui.value
             if (before is CompanionUi.Connect && before.busy) return@launch
             val parsed = ServerUrls.parse(link.server)
+            val connectedTo = baseUrl?.let(ServerUrls::display)
+            if (parsed != null && connectedTo != null && ServerUrls.display(parsed) != connectedTo) {
+                _snackbar.value = getApplication<Application>().getString(R.string.error_other_server, connectedTo)
+                return@launch
+            }
             val shown = CompanionUi.Connect(initialUrl = parsed?.let(ServerUrls::display) ?: link.server, busy = parsed != null)
             val error = if (parsed == null) {
                 ConnectError.InvalidAddress
@@ -222,12 +230,20 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Claims an invite; on success stores the secret, this phone's id and the inviting TV, and opens that TV. */
+    /**
+     * Claims an invite; on success stores the secret, this phone's id and the inviting TV, and opens that TV. A phone
+     * connected again deletes its previous self on the server (best effort), or its owner-level secret would stay listed.
+     */
     private suspend fun claim(url: HttpUrl, request: PhoneClaimRequest): ConnectError? {
         val claim = try {
             graph.apiClient(url, null).claimPhone(request)
         } catch (e: Exception) {
             return claimError(e) ?: throw e
+        }
+        val previous = api
+        val previousId = phoneId
+        if (previous != null && previousId != null && previousId != claim.phone.id) {
+            viewModelScope.launch { withTimeoutOrNull(SELF_DELETE_MS) { orNullOnFailure { previous.deletePhone(previousId) } } }
         }
         leaveListen()
         linkFinder.clear()

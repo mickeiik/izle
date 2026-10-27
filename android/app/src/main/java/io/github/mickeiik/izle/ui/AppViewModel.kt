@@ -150,6 +150,9 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     private var pairingJob: Job? = null
     private var autoplayJob: Job? = null
     private var phoneJob: Job? = null
+
+    /** The calls of the "Connect a phone" screen shown, to cancel its invite when the TV leaves it. */
+    private var phoneApi: PhoneInviteApi? = null
     private var resumeAfterMenu = false
 
     /** Armed on coming to the front on Home: the first state fetched then decides; anything the viewer does disarms it. */
@@ -821,6 +824,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         clearAutoplay()
         phoneJob?.cancel()
         val api = repository.api?.phoneInviteApi()
+        phoneApi = api
         val server = serverUrl
         _screen.value = Screen.ConnectPhone(PhoneConnectUi.Starting)
         phoneJob = viewModelScope.launch {
@@ -829,10 +833,15 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         }
     }
 
-    /** Back or the background on "Connect a phone": the long poll stops, Home (the invite expires on the server). */
+    /**
+     * Back or the background on "Connect a phone": the long poll stops, the invite is cancelled on the server (so the
+     * code seen on screen no longer connects; unreachable, it expires there), Home.
+     */
     private fun leaveConnectPhone() {
         phoneJob?.cancel()
-        if (_screen.value is Screen.ConnectPhone) showHome()
+        if (_screen.value !is Screen.ConnectPhone) return
+        phoneApi?.let { api -> viewModelScope.launch { orNullOnFailure { api.cancel() } } }
+        showHome()
     }
 
     fun aboutInfo(): AboutInfo = state.value.let { s ->

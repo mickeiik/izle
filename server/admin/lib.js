@@ -1221,18 +1221,6 @@ export function phoneLine(phone, devices, now = Date.now()) {
   return `${via} · created ${formatRelative(phone.createdAt, now)} · last used ${formatRelative(phone.lastUsedAt, now)}`;
 }
 
-/**
- * An event about a phone, for a line of text (the Phones card's toast); null for any other event.
- * @param {{ type: string, actor?: { type: string, name?: string, phoneId?: string } | null, data?: { phoneId?: string, name?: string } }} e
- */
-export function phoneEventText(e) {
-  const name = `“${e.data?.name ?? "a phone"}”`;
-  if (e.type === "phone.connected") return `Phone ${name} connected.`;
-  if (e.type !== "phone.disconnected") return null;
-  const self = e.actor?.type === "phone" && e.actor.phoneId === e.data?.phoneId;
-  return `Phone ${name} disconnected by ${self ? "itself" : actorLabel(e.actor) || "someone"}.`;
-}
-
 // --- TV app updates ----------------------------------------------------------------------------------------------
 
 /** The server's upload cap for an APK. */

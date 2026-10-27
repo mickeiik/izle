@@ -27,6 +27,7 @@
     <string name="error_code_not_accepted">That code is not valid any more. Open Connect a phone on the TV again.</string>
     <string name="error_too_many_tries">Too many tries. Wait a few minutes and try again.</string>
     <string name="error_token_not_accepted">The server did not accept that token.</string>
+    <string name="error_other_server">This phone is connected to %1$s. To connect it to another server, disconnect this phone first.</string>
     <string name="error_disconnected">This phone was disconnected. Connect it again from the TV.</string>
     <string name="error_server">The server answered: %1$s.</string>
 

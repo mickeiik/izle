@@ -217,13 +217,31 @@ class CompanionViewModelTest {
     }
 
     @Test
-    fun aLinkWhileConnectedReplacesThePairing() {
+    fun aLinkWhileConnectedReplacesThePairingAndDeletesThePreviousPhone() {
         val vm = startListening(phoneId = "ph-old000000")
         vm.connectWithLink(ConnectLink(server.url("/").toString(), "inv-abc_123"))
         waitUntil("the new pairing") { runBlocking { app.graph.store.current().phoneId } == THIS_PHONE }
         waitUntil("Listen along") { (vm.ui.value as? CompanionUi.Listen)?.loaded == true }
         runBlocking { assertEquals("izph_secret", app.graph.store.current().token) }
-        assertTrue("the old phone is not deleted", requests.none { it.method == "DELETE" })
+        waitUntil("the previous phone deleted") { requests.any { it.method == "DELETE" } }
+        val delete = requests.single { it.method == "DELETE" }
+        assertEquals("/api/v1/admin/phones/ph-old000000", delete.url.encodedPath)
+        assertEquals("with its own secret", "Bearer izat_test", delete.headers["Authorization"])
+    }
+
+    @Test
+    fun aLinkToAnotherServerWhileConnectedIsRefused() {
+        val vm = startListening()
+        val before = requests.size
+        vm.connectWithLink(ConnectLink("https://elsewhere.example", "inv-abc_123"))
+        val connectedTo = server.url("/").toString().trimEnd('/')
+        waitUntil("the snackbar") {
+            vm.snackbar.value == "This phone is connected to $connectedTo. To connect it to another server, disconnect this phone first."
+        }
+        settle()
+        assertTrue("nothing claimed", requests.drop(before).none { it.url.encodedPath == "/api/v1/phones/claim" })
+        assertTrue(vm.ui.value is CompanionUi.Listen)
+        runBlocking { assertEquals(server.url("/").toString(), app.graph.store.current().serverUrl) }
     }
 
     // --- debug builds: a token instead of a code -------------------------------------------------------------------

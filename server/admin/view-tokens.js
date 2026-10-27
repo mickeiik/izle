@@ -6,7 +6,7 @@
 import { api, attempt } from "./api.js";
 import { actionButton, card, chip, h, keyedRows, onSubmit, options, page, slot, toast } from "./dom.js";
 import { watchEvents } from "./events.js";
-import { SCOPES, formatRelative, phoneEventText, phoneLine, scopeLabel } from "./lib.js";
+import { SCOPES, formatRelative, phoneLine, scopeLabel } from "./lib.js";
 
 /** The phones connected from a TV: each with the TV it came through and its dates, and Disconnect. @param {import("./router.js").Scope} scope */
 function phonesCard(scope) {
@@ -44,8 +44,7 @@ function phonesCard(scope) {
   };
   const job = scope.poll(refresh, 30_000, (err) => listSlot.fail(err, job.now, "Could not load the phones."));
   watchEvents(scope, { types: ["phone.", "device.removed", "device.updated"] }, (e) => {
-    const text = phoneEventText(e);
-    if (text && e.type === "phone.connected") toast(text, "info");
+    if (e.type === "phone.connected") toast(`Phone “${e.data?.name ?? "a phone"}” connected.`, "info");
     void job.now();
   });
 

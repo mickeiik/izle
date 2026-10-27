@@ -770,6 +770,11 @@ export class Store {
     this.run("UPDATE phone_invites SET claimed_at = ?, phone_id = ?, phone_name = ? WHERE device_id = ?", now, phone.id, phone.name, deviceId);
   }
 
+  /** Deletes the TV's invite unless a phone claimed it; whether there was one. */
+  deleteOpenPhoneInvite(deviceId: string): boolean {
+    return this.run("DELETE FROM phone_invites WHERE device_id = ? AND claimed_at IS NULL", deviceId) > 0;
+  }
+
   /** Deletes invites that expired more than `graceMs` ago. */
   purgePhoneInvites(now: number, graceMs: number): void {
     this.run("DELETE FROM phone_invites WHERE expires_at <= ?", now - graceMs);

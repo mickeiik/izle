@@ -104,6 +104,42 @@ test("claims: by invite or code (exactly one), a name of 1 to 60 characters; 10 
   assert.equal((await s.admin("GET", "/phones")).json.phones.length, 10);
 });
 
+test("a TV that leaves its screen cancels the open invite; a claimed one stays for its long-poll", async (t) => {
+  const s = await testServer(t);
+  const tv = await tvWithInvite(s);
+  const cancel = () => s.call("DELETE", "/api/v1/tv/phones/invite", { token: tv.token });
+  assert.equal((await s.call("DELETE", "/api/v1/tv/phones/invite")).status, 401, "a device token is needed");
+  assert.equal((await cancel()).status, 204, "nothing to cancel is fine");
+
+  const open = (await tv.invite()).json;
+  const waiting = tv.poll(20);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal((await cancel()).status, 204);
+  assert.deepEqual([(await waiting).status, (await tv.poll()).status], [404, 404], "the long-poll ends; no invite left");
+  assert.equal((await claim(s, { code: open.code, name: "Late" })).status, 404, "its code no longer connects");
+  assert.equal((await claim(s, { invite: open.invite, name: "Late" })).status, 404, "nor its invite");
+  assert.equal(logged(s, "phone invite cancelled").length, 1);
+
+  await connectPhone(s, tv);
+  assert.equal((await cancel()).status, 204);
+  assert.equal((await tv.poll()).json.status, "claimed", "a claimed invite stays");
+});
+
+test("100 failed claims by code from all addresses together refuse claims by code for 10 minutes; the QR code's invite still works", async (t) => {
+  const s = await testServer(t, { configFile: { trustedProxies: ["127.0.0.1", "::1"] } });
+  const tv = await tvWithInvite(s);
+  const from = (client: string, body: Json) => s.call("POST", "/api/v1/phones/claim", { body, headers: { "X-Forwarded-For": client } });
+  for (let i = 0; i < 100; i++) assert.equal((await from(`203.0.${i >> 4}.${i & 15}`, { code: "000000", name: "guess" })).status, 404);
+  const inv = (await tv.invite()).json;
+  const locked = await from("198.51.100.1", { code: inv.code, name: "Pixel" });
+  assert.deepEqual([locked.status, locked.json.error], [429, "rate_limited"], "a fresh address, even with the right code");
+  assert.equal(locked.headers.get("retry-after"), "600");
+  assert.equal((await from("198.51.100.1", { invite: inv.invite, name: "Pixel" })).status, 201, "the invite is not guessable");
+  s.clock.advance(10 * 60_000);
+  const fresh = (await tv.invite()).json;
+  assert.equal((await from("198.51.100.2", { code: fresh.code, name: "Tablet" })).status, 201, "the lockout ends");
+});
+
 test("a phone works at the owner level on every admin route, an access token cannot see the phones, and secrets never reach the log", async (t) => {
   const s = await testServer(t);
   const tv = await tvWithInvite(s);

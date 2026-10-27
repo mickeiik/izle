@@ -123,6 +123,11 @@ class ApiClient(
     suspend fun phoneInvite(): PhoneInvite =
         exchange(authorize(Request.Builder().url(url("api/v1/tv/phones/invite")).post(EMPTY_BODY)).build()).decode(PhoneInvite.serializer())
 
+    /** This TV left "Connect a phone": its open invite stops working (`204`). */
+    suspend fun cancelPhoneInvite() {
+        exchange(authorize(Request.Builder().url(url("api/v1/tv/phones/invite")).delete()).build()).requireOk()
+    }
+
     /** Long-polls this TV's latest invite (on longPollHttp): `open`, `claimed`, `expired` (410) or `not_found` (404). */
     suspend fun phoneInviteWait(waitSec: Int = 25): PhoneInviteStatus {
         val url = url("api/v1/tv/phones/invite").newBuilder().addQueryParameter("wait", waitSec.toString()).build()

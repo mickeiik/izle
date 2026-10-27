@@ -43,6 +43,10 @@ class PhoneConnectLoopTest {
             val answer = waits.removeFirstOrNull() ?: awaitCancellation()
             return answer()
         }
+
+        override suspend fun cancel() {
+            calls += scope.testScheduler.currentTime to "cancel"
+        }
     }
 
     private fun TestScope.connect(api: PhoneInviteApi?) =

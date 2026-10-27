@@ -2,6 +2,7 @@ package io.github.mickeiik.izle.data.api
 
 import io.github.mickeiik.izle.json
 import kotlinx.coroutines.runBlocking
+import mockwebserver3.MockResponse
 import mockwebserver3.MockWebServer
 import okhttp3.OkHttpClient
 import org.junit.After
@@ -60,6 +61,16 @@ class PhoneInviteTest {
         assertEquals(PhoneInviteStatus(PhoneInviteStatus.NOT_FOUND), api.phoneInviteWait())
         val bad = assertThrows(ApiException::class.java) { runBlocking { api.phoneInviteWait() } }
         assertEquals("invalid_request", bad.code)
+    }
+
+    @Test
+    fun theInviteIsCancelledWithTheDeviceToken() = runBlocking {
+        server.enqueue(MockResponse.Builder().code(204).build())
+        client().cancelPhoneInvite()
+        val request = server.takeRequest()
+        assertEquals("DELETE", request.method)
+        assertEquals("/izle/api/v1/tv/phones/invite", request.url.encodedPath)
+        assertEquals("Bearer device-token", request.headers["Authorization"])
     }
 
     @Test

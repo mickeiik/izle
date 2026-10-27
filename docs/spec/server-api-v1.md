@@ -407,6 +407,9 @@ The TV's hidden menu (Settings → Connect a phone) connects the owner's phone (
   "code", "expiresAt"}` while it is not claimed (when `wait` elapses); `200 {"status": "claimed", "phone": {"id",
   "name"}}` once a phone claimed it (at once, until the invite's expiry time); `410 {"error": "expired", "status":
   "expired"}` once it expired; `404 not_found` when the TV has no invite; `400 invalid_request` for a bad `wait`.
+- `DELETE /api/v1/tv/phones/invite` → `204`: the TV left its "Connect a phone" screen (Back, the background), so its
+  invite stops working at once instead of at its expiry; a waiting long-poll answers `404`. An invite a phone already
+  claimed stays (its long-poll keeps answering `claimed`); without an invite it is `204` as well.
 
 ## Play order and the cursor
 
@@ -782,7 +785,10 @@ A claim is answered `404 not_found` for an unknown, used, replaced or expired in
 invalid_request` for a body that is not one of the two forms or a name out of bounds (a refused body is not a failed
 claim); `429 rate_limited` with `Retry-After` from the 11th failed claim from one client address
 ([`trustedProxies`](#configuration); an IPv6 address by its /64) within 10 minutes of the first, until those 10 minutes
-are over, even with a valid invite (successes are not counted). A claim emits `phone.connected`, a disconnection
+are over, even with a valid invite (successes are not counted). Failed claims by code are also counted for all
+addresses together: from the 101st within 10 minutes, every claim by code answers `429 rate_limited` with
+`Retry-After` until those 10 minutes are over, so guessing the 6 digits does not scale with the guesser's addresses;
+claims by invite (the QR code) are not affected. A claim emits `phone.connected`, a disconnection
 `phone.disconnected` ([Events](#events)). `izle-server phone list` and `phone disconnect <id>` call the admin routes on
 the running server, so a lost phone can be cut off from the server's shell.
 
@@ -1147,4 +1153,5 @@ The example's values are the defaults, except the samples for `publicUrl`, `trus
   `POST /phones/claim`), whose `izph_` secret has the owner level on every admin route; `GET /admin/phones`,
   `DELETE /admin/phones/:id`, the events `phone.connected` and `phone.disconnected`, the actor type `phone`, and the
   [`/connect`](#static-routes) page (additive: new routes, a new secret, event types and an actor type, which clients
-  ignore when they do not know them).
+  ignore when they do not know them). `DELETE /tv/phones/invite` cancels a TV's open invite, and failed claims by code
+  are also limited for all addresses together (additive: a new route and a rate limit on a new route).

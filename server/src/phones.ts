@@ -27,6 +27,11 @@ const LIMIT_WINDOW_MS = 10 * 60_000;
 const MAX_INVITES_PER_TV = 10;
 /** Failed claims (unknown, used or expired invite or code) per client address and window. */
 const MAX_FAILED_CLAIMS = 10;
+/**
+ * Failed claims by code from all addresses together per window: beyond it, claims by code are refused until the window
+ * ends (the QR code's invite still works), so guessing the 6 digits does not scale with the guesser's addresses.
+ */
+const MAX_FAILED_CODE_CLAIMS = 100;
 /** Expired invites are deleted this long afterwards (until then the TV's long-poll answers 410, not 404). */
 const INVITE_PURGE_GRACE_MS = 60 * 60_000;
 const LAST_USED_WRITE_INTERVAL_MS = 60_000;
@@ -53,6 +58,7 @@ export class PhoneService {
   private readonly waiters = new Waiters<string>();
   private readonly invites: RateLimiter;
   private readonly failedClaims: RateLimiter;
+  private readonly failedCodeClaims: RateLimiter;
   /** What to close when a phone is disconnected (its open event streams and long-polls), by phone id. */
   private readonly closers = new Map<string, Set<() => void>>();
 
@@ -60,6 +66,7 @@ export class PhoneService {
     this.s = deps;
     this.invites = new RateLimiter(MAX_INVITES_PER_TV, LIMIT_WINDOW_MS, deps.now);
     this.failedClaims = new RateLimiter(MAX_FAILED_CLAIMS, LIMIT_WINDOW_MS, deps.now);
+    this.failedCodeClaims = new RateLimiter(MAX_FAILED_CODE_CLAIMS, LIMIT_WINDOW_MS, deps.now);
   }
 
   /** A new invite for the TV, replacing the one it had (which stops working); the invite is returned here only. */
@@ -85,6 +92,13 @@ export class PhoneService {
     return { code, invite, expiresAt };
   }
 
+  /** The TV left its "Connect a phone" screen: its open invite stops working (a claimed one stays, for the long-poll). */
+  cancel(deviceId: string): void {
+    if (!this.s.store.deleteOpenPhoneInvite(deviceId)) return;
+    this.s.log.info("phone invite cancelled", { deviceId });
+    this.waiters.wake(deviceId);
+  }
+
   /** The TV's latest invite: open, claimed (until its expiry time), 410 once expired, 404 without one. */
   status(deviceId: string): InviteStatus {
     const row = this.s.store.getPhoneInvite(deviceId);
@@ -107,11 +121,15 @@ export class PhoneService {
 
   /**
    * Claims an open invite (by the invite or its code) for a new phone; the secret is returned here and nowhere else.
-   * A claim that finds nothing counts against the client address (`clientKey`, an IPv6 one by its /64).
+   * A claim that finds nothing counts against the client address (`clientKey`, an IPv6 one by its /64), and one by
+   * code also against every address together.
    */
   claim(clientKey: string, input: ClaimInput): { phone: Phone; secret: string; deviceId: string } {
     const locked = this.failedClaims.check(clientKey);
     if (!locked.ok) throw tooManyRequests("rate_limited", "too many failed phone claims from this address; try again later", locked.retryAfterSec);
+    const byCode = "code" in input;
+    const codes = byCode ? this.failedCodeClaims.check("all") : null;
+    if (codes && !codes.ok) throw tooManyRequests("rate_limited", "too many failed phone claims by code; scan the QR code or try again later", codes.retryAfterSec);
     const name = input.name.trim();
     if (name.length < 1 || name.length > PHONE_NAME_MAX) {
       throw new HttpError(400, "invalid_request", `name must be 1 to ${PHONE_NAME_MAX} characters`, { details: [{ path: "/name", message: `must be 1 to ${PHONE_NAME_MAX} characters after trimming` }] });
@@ -128,8 +146,9 @@ export class PhoneService {
     });
     if (!claimed) {
       this.failedClaims.hit(clientKey);
+      if (byCode) this.failedCodeClaims.hit("all");
       // Never the presented invite or code.
-      this.s.log.warn("phone claim failed", { client: clientKey, by: "invite" in input ? "invite" : "code" });
+      this.s.log.warn("phone claim failed", { client: clientKey, by: byCode ? "code" : "invite" });
       throw new HttpError(404, "not_found", "no open invite with this value");
     }
     const deviceId = claimed.deviceId!;

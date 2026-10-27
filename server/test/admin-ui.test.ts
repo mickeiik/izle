@@ -10,7 +10,7 @@ import {
   continueText, episodeHistoryLine, episodeName, episodeStateLabel, episodeStates, errorText, formatClock, formatCode,
   formatCountdown, formatDrift, formatDuration, formatPosition, formatRelative, gridSummary, groupEpisodeChanges, isActive, issueLine,
   languageLabel, liveViewingLine, mediaKindLabel, nowPlayingLine, parseCandidate, parseSse, percent, playbackState, plural,
-  phoneEventText, phoneLine, problemContext, resumes, sameLanguage, scopeLabel, serverAddress, shortId, showMeta, sourceReport, syncDecision,
+  phoneLine, problemContext, resumes, sameLanguage, scopeLabel, serverAddress, shortId, showMeta, sourceReport, syncDecision,
   checkSummaryText, homeCheckLines, runProgressText, runTitle, skippedText, stepText, verdictChip, verdictOf,
   titleLine, titleStatusLabel, tokenFromHash, triggerLabel, tvPositionAt, viewingEnd, viewingSpan,
   onTv, tvCard, tvFace, tvGrid, tvPanel, wrapLines,
@@ -597,11 +597,6 @@ test("admin helpers: phones, the TV they connected through, and their events", (
     [phoneLine(phone, tvs, NOW), "connected through Salon · created 2 days ago · last used just now"],
     [phoneLine({ ...phone, deviceId: null, lastUsedAt: null }, tvs, NOW), "connected through a deleted TV · created 2 days ago · last used never"],
     [phoneLine({ ...phone, deviceId: "gone00000000" }, tvs, NOW), "connected through a deleted TV · created 2 days ago · last used just now", "a TV the list no longer has"],
-    [phoneEventText({ type: "phone.connected", actor: pixel, data: { phoneId: "ph0000000001", name: "Pixel 8" } }), "Phone “Pixel 8” connected."],
-    [phoneEventText({ type: "phone.disconnected", actor: pixel, data: { phoneId: "ph0000000001", name: "Pixel 8" } }), "Phone “Pixel 8” disconnected by itself."],
-    [phoneEventText({ type: "phone.disconnected", actor: { type: "owner" }, data: { phoneId: "ph0000000001", name: "Pixel 8" } }), "Phone “Pixel 8” disconnected by the owner."],
-    [phoneEventText({ type: "phone.disconnected", actor: { ...pixel, phoneId: "ph0000000002", name: "Tablet" }, data: { phoneId: "ph0000000001", name: "Pixel 8" } }), "Phone “Pixel 8” disconnected by phone “Tablet”."],
-    [phoneEventText({ type: "device.updated" }), null],
   ]);
 });
 

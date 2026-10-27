@@ -52,7 +52,8 @@ class CompanionStore(private val dataStore: DataStore<Preferences>) {
             p[TOKEN] = token
             if (phoneId == null) p.remove(PHONE_ID) else p[PHONE_ID] = phoneId
             if (tvId != null) p[TV_ID] = tvId
-        }    }
+        }
+    }
 
     /** Forgets the server, the credential, the phone id and the TV; the nudge stays (it belongs to the phone). */
     suspend fun forgetPairing() {

@@ -167,7 +167,8 @@ focus.
 
 - A phone claims the invite: "<phone name> connected" for 3 s, then Home.
 - The invite expires (the server's 410, or 5 minutes on the TV's clock), or the server no longer knows it (404): Home.
-- Back, HOME or standby: Home at once; the long poll stops with the screen (the invite expires on the server).
+- Back, HOME or standby: Home at once; the long poll stops with the screen and the TV cancels the invite, so the code
+  seen on screen no longer connects (a server out of reach lets it expire).
 - The server unreachable or refusing the invite (429 included), or an error answer to the long poll: "The server cannot
   be reached." or "Could not connect a phone" for 5 s, then Home. A lost long poll is tried again after 5 s with the
   same code, within the 5 minutes.

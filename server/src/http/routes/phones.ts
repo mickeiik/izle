@@ -1,5 +1,5 @@
-// The owner's phones: a TV creates an invite and long-polls it, a phone claims it without a token (the invite or its
-// code is the credential), and the owner level lists and disconnects them.
+// The owner's phones: a TV creates an invite, long-polls it and cancels it when it leaves the screen, a phone claims
+// it without a token (the invite or its code is the credential), and the owner level lists and disconnects them.
 
 import type { Context, Hono } from "hono";
 import type { AppContext } from "../../context.ts";
@@ -18,6 +18,11 @@ export function registerPhones(app: Hono<Env>, { phones }: AppContext, clientKey
   app.get("/api/v1/tv/phones/invite", async (c) => {
     const waitSec = parseWait(c.req.query("wait"), MAX_INVITE_WAIT_MS / 1000, MAX_INVITE_WAIT_MS / 1000);
     return c.json(await phones.wait(c.get("device").id, waitSec * 1000, c.req.raw.signal));
+  });
+
+  app.delete("/api/v1/tv/phones/invite", (c) => {
+    phones.cancel(c.get("device").id);
+    return c.body(null, 204);
   });
 
   app.post("/api/v1/phones/claim", async (c) => {
