@@ -19,13 +19,16 @@ import java.io.IOException
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
-/** The server answered with an error status. `code` is the API error code (`not_allowed`, `expired`, …). */
-class ApiException(val status: Int, val code: String, val retryAfterSec: Long? = null) : Exception("HTTP $status $code")
+/**
+ * The server answered with an error status. `code` is the API error code (`not_allowed`, `expired`, …); [runId] is
+ * the run already going of a `409 check_running`.
+ */
+class ApiException(val status: Int, val code: String, val retryAfterSec: Long? = null, val runId: String? = null) : Exception("HTTP $status $code")
 
 /** An error answer, with its API error code (`http_<status>` without one). Public: the TV app's APK download uses it. */
 fun apiError(status: Int, body: String, retryAfter: String? = null): ApiException {
-    val code = runCatching { ApiJson.decodeFromString(ErrorBody.serializer(), body).error }.getOrNull() ?: "http_$status"
-    return ApiException(status, code, retryAfter?.toLongOrNull())
+    val error = runCatching { ApiJson.decodeFromString(ErrorBody.serializer(), body) }.getOrNull()
+    return ApiException(status, error?.error ?: "http_$status", retryAfter?.toLongOrNull(), error?.runId)
 }
 
 /** What [block] returns, or null when the server could not be reached or answered with an error. */
@@ -309,6 +312,47 @@ class ApiClient(
         val raw = exchange(authorize(Request.Builder().url(url)).build(), if (waitSec > 0) longPollHttp else http)
         return raw.decode(EventsPage.serializer())
     }
+
+    // Checks: a batch run over a TV's Home or one show, followed until it ends. One runs at a time on the server.
+
+    /**
+     * Checks [deviceId]'s Home: [mode] `quick` (what OK plays on each entry) or `full` (every episode that may play).
+     * While another run goes: `409 check_running` with its [ApiException.runId], to follow that one instead.
+     */
+    suspend fun startHomeCheck(deviceId: String, mode: String): CheckRun = startCheck(
+        buildJsonObject {
+            put("deviceId", deviceId)
+            put("mode", mode)
+        },
+    )
+
+    /** Checks every episode of [itemId] that may play, or the channel; `409 check_running` as [startHomeCheck]. */
+    suspend fun startShowCheck(itemId: String): CheckRun = startCheck(buildJsonObject { put("itemId", itemId) })
+
+    private suspend fun startCheck(body: JsonObject): CheckRun =
+        exchange(jsonRequest(checksUrl().build(), "POST", body)).decode(RunResponse.serializer()).run
+
+    /**
+     * A run as it is; with [seq] and [waitMs] > 0 a long-poll (on longPollHttp) that answers once the run's seq is past
+     * [seq], or after [waitMs] (at most 25 000). `404 unknown_check`: only the last run is kept.
+     */
+    suspend fun checkRun(runId: String, seq: Long? = null, waitMs: Int = 0): CheckRun {
+        val waiting = seq != null && waitMs > 0
+        val url = checksUrl().addPathSegment(runId).apply {
+            if (seq != null) addQueryParameter("seq", seq.toString())
+            if (waiting) addQueryParameter("wait", waitMs.toString())
+        }.build()
+        return exchange(authorize(Request.Builder().url(url)).build(), if (waiting) longPollHttp else http).decode(RunResponse.serializer()).run
+    }
+
+    /** The running run, else the last one that ended, else null. */
+    suspend fun currentCheck(): CheckRun? = get(checksUrl().addPathSegment("current").build(), CurrentRunResponse.serializer()).run
+
+    /** Stops a running run (`cancelled`; what it checked stays stored); a run that ended is answered as it is. */
+    suspend fun cancelCheck(runId: String): CheckRun =
+        exchange(authorize(Request.Builder().url(checksUrl().addPathSegment(runId).build()).delete()).build()).decode(RunResponse.serializer()).run
+
+    private fun checksUrl(): HttpUrl.Builder = url("api/v1/admin/checks").newBuilder()
 
     private suspend fun homeChange(request: Request): HomeChange = exchange(request).decode(HomeChange.serializer())
 

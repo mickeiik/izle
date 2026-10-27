@@ -7,7 +7,7 @@ scaled screen. The rest of the TV's page is in [Companion app](companion.md); wh
 
 ## The list
 
-- A top line says the grid and the count: "Grid 4 × 2 · 24 shows"; its ⋮ holds **Grid size**. Under it, **Add show**
+- A top line says the grid and the count: "Grid 4 × 2 · 24 shows"; its ⋮ holds **Grid size** and **Check Home…**. Under it, **Add show**
   and **+ Section**, side by side, equal widths.
 - Each section is a header row in its order on the TV: its title ("No title" for the untitled one), its layout and
   count ("grid · 6", "row · 5") and a ⋮ menu. A section without shows reads "Empty: not shown on the TV".
@@ -39,6 +39,7 @@ Tapping a show opens a sheet:
   minutes."
 - **Continue from episode…** (a series): the episodes that may be played, the one OK plays now marked; choosing one
   sets the TV's place ("Salon continues Sintel from S1 · E5 — Rain.", the episode named as in the list), starting that episode from its beginning.
+- **Check this show**: every episode of it that may play (or the channel), in the [check strip](#checks).
 - **Move to section…** (the sections, the current one marked "here now"): to the end of the one chosen. **Move to
   first** of its section (not for the first one).
 - **Remove from Home**.
@@ -61,6 +62,26 @@ Tapping a show opens a sheet:
 - **Add** puts the show at the end of the chosen section and takes it off the results: "Sintel added to Films." (or
   "Sintel added to Home." for the untitled section). With nothing found: "Nothing found that Salon does not have on
   Home already."
+
+## Checks
+
+The phone's take on the [admin page's checks](admin-home.md#checks), with its words; the routes are the
+[server API's checks](../spec/server-api-v1.md#checks).
+
+- **Check Home…** (the top line's ⋮) opens a sheet with **Quick: what OK plays** (per show, the episode OK plays; a
+  channel itself) and **Full: every episode** (every episode that may be played, and the channels), under a muted
+  note: a pass means the server reached real media along the TV's path just now; it does not prove the TV can decode
+  the codecs. A show's sheet has **Check this show**.
+- While a check runs, a strip at the top of the list says what it checks ("Home of Salon, quick", or the show's
+  title), "12 of 40 checked · 1 failing" (and "· 2 with warnings", "· 1 skipped"), a bar, and **Stop**. The tab
+  follows a check already running for this Home or one of its shows when it opens.
+- When it ends, the strip shows its result for a few seconds (or until closed): "Done: 40 checked · all work" (or what
+  failed, the dot in the verdict's colour) or "Stopped: 12 of 40 checked", and what was skipped and why ("Skipped:
+  Sintel (missing from the catalog)."). Home is read anew on `check.finished`, as on every event, so the rows' chips
+  show what it found.
+- One check runs at a time on the server: starting another follows the one going and says "A check is already
+  running: Home of Salon, quick". A refusal is said in words ("Nothing to check: no episode or channel there may be
+  played.").
 
 ## Grid size
 

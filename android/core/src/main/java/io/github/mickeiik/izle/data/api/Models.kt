@@ -417,4 +417,4 @@ data class LinkResponse(val link: StoredLink)
 data class CopyToItemResponse(val updated: Int, val episodeIds: List<String> = emptyList())
 
 @Serializable
-internal data class ErrorBody(val error: String = "unknown")
+internal data class ErrorBody(val error: String = "unknown", val runId: String? = null)

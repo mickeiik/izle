@@ -16,7 +16,8 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
   sections, a show's sheet (**Play on the TV now**, **Continue from episode…**, **Move to section…**, **Move to
   first**, **Remove from Home**), sections (add, rename, one scrolling line, move, delete), **Add show** (a catalog
   search that leaves out what is already on this TV) and the grid size; each edit is one single change, and edits made
-  elsewhere show at once. Listen along opens from **Now**, slimmer: the source, **Listen**, the earphone delay, and
+  elsewhere show at once. **Check Home…** (quick: what OK plays; full: every episode) and a show's **Check this show**
+  run the admin page's source checks, with their progress, **Stop** and the result in a strip at the top of the list. Listen along opens from **Now**, slimmer: the source, **Listen**, the earphone delay, and
   the timing and sync details folded away. The app has one flat, compact look, light or dark as the phone is.
 - **Listen along timing by ear, in the companion app and on the admin page** ([#34](https://github.com/mickeiik/izle/issues/34)).
   **Mark on TV** when a moment shows on the TV and **Mark on phone** when it is heard, in either order, set the

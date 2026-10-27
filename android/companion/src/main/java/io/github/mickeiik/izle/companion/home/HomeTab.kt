@@ -88,6 +88,7 @@ fun HomeTab(api: ApiClient, tvId: String, tvName: String, onMessage: (String) ->
 /** What a dialog of the tab is open for. */
 private sealed interface HomeDialog {
     data object Grid : HomeDialog
+    data object CheckHome : HomeDialog
     data object NewSection : HomeDialog
     data class Rename(val sectionId: String) : HomeDialog
     data class Delete(val sectionId: String) : HomeDialog
@@ -107,6 +108,7 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
     var dialog by remember { mutableStateOf<HomeDialog?>(null) }
     var sheetFor by rememberSaveable { mutableStateOf<String?>(null) }
     var adding by rememberSaveable { mutableStateOf(false) }
+    val check by vm.checks.run.collectAsStateWithLifecycle()
     val res = resources()
 
     Column(modifier = modifier.fillMaxSize()) {
@@ -121,11 +123,12 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
             }
             return@Column
         }
+        check?.let { CheckStrip(it, onStop = vm.checks::stop, onDismiss = vm.checks::dismiss) }
         val sections = drag.preview ?: state.sections
         val rows = homeRows(sections, state.entries)
         LazyColumn(state = list, modifier = Modifier.weight(1f).fillMaxWidth().homeDragContainer(drag)) {
             item(key = "top") {
-                TopLine(state, onGrid = { dialog = HomeDialog.Grid })
+                TopLine(state, onGrid = { dialog = HomeDialog.Grid }, onCheck = { dialog = HomeDialog.CheckHome })
             }
             if (state.showCount == 0) {
                 item(key = "nothing") {
@@ -199,6 +202,7 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
                 onContinue = { vm.loadEpisodes(itemId); dialog = HomeDialog.Episodes(itemId) },
                 onMoveTo = { dialog = HomeDialog.MoveTo(itemId) },
                 onFirst = { vm.move(itemId, HomePlace(section.id, 0)) },
+                onCheck = { vm.checks.startShow(itemId) },
                 onRemove = { vm.remove(itemId) },
             )
         }
@@ -212,6 +216,7 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
     when (val d = dialog) {
         null -> Unit
         HomeDialog.Grid -> GridDialog(state.columns, state.rows, onSave = { c, r -> vm.setGrid(c, r) }, onDismiss = { dialog = null })
+        HomeDialog.CheckHome -> CheckHomeSheet(onPick = { vm.checks.startHome(vm.tvId, it) }, onDismiss = { dialog = null })
         HomeDialog.NewSection -> {
             val full = state.titledCount >= state.sectionsMax
             TitleDialog(
@@ -260,15 +265,18 @@ private fun HomeList(vm: HomeViewModel, state: HomeState, api: ApiClient, tvName
     }
 }
 
-/** "6 shows · grid 4 × 2" and the tab's ⋮ (Grid size). */
+/** "6 shows · grid 4 × 2" and the tab's ⋮ (Grid size, Check Home…). */
 @Composable
-private fun TopLine(state: HomeState, onGrid: () -> Unit) {
+private fun TopLine(state: HomeState, onGrid: () -> Unit, onCheck: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(start = IzleTheme.spacing.lg, end = IzleTheme.spacing.xs), verticalAlignment = Alignment.CenterVertically) {
         Caption(
             stringResource(R.string.home_summary, state.columns, state.rows, pluralStringResource(R.plurals.home_shows, state.showCount, state.showCount)),
             Modifier.weight(1f),
         )
-        OverflowMenu(stringResource(R.string.home_options), listOf(MenuItem(stringResource(R.string.home_grid_size), onGrid)))
+        OverflowMenu(stringResource(R.string.home_options), listOf(
+                MenuItem(stringResource(R.string.home_grid_size), onGrid),
+                MenuItem(stringResource(R.string.home_check_home), onCheck),
+            ),)
     }
 }
 

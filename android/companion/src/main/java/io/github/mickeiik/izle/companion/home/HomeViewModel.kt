@@ -10,6 +10,7 @@ import io.github.mickeiik.izle.data.api.AdminHomeEntry
 import io.github.mickeiik.izle.data.api.ApiClient
 import io.github.mickeiik.izle.data.api.ApiException
 import io.github.mickeiik.izle.data.api.CatalogHit
+import io.github.mickeiik.izle.data.api.CheckRun
 import io.github.mickeiik.izle.data.api.HomeChange
 import io.github.mickeiik.izle.data.api.HomeSection
 import kotlinx.coroutines.CancellationException
@@ -86,6 +87,8 @@ sealed interface HomeNotice {
     data class Continues(val title: String, val episode: String) : HomeNotice
     /** What Play now came to (queued for an offline TV, playing, refused, or no result yet). */
     data class Played(val title: String, val outcome: CommandOutcome) : HomeNotice
+    /** A check was started while [run] was going: the strip follows that one instead. */
+    data class CheckRunning(val run: CheckRun) : HomeNotice
 }
 
 /**
@@ -107,6 +110,9 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
     private val _notices = Channel<HomeNotice>(Channel.BUFFERED)
     val notices: Flow<HomeNotice> = _notices.receiveAsFlow()
 
+    /** The check shown in the strip: a Home's or a show's run, started here or found running when the tab opened. */
+    val checks = CheckRuns(api, viewModelScope) { _notices.trySend(it) }
+
     /** Changes run one after another, in the order they were made. */
     private val changes = Mutex()
     private var searchJob: Job? = null
@@ -121,6 +127,7 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
                     // Where the log is now, then the Home as it is: nothing that happens in between is missed.
                     after = api.adminEvents(null, types = EVENT_TYPES, devices = listOf(tvId)).last
                     if (first || !_state.value.loaded) changes.withLock { reload() }
+                    if (first) resumeCheck()
                     first = false
                 }
                 val page = api.adminEvents(after, waitSec = 25, types = EVENT_TYPES, devices = listOf(tvId))
@@ -133,11 +140,17 @@ class HomeViewModel(private val api: ApiClient, val tvId: String) : ViewModel() 
                 if (first) {
                     // The log could not be read: load anyway, so the tab shows Home (or why not).
                     changes.withLock { reload() }
+                    resumeCheck()
                     first = false
                 }
                 delay(RETRY_MS)
             }
         }
+    }
+
+    /** Follows a check already running for this TV's Home, or for one of its shows. */
+    private suspend fun resumeCheck() = checks.resume { run ->
+        run.target.deviceId == tvId || run.target.itemId?.let { it in _state.value.entries } == true
     }
 
     /** Reads Home anew; a failure keeps what is shown (only a first load shows the error). */

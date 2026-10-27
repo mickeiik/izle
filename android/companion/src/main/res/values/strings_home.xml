@@ -108,4 +108,29 @@
     <string name="home_error_unknown_item">That show is not in the catalog (any more).</string>
     <string name="home_error_not_playable">Nothing in that show may be played.</string>
     <string name="home_error_other">The server did not accept this (%s).</string>
+    <string name="home_error_nothing_to_check">Nothing to check: no episode or channel there may be played.</string>
+    <string name="home_error_unknown_check">That check is not kept any more: the server restarted, or another check followed it.</string>
+
+    <!-- Checks (the admin page's words: lib.js runTitle, runProgressText, skippedText) -->
+    <string name="home_check_home">Check Home…</string>
+    <string name="home_check_home_title">Check Home</string>
+    <string name="home_check_show">Check this show</string>
+    <string name="home_check_quick">Quick: what OK plays</string>
+    <string name="home_check_full">Full: every episode</string>
+    <string name="home_check_note">A pass means the server reached real media along the TV\'s path just now; it does not prove the TV can decode the codecs.</string>
+    <string name="home_check_of_home_quick">Home of %s, quick</string>
+    <string name="home_check_of_home_full">Home of %s, full</string>
+    <string name="home_check_progress">%1$d of %2$d checked</string>
+    <string name="home_check_stopped">Stopped: %1$d of %2$d checked</string>
+    <string name="home_check_done">Done: %d checked</string>
+    <string name="home_check_all_work">all work</string>
+    <string name="home_check_failing">%d failing</string>
+    <string name="home_check_warned">%d with warnings</string>
+    <string name="home_check_skipped">%d skipped</string>
+    <string name="home_check_skipped_list">Skipped: %s.</string>
+    <string name="home_check_skipped_missing">%s (missing from the catalog)</string>
+    <string name="home_check_skipped_unplayable">%s (not playable)</string>
+    <string name="home_check_stop">Stop</string>
+    <string name="home_check_dismiss">Dismiss</string>
+    <string name="home_check_already_running">A check is already running: %s</string>
 </resources>
