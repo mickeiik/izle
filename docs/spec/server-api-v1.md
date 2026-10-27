@@ -11,7 +11,8 @@ first deployment, v1 changed in place, marked **breaking (pre-release)** in the 
 ## Conventions
 
 - Base path `/api/v1`. JSON request and response bodies, requests ≤ 64 KiB (except the APK upload,
-  [`PUT /admin/app/apk`](#tv-app), which streams up to 64 MiB).
+  [`PUT /admin/app/apk`](#tv-app), which streams up to 64 MiB, and an app's picture,
+  [`PUT /tv/apps/images/:sha256`](#installed-apps), a PNG of up to 256 KiB).
 - **TV routes** (`/api/v1/tv/*`) need `Authorization: Bearer <deviceToken>`, **admin routes** (`/api/v1/admin/*`) the
   admin token, a [phone](#phones)'s secret or an [access token](#access-tokens); neither works on the other's routes. A
   missing or wrong token answers `401 unauthorized` with `WWW-Authenticate: Bearer` (on admin routes `429` after
@@ -20,8 +21,8 @@ first deployment, v1 changed in place, marked **breaking (pre-release)** in the 
   `400 invalid_json`, `400 invalid_request` (with `details: [{path, message}]`; also for unknown request fields, which
   every route refuses), `404 not_found` (no such route), `413 body_too_large`, `500 internal`.
 - Timestamps are ISO 8601 strings; positions and durations are integer milliseconds.
-- All ids are catalog ids (`^[A-Za-z0-9][A-Za-z0-9._~-]{0,119}$`) except device ids (12 alphanumeric characters) and
-  playback session ids (16). Episodes are addressed by episode id, channels by item id; the two id spaces are
+- All ids are catalog ids (`^[A-Za-z0-9][A-Za-z0-9._~-]{0,119}$`) except device ids (12 alphanumeric characters),
+  playback session ids (16) and app ids (an Android package name, [Installed apps](#installed-apps)). Episodes are addressed by episode id, channels by item id; the two id spaces are
   separate (an episode id may equal an item id), so the field (`episodeId` or `itemId`) says which one is meant.
 - A **channel** (a catalog item of kind `live`) has no episodes, cursor, saved position or duration, is never
   "seen" and always plays at its live edge: response fields that describe an episode or a position (`episodeId`,
@@ -124,8 +125,10 @@ Everything the home screen needs:
                 "backdropUrl": null },
       "continue": null, "newEpisodes": 0 }
   ],
-  "homeSections": [ { "id": "untitled", "title": null, "layout": "grid", "itemIds": ["caminandes"] },
-                    { "id": "Hq7cP2xd", "title": "Channels", "layout": "row", "itemIds": ["news-24"] } ]
+  "homeSections": [ { "id": "untitled", "title": null, "layout": "grid", "itemIds": ["caminandes"],
+                      "entries": [ { "itemId": "caminandes" }, { "appId": "com.example.weather" } ] },
+                    { "id": "Hq7cP2xd", "title": "Channels", "layout": "row", "itemIds": ["news-24"],
+                      "entries": [ { "itemId": "news-24" } ] } ]
 }
 ```
 
@@ -151,8 +154,13 @@ Everything the home screen needs:
   the item, and always for a channel.
 - `homeSections`: how `home` is cut into [sections](#home-sections), in display order, each with `id`, `title` (null
   for the untitled section), `layout` and `itemIds` (its entries in `home`, in order). Only sections with an entry in
-  `home` are listed, so the `itemIds` of all sections, one after another, are exactly the ids of `home`. A TV that
+  `home` (or an app card, below) are listed, and the `itemIds` of all sections, one after another, are exactly the ids
+  of `home`. A TV that
   ignores `homeSections` shows `home` as one grid; clients MUST treat an unknown `layout` as `grid`.
+- `homeSections[].entries`: the section's cards in display order, each `{"itemId"}` (an entry of `home`, as in
+  `itemIds`) or `{"appId"}` (an [app card](#app-cards), whether or not the TV still has the app: the TV leaves out
+  what it cannot open). A section is listed when it has an entry in `home` or an app card, so a section of app cards
+  alone is listed with empty `itemIds`. Clients MUST skip an entry with neither field (later kinds of card).
 
 ### `GET /api/v1/tv/events`
 
@@ -411,6 +419,25 @@ The TV's hidden menu (Settings → Connect a phone) connects the owner's phone (
   invite stops working at once instead of at its expiry; a waiting long-poll answers `404`. An invite a phone already
   claimed stays (its long-poll keeps answering `claimed`); without an invite it is `204` as well.
 
+### Installed apps
+
+The TV tells the server which apps it can open, so that the owner can put [app cards](#app-cards) on its Home. An
+**app id** is the app's Android package name (`^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$`, at most 200
+characters); app ids are their own id space, so the field (`appId` or `itemId`) says which one is meant.
+
+- `PUT /api/v1/tv/apps` `{"apps": [{"appId", "label", "image"}]}` replaces the TV's list: every app it can open
+  (a TV launch entry, else a launch entry), izle itself left out, at most 200. `label`: the app's name (1–100
+  characters, trimmed); `image`: the lowercase hex SHA-256 of the PNG the TV draws for it (its banner, else its icon),
+  or null. → `{"missingImages": [sha256]}`: the images the server does not have yet. An app id twice is
+  `400 duplicate_app`. A list that differs from the stored one emits `device.apps`. The TV sends its list when it
+  starts, when it comes to the front, and when an app is installed, updated or removed while it runs, each time only
+  when the list (with its images) changed since its last accepted report.
+- `PUT /api/v1/tv/apps/images/:sha256` with a PNG body (`Content-Type: image/png`, at most 256 KiB): stores one of
+  the images a report named → `204`. `400 invalid_image` when the body is not a PNG (its signature) or its SHA-256 is
+  not `:sha256`; `404 not_found` when no report of this TV names it. The server serves it at
+  [`/app-images/<sha256>.png`](#static-routes) and deletes an image once no TV's report names it.
+- A TV that never reported (an app older than this route) has no list: the owner cannot add app cards to it.
+
 ## Play order and the cursor
 
 Each device has, per item, a **cursor**: the episode OK plays. The server maintains it from progress reports and the
@@ -433,7 +460,7 @@ owner's `PUT …/cursor`, makes the cursor an ordinary one again.
 | Route | Body | Response |
 |---|---|---|
 | `GET /api/v1/admin/devices` | | `{"devices": [Device & {"homeCount"}]}` |
-| `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "backdropUrl", "missing", "playable", "continue", "newEpisodes", "check", "checkAll"}], "homeMax": 200, "sections": [Section], "sectionsMax": 20}` (`home` in [Home order](#home-sections)); `playable`: the item has a `playbackAllowed` episode, or is a channel with `playbackAllowed: true` (false for a missing item); `continue` and `newEpisodes` as in [`GET /tv/state`](#get-apiv1tvstate) (`null` and 0 for a missing item); `check`: the [`CheckSummary`](#checks) of what OK plays (the channel itself), null when nothing plays; `checkAll`: `{"verdict", "checked", "total", "failed", "warned", "oldestCheckedAt"}` over every episode that may play (`total`; `checked`: those with a summary; `verdict` the worst of theirs, null when none), null for a channel or a missing item |
+| `GET /api/v1/admin/devices/:id` | | `{"device": Device, "home": [{"itemId", "title", "kind", "posterUrl", "backdropUrl", "missing", "playable", "continue", "newEpisodes", "check", "checkAll"}], "homeMax": 200, "sections": [Section], "sectionsMax": 20, "apps": [App], "appsMax": 50, "appsReportedAt"}` (`home` in [Home order](#home-sections); `apps` and `appsReportedAt` as in [App cards](#app-cards)); `playable`: the item has a `playbackAllowed` episode, or is a channel with `playbackAllowed: true` (false for a missing item); `continue` and `newEpisodes` as in [`GET /tv/state`](#get-apiv1tvstate) (`null` and 0 for a missing item); `check`: the [`CheckSummary`](#checks) of what OK plays (the channel itself), null when nothing plays; `checkAll`: `{"verdict", "checked", "total", "failed", "warned", "oldestCheckedAt"}` over every episode that may play (`total`; `checked`: those with a summary; `verdict` the worst of theirs, null when none), null for a channel or a missing item |
 | `PATCH /api/v1/admin/devices/:id` | any of `name`, `uiLanguage` (`"tr"`/`"en"`/null), `preferredAudioLanguage` (tag/null), `subtitlesLanguage` (tag/null = off), `autoplayOnStart` (boolean), `homeColumns` (integer 3–10), `homeRows` (integer 1–4) | `{"device": Device}` |
 | `DELETE /api/v1/admin/devices/:id` | | `204`; the TV must pair again |
 | `PUT /api/v1/admin/devices/:id/home` | `{"itemIds": [...]}` (≤ 200, in display order) or `{"sections": [...]}`, see [Home sections](#home-sections) | `{"version", "home", "sections"}` |
@@ -852,7 +879,8 @@ Events carry no URLs, headers, refs, tokens, message texts or problem details.
 | `episode.seen` | `{"viewingId", "itemId", "episodeId", "firstTime", "itemFinished"}`: a viewing ended [seen](#viewing-history); `firstTime`: the episode was not seen before (by any TV, or a mark); `itemFinished`: every playable episode of the item in the current catalog is now seen (false when the item left it) |
 | `command.sent` / `command.delivered` | `{"commandId", "type", "online"}` / `{"commandId"}` (the TV acknowledged it) |
 | `command.result` | `{"commandId", "type", "result", "reason"}`, see [Remote play and command results](#remote-play-and-command-results) |
-| `home.changed` | `{"itemIds", "added", "removed"}` (`itemIds` in Home order; the ids that came and went; a reorder, a move to another section and a change of [sections](#home-sections) alone have both empty) |
+| `home.changed` | `{"itemIds", "added", "removed", "appIds", "appsAdded", "appsRemoved"}` (`itemIds` in Home order; the ids that came and went; a reorder, a move to another section and a change of [sections](#home-sections) alone have both empty; the same three for [app cards](#app-cards)) |
+| `device.apps` | `{"count", "added", "removed"}`: the TV reported another list of [installed apps](#installed-apps) (`count` apps; the app ids that came and went); the TV is the actor |
 | `cursor.changed` | `{"itemId", "episodeId"}`: set through `PUT …/cursor` (not the moves that come from watching) |
 | `problem.recorded` | `{"problemId", "origin", "kind", "code", "itemId", "episodeId"}` |
 | `catalog.reloaded` / `catalog.reload_failed` | `{"buildId", "added", "removed"}` (`{"items", "episodes"}` counts as in [`Build`](#catalog-history), 0 when the build was the one already loaded) on every successful reload, not at start / `{"issues"}` (their number) |
@@ -986,13 +1014,15 @@ Single changes, so that two editors (the owner, an agent) do not overwrite each 
 | `DELETE /api/v1/admin/devices/:id/home/items/:itemId` | | `{"version", "home", "sections"}` |
 
 Errors as for `PUT …/home`, plus `404 not_on_home` and `404 unknown_section`; every change emits `home.changed`.
+A `position` counts every card of the section, [app cards](#app-cards) included (in a section without app cards,
+its items alone, as it always did).
 `PUT …/home` takes an optional `expected` (what the caller saw, in the shape of the body: the `itemIds`, or the
 `sections`): `409 home_changed` (with the current `itemIds` and `sections`) when the list is no longer that.
 
 ### Home sections
 
 A TV's Home list is cut into **sections**, in an order the owner sets; every item on the list is in exactly one
-section. `Section` = `{"id", "title", "layout", "itemIds"}`:
+section, and so is every [app card](#app-cards). `Section` = `{"id", "title", "layout", "itemIds", "entries"}`:
 
 - `id`: 8 alphanumeric characters, made by the server; `untitled` for the untitled section.
 - `title`: 1–40 characters with a non-space, trimmed; titles need not be unique. The TV shows it above the section.
@@ -1000,6 +1030,7 @@ section. `Section` = `{"id", "title", "layout", "itemIds"}`:
   sideways). New layouts may be added within v1.
 - `itemIds`: the section's items in display order, those gone from the catalog or unplayable included (the TV's
   [state](#get-apiv1tvstate) leaves them out, and with them the sections left empty).
+- `entries`: all of the section's cards in display order, `{"itemId"}` (as in `itemIds`) or `{"appId"}`.
 
 There is always exactly one **untitled section** (`"id": "untitled"`, `"title": null`). It holds what was put on Home
 without a section: it cannot be titled or deleted, and it is moved and given a layout like any other. A new TV has
@@ -1011,7 +1042,7 @@ of `home` in the TV's state and on the admin page, of `itemIds` in `home.changed
 |---|---|---|
 | `POST /api/v1/admin/devices/:id/home/sections` | `{"title", "layout"?, "position"?}` (`position` 0-based among the sections, default and upper bound: the end) | `{"version", "home", "sections", "sectionId"}` (the new section's) |
 | `PATCH /api/v1/admin/devices/:id/home/sections/:sectionId` | any of `title`, `layout`, `position` (clamped to the end) | `{"version", "home", "sections"}` |
-| `DELETE /api/v1/admin/devices/:id/home/sections/:sectionId` | | `{"version", "home", "sections"}`; its items move to the end of the untitled section, in their order: deleting a section takes nothing off Home |
+| `DELETE /api/v1/admin/devices/:id/home/sections/:sectionId` | | `{"version", "home", "sections"}`; its cards (items and app cards) move to the end of the untitled section, in their order: deleting a section takes nothing off Home |
 
 `PUT …/home` takes either form:
 
@@ -1022,12 +1053,40 @@ of `home` in the TV's state and on the admin page, of `itemIds` in `home.changed
   without `id` is new; a titled section left out is deleted, and its items leave Home unless another section lists
   them. Without `layout` a section keeps its own (`grid` for a new one). The untitled section (`"id": "untitled"`,
   `title` null or absent) is listed exactly once.
+- [App cards](#app-cards) are kept by both forms: each stays in its section at its place among the section's cards
+  (at the section's end when the section has fewer cards now); those of a deleted section go to the end of the
+  untitled section. A section in the `sections` form may give `entries` (`[{"itemId"} | {"appId"}]`) instead of
+  `itemIds`: then it sets the section's cards of both kinds, and an app card no section lists leaves Home.
 
 Errors: `400 too_many_sections` (`max`), `404 unknown_section` (`sectionId`, also an `id` in `PUT …/home` that is not
 this Home's), `400 untitled_section` (a title for the untitled section, deleting it, or a `PUT` that does not list it
 exactly once), `400 duplicate_section` (an `id` twice in one `PUT`), `400 invalid_request` (a blank or too long title,
 an unknown layout); `duplicate_item` covers the item in two sections. Every change bumps the state version and emits
 `home.changed`.
+
+### App cards
+
+An **app card** opens an app installed on the TV ([Installed apps](#installed-apps)) instead of playing a show. It
+is a card on the TV's Home like an item, in exactly one [section](#home-sections), counted in `position`s and moved
+with its section; it is not in `home` or `itemIds` (so a TV app from before shows nothing of it), only in `entries`.
+App cards belong to the TV, not to the catalog: switching catalogs keeps them. They are never checked, played, zapped
+to or offered by autoplay.
+
+`App` = `{"appId", "label", "imageUrl", "installed", "onHome"}`: in `GET …/devices/:id`, the apps of the TV's last
+report in its order, then the app cards on Home that report does not name (`installed: false`, with the label and
+image of the last report that named them). `imageUrl` is `/app-images/<sha256>.png` or null; `onHome`: an app card
+for it is on Home. `appsReportedAt`: when the TV's list last changed (null: the TV never reported one).
+
+| Route | Body | Response |
+|---|---|---|
+| `POST /api/v1/admin/devices/:id/home/apps` | `{"appId", "sectionId"?, "position"?}` (as for items) | `{"version", "home", "sections", "apps"}` |
+| `PATCH /api/v1/admin/devices/:id/home/apps/:appId` | `{"position"?, "sectionId"?}`, at least one (as for items) | `{"version", "home", "sections", "apps"}` |
+| `DELETE /api/v1/admin/devices/:id/home/apps/:appId` | | `{"version", "home", "sections", "apps"}` |
+
+Errors: `400 unknown_app` (adding an app the TV's last report does not name), `400 duplicate_app` (already on
+Home), `400 too_many_apps` (`max`: 50 app cards per Home, besides the 200 items), `404 not_on_home`,
+`404 unknown_section`; every change bumps the state version and emits `home.changed`. The answers of the other Home
+changes (`PUT …/home`, items, sections) carry `apps` as well.
 
 ### Replacing a TV
 
@@ -1048,6 +1107,7 @@ Viewings of a deleted TV keep its id and name; `POST /api/v1/admin/devices/:id/h
 |---|---|
 | `GET /healthz` | `{"ok": true}` |
 | `GET /assets/<sha256>.<jpg\|png\|webp>` | catalog posters, `Cache-Control: public, max-age=31536000, immutable` |
+| `GET /app-images/<sha256>.png` | the pictures of TVs' [installed apps](#installed-apps), `Content-Type: image/png`, cached as `/assets/` |
 | `GET /admin/` | the admin UI (`/` and `/admin` redirect here): `index.html` plus the allow-lists `ADMIN_FILES` and `ADMIN_VENDOR_FILES` in `server/src/admin-files.ts` (the ES modules flat in `server/admin/`, entry `app.js`; `style.css`, `icon.svg`, and the pinned hls.js build `vendor/hls.min.js`, see `server/admin/vendor/README.md`); anything else under `/admin/` is `404`; `Cache-Control: no-cache`, `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; …` |
 | `GET /connect` | the page a phone opens from the QR code a TV shows (`<server>/connect#<invite>`, see [Phones](#phones)), no token: `index.html` plus the allow-list `CONNECT_FILES` in `server/src/admin-files.ts` (`connect/connect.js`, `connect/link.js`, `connect/connect.css`, from `server/connect/`), under the admin UI's `Cache-Control` and `Content-Security-Policy`. The page reads the invite from the fragment (which browsers never send) and sends it nowhere: its **Open izle companion** button is `intent://connect?server=<server>&invite=<invite>#Intent;scheme=izle-companion;package=io.github.mickeiik.izle.companion;end` (`server`: the page's origin plus the path before `/connect`, URL-encoded); without an invite it says to scan the QR code from the TV |
 | `GET /p/<token>/…` | [media proxy](#media-proxy) |
@@ -1157,3 +1217,11 @@ The example's values are the defaults, except the samples for `publicUrl`, `trus
   are also limited for all addresses together (additive: a new route and a rate limit on a new route).
 - **v1 (2026-10-27)** — `homeColumns` accepts 3–10 instead of 3–6, so that every row count has a grid that fills the
   screen's width. A TV app from before clamps the new values to 6 and draws them as 6 columns, as it always clamped.
+- **v1 (2026-10-27)** — [app cards](#app-cards): a TV reports its [installed apps](#installed-apps)
+  (`PUT /tv/apps`, `PUT /tv/apps/images/:sha256`, served at `/app-images/`), and the owner puts cards that open them
+  on its Home (`…/home/apps` routes). Added: `entries` in every `Section` (TV state and admin answers), `apps`,
+  `appsMax` and `appsReportedAt` in `GET …/devices/:id`, `apps` in Home changes' answers, `entries` as an alternative
+  to `itemIds` in `PUT …/home`, the event `device.apps` and three `home.changed` fields. A section of app cards alone
+  is listed in the TV's state with empty `itemIds` (a TV app from before leaves empty sections out). A `position`
+  counts the section's app cards too, which only a Home with app cards has (additive: new routes, fields, an event
+  type and a request alternative).

@@ -8,8 +8,10 @@ remotely from the admin page or, on the TV itself, behind a hidden menu.
 
 1. **Home → OK → plays.** One screen of show and channel cards, which the owner may group in titled sections. OK on a
    card plays the next unwatched episode, or the half-watched one where it was left, or a channel at its live edge.
+   The owner may add cards that open an app installed on the TV ([App cards](#app-cards)).
 2. **Back always goes home**, and Back on Home does nothing. (The remote's HOME button belongs to the system; the app
-   saves the position and comes back on Home.)
+   saves the position and comes back on Home. When izle is the TV's [home screen](#home-screen), HOME also goes to
+   izle's Home.)
 3. **Every error ends on Home by itself**, after a short, large message. Nothing waits for an answer.
 4. **Nothing small.** No text below 24 sp on the 960×540 dp TV canvas, except the chips on Home cards (16 sp,
    short words in solid colours); high contrast; one focused element with a thick white border, everything else
@@ -62,8 +64,8 @@ remotely from the admin page or, on the TV itself, behind a hidden menu.
 - Server unreachable: the cached home screen stays, a solid red "No connection" chip with dark text appears at the top
   left, the TV retries every 10 s, and OK shows "No connection · Trying again…" for 5 s instead of playing.
 - **Autoplay on start** (owner setting, off by default): when the app comes to the front on Home (TV switched on, app
-  started, back from the launcher) and the first home state fetched then says so, the show or channel played last on
-  this TV if it is on Home (else the first tile) is offered in the "Up next" panel: poster, title, what OK on its tile
+  started, back from the launcher; not back from an app a card opened) and the first home state fetched then says so,
+  the show or channel played last on this TV if it is on Home (else the first show or channel tile) is offered in the "Up next" panel: poster, title, what OK on its tile
   would play ("Episode 2", "Continue · Episode 2", "Live"), "Starts in 10 s" over its bar, **Play now** focused and
   **Not now**. At 0 it plays as OK on its tile would. OK presses the focused button; Back and every other key cancel
   it, do nothing else and leave the focus on its tile. It never appears after in-app steps (Back from the player, "The
@@ -93,8 +95,30 @@ owner's order. They change how the cards are laid out, never what OK does.
 - **Moving:** ↑ and ↓ go line by line (a grid row or a scrolling line), across sections, to the card nearest the one
   left (in a scrolling line, among the cards in view). The screen moves as little as possible to show the focused
   line whole, with its section's title when it is the section's first line; on Home's first line it is at the top.
-- A section with nothing the TV can play is not shown. **Home order** (the sections in order, each with its cards in
-  order) gives autoplay's first tile and CH+ / CH−'s channel order. The offline home screen keeps its sections.
+- A section with nothing the TV can play or open is not shown. **Home order** (the sections in order, each with its
+  cards in order) gives autoplay's first tile and CH+ / CH−'s channel order. The offline home screen keeps its
+  sections.
+
+#### App cards
+
+The owner may put [app cards](../spec/server-api-v1.md#app-cards) on Home, in any section among the shows: OK opens an
+app installed on this TV.
+
+- **The picture:** the app's banner (16:9) whole, across the card's width less 12 dp on each side, centred; an app
+  without a banner: its icon whole, centred, at most the card's width less 24 dp wide; on the card's colour. No chip.
+  The open card: the picture stays at its left, and the panel (plain, as a channel's) holds the app's name (26 sp
+  bold, up to 3 lines) and at the bottom a light grey **Open** chip (24 sp).
+- **OK** opens the app (its TV launch entry, else its launch entry), offline too. When it cannot be opened (removed
+  meanwhile, refused), "Can't open <name>" shows for 5 s in large type as "No connection · Trying again…" does, and
+  Home stays.
+- Back in the app (or HOME, when izle is the [home screen](#home-screen)) comes back to Home with the focus on that
+  card. Coming back from an app opened from a card never offers autoplay on start.
+- An app this TV no longer has (or that cannot be opened) is left out, like a show the TV cannot play; a section left
+  without a card is not shown. App cards are never autoplay's tile, never in CH+ / CH−, and their hidden menu has
+  only the entries shown always.
+- The TV reports the apps it can open (name and picture) to the server on start, when it comes to the front, and when
+  an app is installed, updated or removed while it runs ([Installed apps](../spec/server-api-v1.md#installed-apps));
+  the owner picks from that list. izle itself is never in it.
 
 ### Player
 
@@ -153,7 +177,7 @@ its rows ending at the safe margin; the focused row has the tiles' white border.
 | Start over | shows (not channels) | plays the episode OK would play from the beginning (in the player: seeks to 0) |
 | Audio language | player, ≥ 2 audio tracks | Automatic (the owner's preference) or a specific track, for this playback |
 | Subtitles | player | Off or one of the stream's subtitle tracks, for this playback |
-| Settings | always | Server address (back to the address screen), Language (Automatic → Türkçe → English), Pair again, [Connect a phone](#connect-a-phone); Install update (with the version) while the server offers a newer one, as the owner's command (not in the player's menu) |
+| Settings | always | Server address (back to the address screen), Language (Automatic → Türkçe → English), Pair again, [Connect a phone](#connect-a-phone), [Home screen](#home-screen), TV settings (Android's own settings app; izle stays where it was); Install update (with the version) while the server offers a newer one, as the owner's command (not in the player's menu) |
 | About | always | app version, TV name, server, catalog and catalog build; "Update available" with the version, or "Up to date" |
 
 ### Connect a phone
@@ -175,10 +199,32 @@ focus.
 - As on the pairing and update screens, owner commands answer `ignored`, `not_ready` (messages are not shown), and the
   Menu key and holding OK do nothing.
 
+### Home screen
+
+izle can be the TV's home screen (its launcher): HOME, and switching the TV on, then open izle's Home. It is off
+until chosen on the TV, since Android asks there which app to use.
+
+- Hidden menu → Settings → **Home screen** reads "izle" when HOME opens izle, "TV's own" when izle is not offered as
+  a home screen, and "izle · not chosen" when it is offered but HOME opens another app. OK:
+  - from "TV's own": izle offers itself as a home screen (a home entry that is off until then) and opens the system's
+    home, so that Android asks which app to use: choose izle and **Always**. When Android does not ask (another home
+    screen is fixed as the default), izle opens Android's home-screen settings when the TV has them, else TV settings.
+    Coming back, the row reads the new state.
+  - from "izle" or "izle · not chosen": izle stops offering itself; the next HOME opens the TV's own home screen.
+- While izle is the home screen, HOME acts as Back towards Home: from the player it saves the position and goes Home,
+  it closes the hidden menu, Up next, "The end", "Can't play right now", the update screens (without stopping an
+  install under way) and Connect a phone, each ending on Home; on Home it does nothing; on the address and pairing
+  screens it does nothing. From another app it brings izle's Home back, with the focus where it was.
+- izle stays in the TV's own list of apps either way. After a self-update the system opens its home screen, which is
+  izle again.
+- The server address screen has **TV settings** under **Connect**, since a TV without a network can only be fixed
+  there.
+
 ### First run
 
 1. **Server address**: a large text field (the TV keyboard opens), prefilled with `http://10.0.2.2:8787` in debug
-   builds (which take the `izle.server` extra, [AGENTS.md](../../AGENTS.md#emulator-loop)); Connect checks `/healthz`.
+   builds (which take the `izle.server` extra, [AGENTS.md](../../AGENTS.md#emulator-loop)); Connect checks `/healthz`;
+   **TV settings** opens Android's settings.
 2. **Pairing code**: "Pair this TV", the admin page's address, the 6-digit code in 96 sp, "Waiting for approval…";
    Home once the owner approved it. Expired codes are replaced on their own; Back returns to the address screen. A TV
    the owner deleted shows a new pairing code by itself.
@@ -187,7 +233,7 @@ focus.
 
 | Key | Home | Player (video) | Player (channel) | Up next / error overlay | Hidden menu |
 |---|---|---|---|---|---|
-| OK (short) | play the focused show or channel | pause / resume | information (and undo a system pause) | press the focused button | choose |
+| OK (short) | play the focused show or channel, or open the focused app | pause / resume | information (and undo a system pause) | press the focused button | choose |
 | OK (hold 0.6 s) | hidden menu | hidden menu | hidden menu | — | — |
 | Menu | hidden menu | hidden menu | hidden menu | — | — |
 | ← / → | move | seek −/+ 10 s (holding: 30 s steps after 2 s, 60 s after 4 s; one seek on release) | nothing | move | — |
@@ -197,7 +243,7 @@ focus.
 | Stop | — | save, Home | Home | — | — |
 | CH+ / CH−, ▶▶\| / \|◀◀ | nothing | next / previous episode (first press only; the ends: information only) | next / previous channel (first press only; the ends: information only) | a channel's error overlay: next / previous channel; else nothing | nothing |
 | Back | nothing | save, Home | Home | Home (also from the update screen) | one level up / close |
-| HOME (system) | leaves the app; it reopens on Home | saves the position, releases the player | releases the player | | |
+| HOME (system) | leaves the app; it reopens on Home (izle as the [home screen](#home-screen): nothing) | saves the position, releases the player (izle as the home screen: and goes Home) | releases the player (izle as the home screen: and goes Home) | (izle as the home screen: Home) | (izle as the home screen: close) |
 
 A short OK is delivered on release; a release without a press (the OK that launched the app) is ignored. Channel
 keys never reach the system, also where they do nothing (pairing and the address screen included): many Android TV
@@ -223,4 +269,5 @@ devices open their own live-TV app on an unhandled channel key.
 
 English and Turkish, in `android/app/src/main/res/values/strings.xml` and `values-tr/strings.xml`. The words quoted
 above are the English ones; besides them: "Paused", the pairing line "Open http://… /admin on your phone or computer
-and approve this code", and on the address screen "Server address · Connect · The server cannot be reached."
+and approve this code", and on the address screen "Server address · Connect · TV settings · The server cannot be
+reached."

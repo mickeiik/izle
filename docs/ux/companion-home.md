@@ -16,6 +16,11 @@ scaled screen. The rest of the TV's page is in [Companion app](companion.md); wh
   (**Fails**, **Warnings**; the sheet says the verdict in full), and a drag handle.
 - A show the TV hides is greyed with why: "Hidden: not in the catalog" (its id stands in for the title it
   no longer has) or "Hidden: can't play", with **Remove**.
+- An [app card](../spec/server-api-v1.md#app-cards) is a row like a show's: the app's picture, its name, "App" as
+  its line, and a drag handle; greyed "Hidden: not installed on the TV" with **Remove** when the TV no longer has it.
+  Its sheet: where it is, "OK opens <name> on Salon", **Move to section…**, **Move to first**, **Remove from Home**.
+  It moves (drag, sheet) with `…/home/apps/:appId` as a show does with `…/home/items/:itemId`.
+- The top line counts the app cards too: "Grid 4 × 2 · 24 shows · 3 apps".
 - With nothing on Home: "Nothing on Home yet. Add a show and it appears on the TV."
 
 ## Moving shows
@@ -62,6 +67,9 @@ Tapping a show opens a sheet:
 - **Add** puts the show at the end of the chosen section and takes it off the results: "Sintel added to Films." (or
   "Sintel added to Home." for the untitled section). With nothing found: "Nothing found that Salon does not have on
   Home already."
+- A fourth kind chip, **Apps**, lists instead the apps the TV reported that are not on Home yet (picture, name,
+  **Add**), filtered by the search; none chosen lists shows only. A TV that never reported: "Salon has not listed its
+  apps yet. Its izle app may need an update."
 
 ## Checks
 
@@ -98,7 +106,7 @@ changed) and **Cancel**. It is the one `PATCH …/devices/:id` the tab makes.
   `unknown_section`), the tab reads Home anew and says "Home changed on another screen; this is the current one."
   Other refusals are said in words ("A Home holds at most 200 shows.", "The server cannot be reached.").
 - While the tab is shown it follows the server's event log for this TV (`home.changed`, `cursor.changed`,
-  `device.updated`, `catalog.reloaded`, `check.finished`, or a gap) and reads Home anew on each, so edits made
+  `device.updated`, `device.apps`, `catalog.reloaded`, `check.finished`, or a gap) and reads Home anew on each, so edits made
   elsewhere (the admin page, another phone, an agent) show up and are never undone.
 - When Home cannot be read the first time, the tab says so with **Try again**; later failures keep what is shown.
 

@@ -128,3 +128,14 @@ entries, and how each feature was built, are in git history.
 - TV app: `:core` took only what moves without a logic edit. `EpisodeNames` stays in `:app` because it calls
   `PlaybackPlan.resumePositionMs`, and `PlaybackPlan` is TV logic (autoplay, countdown, source rotation); it moves
   when a second app needs it.
+
+## App cards and izle as the home screen
+
+- App cards are only in a section's `entries`, beside `itemIds` and outside `home`: a 0.6 TV reads those two and
+  would meet a card it cannot draw. A `position` counts every card of the section, so one list orders both kinds.
+- App cards belong to the TV, not the catalog (no `catalog_id`): the apps are on the TV, whatever bundle is loaded.
+- Pictures are content-addressed and public like `/assets/`: an app's banner is not secret, and the TV uploads each
+  image once for all TVs.
+- izle as the home screen is a hidden-menu switch on the TV, not an owner setting: Android asks which home app to use
+  on the TV itself anyway. A disabled activity alias carries the HOME filter, so an izle that is not chosen never
+  makes Android ask.
