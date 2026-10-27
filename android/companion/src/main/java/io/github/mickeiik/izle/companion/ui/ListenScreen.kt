@@ -28,7 +28,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LifecycleStartEffect
@@ -288,7 +287,7 @@ internal fun TimingControls(
             val offsetMs = parseTiming(state.offsetText, "1")?.offsetMs
             Text(
                 offsetMs?.let(ListenTiming::formatOffset) ?: "–",
-                style = IzleTheme.type.title.copy(fontFamily = FontFamily.Monospace),
+                style = IzleTheme.type.digits,
                 color = IzleTheme.colors.textPrimary,
                 modifier = Modifier.weight(1f),
             )

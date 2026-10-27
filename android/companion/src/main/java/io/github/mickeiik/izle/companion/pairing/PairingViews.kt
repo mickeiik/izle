@@ -19,7 +19,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import io.github.mickeiik.izle.companion.R
@@ -44,7 +43,7 @@ fun WaitingCodeCard(code: WaitingCode, onNotMine: () -> Unit, onApprove: () -> U
         Column(verticalArrangement = Arrangement.spacedBy(IzleTheme.spacing.line)) {
             Text(
                 formatCode(code.code),
-                style = IzleTheme.type.title.copy(fontFamily = FontFamily.Monospace),
+                style = IzleTheme.type.digits,
                 color = IzleTheme.colors.textPrimary,
             )
             Caption(pluralStringResource(R.plurals.pairing_minutes_left, code.minutesLeft, code.minutesLeft))
@@ -153,7 +152,7 @@ fun PairByCodeDialog(onNext: (String) -> Unit, onDismiss: () -> Unit) {
                     onValueChange = { v -> text = v.filter { it.isDigit() || it == ' ' }.take(CODE_FIELD_MAX) },
                     label = { Text(stringResource(R.string.pairing_code_field)) },
                     singleLine = true,
-                    textStyle = IzleTheme.type.title.copy(fontFamily = FontFamily.Monospace),
+                    textStyle = IzleTheme.type.digits,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth(),
                 )

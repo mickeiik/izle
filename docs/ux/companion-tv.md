@@ -98,7 +98,7 @@ On the TV list (the screen the TV's name in the app bar opens):
 - Each TV's row gains its state in the supporting line: "Online · playing Caminandes", "Offline · seen 2 h ago", and
   "· 1 problem" (warning tone) when `problems.recent` > 0.
 - While a code waits (`GET /admin/pair/pending`, read with the list and every 10 s while the list is shown): a `Card`
-  above the TVs: "A TV is waiting to pair", the code in `title` with monospace digits ("483 920"), "8 min left" in
+  above the TVs: "A TV is waiting to pair", the code in `digits` ("483 920"), "8 min left" in
   `caption`, then **Not mine** (Quiet: `DELETE …/pending/:code`, after a confirm) and **Approve…** (Primary). A code
   already approved shows "Approved as Kitchen · waiting for the TV" instead of the buttons.
 - Under the TVs: **Pair a new TV by its code** (Secondary, full width): a dialog with the 6-digit field, then the same

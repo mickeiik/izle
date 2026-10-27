@@ -3,7 +3,8 @@
 Guidance for coding agents (and humans) working in this repository. What the software does: the specs in
 [docs/spec/](docs/spec/), the UX rules in [docs/ux/senior-tv.md](docs/ux/senior-tv.md) (the TV),
 [docs/ux/admin-home.md](docs/ux/admin-home.md) (a TV's Home on the admin page), and [docs/ux/companion.md](docs/ux/companion.md)
-with [docs/ux/companion-home.md](docs/ux/companion-home.md) and [docs/ux/companion-catalog.md](docs/ux/companion-catalog.md) (the phone app). Append a line or two to
+with [docs/ux/companion-home.md](docs/ux/companion-home.md), [docs/ux/companion-catalog.md](docs/ux/companion-catalog.md) and
+[docs/ux/companion-tv.md](docs/ux/companion-tv.md) (the phone app). Append a line or two to
 [docs/decisions.md](docs/decisions.md) only for a choice that the code, the docs and this file do not explain.
 
 ## Product principles

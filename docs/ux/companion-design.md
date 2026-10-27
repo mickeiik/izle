@@ -60,6 +60,7 @@ the launcher icon only.
 | `label` | 14 / 20 sp | Medium | buttons, tabs, chips |
 | `caption` | 13 / 18 sp | Regular | supporting lines, meta, hints (`textSecondary`) |
 | `mono` | 12 / 16 sp | Regular, monospace | Sync details only |
+| `digits` | 20 / 26 sp | Medium, tabular figures | a pairing code, the timing offset |
 
 Two weights only (Regular, Medium). Sentence case everywhere.
 
@@ -138,8 +139,8 @@ The approved mockups are the reference: compact, one primary action per screen, 
   `ListRow`s, the kind as a Neutral chip, the found link's row with **Find** (Small) at its end; **Listen** (Primary,
   headphones icon, full width, the one primary of the screen; Stop is Danger); Earphone delay as a `ListRow` ("kept
   on this phone") ending with **−**, the value and **+**; `Disclosure`s for
-  Timing and Sync details; inside Timing: `ButtonRow` (Mark on TV, Mark on phone), the offset readout (`title`,
-  monospace digits) with **Edit** (Quiet), `ButtonGrid(3)` nudges, `ChoiceGrid(2)` speed, `ButtonRow` (Save timing and
+  Timing and Sync details; inside Timing: `ButtonRow` (Mark on TV, Mark on phone), the offset readout (`digits`)
+  with **Edit** (Quiet), `ButtonGrid(3)` nudges, `ChoiceGrid(2)` speed, `ButtonRow` (Save timing and
   Apply to all episodes, both Secondary: Listen is the screen's primary).
 - **Catalog**: the `SearchField`, the filters as one `ChipRow`, then the list: the What's new `ListRow` (the sparkle
   icon in `accent`, "25 Oct · 3 shows, 12 episodes", a chevron), the count line ("142 shows" in `caption`, the sort
