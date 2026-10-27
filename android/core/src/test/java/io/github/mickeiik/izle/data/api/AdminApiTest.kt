@@ -265,8 +265,22 @@ class AdminApiTest {
         assertNull(plain.queryParameter("kind"))
         assertNull(plain.queryParameter("notOnDevice"))
         assertNull(plain.queryParameter("playable"))
+        assertNull(plain.queryParameter("since"))
+        assertNull(plain.queryParameter("sort"))
         assertEquals("0", plain.queryParameter("offset"))
         assertEquals("50", plain.queryParameter("limit"))
+    }
+
+    @Test
+    fun catalogSearchSendsSinceAndSortAndReadsWhenAHitFirstAppeared() = runBlocking {
+        server.enqueue(json(200, """{"items":[{"id":"show-1","kind":"series","title":"Dark","year":2017,"episodeCount":26,"playableCount":24,"playable":true,"firstSeenAt":"2026-10-25T09:12:00.000Z","newEpisodes":3}],"total":1,"offset":0}"""))
+        val page = client().catalogSearch(since = "2026-10-25T09:12:00.000Z", sort = CatalogSearch.SORT_NEWEST)
+        val url = takeRequest("GET", "/izle/api/v1/admin/catalog/search").url
+        assertEquals("2026-10-25T09:12:00.000Z", url.queryParameter("since"))
+        assertEquals("newest", url.queryParameter("sort"))
+        val hit = page.items.single()
+        assertEquals("2026-10-25T09:12:00.000Z", hit.firstSeenAt)
+        assertEquals(3, hit.newEpisodes)
     }
 
     @Test
@@ -274,29 +288,60 @@ class AdminApiTest {
         server.enqueue(
             json(
                 200,
-                """{"item":{"id":"show-1","kind":"series","title":"Dark","year":2017,"posterUrl":"/media/p.jpg","autoAdvance":true,"episodes":[
-                    {"id":"s1e1","index":0,"season":1,"number":1,"title":"Secrets","label":"S1 E1","playbackAllowed":true,"sources":[],"check":{"verdict":"pass","checkedAt":"2026-10-26T10:00:00.000Z","working":1,"total":1,"stale":false}},
-                    {"id":"s1e2","index":1,"season":1,"number":2,"playbackAllowed":false,"check":null}]}}""",
+                """{"item":{"id":"show-1","kind":"series","title":"Dark","year":2017,"posterUrl":"/media/p.jpg","backdropUrl":null,
+                    "originalTitle":"Dark (DE)","synopsis":"A town.","genres":["Drama","Mystery"],"autoAdvance":false,"episodes":[
+                    {"id":"s1e1","index":0,"season":1,"number":1,"title":"Secrets","label":"S1 E1","durationMs":3060000,"playbackAllowed":true,"autoAdvance":null,
+                     "sources":[{"id":"main","type":"direct","label":"HD","languages":{"audio":["de","en"],"subtitles":null},"kind":"hls","needsProxy":true},
+                                {"id":"alt","type":"adapter","label":null,"languages":{"audio":null,"subtitles":null},"adapter":"example"}],
+                     "check":{"verdict":"pass","checkedAt":"2026-10-26T10:00:00.000Z","working":1,"total":1,"stale":false}},
+                    {"id":"s1e2","index":1,"season":1,"number":2,"durationMs":null,"playbackAllowed":false,"autoAdvance":true,"sources":[],"check":null}]}}""",
             ),
         )
         val item = client().catalogItem("show-1")
         takeRequest("GET", "/izle/api/v1/admin/catalog/items/show-1")
         assertEquals("Dark", item.title)
+        assertEquals("Dark (DE)", item.originalTitle)
+        assertEquals("A town.", item.synopsis)
+        assertEquals(listOf("Drama", "Mystery"), item.genres)
+        assertEquals(false, item.autoAdvance)
         assertNull(item.playbackAllowed)
+        assertTrue(item.sources.isEmpty())
         val (first, second) = item.episodes
         assertEquals("Secrets", first.title)
+        assertEquals(3_060_000L, first.durationMs)
         assertTrue(first.playbackAllowed)
+        assertNull(first.autoAdvance)
         assertEquals("pass", first.check?.verdict)
+        assertEquals(
+            listOf(
+                AdminSource("main", "direct", "HD", CandidateLanguages(listOf("de", "en"), null), kind = "hls", needsProxy = true),
+                AdminSource("alt", "adapter", languages = CandidateLanguages(), adapter = "example"),
+            ),
+            first.sources,
+        )
         assertFalse(second.playbackAllowed)
+        assertNull(second.durationMs)
+        assertEquals(true, second.autoAdvance)
         assertNull(second.check)
     }
 
     @Test
-    fun aChannelItemHasNoEpisodes() = runBlocking {
-        server.enqueue(json(200, """{"item":{"id":"ch-1","kind":"live","title":"News","playbackAllowed":true,"sources":[],"check":null}}"""))
+    fun aChannelItemHasNoEpisodesButSourcesAndACheck() = runBlocking {
+        server.enqueue(
+            json(
+                200,
+                """{"item":{"id":"ch-1","kind":"live","title":"News","year":null,"originalTitle":null,"synopsis":null,"genres":[],"playbackAllowed":true,
+                    "sources":[{"id":"live","type":"direct","label":null,"languages":{"audio":["tr"],"subtitles":null},"kind":"hls","needsProxy":false}],
+                    "check":{"verdict":"ok","checkedAt":"2026-10-26T10:00:00.000Z","working":1,"total":1,"stale":false}}}""",
+            ),
+        )
         val item = client().catalogItem("ch-1")
         assertTrue(item.episodes.isEmpty())
         assertEquals(true, item.playbackAllowed)
+        assertNull(item.autoAdvance)
+        assertEquals("live", item.sources.single().id)
+        assertEquals(listOf("tr"), item.sources.single().languages.audio)
+        assertEquals("ok", item.check?.verdict)
     }
 
     @Test

@@ -96,7 +96,14 @@ Every button label is centred, single line, and never pushed to an edge; equal-w
   Play/Pause is outlined and drawn in `accent`. The seek buttons read "−30" and "+30".
 - **`IzleSheet`**: `ModalBottomSheet` with `surface`, top radius `lg`, title in `title`, content padded `lg`.
 - **`IzleTopBar(title, onTitleClick?, actions)`** and **`IzleBottomBar`** (64 dp, icon + `label`, active in `accent`,
-  no pill indicator fill beyond `accentMuted`); Now's tab icon is a TV, Home's a grid.
+  no pill indicator fill beyond `accentMuted`); Now's tab icon is a TV, Home's a grid, Catalog's a stack of books.
+- **`SearchField(value, onValueChange, placeholder)`** (`Filters.kt`): an outlined field, radius `md`, on `surface`, a
+  search icon, the placeholder in `textMuted`, one line, a clear button while it holds text.
+- **`FilterChip(text, selected)`** in a **`ChipRow`**: 32 dp, radius `sm`, `label`; at rest a 1 dp `border` and
+  `textSecondary` text, selected in `accentMuted` with `accent` text and border. The row is one line that scrolls
+  sideways, chips `sm` apart, from the page gutter (the Catalog's filters, What's new's builds).
+- **`QuietSelect(text, items)`**: a choice inside a line of text (a list's sort): the current choice in `label`,
+  `textSecondary`, a chevron, and a menu with the current item ticked.
 - **`EmptyState(text)`**: `caption`-coloured body text, no card around it.
 
 ## Screens
@@ -126,4 +133,10 @@ The approved mockups are the reference: compact, one primary action per screen, 
   Timing and Sync details; inside Timing: `ButtonRow` (Mark on TV, Mark on phone), the offset readout (`title`,
   monospace digits) with **Edit** (Quiet), `ButtonGrid(3)` nudges, `ChoiceGrid(2)` speed, `ButtonRow` (Save timing and
   Apply to all episodes, both Secondary: Listen is the screen's primary).
+- **Catalog**: the `SearchField`, the filters as one `ChipRow`, then the list: the What's new `ListRow` (the sparkle
+  icon in `accent`, "25 Oct · 3 shows, 12 episodes", a chevron), the count line ("142 shows" in `caption`, the sort
+  as a `QuietSelect` and the tab's ⋮ at the right), and the shows as `ListRow`s (`Poster` 36 × 54, "Series · 2013 ·
+  3 episodes", "On Home" in `caption`/`textMuted` as trailing). **What's new** (top bar: back arrow, "What's new", a
+  refresh icon): the builds as a `ChipRow`, the build's `caption` summary, then `SectionHeader`s; new shows end with
+  **Add** (Small, Secondary) or "On Home"; gone shows in `textSecondary`.
 - **TV list, Phones, Connect, link finder**: `ListRow`s and the same buttons; Connect's **Connect** is its Primary.

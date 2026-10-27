@@ -65,7 +65,7 @@ sealed interface ConnectError {
 }
 
 /** The TV page's bottom bar. */
-enum class TvTab { Now, Home }
+enum class TvTab { Now, Home, Catalog }
 
 /** What the app shows; [CompanionRoot] switches on it. */
 sealed interface CompanionUi {
@@ -96,7 +96,8 @@ sealed interface CompanionUi {
     ) : CompanionUi
 
     /**
-     * One TV's page: the Now and Home tabs ([tab]), and Listen along over Now ([listenOpen]). [device]: the TV as the
+     * One TV's page: the Now, Home and Catalog tabs ([tab]), Listen along over Now ([listenOpen]), and a show's page over
+     * the tabs ([openShow], with [openShowTitle] once read). [device]: the TV as the
      * list gives it (its last-seen time); [severalTvs]: the server has more than one, so Back goes to the list.
      *
      * Now: [now] is the last `GET …/now` answer, followed while the tab is shown, which arrived at [nowAtMs]
@@ -137,6 +138,8 @@ sealed interface CompanionUi {
         val tvMarkMs: Double? = null,
         val phoneMarkMs: Double? = null,
         val otherSpeed: Boolean = false,
+        val openShow: String? = null,
+        val openShowTitle: String? = null,
     ) : CompanionUi {
         val isChannel: Boolean get() = nowPlaying?.isLive == true
         val listening: Boolean get() = session.phase != ListenPhase.Idle
@@ -551,7 +554,14 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     // --- the TV page: tabs, Now, the remote, a message -------------------------------------------------------------
 
-    fun selectTab(tab: TvTab) = updateTv { it.copy(tab = tab, listenOpen = false) }
+    fun selectTab(tab: TvTab) = updateTv { it.copy(tab = tab, listenOpen = false, openShow = null, openShowTitle = null) }
+
+    /** A show's page, full screen over the tabs; the page hands its title (for the bar) to [showTitle] once read. */
+    fun openShow(itemId: String) = updateTv { it.copy(openShow = itemId, openShowTitle = null) }
+
+    fun showTitle(itemId: String, title: String) = updateTv { if (it.openShow == itemId) it.copy(openShowTitle = title) else it }
+
+    fun closeShow() = updateTv { it.copy(openShow = null, openShowTitle = null) }
 
     /** Listen along, over Now: what it offers is read again at once. */
     fun openListen() {
