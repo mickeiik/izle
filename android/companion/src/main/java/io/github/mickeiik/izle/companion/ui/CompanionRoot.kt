@@ -118,7 +118,7 @@ fun CompanionRoot(vm: CompanionViewModel = viewModel()) {
             CompanionUi.Starting -> Box(modifier)
             is CompanionUi.Connect ->
                 ConnectScreen(screen, onConnect = vm::connect, onConnectWithToken = vm::connectWithToken, modifier = modifier)
-            is CompanionUi.PickTv -> TvPickerScreen(screen, onPick = vm::pickTv, onRetry = vm::reloadTvs, modifier = modifier)
+            is CompanionUi.PickTv -> TvPickerScreen(screen, vm.apiClient, onPick = vm::pickTv, onRetry = vm::reloadTvs, onPaired = vm::reloadTvs, modifier = modifier)
             is CompanionUi.Phones -> PhonesScreen(
                 screen, onDisconnect = vm::disconnectPhone, onRetry = vm::reloadPhones, onBack = vm::closePhones, modifier = modifier,
             )
