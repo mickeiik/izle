@@ -2,6 +2,8 @@ package io.github.mickeiik.izle.player
 
 import android.Manifest
 import android.app.Application
+import android.content.Context
+import android.content.ContextWrapper
 import android.os.Looper
 import androidx.media3.common.C
 import androidx.test.core.app.ApplicationProvider
@@ -27,7 +29,6 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import org.robolectric.shadows.ShadowPowerManager
 import java.net.InetAddress
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
@@ -178,9 +179,27 @@ class ExoMediaEngineTest {
     }
 
     @Test
-    fun audioOnlyDisablesVideoAndKeepsTheNetworkAwake() {
+    fun theWifiStaysAwakeWhilePlaying() {
         val app = ApplicationProvider.getApplicationContext<Application>()
-        shadowOf(app).grantPermissions(Manifest.permission.WAKE_LOCK) // the companion app's manifest asks for it
+        shadowOf(app).grantPermissions(Manifest.permission.WAKE_LOCK) // Media3's manifest asks for it in both apps
+        // Media3's default wake mode keeps only the CPU awake; the network one also creates a Wi-Fi lock (on the player's
+        // own thread), the one reason it asks for the Wi-Fi service. Robolectric's lock count cannot tell: it also counts
+        // the release of a lock that was never held.
+        val services = ServiceLog(app)
+        val engine = ExoMediaEngine(services, http, "izle-test", capVideoTo720p = false)
+        try {
+            engine.load(media, 0)
+            val deadline = System.currentTimeMillis() + 5_000
+            while (Context.WIFI_SERVICE !in services.asked && System.currentTimeMillis() < deadline) Thread.sleep(10)
+            assertTrue(Context.WIFI_SERVICE in services.asked)
+        } finally {
+            engine.release()
+        }
+    }
+
+    @Test
+    fun audioOnlyDisablesVideo() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
         val engine = ExoMediaEngine(app, http, "izle-test", capVideoTo720p = false, audioOnly = true)
         try {
             engine.applyPreferences("de", null)
@@ -188,10 +207,6 @@ class ExoMediaEngineTest {
             val first = engine.surface!!
             assertTrue(C.TRACK_TYPE_VIDEO in first.trackSelectionParameters.disabledTrackTypes)
             assertEquals(listOf("de"), first.trackSelectionParameters.preferredAudioLanguages)
-            // The wake mode: the player creates its wake lock (on its own thread) only when a wake mode is set.
-            val deadline = System.currentTimeMillis() + 5_000
-            while (ShadowPowerManager.getLatestWakeLock() == null && System.currentTimeMillis() < deadline) Thread.sleep(10)
-            assertEquals("ExoPlayer:WakeLockManager", shadowOf(ShadowPowerManager.getLatestWakeLock()).tag)
             // Also on a decoder created later.
             engine.release()
             engine.applyPreferences("en", null)
@@ -247,5 +262,12 @@ class ExoMediaEngineTest {
         } finally {
             engine.release()
         }
+    }
+
+    /** [base], noting the system services asked for; it is its own application context, so Media3 asks it too. */
+    private class ServiceLog(base: Context) : ContextWrapper(base) {
+        val asked = CopyOnWriteArrayList<String>()
+        override fun getApplicationContext(): Context = this
+        override fun getSystemService(name: String): Any? = super.getSystemService(name).also { asked += name }
     }
 }
