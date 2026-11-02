@@ -6,6 +6,12 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 
 ## [Unreleased]
 
+### Fixed
+
+- **TV app: no more pauses on Wi-Fi.** The TV kept its Wi-Fi in power save while playing, so each request could wait
+  up to seconds for the radio to wake; a live channel then fell behind and restarted with a 5–10 s pause. The player
+  now keeps the Wi-Fi awake while it plays, as the phone app already did for Listen along.
+
 ## [0.7.0] - 2026-10-27
 
 ### Added

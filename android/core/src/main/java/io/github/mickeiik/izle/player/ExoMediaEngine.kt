@@ -23,9 +23,10 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 
 /**
- * Owns Media3's decoder and transport choices; playback recovery belongs to the controller. [audioOnly] (the companion
- * app, which plays with the screen off) disables video tracks and keeps the Wi-Fi and the CPU awake while playing,
- * which needs `WAKE_LOCK` in that app's manifest; the TV app leaves it false.
+ * Owns Media3's decoder and transport choices; playback recovery belongs to the controller. While playing, the Wi-Fi
+ * and the CPU stay awake (`WAKE_LOCK` comes with Media3's manifest; without it Media3 would skip the locks): a dozing
+ * Wi-Fi radio delays every request by up to seconds, enough for a live channel to fall behind its window.
+ * [audioOnly] (the companion app, which plays with the screen off) disables video tracks; the TV app leaves it false.
  */
 @OptIn(UnstableApi::class)
 class ExoMediaEngine(
@@ -179,7 +180,7 @@ class ExoMediaEngine(
             /* handleAudioFocus = */ true,
         )
         .setHandleAudioBecomingNoisy(true)
-        .apply { if (audioOnly) setWakeMode(C.WAKE_MODE_NETWORK) }
+        .setWakeMode(C.WAKE_MODE_NETWORK)
         .build()
         .apply {
             addListener(playerListener)
