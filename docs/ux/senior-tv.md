@@ -165,7 +165,8 @@ interrupts playback: during playback the command answers `busy` and nothing is i
 
 - **Android 12+, with the one-time "install unknown apps" grant**: when the owner allows TVs to update by themselves,
   the TV updates silently once it has sat on Home for 3 minutes with no key pressed (no hidden menu, no autoplay
-  countdown, nothing playing, server reachable); the owner's command installs at once. "Updating…" shows during the
+  countdown, nothing playing, server reachable), or at once, unseen, while another app is in front of izle as the
+  home screen (see [Home screen](#home-screen)); the owner's command installs at once. "Updating…" shows during the
   install; Android then closes the app and does not let it come back (Android 10+ blocks background activity starts,
   verified on the API 36 emulator), so the TV shows its launcher until izle is opened again, on Home. After a failed
   attempt the TV waits 6 hours before trying by itself again. If the system asks for a confirmation anyway, the TV
@@ -234,6 +235,15 @@ restarts), and the row reads "izle · not chosen" until then.
   screens it does nothing. From another app it brings izle's Home back, with the focus where it was.
 - izle stays in the TV's own list of apps either way. After a self-update izle opens again by itself (the system would
   show the app used before it).
+- **Another app in front** (one an app card opened, or any other) with the screen on: izle stays connected, so the
+  owner sees the TV online. The owner's `play` brings izle back and plays (no autoplay offer); not in front within
+  10 s, it answers `ignored`, `background`. A TV that updates silently installs an offered version unseen, without
+  waiting for 3 idle minutes (and on the owner's `update`), and the new version stays behind the app in front until
+  HOME; a guided TV answers `update` with `ignored`, `background`. Every other command answers `ignored`,
+  `background` (a message is not shown). Standby lets go of the server, so the TV shows offline and installs nothing;
+  switching on connects again. An izle that is not the
+  home screen lets go as soon as it leaves the front (Android freezes such an app in the background, and only the home
+  screen may come back to the front by itself).
 - The server address screen has **TV settings** under **Connect**, since a TV without a network can only be fixed
   there.
 

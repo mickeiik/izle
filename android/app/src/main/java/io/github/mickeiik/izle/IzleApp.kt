@@ -60,6 +60,7 @@ class AppGraph(val context: Context) {
 
     val tvApps = TvApps(context)
     val homeScreen = HomeScreenSwitch(context)
+    val tvScreen = TvScreen(context)
 
     /** The installed apps, for the owner's app cards; their pictures are drawn off the main thread. */
     val appsReporter = AppsReporter(appScope, deviceStore, { repository.api }, apps = { withContext(Dispatchers.Default) { tvApps.report() } })

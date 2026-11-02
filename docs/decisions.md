@@ -31,7 +31,14 @@ entries, and how each feature was built, are in git history.
 
 - Reasons beyond the spec's: `superseded` (another playback or episode step started first), `stopped` (the player was
   left before a `play` ran), `busy` (an earlier step still fetches the episode list), `episodes_unavailable` (that
-  fetch failed). A known type with an unusable payload reports `unknown_type`.
+  fetch failed), `background` (another app is in front: izle as the home screen stays connected there). A known type
+  with an unusable payload reports `unknown_type`.
+- With another app in front only `play` acts, by bringing izle back (the home app may start activities from the
+  background): an owner who sends a show means it to play now, while a message or a transport command over someone
+  else's app would be unseen or act on nothing. A silent update installs there too, unseen and without the idle
+  wait (replacing izle does not touch the app in front); the version it installs is stored (`background_update_to`)
+  so that `MY_PACKAGE_REPLACED` does not bring the new version over that app (the owner did not want the jump). No foreground service keeps a non-home izle connected: Android would
+  freeze or limit it all the same, and it could not come back to play.
 - `play` fails with `no_playable_source` whenever its resolves end without a stream (also a 403/404 or a network
   failure), `playback_error` when the player failed; `done` comes at the first frame of any resolve of its playback,
   a fallback included; Try again after `failed` sends no second result.

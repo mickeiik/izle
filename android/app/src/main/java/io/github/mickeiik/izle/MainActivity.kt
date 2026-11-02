@@ -25,8 +25,9 @@ import kotlinx.coroutines.launch
 /**
  * The only activity. Key routing lives here because OK has two meanings (click / long-press menu), the player owns
  * the D-pad while video is showing, channel keys must never reach the system, and the autoplay countdown gives way to
- * any key. It also receives the app's install session statuses, HOME while izle is the TV's home screen, and starts
- * what the view model asks for (a guided update's system dialog, an app a card opens, TV settings).
+ * any key. It also receives the app's install session statuses, HOME while izle is the TV's home screen, the screen
+ * switching on and off, and starts what the view model asks for (a guided update's system dialog, an app a card opens,
+ * TV settings).
  */
 class MainActivity : ComponentActivity() {
     private val vm: AppViewModel by viewModels {
@@ -34,6 +35,7 @@ class MainActivity : ComponentActivity() {
     }
     private val okPress = OkPressDetector()
     private var packageReceiver: BroadcastReceiver? = null
+    private var screenReceiver: BroadcastReceiver? = null
 
     /** Stopped since it was last in front: a HOME delivered now comes from another app. */
     private var stopped = false
@@ -50,11 +52,15 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        packageReceiver = (application as IzleApp).graph.tvApps.watch(vm::onPackagesChanged)
+        val graph = (application as IzleApp).graph
+        packageReceiver = graph.tvApps.watch(vm::onPackagesChanged)
+        screenReceiver = graph.tvScreen.watch(vm::onScreenChanged)
     }
 
     override fun onDestroy() {
-        packageReceiver?.let((application as IzleApp).graph.tvApps::unwatch)
+        val graph = (application as IzleApp).graph
+        packageReceiver?.let(graph.tvApps::unwatch)
+        screenReceiver?.let(graph.tvScreen::unwatch)
         super.onDestroy()
     }
 

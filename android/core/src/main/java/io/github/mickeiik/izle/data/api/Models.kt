@@ -274,6 +274,7 @@ data class CommandResult(val result: Outcome, val reason: String? = null) {
         const val STOPPED = "stopped" // the player was left (Back, stop, standby) before the playback ran
         const val BUSY = "busy" // next/previous while an earlier step is still fetching the episode list
         const val EPISODES_UNAVAILABLE = "episodes_unavailable" // next/previous: the episode list could not be fetched
+        const val BACKGROUND = "background" // another app is in front (izle, the home screen, stays connected)
 
         // `update` (see docs/decisions.md, "TV app updates: TV side"). BUSY and NOT_READY above apply too.
         const val INSTALLING = "installing" // done: silent, the archive checked out and the install starts

@@ -57,6 +57,28 @@ class UpdatePlanTest {
     }
 
     @Test
+    fun withAnotherAppInFrontASilentTvInstallsWithoutWaitingAndAGuidedOneWaits() {
+        val behind = idleHome.copy(inFront = false, idleMs = 0)
+        assertTrue("nobody sees it: no idle time", UpdatePlan.autoInstall(update, behind))
+        assertFalse(UpdatePlan.autoInstall(update, behind.copy(capability = UpdateCapability.Guided)))
+        assertFalse(UpdatePlan.autoInstall(update, behind.copy(online = false)))
+        assertFalse(UpdatePlan.autoInstall(update, behind.copy(lastFailureAt = now)))
+        assertEquals(listOf(Action.Install(update, silent = true)), UpdatePlan.onCommand(update, 300, behind))
+        assertEquals(ignored(CommandResult.BACKGROUND), UpdatePlan.onCommand(update, 300, behind.copy(capability = UpdateCapability.Guided)))
+        assertEquals("up to date comes first", ignored(CommandResult.UP_TO_DATE), UpdatePlan.onCommand(update, 300, behind.copy(installedVersionCode = 300)))
+    }
+
+    @Test
+    fun theNewVersionComesToTheFrontUnlessItWasInstalledBehindAnotherApp() {
+        // Below Android 10 always; from 10 on only as the home screen.
+        assertTrue(UpdatePlan.reopenAfterUpdate(28, homeScreen = false, backgroundUpdateTo = null, versionCode = 300))
+        assertFalse(UpdatePlan.reopenAfterUpdate(34, homeScreen = false, backgroundUpdateTo = null, versionCode = 300))
+        assertTrue(UpdatePlan.reopenAfterUpdate(34, homeScreen = true, backgroundUpdateTo = null, versionCode = 300))
+        assertFalse(UpdatePlan.reopenAfterUpdate(34, homeScreen = true, backgroundUpdateTo = 300, versionCode = 300))
+        assertTrue("another version's install (one that failed)", UpdatePlan.reopenAfterUpdate(34, homeScreen = true, backgroundUpdateTo = 250, versionCode = 300))
+    }
+
+    @Test
     fun aFailureHoldsAutomaticAttemptsBackForSixHours() {
         val hour = 3_600_000L
         // A clock set back (a failure "in the future") does not block it forever.

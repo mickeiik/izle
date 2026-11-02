@@ -7,6 +7,7 @@ import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.ViewModelStore
@@ -16,6 +17,7 @@ import androidx.test.core.app.ApplicationProvider
 import io.github.mickeiik.izle.BuildConfig
 import io.github.mickeiik.izle.HomeActivity
 import io.github.mickeiik.izle.IzleApp
+import io.github.mickeiik.izle.MainActivity
 import io.github.mickeiik.izle.apps.HomeScreenState
 import io.github.mickeiik.izle.apps.HomeScreenSwitch
 import io.github.mickeiik.izle.data.api.ContinueInfo
@@ -645,6 +647,43 @@ class AppViewModelTest {
     }
 
     @Test
+    fun withAnotherAppInFrontASilentTvUpdatesUnseenAndStaysBehind() {
+        offerUpdate(silent = true)
+        val vm = startTvOnHome()
+        makeHomeScreen(vm)
+        waitUntil("the offered version") { app.graph.updater.available.value?.versionCode == 990_000L }
+        vm.onBackground()
+        // Nobody sees it: the first tick installs, without three idle minutes.
+        advance(UpdatePlan.AUTO_TICK_MS)
+        waitUntil("the install") { installer.installs.isNotEmpty() }
+        assertTrue(installer.installs.single().silent)
+        assertEquals("nothing shows", Screen.Home, vm.screen.value)
+        runBlocking { assertEquals(990_000L, app.graph.deviceStore.current().backgroundUpdateTo) }
+    }
+
+    @Test
+    fun anUpdateFromHomeComesBackToTheFrontAndStandbyStopsUpdatesBehindAnotherApp() {
+        offerUpdate(silent = true)
+        val vm = startTvOnHome()
+        makeHomeScreen(vm)
+        waitUntil("the offered version") { app.graph.updater.available.value?.versionCode == 990_000L }
+        runBlocking { app.graph.deviceStore.setBackgroundUpdateTo(990_000L) } // an earlier attempt behind another app
+        vm.onBackground()
+        val power = shadowOf(app.getSystemService(PowerManager::class.java))
+        power.setIsInteractive(false)
+        vm.onScreenChanged()
+        advance(UpdatePlan.AUTO_TICK_MS * 4)
+        settle()
+        assertTrue("standby", installer.installs.isEmpty())
+        power.setIsInteractive(true)
+        vm.onForeground()
+        advance(UpdatePlan.IDLE_MS)
+        waitUntil("the install") { installer.installs.isNotEmpty() }
+        assertEquals(INSTALLING, vm.screen.value)
+        runBlocking { assertNull(app.graph.deviceStore.current().backgroundUpdateTo) }
+    }
+
+    @Test
     fun theSystemDialogOverTheAppKeepsUpdatingAndBringsNoAutoplay() {
         autoplayOnStart = true
         offerUpdate(silent = false)
@@ -947,6 +986,90 @@ class AppViewModelTest {
         assertEquals(HomeActivity::class.java.name, home?.activityInfo?.name)
         vm.onSettingsEntry(SettingsEntry.HomeScreen)
         assertEquals(HomeScreenState.TvOwn, vm.homeScreen.value)
+    }
+
+    @Test
+    fun asTheHomeScreenWithAnotherAppInFrontItStaysOnlineUntilStandby() {
+        val vm = startTvOnHome()
+        makeHomeScreen(vm)
+        vm.onBackground()
+        advance(60_000)
+        settle()
+        assertEquals("still connected", 1, count("/api/v1/tv/events"))
+        // Only play acts from the background.
+        val message = command("message", """{"text":"Hello","durationSec":15}""")
+        assertEquals(ignored("background"), awaitResult(message))
+        assertNull(vm.banner.value)
+        assertEquals(ignored("background"), awaitResult(command("pause")))
+
+        // Standby lets go; the screen on again connects.
+        val power = shadowOf(app.getSystemService(PowerManager::class.java))
+        power.setIsInteractive(false)
+        vm.onScreenChanged()
+        power.setIsInteractive(true)
+        vm.onScreenChanged()
+        waitUntil("a new event stream") { count("/api/v1/tv/events") == 2 }
+
+        // Not the home screen: the background lets go, and the screen switching on does not connect.
+        vm.onForeground()
+        makeHomeScreen(vm, izle = false)
+        vm.onBackground()
+        vm.onScreenChanged()
+        advance(60_000)
+        settle()
+        assertEquals(2, count("/api/v1/tv/events"))
+        vm.onForeground()
+        waitUntil("the event stream once in front") { count("/api/v1/tv/events") == 3 }
+    }
+
+    @Test
+    fun aPlayWithAnotherAppInFrontBringsIzleBackToPlayIt() {
+        val vm = startTvOnHome()
+        makeHomeScreen(vm)
+        vm.onBackground()
+        val play = command("play", """{"itemId":"b","episodeId":"b.e2"}""")
+        awaitAck(play)
+        settle()
+        assertEquals(MainActivity::class.java.name, shadowOf(app).nextStartedActivity?.component?.className)
+        assertEquals("nothing plays behind the other app", Screen.Home, vm.screen.value)
+        assertEquals(0, count(RESOLVE))
+
+        // izle is in front: the play runs as from Home, and no autoplay.
+        vm.onForeground()
+        assertEquals(Screen.Player, vm.screen.value)
+        awaitResolves(1)
+        assertEquals("""{"episodeId":"b.e2","trigger":"command","commandId":$play}""", resolveBodies().single())
+        assertEquals(failed("no_playable_source"), awaitResult(play))
+        assertNull(vm.autoplay.value)
+    }
+
+    @Test
+    fun aPlayFromTheBackgroundIsSupersededByTheNextAndGivesUpWhenIzleStaysBehind() {
+        val vm = startTvOnHome()
+        makeHomeScreen(vm)
+        vm.onBackground()
+        val first = command("play", """{"itemId":"b","episodeId":"b.e2"}""")
+        awaitAck(first)
+        val second = command("play", """{"itemId":"c","episodeId":"c.e2"}""")
+        assertEquals(ignored("superseded"), awaitResult(first))
+        advance(AppViewModel.FRONT_WAIT_MS)
+        assertEquals(ignored("background"), awaitResult(second))
+        // Coming to the front later plays nothing.
+        vm.onForeground()
+        settle()
+        assertEquals(Screen.Home, vm.screen.value)
+        assertEquals(0, count(RESOLVE))
+    }
+
+    /** Hidden menu → Settings → Home screen: izle becomes the TV's home screen (here the only one), or stops being it. */
+    private fun makeHomeScreen(vm: AppViewModel, izle: Boolean = true) {
+        vm.openMenu()
+        vm.onRootEntry(RootEntry.Settings)
+        vm.onSettingsEntry(SettingsEntry.HomeScreen)
+        assertEquals(if (izle) HomeScreenState.Izle else HomeScreenState.TvOwn, vm.homeScreen.value)
+        vm.onBack()
+        vm.onBack()
+        assertNull(vm.menu.value)
     }
 
     /** An app with a launch entry, as PackageManager will find it. */

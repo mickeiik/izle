@@ -4,15 +4,15 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import io.github.mickeiik.izle.BuildConfig
 import io.github.mickeiik.izle.IzleApp
 import io.github.mickeiik.izle.MainActivity
 import io.github.mickeiik.izle.apps.HomeScreenState
 import kotlinx.coroutines.launch
 
 /**
- * `MY_PACKAGE_REPLACED`: forgets the old update's state, and brings the new version to the front below Android 10
- * (allowed from a receiver there; later the TV shows what was under izle until izle is opened again), and on any
- * version while izle is the TV's home screen (the home app may start activities from the background).
+ * `MY_PACKAGE_REPLACED`: forgets the old update's state, and brings the new version to the front as
+ * [UpdatePlan.reopenAfterUpdate] says (elsewhere the TV shows what was under izle until izle is opened again).
  */
 class UpdateStatusReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -21,13 +21,16 @@ class UpdateStatusReceiver : BroadcastReceiver() {
         val pending = goAsync()
         app.graph.appScope.launch {
             try {
+                // Read before onReplaced forgets it.
+                val backgroundUpdateTo = app.graph.deviceStore.current().backgroundUpdateTo
                 app.graph.updater.onReplaced()
+                val homeScreen = app.graph.homeScreen.state() == HomeScreenState.Izle
+                if (UpdatePlan.reopenAfterUpdate(Build.VERSION.SDK_INT, homeScreen, backgroundUpdateTo, BuildConfig.VERSION_CODE.toLong())) {
+                    app.startActivity(Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }
             } finally {
                 pending.finish()
             }
-        }
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || app.graph.homeScreen.state() == HomeScreenState.Izle) {
-            context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
     }
 }

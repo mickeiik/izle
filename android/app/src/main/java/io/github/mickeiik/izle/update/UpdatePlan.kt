@@ -7,7 +7,9 @@ import io.github.mickeiik.izle.ui.Screen
 /**
  * When the TV installs a new version of itself (docs/ux/senior-tv.md, "Update"), never during playback. A
  * [UpdateCapability.Silent] TV installs by itself once idle on Home for [IDLE_MS], or at once on the owner's `update`
- * command; a [UpdateCapability.Guided] one only on the command, behind a full-screen "press OK". Pure.
+ * command; a [UpdateCapability.Guided] one only on the command, behind a full-screen "press OK". With another app in
+ * front (izle staying connected as the home screen), a silent TV installs unseen, without waiting to be idle, and
+ * izle stays behind that app afterwards; a guided one waits. Pure.
  */
 object UpdatePlan {
     /** Home without a key press for this long: nobody is using the TV. */
@@ -22,7 +24,10 @@ object UpdatePlan {
     /** "Updating…" goes Home when the system never answers (the install normally restarts the app). */
     const val INSTALLING_MAX_MS = 2 * 60_000L
 
-    /** [idleMs]: since the last key press, the app coming to the front or playback ending; [now]: wall clock. */
+    /**
+     * [idleMs]: since the last key press, the app coming to the front or playback ending; [now]: wall clock; [inFront]:
+     * no other app is in front.
+     */
     data class Context(
         val capability: UpdateCapability,
         val installedVersionCode: Long,
@@ -35,6 +40,7 @@ object UpdatePlan {
         val lastFailureAt: Long?,
         val now: Long,
         val busy: Boolean = false,
+        val inFront: Boolean = true,
     )
 
     sealed interface Action {
@@ -55,6 +61,7 @@ object UpdatePlan {
         update == null || update.versionCode <= ctx.installedVersionCode -> ignored(CommandResult.UP_TO_DATE)
         versionCode != null && versionCode <= ctx.installedVersionCode -> ignored(CommandResult.UP_TO_DATE)
         ctx.capability == UpdateCapability.Silent -> listOf(Action.Install(update, silent = true))
+        !ctx.inFront -> ignored(CommandResult.BACKGROUND)
         else -> listOf(Action.ShowGuided(update))
     }
 
@@ -62,7 +69,17 @@ object UpdatePlan {
         update != null && ctx.capability == UpdateCapability.Silent && update.auto &&
             update.versionCode > ctx.installedVersionCode &&
             ctx.screen == Screen.Home && !ctx.menuOpen && !ctx.autoplayShowing && !ctx.playerInUse && ctx.online &&
-            !ctx.busy && ctx.idleMs >= IDLE_MS && !failedRecently(ctx)
+            !ctx.busy && (ctx.idleMs >= IDLE_MS || !ctx.inFront) && !failedRecently(ctx)
+
+    /**
+     * `MY_PACKAGE_REPLACED` as [versionCode]: izle comes back to the front below Android 10 (allowed from a receiver
+     * there) and as the TV's home screen ([homeScreen]: may start activities from the background), unless that version
+     * was installed with another app in front ([backgroundUpdateTo]), which stays in front.
+     */
+    fun reopenAfterUpdate(sdkInt: Int, homeScreen: Boolean, backgroundUpdateTo: Long?, versionCode: Long): Boolean =
+        backgroundUpdateTo != versionCode && (sdkInt < ANDROID_10 || homeScreen)
+
+    private const val ANDROID_10 = 29
 
     /** A failure in the last [RETRY_AFTER_FAILURE_MS]; one in the future (the clock was set back) does not hold it up. */
     private fun failedRecently(ctx: Context): Boolean {
