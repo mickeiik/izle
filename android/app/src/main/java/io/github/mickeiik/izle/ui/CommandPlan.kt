@@ -8,12 +8,17 @@ import io.github.mickeiik.izle.player.PlayerPhase
  * What the owner's commands do on this TV: they act only on Home and in the player. Transport commands need video
  * showing and win over the hidden menu (`resume`, `next`, `previous` close it, `pause` keeps closing it from resuming,
  * `seek` happens under it). A channel is never paused (`ignored`, `live`); `next`/`previous` zap as CH+/CH− do, also
- * from its error screen. Every command ends in exactly one result: a [Action.Report] last, or the [Action.Play],
- * [Action.Step], [Action.Zap] or [Action.Update] that reports it later.
+ * from its error screen. With another app in front (izle, the TV's home screen, stays connected) only `play` acts: izle
+ * comes back to play it; the others are ignored (`background`). Every command ends in exactly one result: a
+ * [Action.Report] last, or the [Action.Play], [Action.ComeToFront], [Action.Step], [Action.Zap] or [Action.Update]
+ * that reports it later.
  */
 object CommandPlan {
     sealed interface Action {
         data class Play(val command: RemoteCommand.Play) : Action
+
+        /** izle comes to the front, where the command is planned again. */
+        data object ComeToFront : Action
         data object Exit : Action
         data object Pause : Action
         data object Resume : Action
@@ -35,11 +40,24 @@ object CommandPlan {
 
     private val done = Action.Report(CommandResult.Done)
 
-    /** The actions, in order, for [command] on [screen] with the player in [phase]; [live]: it plays a channel. */
-    fun actions(command: RemoteCommand, screen: Screen, phase: PlayerPhase, menuOpen: Boolean, live: Boolean = false): List<Action> {
+    /**
+     * The actions, in order, for [command] on [screen] with the player in [phase]; [live]: it plays a channel;
+     * [inFront]: no other app is in front.
+     */
+    fun actions(
+        command: RemoteCommand,
+        screen: Screen,
+        phase: PlayerPhase,
+        menuOpen: Boolean,
+        live: Boolean = false,
+        inFront: Boolean = true,
+    ): List<Action> {
         // An `update` while the update screen shows is the update plan's (`busy`).
         val ready = screen == Screen.Home || screen == Screen.Player || (screen is Screen.Update && command is RemoteCommand.Update)
         if (!ready && command !is RemoteCommand.Ignored) return listOf(Action.Report(CommandResult.ignored(CommandResult.NOT_READY)))
+        if (!inFront && command !is RemoteCommand.Ignored) {
+            return listOf(if (command is RemoteCommand.Play) Action.ComeToFront else Action.Report(CommandResult.ignored(CommandResult.BACKGROUND)))
+        }
         val video = screen == Screen.Player && phase == PlayerPhase.Playing
         // A channel zaps on while the next one loads, as CH+/CH− do.
         val channel = live && screen == Screen.Player && (phase == PlayerPhase.Playing || phase == PlayerPhase.Loading)

@@ -1377,7 +1377,7 @@ const REASONS = /** @type {Record<string, string>} */ ({
   not_in_player: "nothing is playing", not_ready: "the TV is not set up", no_episode: "no episode that way", unknown_type: "the TV does not know this command",
   no_playable_source: "no source could be played", playback_error: "the player failed", superseded: "something else started first",
   stopped: "the player was left first", busy: "the TV was busy", episodes_unavailable: "the episode list could not be fetched",
-  live: "a channel cannot be paused or seeked", no_channel: "no channel that way on Home",
+  live: "a channel cannot be paused or seeked", no_channel: "no channel that way on Home", background: "another app was in front",
   "next:no_channel": "no channel after this one on Home", "previous:no_channel": "no channel before this one on Home",
 });
 
@@ -1389,6 +1389,7 @@ const UPDATE_RESULTS = /** @type {Record<string, string>} */ ({
   not_newer: "Update: ignored, the TV has this version or a newer one",
   busy: "Update: ignored, the TV is playing",
   not_ready: "Update: ignored, the TV is not set up",
+  background: "Update: ignored, another app was in front on the TV",
   declined: "Update: declined on the TV (Back was pressed)",
   timeout: "Update: nobody pressed OK on the TV within 60 s",
   download: "Update failed: the TV could not download the APK",

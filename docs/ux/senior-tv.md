@@ -234,6 +234,12 @@ restarts), and the row reads "izle · not chosen" until then.
   screens it does nothing. From another app it brings izle's Home back, with the focus where it was.
 - izle stays in the TV's own list of apps either way. After a self-update izle opens again by itself (the system would
   show the app used before it).
+- **Another app in front** (one an app card opened, or any other) with the screen on: izle stays connected, so the
+  owner sees the TV online. The owner's `play` brings izle back and plays (no autoplay offer); not in front within
+  10 s, it answers `ignored`, `background`. Every other command answers `ignored`, `background` (a message is not
+  shown). Standby lets go of the server, so the TV shows offline; switching on connects again. An izle that is not the
+  home screen lets go as soon as it leaves the front (Android freezes such an app in the background, and only the home
+  screen may come back to the front by itself).
 - The server address screen has **TV settings** under **Connect**, since a TV without a network can only be fixed
   there.
 

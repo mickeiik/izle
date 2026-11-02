@@ -113,6 +113,7 @@ private val REASONS = mapOf(
     "playback_error" to "the player failed",
     "superseded" to "something else started first",
     "stopped" to "the player was left first",
+    "background" to "another app was in front",
     "busy" to "it was busy",
     "episodes_unavailable" to "the episode list could not be fetched",
 )

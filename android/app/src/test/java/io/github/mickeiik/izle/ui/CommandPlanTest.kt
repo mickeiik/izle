@@ -135,16 +135,31 @@ class CommandPlanTest {
     }
 
     @Test
+    fun withAnotherAppInFrontOnlyPlayActsByComingToTheFront() {
+        val background = listOf(Action.Report(CommandResult.ignored(CommandResult.BACKGROUND)))
+        assertEquals(listOf(Action.ComeToFront), CommandPlan.actions(play, Screen.Home, PlayerPhase.Idle, menuOpen = false, inFront = false))
+        for (command in transport + listOf(message, RemoteCommand.Stop, RemoteCommand.Update(300))) {
+            assertEquals("$command", background, CommandPlan.actions(command, Screen.Home, PlayerPhase.Idle, menuOpen = false, inFront = false))
+        }
+        assertEquals(unknownType, CommandPlan.actions(RemoteCommand.Ignored("launch"), Screen.Home, PlayerPhase.Idle, menuOpen = false, inFront = false))
+        assertEquals("not set up comes first", notReady, CommandPlan.actions(play, Screen.Pairing, PlayerPhase.Idle, menuOpen = false, inFront = false))
+    }
+
+    @Test
     fun everyCommandEndsInExactlyOneResult() {
-        // A Report, a Play or a Step: one of them, once, and last.
+        // A Report, a Play, a ComeToFront or a Step: one of them, once, and last.
         val everything = transport + listOf(play, message, RemoteCommand.Stop, RemoteCommand.Ignored("launch"), RemoteCommand.Update(300))
         val updating = Screen.Update(UpdateUi("0.3.0", UpdatePhase.Prompt(60)))
         val screens = listOf(Screen.Starting, Screen.Setup(canGoBack = true), Screen.Pairing, Screen.Home, Screen.Player, updating)
         val bools = listOf(false, true)
-        for (screen in screens) for (phase in noVideo + PlayerPhase.Playing) for (menuOpen in bools) for (live in bools) for (command in everything) {
-            val actions = CommandPlan.actions(command, screen, phase, menuOpen, live)
-            val answering = actions.filter { it is Action.Report || it is Action.Play || it is Action.Step || it is Action.Zap || it is Action.Update }
-            assertEquals("$command on $screen in $phase (live $live)", listOf(actions.last()), answering)
+        for (screen in screens) for (phase in noVideo + PlayerPhase.Playing) for (menuOpen in bools) for (live in bools) for (inFront in bools) {
+            for (command in everything) {
+                val actions = CommandPlan.actions(command, screen, phase, menuOpen, live, inFront)
+                val answering = actions.filter {
+                    it is Action.Report || it is Action.Play || it is Action.ComeToFront || it is Action.Step || it is Action.Zap || it is Action.Update
+                }
+                assertEquals("$command on $screen in $phase (live $live, in front $inFront)", listOf(actions.last()), answering)
+            }
         }
     }
 }

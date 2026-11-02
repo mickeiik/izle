@@ -6,6 +6,13 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 
 ## [Unreleased]
 
+### Changed
+
+- **TV app: online while another app is in front.** With izle as the TV's home screen and the screen on, the TV now
+  stays connected when another app (one an app card opened, say) is in front, so the admin page and the phone show it
+  online until standby. A `play` sent then brings izle back and plays; other commands answer `ignored` with the new
+  reason `background`, which the admin page and the phone app put in words.
+
 ## [0.7.1] - 2026-11-02
 
 ### Fixed

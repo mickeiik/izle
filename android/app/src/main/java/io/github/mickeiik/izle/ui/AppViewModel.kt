@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.mickeiik.izle.AppGraph
 import io.github.mickeiik.izle.BuildConfig
+import io.github.mickeiik.izle.MainActivity
 import io.github.mickeiik.izle.apps.AppPicture
 import io.github.mickeiik.izle.apps.HomeScreenState
 import io.github.mickeiik.izle.data.api.ApiClient
@@ -193,6 +194,10 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     private var confirming = false
     private var autoUpdateJob: Job? = null
 
+    /** The owner's `play` that came with another app in front, until izle is back in front to play it. */
+    private var waitingForFront: ServerEvent.Command? = null
+    private var waitingForFrontJob: Job? = null
+
     private val _launches = Channel<Launch>(Channel.BUFFERED)
 
     /** The system's Install dialog of a guided update, an app a card opens, TV settings: for the activity to start. */
@@ -252,6 +257,12 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             Screen.Pairing -> if (pairingJob?.isActive != true) startPairing()
             Screen.Starting -> Unit
         }
+        waitingForFront?.let { command ->
+            waitingForFront = null
+            waitingForFrontJob?.cancel()
+            autoplayArmed = false
+            onCommand(command)
+        }
     }
 
     /**
@@ -262,7 +273,10 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         openedApp = false
     }
 
-    /** HOME or standby: the player is released, the app comes back on Home (but "Updating…" waits for the Install dialog). */
+    /**
+     * HOME, another app or standby: the player is released, the app comes back on Home (but "Updating…" waits for the
+     * Install dialog). It lets go of the server unless it [staysConnected].
+     */
     fun onBackground() {
         foreground = false
         autoUpdateJob?.cancel()
@@ -275,9 +289,24 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             _screen.value = Screen.Home
         }
         _menu.value = null
-        repository.stop()
+        refreshHomeScreen()
+        if (!staysConnected()) repository.stop()
         pairingJob?.cancel()
     }
+
+    /** The screen went off (standby) or on again: in the background, izle is connected only while it [staysConnected]. */
+    fun onScreenChanged() {
+        if (foreground) return
+        if (staysConnected()) repository.start() else repository.stop()
+    }
+
+    /**
+     * Another app in front on a TV whose home screen is izle, its screen on and izle on Home: the event stream stays
+     * open, so the owner sees the TV online and a `play` reaches it (docs/ux/senior-tv.md, "Another app in front").
+     * The home app is never frozen in the background and may come back to the front by itself; any other app is.
+     */
+    private fun staysConnected(): Boolean =
+        !foreground && _screen.value == Screen.Home && _homeScreen.value == HomeScreenState.Izle && graph.tvScreen.isOn()
 
     /** Debug builds: `am start … --es izle.server <url>` points the TV at a server without typing. */
     fun onLaunchServer(address: String) {
@@ -400,7 +429,8 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         endUpdateScreen()
         _screen.value = Screen.Pairing
         _pairing.value = PairingUi(adminUrl = serverUrl?.let(ServerUrls::adminPage).orEmpty())
-        startPairing()
+        // In the background (a TV the server forgot while another app was in front), once back in front.
+        if (foreground) startPairing()
     }
 
     private fun startPairing() {
@@ -575,7 +605,9 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     private fun onCommand(command: ServerEvent.Command) {
         val playing = player.ui.value
-        val actions = CommandPlan.actions(RemoteCommand.of(command), _screen.value, playing.phase, menuOpen = _menu.value != null, live = playing.live)
+        val actions = CommandPlan.actions(
+            RemoteCommand.of(command), _screen.value, playing.phase, menuOpen = _menu.value != null, live = playing.live, inFront = foreground,
+        )
         // The server the command came from (the repository acknowledged it there).
         val api = repository.api
         val report = { result: CommandResult -> if (api != null) graph.commandResults.report(api, command.id, result) }
@@ -586,6 +618,7 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
                     itemId?.let { homeFocusKey = it }
                     startPlayback(ref, origin, positionMs, homeEntry(itemId)?.item, playCommand = true)
                 }
+                CommandPlan.Action.ComeToFront -> comeToFront(command, report)
                 CommandPlan.Action.Exit -> player.exit()
                 CommandPlan.Action.Pause -> player.pause()
                 CommandPlan.Action.Resume -> player.resume()
@@ -599,6 +632,28 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
                 is CommandPlan.Action.Update -> onUpdate(action.command.versionCode, command.id, api, report)
             }
         }
+    }
+
+    /**
+     * The owner's `play` with another app in front: izle, the TV's home screen, may start itself from the background and
+     * plays it there ([onForeground]). A later `play` replaces it (`superseded`); not in front within
+     * [FRONT_WAIT_MS], `background`.
+     */
+    private fun comeToFront(command: ServerEvent.Command, report: (CommandResult) -> Unit) {
+        val earlier = waitingForFront
+        val api = repository.api
+        if (earlier != null && api != null) graph.commandResults.report(api, earlier.id, CommandResult.ignored(CommandResult.SUPERSEDED))
+        waitingForFront = command
+        waitingForFrontJob?.cancel()
+        waitingForFrontJob = viewModelScope.launch {
+            delay(FRONT_WAIT_MS)
+            if (waitingForFront !== command) return@launch
+            waitingForFront = null
+            report(CommandResult.ignored(CommandResult.BACKGROUND))
+        }
+        val context = graph.context
+        // Refused, it waits out the time limit all the same: the viewer may come back to izle meanwhile.
+        runCatching { context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
     }
 
     /** The owner's `update` ([commandId]), or the hidden menu's "Install update" (null), as [UpdatePlan.onCommand] says. */
@@ -965,5 +1020,10 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
     override fun onCleared() {
         player.stop()
         repository.stop()
+    }
+
+    companion object {
+        /** How long a `play` that came with another app in front waits for izle to be in front. */
+        const val FRONT_WAIT_MS = 10_000L
     }
 }
