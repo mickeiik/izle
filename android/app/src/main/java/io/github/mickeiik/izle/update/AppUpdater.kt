@@ -226,6 +226,7 @@ class AppUpdater(
         silentRefused = false
         store.setUpdateSilentRefused(false)
         store.setLastUpdateFailureAt(null)
+        store.setBackgroundUpdateTo(null)
         lastFailureStored = null
         _available.value = null
         downloader.clear()

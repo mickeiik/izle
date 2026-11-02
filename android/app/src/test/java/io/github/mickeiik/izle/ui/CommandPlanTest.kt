@@ -135,10 +135,12 @@ class CommandPlanTest {
     }
 
     @Test
-    fun withAnotherAppInFrontOnlyPlayActsByComingToTheFront() {
+    fun withAnotherAppInFrontOnlyPlayActsByComingToTheFrontAndUpdateIsLeftToTheUpdatePlan() {
         val background = listOf(Action.Report(CommandResult.ignored(CommandResult.BACKGROUND)))
         assertEquals(listOf(Action.ComeToFront), CommandPlan.actions(play, Screen.Home, PlayerPhase.Idle, menuOpen = false, inFront = false))
-        for (command in transport + listOf(message, RemoteCommand.Stop, RemoteCommand.Update(300))) {
+        val update = RemoteCommand.Update(300)
+        assertEquals(listOf(Action.Update(update)), CommandPlan.actions(update, Screen.Home, PlayerPhase.Idle, menuOpen = false, inFront = false))
+        for (command in transport + listOf(message, RemoteCommand.Stop)) {
             assertEquals("$command", background, CommandPlan.actions(command, Screen.Home, PlayerPhase.Idle, menuOpen = false, inFront = false))
         }
         assertEquals(unknownType, CommandPlan.actions(RemoteCommand.Ignored("launch"), Screen.Home, PlayerPhase.Idle, menuOpen = false, inFront = false))

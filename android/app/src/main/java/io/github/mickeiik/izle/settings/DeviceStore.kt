@@ -25,6 +25,8 @@ data class DeviceSettings(
     /** The installed apps the server last accepted ([io.github.mickeiik.izle.apps.AppsReport.hash]), and when (wall clock). */
     val appsReportHash: String? = null,
     val appsReportedAt: Long? = null,
+    /** The version a self-update installed with another app in front: once installed, izle stays behind that app. */
+    val backgroundUpdateTo: Long? = null,
 ) {
     val isPaired: Boolean get() = serverUrl != null && deviceToken != null
 }
@@ -41,6 +43,7 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
             lastUpdateFailureAt = p[LAST_UPDATE_FAILURE],
             appsReportHash = p[APPS_REPORT_HASH],
             appsReportedAt = p[APPS_REPORTED_AT],
+            backgroundUpdateTo = p[BACKGROUND_UPDATE_TO],
         )
     }
 
@@ -94,6 +97,10 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
         dataStore.edit { p -> if (at == null) p.remove(LAST_UPDATE_FAILURE) else p[LAST_UPDATE_FAILURE] = at }
     }
 
+    suspend fun setBackgroundUpdateTo(versionCode: Long?) {
+        dataStore.edit { p -> if (versionCode == null) p.remove(BACKGROUND_UPDATE_TO) else p[BACKGROUND_UPDATE_TO] = versionCode }
+    }
+
     suspend fun setAppsReport(hash: String, at: Long) {
         dataStore.edit { p ->
             p[APPS_REPORT_HASH] = hash
@@ -118,5 +125,6 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
         val LAST_UPDATE_FAILURE = longPreferencesKey("last_update_failure_at")
         val APPS_REPORT_HASH = stringPreferencesKey("apps_report_hash")
         val APPS_REPORTED_AT = longPreferencesKey("apps_reported_at")
+        val BACKGROUND_UPDATE_TO = longPreferencesKey("background_update_to")
     }
 }

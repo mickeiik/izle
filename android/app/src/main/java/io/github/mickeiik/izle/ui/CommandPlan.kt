@@ -8,8 +8,9 @@ import io.github.mickeiik.izle.player.PlayerPhase
  * What the owner's commands do on this TV: they act only on Home and in the player. Transport commands need video
  * showing and win over the hidden menu (`resume`, `next`, `previous` close it, `pause` keeps closing it from resuming,
  * `seek` happens under it). A channel is never paused (`ignored`, `live`); `next`/`previous` zap as CH+/CH− do, also
- * from its error screen. With another app in front (izle, the TV's home screen, stays connected) only `play` acts: izle
- * comes back to play it; the others are ignored (`background`). Every command ends in exactly one result: a
+ * from its error screen. With another app in front (izle, the TV's home screen, stays connected) only `play` acts, by
+ * bringing izle back, and `update`, as [io.github.mickeiik.izle.update.UpdatePlan] says; the others are ignored
+ * (`background`). Every command ends in exactly one result: a
  * [Action.Report] last, or the [Action.Play], [Action.ComeToFront], [Action.Step], [Action.Zap] or [Action.Update]
  * that reports it later.
  */
@@ -55,7 +56,7 @@ object CommandPlan {
         // An `update` while the update screen shows is the update plan's (`busy`).
         val ready = screen == Screen.Home || screen == Screen.Player || (screen is Screen.Update && command is RemoteCommand.Update)
         if (!ready && command !is RemoteCommand.Ignored) return listOf(Action.Report(CommandResult.ignored(CommandResult.NOT_READY)))
-        if (!inFront && command !is RemoteCommand.Ignored) {
+        if (!inFront && command !is RemoteCommand.Ignored && command !is RemoteCommand.Update) {
             return listOf(if (command is RemoteCommand.Play) Action.ComeToFront else Action.Report(CommandResult.ignored(CommandResult.BACKGROUND)))
         }
         val video = screen == Screen.Player && phase == PlayerPhase.Playing

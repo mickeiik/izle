@@ -647,6 +647,43 @@ class AppViewModelTest {
     }
 
     @Test
+    fun withAnotherAppInFrontASilentTvUpdatesUnseenAndStaysBehind() {
+        offerUpdate(silent = true)
+        val vm = startTvOnHome()
+        makeHomeScreen(vm)
+        waitUntil("the offered version") { app.graph.updater.available.value?.versionCode == 990_000L }
+        vm.onBackground()
+        // Nobody sees it: the first tick installs, without three idle minutes.
+        advance(UpdatePlan.AUTO_TICK_MS)
+        waitUntil("the install") { installer.installs.isNotEmpty() }
+        assertTrue(installer.installs.single().silent)
+        assertEquals("nothing shows", Screen.Home, vm.screen.value)
+        runBlocking { assertEquals(990_000L, app.graph.deviceStore.current().backgroundUpdateTo) }
+    }
+
+    @Test
+    fun anUpdateFromHomeComesBackToTheFrontAndStandbyStopsUpdatesBehindAnotherApp() {
+        offerUpdate(silent = true)
+        val vm = startTvOnHome()
+        makeHomeScreen(vm)
+        waitUntil("the offered version") { app.graph.updater.available.value?.versionCode == 990_000L }
+        runBlocking { app.graph.deviceStore.setBackgroundUpdateTo(990_000L) } // an earlier attempt behind another app
+        vm.onBackground()
+        val power = shadowOf(app.getSystemService(PowerManager::class.java))
+        power.setIsInteractive(false)
+        vm.onScreenChanged()
+        advance(UpdatePlan.AUTO_TICK_MS * 4)
+        settle()
+        assertTrue("standby", installer.installs.isEmpty())
+        power.setIsInteractive(true)
+        vm.onForeground()
+        advance(UpdatePlan.IDLE_MS)
+        waitUntil("the install") { installer.installs.isNotEmpty() }
+        assertEquals(INSTALLING, vm.screen.value)
+        runBlocking { assertNull(app.graph.deviceStore.current().backgroundUpdateTo) }
+    }
+
+    @Test
     fun theSystemDialogOverTheAppKeepsUpdatingAndBringsNoAutoplay() {
         autoplayOnStart = true
         offerUpdate(silent = false)

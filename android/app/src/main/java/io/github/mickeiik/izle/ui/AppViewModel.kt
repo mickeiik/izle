@@ -279,7 +279,6 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
      */
     fun onBackground() {
         foreground = false
-        autoUpdateJob?.cancel()
         if (!confirming) leaveUpdateScreen()
         leaveConnectPhone()
         clearAutoplay()
@@ -290,19 +289,31 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
         }
         _menu.value = null
         refreshHomeScreen()
-        if (!staysConnected()) repository.stop()
+        if (!staysConnected()) letGo()
         pairingJob?.cancel()
     }
 
     /** The screen went off (standby) or on again: in the background, izle is connected only while it [staysConnected]. */
     fun onScreenChanged() {
         if (foreground) return
-        if (staysConnected()) repository.start() else repository.stop()
+        if (staysConnected()) {
+            repository.start()
+            startAutoUpdates()
+        } else {
+            letGo()
+        }
+    }
+
+    /** In the background: no server, and no update by itself. */
+    private fun letGo() {
+        autoUpdateJob?.cancel()
+        repository.stop()
     }
 
     /**
      * Another app in front on a TV whose home screen is izle, its screen on and izle on Home: the event stream stays
-     * open, so the owner sees the TV online and a `play` reaches it (docs/ux/senior-tv.md, "Another app in front").
+     * open, so the owner sees the TV online, a `play` reaches it and a silent update installs unseen (docs/ux/senior-tv.md,
+     * "Another app in front").
      * The home app is never frozen in the background and may come back to the front by itself; any other app is.
      */
     private fun staysConnected(): Boolean =
@@ -687,10 +698,14 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             lastFailureAt = updater.lastFailureAt,
             now = System.currentTimeMillis(),
             busy = updater.busy,
+            inFront = foreground,
         )
     }
 
-    /** While in front: every 30 s, whether a silent TV installs the offered version by itself ([UpdatePlan.autoInstall]). */
+    /**
+     * While in front, or in the background while it [staysConnected]: every 30 s, whether a silent TV installs the
+     * offered version by itself ([UpdatePlan.autoInstall]).
+     */
     private fun startAutoUpdates() {
         autoUpdateJob?.cancel()
         autoUpdateJob = viewModelScope.launch {
@@ -796,8 +811,9 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
 
     /**
      * Downloads, checks and installs [request]'s update. Silent: "Updating…" only once the archive checked out, if
-     * nothing started meanwhile ([auto]: the TV is still idle). Guided: "Updating…" from OK on, then the system's
-     * Install dialog. The command's result goes out right before the session is committed: success ends this process.
+     * nothing started meanwhile ([auto]: the TV is still idle); with another app in front, nothing shows. Guided:
+     * "Updating…" from OK on, then the system's Install dialog. The command's result goes out right before the session
+     * is committed: success ends this process.
      */
     private fun runUpdate(request: UpdateRequest, silent: Boolean, auto: Boolean) {
         val api = request.api ?: return request.report(CommandResult.ignored(CommandResult.NOT_READY))
@@ -808,13 +824,15 @@ class AppViewModel(private val graph: AppGraph) : ViewModel() {
             val run = updater.run(api, request.update, silent, request.commandId) {
                 val ready = when {
                     !silent -> (_screen.value as? Screen.Update)?.ui?.phase == UpdatePhase.Installing
-                    !foreground -> false
+                    !foreground && !staysConnected() -> false
                     auto -> UpdatePlan.autoInstall(request.update, updateContext().copy(busy = false))
                     else -> !player.inUse && (_screen.value == Screen.Home || _screen.value is Screen.Update)
                 }
                 if (ready) {
                     request.committing = true
-                    if (silent) {
+                    // Once installed, the new version stays behind the app in front ([UpdatePlan.reopenAfterUpdate]).
+                    store.setBackgroundUpdateTo(if (foreground) null else request.update.versionCode)
+                    if (silent && foreground) {
                         closeMenu(resume = false)
                         clearAutoplay()
                         showInstalling(versionName)
