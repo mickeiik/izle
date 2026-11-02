@@ -6,6 +6,8 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-02
+
 ### Changed
 
 - **TV app: online while another app is in front.** With izle as the TV's home screen and the screen on, the TV now
@@ -368,7 +370,8 @@ The first release: everything needed to run izle at home with your own catalog.
 - Node.js 22.13 or newer (`node:sqlite`), tested on 22, 24 and 26. The TV app needs Android 7.0 (API 24)+ and carries
   Let's Encrypt's roots.
 
-[Unreleased]: https://github.com/mickeiik/izle/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/mickeiik/izle/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/mickeiik/izle/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/mickeiik/izle/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/mickeiik/izle/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/mickeiik/izle/compare/v0.6.0...v0.6.1

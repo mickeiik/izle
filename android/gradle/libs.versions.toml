@@ -1,7 +1,7 @@
 [versions]
 # The version of both apps (versionName; buildSrc's IzleVersion derives the versionCode), the same as the server's:
 # set with `node scripts/version.mjs set X.Y.Z`.
-izle = "0.7.1"
+izle = "0.7.2"
 # Every module compiles against compileSdk and runs from minSdk (each app sets its own targetSdk).
 compileSdk = "37"
 minSdk = "24"
