@@ -6,6 +6,8 @@ number. How to update: [self-hosting guide](docs/deploy/self-hosting.md#10-updat
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-02
+
 ### Fixed
 
 - **TV app: no more pauses on Wi-Fi.** The TV kept its Wi-Fi in power save while playing, so each request could wait
@@ -356,7 +358,8 @@ The first release: everything needed to run izle at home with your own catalog.
 - Node.js 22.13 or newer (`node:sqlite`), tested on 22, 24 and 26. The TV app needs Android 7.0 (API 24)+ and carries
   Let's Encrypt's roots.
 
-[Unreleased]: https://github.com/mickeiik/izle/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/mickeiik/izle/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/mickeiik/izle/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/mickeiik/izle/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/mickeiik/izle/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/mickeiik/izle/compare/v0.5.0...v0.6.0
