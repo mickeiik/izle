@@ -5,7 +5,7 @@ izle = "0.7.2"
 # Every module compiles against compileSdk and runs from minSdk (each app sets its own targetSdk).
 compileSdk = "37"
 minSdk = "24"
-agp = "9.4.1"
+agp = "9.5.0"
 kotlin = "2.4.21"
 composeBom = "2026.09.00"
 tvMaterial = "1.1.0"
